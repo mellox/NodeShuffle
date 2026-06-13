@@ -141,6 +141,16 @@ private:
     void SweepRockComponents();
     TMap<FGuid, TWeakObjectPtr<UStaticMeshComponent>> SweptRocks; // entry -> rock
     bool bRocksSwept = false;
+    float LastRockSweepSeconds = 0.f;          // last (re)sweep time, for rate-limiting
+    float LastOrphanSweepSeconds = 0.f;        // last orphan-rock cleanup, for rate-limiting
+    TSet<FGuid> RockSearchExhausted;           // entries proven to have no findable rock
+    // Hides node-rock meshes left with no node behind them (a node destroyed in
+    // an earlier layout then dropped from the pool by a re-roll). World-state
+    // based, so it needs no surviving entry. Rate-limited.
+    void OrphanRockCleanup();
+    // A non-new entry that still needs its separate rock paired (inactive nodes
+    // to hide, or ore-style retypes to re-skin) sits near a player unpaired.
+    bool HasNonNewEntryNeedingRock() const;
 
     // Correct world scale per rock-mesh name, measured once from real vanilla
     // rocks in the level — so spawned new nodes match vanilla size instead of
@@ -158,6 +168,10 @@ private:
     bool RaycastSettle(FNodeShuffleEntry& Entry, const AActor* IgnoreNode, const AActor* IgnoreMesh) const;
     void DressSpawnedNode(AFGResourceNode* Node, FNodeShuffleEntry& Entry, UClass* ResourceClass);
     void LogLayoutSummary() const;
+    // Diagnostic: names rock-like meshes near players and why they aren't paired
+    // (distance to nearest entry, that entry's active/paired state). Once each.
+    void DiagnoseRocksNearPlayers();
+    TSet<TWeakObjectPtr<UStaticMeshComponent>> DiagnosedComponents;
 
     // ---- persisted state ----
     UPROPERTY(SaveGame) int32 SavedSeed = 0;

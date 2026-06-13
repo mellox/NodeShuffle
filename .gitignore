@@ -9,3 +9,5 @@ DerivedDataCache/
 .vs/
 .idea/
 *.sln
+build_nodeshuffle.log
+*.log

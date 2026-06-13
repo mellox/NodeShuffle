@@ -1,8 +1,8 @@
 {
 	"FileVersion": 3,
-	"Version": 1,
-	"VersionName": "1.0.0",
-	"SemVersion": "1.0.0",
+	"Version": 2,
+	"VersionName": "1.0.1",
+	"SemVersion": "1.0.1",
 	"GameVersion": ">=491125",
 	"FriendlyName": "Node Shuffle",
 	"Description": "Adds ~100 new resource node locations and randomizes, per save, which nodes are active and what resource and purity each one carries. Balance minimums keep every playthrough completable. Layout is rolled once per save and never changes unless you explicitly re-roll.",
