@@ -131,9 +131,9 @@ void UNodeShuffleConfig::PostInitProperties()
         TEXT("Include Modded Nodes"),
         TEXT("Shuffle nodes added by other mods too (e.g. AllMinable's item nodes, modded ores). The per-resource minimum only ever applies to vanilla ores, and non-vanilla resources may lack proper rock visuals for now. Applied when the layout is rolled."));
 
-    AddBool(TEXT("SwapNodeRockVisuals"), true,
-        TEXT("Swap Node Rock Visuals"),
-        TEXT("When ON (default), retyped existing nodes change their rock's appearance to match the new resource. When OFF, retyped nodes keep their original rock look but still mine the shuffled resource. New spawned nodes always show proper visuals either way."));
+    AddBool(TEXT("EnableExperimentalFeatures"), false,
+        TEXT("Enable Experimental Features"),
+        TEXT("Master switch for in-development features that are not yet considered stable. THIS VERSION HAS NO EXPERIMENTAL FEATURES, so this option currently does nothing — leave it off. (Rock-visual swapping graduated to a stable, always-on feature in this release.)"));
 
     RootSection = Root;
 }

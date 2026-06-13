@@ -49,12 +49,12 @@ struct NODESHUFFLE_API FNodeShuffleConfigStruct
     UPROPERTY(BlueprintReadWrite)
     bool IncludeModdedNodes{true};
 
-    // Re-skin retyped existing nodes' rocks to match the new resource (the rock
-    // appearance is copied from a real node of that resource). On by default;
-    // turn off if you prefer retyped nodes to keep their ORIGINAL rock look
-    // while still mining the new resource. New spawned nodes always get visuals.
+    // Standard "experimental features" gate. Off by default. Experimental,
+    // not-yet-stable features check this before activating; stable features
+    // ignore it. This version has NO experimental features (see the config
+    // description), so the flag currently does nothing.
     UPROPERTY(BlueprintReadWrite)
-    bool SwapNodeRockVisuals{true};
+    bool EnableExperimentalFeatures{false};
 
     static FNodeShuffleConfigStruct GetActiveConfig(UObject* WorldContext);
 };

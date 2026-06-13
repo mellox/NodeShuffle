@@ -522,11 +522,9 @@ void ANodeShuffleSubsystem::ApplyLayout()
         }
     }
 
-    // Always capture each resource's authentic rock look (mesh+materials+world
-    // scale) from the pre-retype world — cheap, read-only, and needed to dress
-    // NEW nodes correctly in either mode. The experimental toggle only controls
-    // whether EXISTING retyped nodes are also re-skinned.
-    bSwapVisualsActive = FNodeShuffleConfigStruct::GetActiveConfig(this).SwapNodeRockVisuals;
+    // Capture each resource's authentic rock look (mesh+materials+world scale)
+    // from the pre-retype world, used to re-skin retyped nodes AND dress new
+    // nodes. Cheap, read-only, always on (this is now a stable feature).
     SweepRockComponents();
     CaptureDonorVisuals();
 
@@ -693,19 +691,16 @@ void ANodeShuffleSubsystem::ApplyVanillaRetype(FNodeShuffleEntry& Entry, AFGReso
         Node->SetResourceClassOverride(AssignedClass);
         Node->OnResourceClassOverrideReplication.Broadcast(Node, OriginalClass, AssignedClass);
 
-        // VISUALS (experimental, opt-in): try to make the rock match. When
-        // off, the node keeps its original rock look but mines the new resource.
-        if (bSwapVisualsActive)
+        // VISUALS: re-skin the rock to match the new resource (stamped from a
+        // real rock of that resource). Stable, always on.
+        const bool bMeshSwapped = ApplyNodeOwnMesh(Node, AssignedClass, Entry);
+        if (AFGNodeMeshActor* MeshActor = FindMeshActorForNode(Node))
         {
-            const bool bMeshSwapped = ApplyNodeOwnMesh(Node, AssignedClass, Entry);
-            if (AFGNodeMeshActor* MeshActor = FindMeshActorForNode(Node))
-            {
-                MeshActor->OverrideMeshAndMaterials(Node, OriginalClass, AssignedClass);
-            }
-            UE_LOG(LogNodeShuffle, Verbose, TEXT("Retyped %s: %s -> %s (own mesh: %s)"),
-                *Node->GetName(), *OriginalClass->GetName(), *AssignedClass->GetName(),
-                bMeshSwapped ? TEXT("swapped") : TEXT("NO VISUAL"));
+            MeshActor->OverrideMeshAndMaterials(Node, OriginalClass, AssignedClass);
         }
+        UE_LOG(LogNodeShuffle, Verbose, TEXT("Retyped %s: %s -> %s (own mesh: %s)"),
+            *Node->GetName(), *OriginalClass->GetName(), *AssignedClass->GetName(),
+            bMeshSwapped ? TEXT("swapped") : TEXT("NO VISUAL"));
     }
     if (!bPurityRight)
     {

@@ -141,7 +141,6 @@ private:
     void SweepRockComponents();
     TMap<FGuid, TWeakObjectPtr<UStaticMeshComponent>> SweptRocks; // entry -> rock
     bool bRocksSwept = false;
-    bool bSwapVisualsActive = false; // cached SwapNodeRockVisuals for this apply
 
     // Correct world scale per rock-mesh name, measured once from real vanilla
     // rocks in the level — so spawned new nodes match vanilla size instead of

@@ -38,7 +38,7 @@ All settings are in the in-game **Mods → Node Shuffle** panel (and persist to
 | Randomize Purity | on | shuffle purities from the vanilla distribution |
 | Allow Vanilla Nodes To Disappear | on | when off, every vanilla node stays active |
 | Include Modded Nodes | on | shuffle nodes added by other mods too |
-| Swap Node Rock Visuals | on | retyped nodes look like their new resource (off = keep original rock look, still mine the new resource) |
+| Enable Experimental Features | off | master switch for in-development features; this version has none, so it does nothing |
 
 Generation-time settings (seed, counts, percentages) affect a save only at its
 first roll or an explicit re-roll.
