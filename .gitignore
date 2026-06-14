@@ -11,3 +11,4 @@ DerivedDataCache/
 *.sln
 build_nodeshuffle.log
 *.log
+graphify-out/

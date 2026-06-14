@@ -107,6 +107,10 @@ void UNodeShuffleConfig::PostInitProperties()
         TEXT("Allow Re-roll Of Existing Saves"),
         TEXT("DANGER: when on, a save whose stored seed differs from a non-zero Seed Override re-rolls its entire node layout at the next load. Nodes with miners on them are never changed."));
 
+    AddBool(TEXT("RerollNow"), false,
+        TEXT("Re-roll Now (applies once)"),
+        TEXT("Turn this on, then fully launch and load your save: NodeShuffle re-rolls the entire node layout once (using the current Seed Override, or a fresh random seed if it is 0), then automatically turns this back off so it never loops. This is the reliable way to re-roll an existing save — it does not depend on the seed differing. Nodes with miners on them are never changed; nodes destroyed in a previous roll cannot return."));
+
     AddInt(TEXT("ActivePercent"), 70, 10, 100,
         TEXT("Active Percent Of Node Pool"),
         TEXT("Percent of all node locations (vanilla + new) that are active in a given save. Applied when the layout is rolled."));
@@ -119,6 +123,10 @@ void UNodeShuffleConfig::PostInitProperties()
         TEXT("Minimum Active Nodes Per Resource"),
         TEXT("Every resource type keeps at least this many active nodes so the playthrough stays completable. Applied when the layout is rolled."));
 
+    AddInt(TEXT("MinNodesPerModdedResource"), 2, 0, 25,
+        TEXT("Minimum Active Nodes Per Modded Resource"),
+        TEXT("Like the above, but for resources added by other mods (outside /Game/). 0 = no minimum (modded types may collapse to a single location). Default 2 stops any modded resource type from appearing at only one spot. Applied when the layout is rolled."));
+
     AddBool(TEXT("RandomizePurity"), true,
         TEXT("Randomize Purity"),
         TEXT("Shuffle node purities too (dealt from the vanilla purity distribution, so overall purity balance is preserved). Applied when the layout is rolled."));
@@ -129,11 +137,15 @@ void UNodeShuffleConfig::PostInitProperties()
 
     AddBool(TEXT("IncludeModdedNodes"), true,
         TEXT("Include Modded Nodes"),
-        TEXT("Shuffle nodes added by other mods too (e.g. AllMinable's item nodes, modded ores). The per-resource minimum only ever applies to vanilla ores, and non-vanilla resources may lack proper rock visuals for now. Applied when the layout is rolled."));
+        TEXT("Shuffle nodes added by other mods too (e.g. AllMinable's item nodes, modded ores). Modded resources use the separate 'Minimum Active Nodes Per Modded Resource' floor, and non-vanilla resources may lack proper rock visuals for now. Applied when the layout is rolled."));
+
+    AddInt(TEXT("SpawnRadiusMeters"), 600, 100, 5000,
+        TEXT("Spawn-On-Discovery Radius (m)"),
+        TEXT("New node locations only materialize (their rock + minable node appear) once you come within this many metres AND the terrain there has streamed in, so they always settle correctly on the ground. Smaller = more exploration, fewer live actors at once; larger = nodes pop in from further away. Far, undiscovered nodes stay as data until you reach them."));
 
     AddBool(TEXT("EnableExperimentalFeatures"), false,
         TEXT("Enable Experimental Features"),
-        TEXT("Master switch for in-development features that are not yet considered stable. THIS VERSION HAS NO EXPERIMENTAL FEATURES, so this option currently does nothing — leave it off. (Rock-visual swapping graduated to a stable, always-on feature in this release.)"));
+        TEXT("Enables experimental oil/liquid node shuffling. When ON, crude oil nodes are scanned, shuffled and spawned alongside ore nodes, and the new oil locations can be mined with oil extractors. This is in-development and not yet proven stable — leave it OFF for a guaranteed-stable solid-resource-only shuffle. (Applies when the layout is rolled, so toggle it then re-roll.)"));
 
     RootSection = Root;
 }

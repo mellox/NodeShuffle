@@ -25,6 +25,12 @@ struct NODESHUFFLE_API FNodeShuffleConfigStruct
     UPROPERTY(BlueprintReadWrite)
     bool AllowReroll{false};
 
+    // User-facing reliable re-roll trigger. When true at load and the world is
+    // ready, the layout re-rolls once regardless of seed equality, then the mod
+    // clears this flag back to false and saves the config so it fires only once.
+    UPROPERTY(BlueprintReadWrite)
+    bool RerollNow{false};
+
     // Percent of the total node pool (vanilla + new) that is active.
     UPROPERTY(BlueprintReadWrite)
     int32 ActivePercent{70};
@@ -36,6 +42,13 @@ struct NODESHUFFLE_API FNodeShuffleConfigStruct
     // Minimum active nodes per resource type — the completability floor.
     UPROPERTY(BlueprintReadWrite)
     int32 MinNodesPerResource{5};
+
+    // Minimum active nodes per MODDED resource type (resources added by other
+    // mods, i.e. outside /Game/). 0 = no minimum (the old behavior, where modded
+    // types could collapse to a single location). Default 2 keeps the
+    // proportional feel while preventing singletons.
+    UPROPERTY(BlueprintReadWrite)
+    int32 MinNodesPerModdedResource{2};
 
     UPROPERTY(BlueprintReadWrite)
     bool RandomizePurity{true};
@@ -49,10 +62,18 @@ struct NODESHUFFLE_API FNodeShuffleConfigStruct
     UPROPERTY(BlueprintReadWrite)
     bool IncludeModdedNodes{true};
 
+    // Spawn-on-discovery radius (metres). A new node only materializes (spawns
+    // its actor + visual) once a player is within this distance of it AND the
+    // terrain there has streamed in. Far, undiscovered nodes stay as data until
+    // you explore to them — this is what makes them settle correctly on the
+    // ground instead of floating in unloaded regions.
+    UPROPERTY(BlueprintReadWrite)
+    int32 SpawnRadiusMeters{600};
+
     // Standard "experimental features" gate. Off by default. Experimental,
     // not-yet-stable features check this before activating; stable features
-    // ignore it. This version has NO experimental features (see the config
-    // description), so the flag currently does nothing.
+    // ignore it. In this version it enables oil/liquid node shuffling
+    // (oil nodes join the scan/pool/spawn and can be mined with oil extractors).
     UPROPERTY(BlueprintReadWrite)
     bool EnableExperimentalFeatures{false};
 

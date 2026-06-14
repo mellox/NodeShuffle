@@ -51,6 +51,25 @@ struct FNodeShuffleEntry
 
     // The vanilla node Blueprint class to spawn new nodes from.
     UPROPERTY(SaveGame) FString NodeClassPath;
+
+    // Resource form of the assigned resource at roll time: 1 = solid, 2 = liquid
+    // (matches EResourceForm). Lets the apply path treat liquid (oil) nodes
+    // correctly without re-deriving the form from a possibly-unloaded class.
+    // 0 = unknown/legacy (treated as solid). Phase 2.
+    UPROPERTY(SaveGame) uint8 ResourceForm = 0;
+};
+
+// One original vanilla node location to suppress on stream-in after a wipe-on-
+// reroll: the node itself plus its associated separate rock are hidden whenever
+// they stream in, unless the spot is occupied or reused by the new layout. This
+// record is persistent so suppression is reliable across sessions.
+USTRUCT()
+struct FNodeShuffleSuppressedOriginal
+{
+    GENERATED_BODY()
+
+    UPROPERTY(SaveGame) FString VanillaNodePath;
+    UPROPERTY(SaveGame) FVector Location = FVector::ZeroVector;
 };
 
 // Server-side brain of NodeShuffle.
@@ -94,9 +113,31 @@ private:
     void RefreshTick();
 
     // ---- roll ----
+    // Strict gate for the INITIAL roll: requires 50+ pristine /Game/ vanilla
+    // nodes streamed in, proving the world is fully loaded before a first shuffle.
     bool IsWorldReadyForRoll() const;
+    // Shuffle-aware gate for the RE-ROLL path. A shuffled save has most of its
+    // originally-vanilla nodes retyped (no longer /Game/) or destroyed, so the
+    // pristine-vanilla count never reaches 50 and the strict gate above can never
+    // pass on reload. Instead require enough loaded resource nodes of ANY kind to
+    // prove the world has streamed in, after a short post-load settle.
+    bool IsWorldReadyForReroll() const;
     void RollLayout(int32 Seed, bool bIsReroll);
+    // Before a re-roll rescans the vanilla pool, restore each non-new live node's
+    // resource class/purity to the original values stored in its layout entry, so
+    // the rescan sees the true vanilla pool instead of the previously-shuffled one.
+    // Destroyed nodes cannot return; that is logged and accepted.
+    void RestoreOriginalsForReroll();
+    // Map-wide spread: distribute new locations across the bounding box of the
+    // full known-node set (whole playable map) rather than clustered around the
+    // currently-loaded vanilla nodes, so the initial roll is not bunched at the
+    // player's load point. Streaming-independent on reroll (saved locations span
+    // the map).
+    // VanillaLocations defines the map bounding box; AvoidLocations is the full
+    // union of occupied/kept/original/pinned locations new nodes must be spaced
+    // away from (FIX 2 overlap guard).
     void GenerateNewLocations(FRandomStream& Rng, const TArray<FVector>& VanillaLocations,
+                              const TArray<FVector>& AvoidLocations,
                               int32 Count, TArray<FVector>& OutLocations) const;
     bool ReadCustomLocationsJson(TArray<FVector>& OutLocations) const;
     void WriteGeneratedLocationsJson(const TArray<FVector>& Locations) const;
@@ -104,8 +145,36 @@ private:
     // ---- apply ----
     void ApplyLayout();
     void ApplyVanillaRetype(FNodeShuffleEntry& Entry, AFGResourceNode* Node, bool& bOutChangedWorld);
+    // LOSSLESS DEACTIVATION (architectural change, build lossless-5): a vanilla
+    // node is NEVER destroyed. It is made reversibly inactive — hidden, no
+    // collision, and re-hidden idempotently every tick (the runtime hide reverts
+    // on reload AND on stream-in). Its path is tracked in DeactivatedNodePaths
+    // (SaveGame) so it can be fully reactivated by a later re-roll. The node's
+    // separate ore-rock (ore-style nodes) is hidden the same way.
     void ApplyVanillaDeactivate(FNodeShuffleEntry& Entry, AFGResourceNode* Node, bool& bOutChangedWorld);
+    // Reverse of deactivation: un-hide, re-enable collision, drop from the
+    // deactivated set, and (via the normal retype path) restore the live node to
+    // its assigned resource. Called when a previously-deactivated node is ACTIVE
+    // in the current layout. Idempotent.
+    void ReactivateVanillaNode(FNodeShuffleEntry& Entry, AFGResourceNode* Node, bool& bOutChangedWorld);
+    // Comprehensive respawn (task #3): an ACTIVE non-new entry whose live actor is
+    // genuinely missing (never streams in — destroyed in a pre-lossless save, or
+    // simply gone) is materialized as a managed node from its recorded location +
+    // original resource, via the new-node spawn machinery. Generalizes the old
+    // FIX-3 resurrect to ALL active entries with no live node.
+    void EnsureMissingVanillaRespawned(FNodeShuffleEntry& Entry, bool& bOutChangedWorld);
     void EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool& bOutChangedWorld);
+    // Spawn-on-discovery: true if any player is within SpawnRadius of Loc.
+    bool IsLocationNearAnyPlayer(const FVector& Loc, float RadiusCm) const;
+    // FIX 1: DespawnFarNewNodes removed — materialized new nodes are kept for the
+    // session (despawn-back-to-data caused disappearing/only-visual nodes).
+    // Wipe-on-reroll: hide every original vanilla node + its rock when it streams
+    // in, unless the spot is occupied or reused by the active new layout. Driven
+    // by the persistent OriginalNodeRecord so it works across sessions.
+    void SuppressOriginalNodes();
+    // Build/refresh the persistent record of all original vanilla node locations
+    // (used by SuppressOriginalNodes). Captured at roll time from the layout.
+    void CaptureOriginalNodeRecord();
     void SettleNewNodesNearPlayers();
     void ReassociateOrphanedExtractors();
     void RefreshScannersAndRadarTowers();
@@ -114,9 +183,11 @@ private:
     void SweepMismatchedDeposits();
 
     // ---- helpers ----
-    // Eligible = solid, infinite, plain Node type (no oil/geyser/fracking/deposit).
-    // bIncludeModded admits non-/Game/ resource descriptors (AllMinable etc.).
-    static bool IsEligibleVanillaNode(const AFGResourceNode* Node, bool bIncludeModded);
+    // Eligible = infinite, plain Node type (no geyser/fracking/deposit), solid by
+    // default. bIncludeModded admits non-/Game/ resource descriptors (AllMinable
+    // etc.). bIncludeLiquid (Phase 2, experimental) also admits RF_LIQUID (oil)
+    // nodes — gated on EnableExperimentalFeatures so the stable mod is solid-only.
+    static bool IsEligibleVanillaNode(const AFGResourceNode* Node, bool bIncludeModded, bool bIncludeLiquid);
     // True if the node has an extractor or a portable miner on it.
     bool IsNodeOccupiedAnyway(const AFGResourceNode* Node) const;
     // Swaps the rock mesh carried by the node actor itself (vanilla layouts
@@ -148,6 +219,15 @@ private:
     // an earlier layout then dropped from the pool by a re-roll). World-state
     // based, so it needs no surviving entry. Rate-limited.
     void OrphanRockCleanup();
+    // Rock components already explained by OrphanRockCleanup's per-rock reason
+    // log, so the reason for each is stated at most once (hidden OR why-not).
+    TSet<TWeakObjectPtr<UStaticMeshComponent>> OrphanReasonLogged;
+    // Shared rock-mesh name predicate used by SweepRockComponents, OrphanRockCleanup
+    // and the diagnostic. Matches the game's node-rock mesh naming families plus the
+    // user's NodeShuffle_RockPatterns.json prefixes. ExtraPatterns may be empty.
+    static bool IsNodeRockMeshName(const FString& MeshName, const TArray<FString>& ExtraPatterns);
+    // Reads NodeShuffle_RockPatterns.json prefixes (best-effort; empty on miss).
+    void LoadExtraRockPatterns(TArray<FString>& OutPatterns) const;
     // A non-new entry that still needs its separate rock paired (inactive nodes
     // to hide, or ore-style retypes to re-skin) sits near a player unpaired.
     bool HasNonNewEntryNeedingRock() const;
@@ -166,8 +246,24 @@ private:
     AFGResourceNode* FindVanillaNodeByPath(const FString& Path) const;
     static UClass* LoadClassByPath(const FString& Path);
     bool RaycastSettle(FNodeShuffleEntry& Entry, const AActor* IgnoreNode, const AActor* IgnoreMesh) const;
+    // FIX A (land-only placement): true if a world point sits inside a streamed-in
+    // water volume (ocean/lake/river). Used to reject settle hits on the seafloor:
+    // the down-ray hits solid terrain, but if that impact point is underwater the
+    // node is invisible to the player. Definitive (volume containment), not a
+    // sea-level guess. Returns false when no water is streamed near the point.
+    bool IsPointInWater(const FVector& Point) const;
+    // FIX A: single raycast that also rejects water. Out params return the grounded
+    // location/rotation/water-state. Helper that RaycastSettle's relocation loop
+    // drives over offset candidates.
+    bool RaycastGroundAt(const FVector& ProbeXY, float StartZ, const AActor* IgnoreNode,
+                         const AActor* IgnoreMesh, FVector& OutLoc, FRotator& OutRot,
+                         bool& bOutWater) const;
     void DressSpawnedNode(AFGResourceNode* Node, FNodeShuffleEntry& Entry, UClass* ResourceClass);
     void LogLayoutSummary() const;
+    // Writes RerollNow=false back to the live config and flushes it to disk so the
+    // one-shot "Re-roll Now" toggle fires exactly once per enable. Returns true on
+    // success (property found and marked dirty).
+    bool ClearRerollNowFlag();
     // Diagnostic: names rock-like meshes near players and why they aren't paired
     // (distance to nearest entry, that entry's active/paired state). Once each.
     void DiagnoseRocksNearPlayers();
@@ -178,6 +274,20 @@ private:
     UPROPERTY(SaveGame) bool bLayoutGenerated = false;
     UPROPERTY(SaveGame) int32 LayoutVersion = 1;
     UPROPERTY(SaveGame) TArray<FNodeShuffleEntry> Layout;
+
+    // Persistent record of every original vanilla node location, used to suppress
+    // (hide node + rock) any original that streams in after a wipe-on-reroll —
+    // reliable across sessions, and the catch-all for orphan-rock ghosts. Rebuilt
+    // from the layout each roll.
+    UPROPERTY(SaveGame) TArray<FNodeShuffleSuppressedOriginal> OriginalNodeRecord;
+
+    // LOSSLESS DEACTIVATION (build lossless-5): paths of vanilla nodes the current
+    // layout marks inactive. These nodes are HIDDEN, not destroyed, so they remain
+    // in the world and can be reactivated by a later re-roll. Persisted so the hide
+    // can be re-applied reliably across sessions and a reactivation knows exactly
+    // which previously-hidden nodes to restore. Replaces the old "destroyed forever"
+    // model entirely.
+    UPROPERTY(SaveGame) TSet<FString> DeactivatedNodePaths;
 
     // ---- session state ----
     FTimerHandle TickTimerHandle;
