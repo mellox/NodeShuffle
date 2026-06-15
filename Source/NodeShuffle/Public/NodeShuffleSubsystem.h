@@ -52,6 +52,12 @@ struct FNodeShuffleEntry
     // The vanilla node Blueprint class to spawn new nodes from.
     UPROPERTY(SaveGame) FString NodeClassPath;
 
+    // FIX C (overlap guard): how many times this new node's location has been
+    // spiral-nudged off an overlap. Persisted so retries don't restart each load.
+    // When it exceeds the cap the entry is resolved (deactivated) instead of being
+    // re-checked — and re-logged — every single tick forever.
+    UPROPERTY(SaveGame) uint8 OverlapNudges = 0;
+
     // Resource form of the assigned resource at roll time: 1 = solid, 2 = liquid
     // (matches EResourceForm). Lets the apply path treat liquid (oil) nodes
     // correctly without re-deriving the form from a possibly-unloaded class.
@@ -70,6 +76,33 @@ struct FNodeShuffleSuppressedOriginal
 
     UPROPERTY(SaveGame) FString VanillaNodePath;
     UPROPERTY(SaveGame) FVector Location = FVector::ZeroVector;
+};
+
+// FIX 2 (persisted donor visuals): the authentic look of one resource's rock,
+// captured from a PRISTINE (un-retyped) live node and stored as soft asset paths
+// so it survives reload/reroll. On a reloaded shuffled save every vanilla node is
+// already retyped (the override is SaveGame), so no pristine donor exists to copy
+// from live — without persistence the capture fell back to the wrong descriptor
+// DEPOSIT mesh (visual-6's bug). Persisting the real mesh/materials/scale lets the
+// apply path re-stamp the correct rock with no live donor needed.
+USTRUCT()
+struct FNodeShuffleDonorRecord
+{
+    GENERATED_BODY()
+
+    // Resource descriptor class path this look reproduces.
+    UPROPERTY(SaveGame) FString ResourceClassPath;
+    // Soft object path of the rock UStaticMesh (empty for liquid donors).
+    UPROPERTY(SaveGame) FString MeshPath;
+    // Soft object paths of the rock's materials, in slot order.
+    UPROPERTY(SaveGame) TArray<FString> MaterialPaths;
+    // World scale captured from the real vanilla rock (the only correct scale).
+    UPROPERTY(SaveGame) FVector Scale = FVector::OneVector;
+    // 0 = solid mesh donor, 1 = liquid (rebuild native decal from descriptor).
+    UPROPERTY(SaveGame) uint8 Kind = 0;
+    // True when this record was NOT captured from a real live node (deposit-mesh or
+    // native-rebuild fallback). A real donor seen later upgrades a fallback record.
+    UPROPERTY(SaveGame) bool bIsFallback = false;
 };
 
 // Server-side brain of NodeShuffle.
@@ -183,11 +216,28 @@ private:
     void SweepMismatchedDeposits();
 
     // ---- helpers ----
-    // Eligible = infinite, plain Node type (no geyser/fracking/deposit), solid by
-    // default. bIncludeModded admits non-/Game/ resource descriptors (AllMinable
-    // etc.). bIncludeLiquid (Phase 2, experimental) also admits RF_LIQUID (oil)
-    // nodes — gated on EnableExperimentalFeatures so the stable mod is solid-only.
+    // Property-based eligibility (no class-name/form-list hardcoding). Eligible =
+    // a genuine AFGResourceNode with a UFGResourceDescriptor resource, plain Node
+    // type (GetResourceNodeType() == EResourceNodeType::Node — no geyser/fracking/
+    // deposit), not skeletal/transient. bIncludeModded admits non-/Game/ resource
+    // descriptors (AllMinable etc.). bIncludeLiquid is the EXPERIMENTAL-form gate:
+    // solid is always allowed; liquid (oil) AND gas (e.g. lithium, Desc_OreLithium
+    // form=RF_GAS) join only when EnableExperimentalFeatures is on (both need
+    // special extractors). Nothing is special-cased by mod/class name.
     static bool IsEligibleVanillaNode(const AFGResourceNode* Node, bool bIncludeModded, bool bIncludeLiquid);
+    // Same gate, but reports WHY a node was rejected (for the once-per-class
+    // modded-eligibility diagnostic). Accepts genuinely-functional modded nodes
+    // (lithium's BP_ResourdeNode_Alkali_C, AllMinable item-style nodes) by driving
+    // entirely off node PROPERTIES: relaxes purity/amount for non-/Game/ resources
+    // (purity normalized at roll time) while keeping the principled junk exclusions
+    // (skeletal, transient, non-resource-descriptor, deposit, geyser/fracking).
+    static bool IsEligibleVanillaNodeReason(const AFGResourceNode* Node, bool bIncludeModded,
+                                            bool bIncludeLiquid, const TCHAR*& OutReason);
+    // FIX 4: once-per-node-class diagnostic naming why each MODDED node class is or
+    // isn't shuffled. Turns a silent "lithium never shuffles" into a log line that
+    // states the exact gate. Runs at roll time.
+    void DiagnoseModdedNodeEligibility(bool bIncludeModded, bool bIncludeLiquid) const;
+    TSet<FString> ModdedEligibilityLogged;
     // True if the node has an extractor or a portable miner on it.
     bool IsNodeOccupiedAnyway(const AFGResourceNode* Node) const;
     // Swaps the rock mesh carried by the node actor itself (vanilla layouts
@@ -196,16 +246,81 @@ private:
     // ores); the static asset-path table is the fallback. Returns true if a
     // mesh was applied.
     bool ApplyNodeOwnMesh(AFGResourceNode* Node, UClass* ResourceClass, const FNodeShuffleEntry& Entry);
+    // INCREMENTAL DONOR CAPTURE (visual-6): runs every tick (NOT one-shot). The
+    // one-shot capture only saw the partially-streamed world at roll time, so it
+    // missed any resource whose nodes had not streamed in yet (the log's "10 of
+    // 12" — oil + the modded lead ore had no donor and rendered a wrong rock).
+    // Now we capture a missing donor whenever a live node of that resource
+    // streams in, until every ASSIGNED resource is covered. Liquids (oil) are
+    // captured as a decal/native-rebuild donor, not a rock mesh.
     void CaptureDonorVisuals();
+    bool bDonorsRehydrated = false;
+    // True once every distinct assigned resource in the active layout has a donor
+    // (real or fallback) — lets the incremental capture stop scanning.
+    bool bAllDonorsCovered = false;
+    // Per-resource coverage diagnostic: emitted once when a resource first gets a
+    // donor, stating whether it is a REAL live-node donor or a FALLBACK.
+    TSet<FString> DonorCoverageLogged;
 
+    // How a resource's visual is reproduced.
+    enum class EDonorKind : uint8
+    {
+        SolidMesh,  // stamp mesh + materials + world scale onto a rock component
+        Liquid,     // oil/liquid: rebuild the node's native decal from its descriptor
+    };
     struct FDonorVisual
     {
         TWeakObjectPtr<UStaticMesh> Mesh;
         TArray<TWeakObjectPtr<UMaterialInterface>> Materials;
         FTransform RelativeTransform;
+        EDonorKind Kind = EDonorKind::SolidMesh;
+        bool bIsFallback = false;   // true when not captured from a real live node
     };
     TMap<FString, FDonorVisual> DonorVisuals;   // resource class path -> look
-    bool bDonorsCaptured = false;
+
+    // DONOR-HYGIENE (visual-9): the world is full of modded PLACEHOLDER nodes that
+    // all reuse ONE shared rock mesh (e.g. AllMinable/AlkaLib reuse
+    // 'ResourceNode_quartz' for dozens of resources). Capturing a donor from such a
+    // node poisons a resource's look (iron's rock turns to quartz) and the bad donor
+    // is then persisted and spread map-wide. The cure is a generic invariant:
+    //   ONE real rock mesh -> AT MOST ONE resource's donor.
+    // We track which mesh is already claimed as a REAL donor and reject any other
+    // resource from claiming that same mesh; a mesh that several resources try to
+    // claim is a shared placeholder and is rejected for all but its rightful owner
+    // (the resource whose NATIVE nodes actually use it). Keyed by mesh path name so
+    // it survives weak-ptr churn. Built from DonorVisuals + revalidated on load.
+    TMap<FString, FString> RealDonorMeshOwner; // rock mesh path -> resource that owns it
+    // Returns true if MeshPath is already the REAL donor mesh of a resource OTHER
+    // than ForResourcePath (i.e. claiming it here would be placeholder pollution).
+    bool IsMeshClaimedByOtherResource(const FString& MeshPath, const FString& ForResourcePath) const;
+    // Records MeshPath as the real-donor mesh owned by ResourcePath (one-to-one map).
+    void ClaimRealDonorMesh(const FString& MeshPath, const FString& ResourcePath);
+    // Revalidates rehydrated/persisted donors against the one-mesh-one-resource
+    // invariant: drops any persisted REAL donor whose mesh collides with another
+    // resource's real donor (keeping the better-justified owner) so a polluted
+    // SaveGame donor is never trusted. Runs once after rehydrate.
+    void RevalidatePersistedDonors();
+    bool bPersistedDonorsRevalidated = false;
+
+    // FIX 2: write a captured donor into the persisted store (and update the in-
+    // memory DonorVisuals). A real (non-fallback) capture overwrites a prior
+    // fallback record for the same resource. MeshPath/MaterialPaths are soft paths.
+    // (Declared after FDonorVisual so the parameter type is complete.)
+    void PersistDonor(const FString& ResourcePath, const FDonorVisual& Donor);
+    // FIX 2: on first apply of a session, rebuild DonorVisuals from PersistedDonors
+    // (resolving soft paths via the on-disk asset). This is what makes a reloaded
+    // shuffled save re-stamp the CORRECT rock — no pristine live node needed, so no
+    // deposit-mesh fallback. Real donors still captured live for any resource not
+    // yet persisted (e.g. first-ever roll). Idempotent; runs once.
+    void RehydrateDonorsFromPersisted();
+    // Set of resource paths still needing a real (non-fallback) donor; shrinks as
+    // live nodes stream in. Drives the incremental rescan + coverage logging.
+    TSet<FString> AssignedResourcesNeedingDonor;
+    bool bDonorTargetsBuilt = false;
+    // Re-applies the native visual (mesh or oil decal) a node draws for its CURRENT
+    // (overridden) resource descriptor. Used for liquid donors and as the modded
+    // fallback when no donor mesh exists. Friend access to UpdateMeshFromDescriptor.
+    void RebuildNodeNativeVisual(AFGResourceNode* Node);
 
     // Ore-style vanilla nodes carry no mesh of their own: their rock is a
     // separate level actor. Swept once per session by mesh-name + proximity.
@@ -288,6 +403,13 @@ private:
     // which previously-hidden nodes to restore. Replaces the old "destroyed forever"
     // model entirely.
     UPROPERTY(SaveGame) TSet<FString> DeactivatedNodePaths;
+
+    // FIX 2: persisted real-rock donor visuals (resource path -> mesh/materials/
+    // scale as soft paths). Captured from pristine nodes at the initial roll and
+    // reused across reload/reroll so the correct rock is always re-stampable even
+    // when every live vanilla node is already retyped. Replaces visual-6's
+    // deposit-mesh fallback for any resource that has ever had a real donor.
+    UPROPERTY(SaveGame) TArray<FNodeShuffleDonorRecord> PersistedDonors;
 
     // ---- session state ----
     FTimerHandle TickTimerHandle;
