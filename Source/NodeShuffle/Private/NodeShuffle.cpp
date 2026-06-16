@@ -101,7 +101,7 @@ void FNodeShuffleModule::DbgLogAcceptance(AFGResourceExtractorHologram* Hologram
 void FNodeShuffleModule::StartupModule()
 {
     UE_LOG(LogNodeShuffle, Log, TEXT("NodeShuffle module loaded"));
-    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle BUILD 2026-06-16-redesign-22 LOADED ====="));
+    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle BUILD 2026-06-16-redesign-23 LOADED ====="));
 
 #if !WITH_EDITOR
     // redesign-13 HOLOGRAM HOOK (DIAGNOSTICS). r12 proved the Mk1 build trace NEVER hits our node (0 hits on
@@ -186,6 +186,45 @@ void FNodeShuffleModule::StartupModule()
                 // see which one rejects our node inside TrySnapToActor.
                 FNodeShuffleModule::DbgLogAcceptance(Self, HitActor);
             }
+        }
+    });
+
+    // redesign-23 (THE FIX — surgical accept-hook). r22 diagnostics PROVED the only remaining gate: the Miner's
+    // mRestrictToNodeType='BP_ResourceNode_C' and our custom subclass fails IsA() (ACCEPT-EXT nodeIsA=0); every
+    // other sub-condition already passes (canPlaceExtractor=1, form ok, resource ok). The class-identity check
+    // lives inside IsAllowedOnResource/CanOccupyResource, which TrySnapToActor calls. We can't change what class
+    // our actor IsA, so instead force these two protected acceptance checks to return true FOR OUR NODE ONLY,
+    // letting the real TrySnapToActor complete its normal snap. Surgical (vanilla nodes/other actors untouched —
+    // we Override only when the resource is a NodeShuffleResourceNode) and MP-correct (the hook runs identically
+    // on server + clients). SML detours patch the function body, so TrySnapToActor's INTERNAL calls to these are
+    // intercepted too. Friend grant (AccessTransformers) makes the protected method addresses takeable here.
+    auto IsOurNode = [](const TScriptInterface<IFGExtractableResourceInterface>& Resource) -> bool
+    {
+        const UObject* Obj = Resource.GetObject();
+        return Obj && Obj->GetClass()->GetName() == TEXT("NodeShuffleResourceNode");
+    };
+    SUBSCRIBE_UOBJECT_METHOD(AFGResourceExtractorHologram, IsAllowedOnResource,
+        [IsOurNode](auto& Scope, const AFGResourceExtractorHologram* Self,
+                    const TScriptInterface<IFGExtractableResourceInterface>& resource)
+    {
+        if (IsOurNode(resource))
+        {
+            static bool bLoggedOnce = false;
+            if (!bLoggedOnce) { bLoggedOnce = true;
+                UE_LOG(LogNodeShuffle, Display, TEXT("HOLOGRAMHOOK FORCE-ACCEPT IsAllowedOnResource->true (our node)")); }
+            Scope.Override(true); // accept our node; skip the BP_ResourceNode_C IsA() rejection
+        }
+    });
+    SUBSCRIBE_UOBJECT_METHOD(AFGResourceExtractorHologram, CanOccupyResource,
+        [IsOurNode](auto& Scope, const AFGResourceExtractorHologram* Self,
+                    const TScriptInterface<IFGExtractableResourceInterface>& resource)
+    {
+        if (IsOurNode(resource))
+        {
+            static bool bLoggedOnce = false;
+            if (!bLoggedOnce) { bLoggedOnce = true;
+                UE_LOG(LogNodeShuffle, Display, TEXT("HOLOGRAMHOOK FORCE-ACCEPT CanOccupyResource->true (our node)")); }
+            Scope.Override(true);
         }
     });
 #endif
