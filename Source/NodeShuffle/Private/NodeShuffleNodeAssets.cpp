@@ -42,15 +42,21 @@ namespace
                 { TEXT("/Game/FactoryGame/Resource/RawResources/OreQuartz/Material/ResourceNode_Quartz_Inst.ResourceNode_Quartz_Inst") },
                 OreOffset, OreScale });
 
+            // correct-visual-5 ISSUE 3: coal & sulfur node rocks were spawning at IDENTITY (1,1,1)
+            // and read quarter-size next to the (now correctly ~2.0-scaled) ore rocks. The authentic
+            // captured world scale for both is ~0.917 (live capture is still preferred and overrides
+            // this once the player reaches one; this table value just stops the identity spawn).
+            const FVector CoalSulfurScale(0.917f, 0.917f, 0.917f);
+
             M.Add("Desc_Sulfur_C", {
                 TEXT("/Game/FactoryGame/Resource/RawResources/Nodes/SulfurResource_01.SulfurResource_01"),
                 { TEXT("/Game/FactoryGame/Resource/RawResources/Sulfur/Material/Resource_Sulfur_Inst.Resource_Sulfur_Inst") },
-                FVector(0.0f, 0.0f, -10.0f), FVector(1.0f, 1.0f, 1.0f) });
+                FVector(0.0f, 0.0f, -10.0f), CoalSulfurScale });
 
             M.Add("Desc_Coal_C", {
                 TEXT("/Game/FactoryGame/Resource/RawResources/Nodes/CoalResource_01.CoalResource_01"),
                 { TEXT("/Game/FactoryGame/Resource/RawResources/Coal/Material/CoalResource_01_Inst.CoalResource_01_Inst") },
-                FVector(0.0f, 0.0f, -10.0f), FVector(1.0f, 1.0f, 1.0f) });
+                FVector(0.0f, 0.0f, -10.0f), CoalSulfurScale });
 
             M.Add("Desc_Stone_C", {
                 TEXT("/Game/FactoryGame/Resource/RawResources/Nodes/Resource_Stone_01.Resource_Stone_01"),

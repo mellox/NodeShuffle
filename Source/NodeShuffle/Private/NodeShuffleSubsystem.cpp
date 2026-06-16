@@ -2,6 +2,7 @@
 #include "NodeShuffle.h"
 #include "NodeShuffleConfig.h"
 #include "NodeShuffleNodeAssets.h"
+#include "NodeShuffleResourceNode.h"
 
 #include "EngineUtils.h"
 #include "TimerManager.h"
@@ -14,6 +15,8 @@
 #include "Misc/Paths.h"
 #include "Engine/StaticMesh.h"
 #include "Materials/MaterialInterface.h"
+#include "Materials/MaterialInstance.h"
+#include "Materials/Material.h"
 #include "Components/BoxComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
@@ -26,6 +29,9 @@
 
 #include "Resources/FGResourceNode.h"
 #include "Resources/FGResourceNodeBase.h"
+#include "Resources/FGResourceNodeManager.h"
+#include "Resources/FGResourceNodeFrackingCore.h"
+#include "Resources/FGResourceNodeFrackingSatellite.h"
 #include "Resources/FGResourceDeposit.h"
 #include "Resources/FGResourceDescriptor.h"
 #include "Resources/FGItemDescriptor.h"
@@ -55,6 +61,11 @@ namespace
     // EResourceForm numeric values (mirror of EResourceForm in FGItemDescriptor.h).
     constexpr uint8 FormSolid = 1;
     constexpr uint8 FormLiquid = 2;
+    // redesign-5: our spawned rock is now a RockMesh subobject OF ANodeShuffleResourceNode, so scans
+    // exclude our rocks by OWNER TYPE (IsA<ANodeShuffleResourceNode>) — the old ManagedRockTag (a Tag
+    // on a separate rock actor) is gone along with the separate-actor machinery.
+    // redesign-3: spawned nodes are identified by TYPE (ANodeShuffleResourceNode) with a
+    // UPROPERTY(SaveGame) EntryGuid — Tags don't survive reload, so the old SpawnedNodeTag was dropped.
     // FIX 4: modded "advanced" nodes (AlkaLib lithium) can report a purity outside
     // {Impure,Normal,Pure}. Eligibility now admits them; normalize that out-of-range
     // value to RP_Normal everywhere the roll captures purity so the node shuffles
@@ -63,8 +74,6 @@ namespace
     {
         return (P == RP_Inpure || P == RP_Normal || P == RP_Pure) ? P : RP_Normal;
     }
-    // Crude oil descriptor + visual assets for liquid (Phase 2) donor fallback.
-    const TCHAR* OilDescriptorPath = TEXT("/Game/FactoryGame/Resource/RawResources/CrudeOil/Desc_LiquidOil.Desc_LiquidOil_C");
 }
 
 ANodeShuffleSubsystem::ANodeShuffleSubsystem()
@@ -102,6 +111,26 @@ void ANodeShuffleSubsystem::RefreshTick()
         return;
     }
     bLoggedDisabled = false;
+
+    // redesign-1 STARTER NODES: capture the player's REAL spawn location as early as possible on a
+    // BRAND-NEW game (before the layout is first rolled, before the player wanders). Works with
+    // random-start mods because it reads the live pawn, not a hardcoded spawn. Captured once, saved.
+    if (!bPlayerStartCaptured && !bLayoutGenerated)
+    {
+        for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+        {
+            const APlayerController* Pc = It->Get();
+            const APawn* Pawn = Pc ? Pc->GetPawn() : nullptr;
+            if (Pawn)
+            {
+                PlayerStartLocation = Pawn->GetActorLocation();
+                bPlayerStartCaptured = true;
+                UE_LOG(LogNodeShuffle, Display, TEXT("Captured player start location %s for starter nodes"),
+                    *PlayerStartLocation.ToCompactString());
+                break;
+            }
+        }
+    }
 
     if (!bLayoutGenerated)
     {
@@ -213,78 +242,40 @@ bool ANodeShuffleSubsystem::IsWorldReadyForReroll() const
 
 void ANodeShuffleSubsystem::RestoreOriginalsForReroll()
 {
-    // Before the re-roll rescans the vanilla pool, put each live non-new node back
-    // to the resource class/purity it had at the FIRST roll (stored on the entry).
-    // Otherwise the rescan reads the previously-shuffled resources and builds a
-    // corrupted pool. Destroyed nodes cannot return — counted and logged.
-    int32 Restored = 0;
-    int32 MissingDestroyed = 0;
+    // redesign-1: a re-roll restarts from a pristine world. Every original node that this layout
+    // suppressed (hid whole-actor) is UN-HIDDEN so the new roll starts clean — the new roll then
+    // re-hides per its own record. Nothing was ever retyped in place or destroyed (Hide & Replace
+    // never touches an original's resource), so this is purely an un-hide. The reroll pool itself
+    // is rebuilt from the saved Layout's stored ORIGINAL resources (streaming-independent), not a
+    // live rescan, so we do not need the originals' live resource data here.
+    // redesign-3b FOLD-IN 1: clear the scanner-deregister tracking so an un-hidden original can re-register
+    // its scanner representation under the new roll (the new layout may keep this spot active). Harmless
+    // now (a spot the new roll hides again is simply re-deregistered), but correct for re-roll cleanliness.
+    ScannerDeregistered.Reset();
+
     int32 Unhidden = 0;
-    for (const FNodeShuffleEntry& Entry : Layout)
+    for (const FNodeShuffleSuppressedOriginal& Rec : OriginalNodeRecord)
     {
-        if (Entry.bIsNewNode)
+        // redesign-6 FIX 2: Base-aware so esc_ (Base-only) originals are un-hidden on re-roll too.
+        AFGResourceNodeBase* Node = FindOriginalBaseByPath(Rec.VanillaNodePath);
+        if (!IsValid(Node)) { continue; } // not streamed in (or genuinely gone) — nothing to un-hide
+        if (Node->IsHidden() || !Node->GetActorEnableCollision())
         {
-            continue;
-        }
-        AFGResourceNode* Node = FindVanillaNodeByPath(Entry.VanillaNodePath);
-        if (!IsValid(Node))
-        {
-            // Either not streamed in yet, or permanently destroyed in a PRE-LOSSLESS
-            // save (those destructions are baked in and cannot be undone — the
-            // comprehensive respawn in ApplyLayout repopulates them). Lossless
-            // deactivation never reaches here: hidden nodes stay valid in the world.
-            MissingDestroyed++;
-            continue;
-        }
-        // LOSSLESS: un-hide any node this layout had reversibly deactivated, so the
-        // re-roll rescan/restore sees a live, visible, mineable vanilla node again
-        // (the destruction-era code could never do this — the node was gone).
-        if (DeactivatedNodePaths.Contains(Entry.VanillaNodePath))
-        {
-            if (Node->IsHidden() || !Node->GetActorEnableCollision())
+            Node->SetActorEnableCollision(true);
+            Node->SetActorHiddenInGame(false);
+            // Re-register its scanner rep so an un-hidden original pings again until the new roll decides.
+            Node->UpdateNodeRepresentation();
+            if (AFGNodeMeshActor* MeshActor = FindMeshActorForNode(Node))
             {
-                Node->SetActorEnableCollision(true);
-                Node->SetActorHiddenInGame(false);
-                if (AFGNodeMeshActor* MeshActor = FindMeshActorForNode(Node))
-                {
-                    MeshActor->SetActorHiddenInGame(false);
-                    MeshActor->SetActorEnableCollision(true);
-                }
-                Unhidden++;
+                MeshActor->SetActorHiddenInGame(false);
+                MeshActor->SetActorEnableCollision(true);
             }
-        }
-        UClass* OriginalClass = LoadClassByPath(Entry.OriginalResourceClassPath);
-        const bool bClassWrong = OriginalClass && Node->GetResourceClass() != OriginalClass;
-        const bool bPurityWrong = Entry.OriginalPurity != RP_MAX
-                                  && Node->GetResourcePurity() != Entry.OriginalPurity;
-        if (bClassWrong && OriginalClass)
-        {
-            UClass* Current = Node->GetResourceClass();
-            Node->SetResourceClassOverride(OriginalClass);
-            Node->OnResourceClassOverrideReplication.Broadcast(Node, Current, OriginalClass);
-        }
-        if (bPurityWrong)
-        {
-            Node->SetResourcePurityOverride(Entry.OriginalPurity);
-        }
-        if (bClassWrong || bPurityWrong)
-        {
-            Node->InitRadioactivity();
-            Node->UpdateRadioactivity();
-            Restored++;
+            Unhidden++;
         }
     }
-    // The new layout (RollLayout, called right after this) will repopulate
-    // DeactivatedNodePaths from scratch. Clear it now so a node this re-roll makes
-    // active is no longer considered deactivated and is never re-hidden by a stale
-    // entry. (Hidden nodes were un-hidden above for the ones that streamed in;
-    // ApplyLayout reactivates any that stream in later via ReactivateVanillaNode,
-    // which also drops them from the set.)
-    DeactivatedNodePaths.Reset();
-
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("Re-roll restore: reverted %d live nodes to originals, un-hid %d reversibly-deactivated nodes; %d entries had no live node (destroyed in a PRE-LOSSLESS save or not yet streamed — comprehensive respawn repopulates these)"),
-        Restored, Unhidden, MissingDestroyed);
+        TEXT("Re-roll restore: un-hid %d suppressed original nodes (world reset to pristine before the new roll re-hides)"),
+        Unhidden);
 }
 
 bool ANodeShuffleSubsystem::ClearRerollNowFlag()
@@ -403,30 +394,38 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
 
     if (bIsReroll)
     {
-        // Rebuild the vanilla pool from the persisted entries (complete + stable),
-        // not from a live scan that depends on what happened to stream in.
+        // redesign-6 FIX 3 (REROLL COLLAPSE). In the Hide & Replace model every UNOCCUPIED original was
+        // converted at the initial roll into a bIsNewNode SPAWNED entry (its VanillaNodePath emptied) —
+        // only OCCUPIED/pinned originals remain as !bIsNewNode entries. So the old reroll loop, which
+        // rebuilt from !bIsNewNode entries ONLY, saw just the few pinned ones and COLLAPSED the pool
+        // (732 -> 349). The complete original pool = EVERY entry that carries an original resource:
+        //   - pinned originals (kept as !bIsNewNode), AND
+        //   - every spawned entry (bIsNewNode) — each one IS a relocated original carrying its
+        //     OriginalResourceClassPath / OriginalPurity / ResourceForm.
+        // Rebuild the FULL pool from BOTH so counts/floors/purity match the initial roll. Locations are
+        // re-randomized below regardless, so we don't need the exact original location here.
         for (const FNodeShuffleEntry& Old : Layout)
         {
-            if (Old.bIsNewNode)
+            // An entry contributes to the original pool if it carries an original resource. Pinned
+            // (occupied) originals stay in place; everything else becomes a fresh original-pool member
+            // that the deck below re-shuffles + relocates.
+            if (Old.OriginalResourceClassPath.IsEmpty())
             {
-                continue;
+                continue; // no original resource recorded (e.g. a dropped/inactive remnant) — skip
             }
-            // Occupation/pinning still comes from the LIVE node when it is
-            // streamed in; a node that is not currently streamed is treated as
-            // not-occupied (default unpinned), exactly as directed.
-            AFGResourceNode* Live = FindVanillaNodeByPath(Old.VanillaNodePath);
-            const bool bOccupied = IsValid(Live)
-                && (Live->IsOccupied() || PortableMinerNodes.Contains(Live));
+
+            // Occupancy for pinned originals comes from the LIVE node when streamed in (Base-aware).
+            AFGResourceNodeBase* Live = Old.VanillaNodePath.IsEmpty() ? nullptr : FindOriginalBaseByPath(Old.VanillaNodePath);
+            AFGResourceNode* LiveNode = Cast<AFGResourceNode>(Live);
+            const bool bOccupied = (IsValid(Live) && Live->IsOccupied())
+                || (LiveNode && PortableMinerNodes.Contains(LiveNode));
 
             FNodeShuffleEntry E;
             E.EntryGuid = FGuid::NewGuid();
-            E.bIsNewNode = false;
-            E.VanillaNodePath = Old.VanillaNodePath;
+            E.bIsNewNode = false;                 // re-enters the pool as an original; conversion re-runs below
+            E.VanillaNodePath = Old.VanillaNodePath; // empty for already-relocated originals (fine — they hide via record)
             E.Location = Old.Location;
             E.Rotation = Old.Rotation;
-            // Counts/floors/purity MUST come from the stored ORIGINAL values,
-            // never from a live GetResourceClass() (which is the shuffled type
-            // and may not even be streamed).
             E.OriginalResourceClassPath = Old.OriginalResourceClassPath;
             E.OriginalPurity = Old.OriginalPurity;
             E.AssignedResourceClassPath = Old.OriginalResourceClassPath;
@@ -438,12 +437,9 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
             NewLayout.Add(E);
 
             VanillaLocations.Add(Old.Location);
-            if (!Old.OriginalResourceClassPath.IsEmpty())
-            {
-                VanillaResourceCounts.FindOrAdd(Old.OriginalResourceClassPath)++;
-                FormByResource.FindOrAdd(Old.OriginalResourceClassPath) =
-                    Old.ResourceForm != 0 ? Old.ResourceForm : FormSolid;
-            }
+            VanillaResourceCounts.FindOrAdd(Old.OriginalResourceClassPath)++;
+            FormByResource.FindOrAdd(Old.OriginalResourceClassPath) =
+                Old.ResourceForm != 0 ? Old.ResourceForm : FormSolid;
             if (Old.OriginalPurity != RP_MAX)
             {
                 PurityDeckSource.Add(Old.OriginalPurity);
@@ -461,8 +457,11 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
             }
             VanillaCount++;
         }
+        // A re-roll starts a clean record (the conversion below re-populates OriginalNodeRecord for the
+        // unoccupied originals it re-detaches). Without this, stale records from the prior layout linger.
+        OriginalNodeRecord.Reset();
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("Re-roll pool: rebuilt %d vanilla entries from saved layout (streaming-independent), %d resource kinds"),
+            TEXT("Re-roll pool (redesign-6): rebuilt %d original entries from the FULL saved layout (pinned + all relocated), %d resource kinds — no collapse"),
             VanillaCount, VanillaResourceCounts.Num());
 
         // EXPERIMENTAL-FORM augment into the reroll (generic — covers oil AND gas):
@@ -551,33 +550,83 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
         // Experimental forms (liquid oil AND gas, e.g. lithium) join only when the
         // experimental flag is on; the stable mod is solid-only.
         const bool bIncludeLiquid = Config.EnableExperimentalFeatures;
-        for (TActorIterator<AFGResourceNode> It(GetWorld()); It; ++It)
+
+        // redesign-6 FIX 2: one-shot esc_/AllMinable class-hierarchy diagnostic (names their real type).
+        DiagnoseEscClassHierarchy();
+
+        // redesign-6 FIX 2: BROADEN the pool scan from TActorIterator<AFGResourceNode> to the BASE class
+        // AFGResourceNodeBase — the analyst proved esc_ nodes are NOT AFGResourceNode (so the old iterator
+        // never saw them). Fracking cores/satellites also derive from Base; they're excluded by node-type
+        // in eligibility (and IsFrackingActor). A Base node that is NOT an AFGResourceNode (a candidate
+        // esc_ node) is admitted via the modded path with sane defaults (purity Normal, form from Base).
+        for (TActorIterator<AFGResourceNodeBase> It(GetWorld()); It; ++It)
         {
-            AFGResourceNode* Node = *It;
-            if (!IsEligibleVanillaNode(Node, Config.IncludeModdedNodes, bIncludeLiquid))
+            AFGResourceNodeBase* BaseNode = *It;
+            if (!IsValid(BaseNode) || IsFrackingActor(BaseNode)) { continue; }
+            // Skip our own spawned nodes (they're AFGResourceNode subclass; eligibility also excludes them).
+            if (BaseNode->IsA<ANodeShuffleResourceNode>()) { continue; }
+            AFGResourceNode* Node = Cast<AFGResourceNode>(BaseNode); // may be null for Base-only esc_ nodes
+
+            // redesign-5/6 UPSTREAM-SCAN: log once per distinct node-class|resource-class, EVERY base node
+            // the iterator sees BEFORE eligibility — class paths, AFGResourceNode-or-not, form, node-type.
+            const UClass* RC = BaseNode->GetResourceClass();
+            const FString DiagKey = BaseNode->GetClass()->GetPathName()
+                + TEXT("|") + (RC ? RC->GetPathName() : TEXT("<null>"));
+            if (!UpstreamScanLogged.Contains(DiagKey))
             {
-                continue;
+                UpstreamScanLogged.Add(DiagKey);
+                const bool bResVanilla = RC && RC->GetPathName().StartsWith(TEXT("/Game/"));
+                const bool bNodeClassVanilla = BaseNode->GetClass()->GetPathName().StartsWith(TEXT("/Game/"));
+                const TCHAR* Branch = (bResVanilla && bNodeClassVanilla) ? TEXT("vanilla-strict") : TEXT("modded-gate");
+                UE_LOG(LogNodeShuffle, Display,
+                    TEXT("UPSTREAM-SCAN: nodeClass='%s' resClass='%s' isResNode=%d isResDesc=%d form=%d nodeType=%d -> branch=%s"),
+                    *BaseNode->GetClass()->GetPathName(), RC ? *RC->GetPathName() : TEXT("<null>"),
+                    Node ? 1 : 0,
+                    (RC && RC->IsChildOf(UFGResourceDescriptor::StaticClass())) ? 1 : 0,
+                    (int32)BaseNode->GetResourceForm(), (int32)BaseNode->GetResourceNodeType(), Branch);
             }
-            const bool bOccupied = Node->IsOccupied() || PortableMinerNodes.Contains(Node);
+
+            // ELIGIBILITY. AFGResourceNode -> full predicate. Base-only (esc_) -> Base-aware modded admit.
+            if (Node)
+            {
+                if (!IsEligibleVanillaNode(Node, Config.IncludeModdedNodes, bIncludeLiquid)) { continue; }
+            }
+            else
+            {
+                // Base-only node (esc_ candidate). Admit only when modded is on, it's plain Node-type, has
+                // a resource class, and is solid/unknown form (experimental gates liquid/gas). Keeps junk out.
+                if (!Config.IncludeModdedNodes) { continue; }
+                if (!RC) { continue; }
+                if (BaseNode->GetResourceNodeType() != EResourceNodeType::Node) { continue; }
+                const EResourceForm BF = BaseNode->GetResourceForm();
+                const bool bExp = (BF == EResourceForm::RF_LIQUID) || (BF == EResourceForm::RF_GAS);
+                if (bExp && !bIncludeLiquid) { continue; } // liquid/gas only under experimental
+            }
+
+            const bool bOccupied = BaseNode->IsOccupied() || (Node && PortableMinerNodes.Contains(Node));
+
+            // redesign-6 FIX 2: build the entry off the BASE node (works for both AFGResourceNode and a
+            // Base-only esc_ node). Purity is Node-only — default RP_Normal for Base-only nodes.
+            const EResourcePurity NodePurity = Node ? Node->GetResourcePurity() : RP_Normal;
 
             FNodeShuffleEntry E;
             E.EntryGuid = FGuid::NewGuid();
             E.bIsNewNode = false;
-            E.VanillaNodePath = Node->GetPathName();
-            E.Location = Node->GetActorLocation();
-            E.Rotation = Node->GetActorRotation();
-            E.OriginalResourceClassPath = Node->GetResourceClass() ? Node->GetResourceClass()->GetPathName() : FString();
-            E.OriginalPurity = NormalizePurity(Node->GetResourcePurity());
+            E.VanillaNodePath = BaseNode->GetPathName();
+            E.Location = BaseNode->GetActorLocation();
+            E.Rotation = BaseNode->GetActorRotation();
+            E.OriginalResourceClassPath = BaseNode->GetResourceClass() ? BaseNode->GetResourceClass()->GetPathName() : FString();
+            E.OriginalPurity = NormalizePurity(NodePurity);
             E.AssignedResourceClassPath = E.OriginalResourceClassPath;
             E.AssignedPurity = E.OriginalPurity;
-            E.ResourceForm = (Node->GetResourceForm() == EResourceForm::RF_LIQUID) ? FormLiquid : FormSolid;
+            E.ResourceForm = (BaseNode->GetResourceForm() == EResourceForm::RF_LIQUID) ? FormLiquid : FormSolid;
             E.bPinned = bOccupied;
             E.bActive = true;
-            E.NodeClassPath = Node->GetClass()->GetPathName();
+            E.NodeClassPath = BaseNode->GetClass()->GetPathName();
             NewLayout.Add(E);
 
-            VanillaLocations.Add(Node->GetActorLocation());
-            if (const UClass* Res = Node->GetResourceClass())
+            VanillaLocations.Add(BaseNode->GetActorLocation());
+            if (const UClass* Res = BaseNode->GetResourceClass())
             {
                 VanillaResourceCounts.FindOrAdd(Res->GetPathName())++;
                 FormByResource.FindOrAdd(Res->GetPathName()) = E.ResourceForm;
@@ -585,11 +634,11 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
             PurityDeckSource.Add(E.OriginalPurity);
             if (E.ResourceForm == FormLiquid)
             {
-                if (SpawnableLiquidNodeClassPath.IsEmpty()) { SpawnableLiquidNodeClassPath = Node->GetClass()->GetPathName(); }
+                if (SpawnableLiquidNodeClassPath.IsEmpty()) { SpawnableLiquidNodeClassPath = BaseNode->GetClass()->GetPathName(); }
             }
             else if (SpawnableNodeClassPath.IsEmpty())
             {
-                SpawnableNodeClassPath = Node->GetClass()->GetPathName();
+                SpawnableNodeClassPath = BaseNode->GetClass()->GetPathName();
             }
             VanillaCount++;
         }
@@ -928,14 +977,98 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
         }
     }
 
-    // FIX 3 (old resurrect) REMOVED for build lossless-5: it converted active
-    // entries whose path was "destroyed in a past roll" into new-node spawns. With
-    // lossless deactivation no vanilla node is ever destroyed, so that signal is
-    // gone and the conversion would duplicate a still-alive hidden node. The
-    // genuinely-missing case (pre-lossless saves) is handled at apply time by
-    // EnsureMissingVanillaRespawned, which tests the LIVE world and is overlap-
-    // guarded — repopulating real holes without ever double-spawning a present node,
-    // and keeping the entry's vanilla identity (so re-roll balance stays stable).
+    // redesign-1 (Hide & Replace) CONVERSION. The deck above dealt resources onto the original
+    // node SLOTS, preserving counts/floors/purity. Now we DETACH every unoccupied original from its
+    // location: its resource lives on as one of OUR relocated spawned nodes, and the original node
+    // itself is recorded for whole-actor hiding (SuppressOriginalNodes). Occupied/pinned originals
+    // stay exactly where they are, 100% untouched (save-safety — built miners keep working).
+    //
+    // Build OriginalNodeRecord here (not in CaptureOriginalNodeRecord) because after this conversion
+    // the unoccupied originals are no longer present in Layout as non-new entries.
+    OriginalNodeRecord.Reset();
+    {
+        // Count the unoccupied originals that need a relocated home (active ones carry a resource;
+        // inactive ones are simply hidden and contribute nothing to the spawned pool).
+        int32 NeedRelocation = 0;
+        for (const FNodeShuffleEntry& E : NewLayout)
+        {
+            if (!E.bIsNewNode && !E.bPinned && E.bActive) { NeedRelocation++; }
+        }
+        // Generate that many additional grounded, non-overlapping relocated locations.
+        TArray<FVector> RelocSpots;
+        if (NeedRelocation > 0)
+        {
+            // Avoid everything already placed: the map pool, occupied/kept, original-record (none yet),
+            // and the new-node locations we already generated this roll.
+            TArray<FVector> RelocAvoid = AvoidLocations;
+            for (const FNodeShuffleEntry& E : NewLayout)
+            {
+                if (E.bIsNewNode) { RelocAvoid.Add(E.Location); }
+            }
+            GenerateNewLocations(Rng, VanillaLocations, RelocAvoid, NeedRelocation, RelocSpots);
+        }
+
+        int32 RelocCursor = 0;
+        int32 Converted = 0, Dropped = 0, KeptOccupied = 0, Recorded = 0;
+        for (FNodeShuffleEntry& E : NewLayout)
+        {
+            if (E.bIsNewNode) { continue; }
+            if (E.bPinned)
+            {
+                // Occupied original: left in place, untouched. NOT recorded (never hidden).
+                KeptOccupied++;
+                continue;
+            }
+            // Record this unoccupied original for whole-actor hiding (vanilla AND modded).
+            if (!E.VanillaNodePath.IsEmpty())
+            {
+                FNodeShuffleSuppressedOriginal Rec;
+                Rec.VanillaNodePath = E.VanillaNodePath;
+                Rec.Location = E.Location;
+                Rec.bModdedOrigin = !E.OriginalResourceClassPath.StartsWith(TEXT("/Game/"));
+                OriginalNodeRecord.Add(Rec);
+                Recorded++;
+            }
+            if (E.bActive && RelocCursor < RelocSpots.Num())
+            {
+                // Convert to one of OUR relocated spawned nodes carrying the dealt resource.
+                // redesign-6 FIX 3: KEEP VanillaNodePath (the original's identity) on the converted
+                // spawned entry — emptying it lost the link needed to re-hide that original on a future
+                // re-roll (which collapsed the reroll pool). A bIsNewNode entry never uses the path for
+                // spawning (it keys on EntryGuid), so keeping it is harmless and preserves the pool.
+                E.bIsNewNode = true;
+                E.Location = RelocSpots[RelocCursor++];
+                E.Rotation = FRotator(0.f, Rng.FRandRange(0.f, 360.f), 0.f);
+                E.bRayCasted = false; // re-settle onto terrain at the new spot
+                E.OverlapNudges = 0;
+                if (E.NodeClassPath.IsEmpty()) { E.NodeClassPath = SpawnableNodeClassPath; }
+                Converted++;
+            }
+            else
+            {
+                // Inactive (or no relocation slot left): this original just gets hidden, no spawn.
+                E.bActive = false;
+                Dropped++;
+            }
+        }
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("Hide & Replace conversion: %d unoccupied originals recorded for hiding, %d relocated to spawned nodes, %d left hidden-only, %d occupied originals kept in place"),
+            Recorded, Converted, Dropped, KeptOccupied);
+    }
+    // Remove the now-detached inactive originals from the layout (they are pure hide records now —
+    // keeping them as non-new inactive entries would do nothing and confuse the apply loop).
+    NewLayout.RemoveAll([](const FNodeShuffleEntry& E){ return !E.bIsNewNode && !E.bPinned; });
+
+    // redesign-1 STARTER NODES: on the FIRST roll of a BRAND-NEW game only, append a starter set
+    // near the captured player-start so the early game is always playable. Never on a re-roll or an
+    // existing save (bStarterNodesPlaced gates it; bIsReroll excludes re-rolls).
+    if (!bIsReroll && Config.EnableStarterNodes && !bStarterNodesPlaced && bPlayerStartCaptured)
+    {
+        TArray<FVector> StarterAvoid = AvoidLocations;
+        for (const FNodeShuffleEntry& E : NewLayout) { if (E.bIsNewNode) { StarterAvoid.Add(E.Location); } }
+        AppendStarterNodes(NewLayout, Rng, StarterAvoid);
+        bStarterNodesPlaced = true;
+    }
 
     NewLayout.Append(CarriedEntries);
     Layout = MoveTemp(NewLayout);
@@ -943,25 +1076,26 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     bLayoutGenerated = true;
     bDidInitialApply = false;
 
-    // INCREMENTAL DONOR CAPTURE (visual-6): the assigned-resource set changed, so
-    // rebuild the donor target set and re-open coverage on the next apply tick.
-    // Donors already captured stay valid (same resources keep the same look).
-    bDonorTargetsBuilt = false;
-    bAllDonorsCovered = false;
-    AssignedResourcesNeedingDonor.Reset();
+    // redesign-1: OriginalNodeRecord was already built during the Hide & Replace conversion above
+    // (it captures every unoccupied original — vanilla AND modded — before they were detached).
 
-    // Refresh the persistent original-node record from the new layout so
-    // SuppressOriginalNodes (wipe-on-reroll) can hide every original spot that the
-    // new layout no longer keeps, reliably on stream-in and across sessions.
-    CaptureOriginalNodeRecord();
-
-    // Live spawned actors from a previous layout die with the re-roll.
+    // Live spawned actors from a previous layout die with the re-roll — EXCEPT occupied ones, which
+    // were carried (pinned) above and MUST survive so the player's miner keeps its node (save-safety).
     if (bIsReroll)
     {
-        for (auto& Pair : SpawnedNodes) { if (IsValid(Pair.Value)) { Pair.Value->Destroy(); } }
-        for (auto& Pair : SpawnedMeshActors) { if (IsValid(Pair.Value)) { Pair.Value->Destroy(); } }
-        SpawnedNodes.Empty();
-        SpawnedMeshActors.Empty();
+        // GUIDs the new layout still keeps as carried/pinned occupied spawned nodes.
+        TSet<FGuid> KeptGuids;
+        for (const FNodeShuffleEntry& E : CarriedEntries) { KeptGuids.Add(E.EntryGuid); }
+
+        for (auto It = SpawnedNodes.CreateIterator(); It; ++It)
+        {
+            if (KeptGuids.Contains(It->Key)) { continue; } // keep the occupied node alive
+            // redesign-5: the visual rock is a subobject OF the node now, so destroying the node destroys
+            // its rock — no separate rock actor to clean up.
+            if (IsValid(It->Value)) { It->Value->Destroy(); }
+            It.RemoveCurrent();
+        }
+        MeshActorCache.Reset();
     }
 
     UE_LOG(LogNodeShuffle, Display,
@@ -1116,39 +1250,64 @@ void ANodeShuffleSubsystem::ApplyLayout()
     }
     if (bCacheStale)
     {
-        for (TActorIterator<AFGResourceNode> It(GetWorld()); It; ++It)
+        // redesign-6 FIX 2: iterate the BASE class so esc_ (Base-only) originals are cached + hidable.
+        // Skip our own spawned subclass (those are the relocated nodes, not originals).
+        for (TActorIterator<AFGResourceNodeBase> It(GetWorld()); It; ++It)
         {
+            if (It->IsA<ANodeShuffleResourceNode>()) { continue; }
             VanillaNodeCache.Add(It->GetPathName(), *It);
         }
     }
 
-    // Capture each resource's authentic rock look (mesh+materials+world scale)
-    // from the pre-retype world, used to re-skin retyped nodes AND dress new
-    // nodes. Cheap, read-only, always on (this is now a stable feature).
-    SweepRockComponents();
-    // FIX 2: rebuild donors from the SaveGame store FIRST so a reloaded shuffled
-    // save re-stamps the CORRECT rock (every live vanilla node is already retyped,
-    // so a pristine live capture is impossible). Then CaptureDonorVisuals still
-    // captures any not-yet-persisted resource live (first-ever roll).
-    RehydrateDonorsFromPersisted();
-    // DONOR-HYGIENE: before trusting rehydrated donors, enforce the one-mesh-one-
-    // resource invariant on them. A SaveGame donor written by an older build may be
-    // polluted (its mesh is really a shared placeholder); revalidation discards such
-    // records and seeds RealDonorMeshOwner from the surviving (clean) donors so the
-    // live capture below never lets a placeholder claim a mesh a real rock owns.
-    RevalidatePersistedDonors();
-    CaptureDonorVisuals();
+    // redesign-2 FIX 1: ONE-TIME adopt-on-load — map GUID-tagged restored spawned nodes back into
+    // SpawnedNodes so EnsureNewNodeSpawned never double-spawns a node the save already restored.
+    if (!bAdoptedRestoredNodes)
+    {
+        AdoptRestoredSpawnedNodes();
+        bAdoptedRestoredNodes = true;
+    }
 
+    // redesign-1: pair each original node to its own AFGNodeMeshActor so SuppressOriginalNodes can
+    // hide the paired mesh actor when an unoccupied original streams in. Rebuilt each pass.
+    RebuildMeshActorCache();
+
+    // redesign-1: reset per-pass spawned-visual coverage counters (logged at pass end).
+    SpawnedRockVanilla = 0;
+    SpawnedRockQuartz = 0;
+    SpawnedRockLiquid = 0;
+
+    // redesign-1 (Hide & Replace) APPLY MODEL. The layout now has exactly two kinds of entry:
+    //   - bIsNewNode == true  : one of OUR relocated/spawned nodes (the resource pool, re-homed).
+    //                           Spawn it on discovery (raycast-settled, overlap-nudged, mineable +
+    //                           scannable, with our own mesh actor at one transform we control).
+    //   - bIsNewNode == false : an OCCUPIED/PINNED original (vanilla or modded) we leave 100%
+    //                           UNTOUCHED (save-safety — the player's miners keep working). Every
+    //                           UNOCCUPIED original was turned into a spawned entry at roll time and
+    //                           is hidden whole-actor by SuppressOriginalNodes below.
     for (FNodeShuffleEntry& Entry : Layout)
     {
         if (Entry.bIsNewNode)
         {
-            // SPAWN-ON-DISCOVERY: only attempt to materialize an active new node
-            // when a player is within SpawnRadius of it. Far, undiscovered nodes
-            // stay as pure data until you explore to them — at which point
-            // EnsureNewNodeSpawned raycasts the (now-streamed) terrain and places
-            // the node flush on the ground. This is what keeps new nodes from ever
-            // floating/overlapping in unloaded regions.
+            // redesign-3 BUG B (occupancy pin): if a player built a miner/extractor on this spawned
+            // node, pin it so it is NEVER relocated again (settle/re-roll skip it). Persist the pin on
+            // the node itself (bNodeShuffleOccupiedPinned) so it survives further reloads.
+            if (AFGResourceNode* const* Live = SpawnedNodes.Find(Entry.EntryGuid))
+            {
+                if (IsValid(*Live) && !Entry.bPinned && IsNodeOccupiedAnyway(*Live))
+                {
+                    Entry.bPinned = true;
+                    Entry.bRayCasted = true;
+                    Entry.Location = (*Live)->GetActorLocation(); // lock the entry to where the miner is
+                    if (ANodeShuffleResourceNode* Ours = Cast<ANodeShuffleResourceNode>(*Live))
+                    {
+                        Ours->bNodeShuffleOccupiedPinned = true;
+                    }
+                    UE_LOG(LogNodeShuffle, Verbose, TEXT("Pinned occupied spawned node %s (miner built — never relocate)"),
+                        *Entry.EntryGuid.ToString());
+                }
+            }
+            // SPAWN-ON-DISCOVERY: materialize an active relocated node once a player is within
+            // SpawnRadius and the terrain has streamed in. Far nodes stay as data until explored.
             if (Entry.bActive && IsLocationNearAnyPlayer(Entry.Location, SpawnRadiusCm))
             {
                 EnsureNewNodeSpawned(Entry, bChangedWorld);
@@ -1156,137 +1315,48 @@ void ANodeShuffleSubsystem::ApplyLayout()
             continue;
         }
 
-        // Inactive vanilla nodes: REVERSIBLY deactivated (hidden, not destroyed).
-        // The hide is runtime-only — it reverts on every reload AND whenever the
-        // node/rock streams back in — so re-apply it every tick. The live node is
-        // passed through (now usually still valid, since lossless deactivation
-        // keeps it in the world).
-        if (!Entry.bActive && !Entry.bPinned)
-        {
-            ApplyVanillaDeactivate(Entry, FindVanillaNodeByPath(Entry.VanillaNodePath), bChangedWorld);
-            continue;
-        }
-
-        AFGResourceNode* Node = FindVanillaNodeByPath(Entry.VanillaNodePath);
-
-        // REACTIVATION (task #2): this entry is ACTIVE now, but its node may have
-        // been deactivated (hidden) in a PRIOR layout — either it is still tracked
-        // in DeactivatedNodePaths, or (same-session re-roll, where the set was
-        // reset) the live actor is simply still hidden from the prior layout's
-        // runtime hide. Either way, un-hide + re-enable it in place before retyping.
-        // Lossless: the actor is alive because we never destroyed it.
-        if (DeactivatedNodePaths.Contains(Entry.VanillaNodePath)
-            || (IsValid(Node) && (Node->IsHidden() || !Node->GetActorEnableCollision())))
-        {
-            ReactivateVanillaNode(Entry, Node, bChangedWorld);
-        }
-
-        // COMPREHENSIVE RESPAWN (task #3): an ACTIVE entry whose live actor is
-        // genuinely missing — never streams in (destroyed by a pre-lossless build,
-        // or otherwise gone). Materialize a managed node from the recorded data so
-        // even an already-degraded save repopulates. Gate on spawn-on-discovery so
-        // we don't act on a node that is merely not-yet-streamed. If the real node
-        // later streams in, the path lookup below matches it and this never fires
-        // (the overlap guard inside also prevents a duplicate).
-        if (!Node)
-        {
-            if (!Entry.bPinned && IsLocationNearAnyPlayer(Entry.Location, SpawnRadiusCm))
-            {
-                EnsureMissingVanillaRespawned(Entry, bChangedWorld);
-            }
-            continue; // no live level actor to retype this tick
-        }
-
-        // Safety rule re-check: occupation wins over the rolled layout.
-        if (!Entry.bPinned && IsNodeOccupiedAnyway(Node))
-        {
-            Entry.bPinned = true;
-            Entry.bActive = true;
-            Entry.AssignedResourceClassPath = Node->GetResourceClass() ? Node->GetResourceClass()->GetPathName() : Entry.OriginalResourceClassPath;
-            Entry.AssignedPurity = Node->GetResourcePurity();
-            UE_LOG(LogNodeShuffle, Verbose, TEXT("Pinning %s (became occupied)"), *Entry.VanillaNodePath);
-            continue;
-        }
-        if (Entry.bPinned)
-        {
-            continue;
-        }
-
-        if (Entry.AssignedResourceClassPath != Entry.OriginalResourceClassPath
-              || Entry.AssignedPurity != Entry.OriginalPurity)
-        {
-            ApplyVanillaRetype(Entry, Node, bChangedWorld);
-        }
+        // Non-new entry = an occupied/pinned original. Left untouched. (Defensive: if it somehow
+        // became un-pinned and un-occupied it will be hidden by SuppressOriginalNodes, since its
+        // location is in OriginalNodeRecord whenever it is not occupied.)
     }
 
     SettleNewNodesNearPlayers();
     ReassociateOrphanedExtractors();
 
-    // WIPE-ON-REROLL: re-hide every ORIGINAL vanilla node + its rock whenever it
-    // streams in, unless that spot is now occupied/pinned or reused by the active
-    // new layout. Driven by the persistent OriginalNodeRecord so it is reliable
-    // across sessions and stream-ins. This is the clean-slate guarantee and also
-    // the catch-all for orphan-rock ghosts.
+    // redesign-9 SNAPDIAG: one-shot collision/component comparison of a spawned node vs a vanilla node,
+    // so the log names the exact delta the extractor hologram detects (Mk1 works on vanilla, not ours).
+    DiagnoseSnapState();
+
+    // redesign-12 VALIDDIAG: one-shot OURS-vs-VANILLA on the extractor hologram's VALIDATION-gate
+    // props/methods (collision + registration already ruled out; the gate is acceptance/validation).
+    DiagnoseValidationGate();
+
+    // redesign-1 CORE: hide EVERY unoccupied original node (vanilla AND modded) + its rock whenever
+    // it streams in. This is what removes the world's original nodes so only our relocated nodes and
+    // the untouched occupied originals remain. Reliable across sessions via the persistent record.
     SuppressOriginalNodes();
 
     OrphanRockCleanup();
 
-    // FIX 1: the far-node despawn is DISABLED. Despawning materialized far nodes
-    // "back to data" did not reliably respawn them — it caused DISAPPEARED nodes,
-    // ONLY-VISUAL ghosts (mesh actor left behind), and vanished modded nodes.
-    // Satisfactory handles thousands of nodes fine, so once a new node
-    // materializes we KEEP it for the rest of the session (DespawnFarNewNodes
-    // was removed entirely).
+    // Once new nodes materialize we KEEP them for the session (far-node despawn was removed long ago).
 
-    if (!bDepositSweepDone)
+    if (SpawnedRockVanilla + SpawnedRockQuartz + SpawnedRockLiquid > 0)
     {
-        SweepMismatchedDeposits();
-        bDepositSweepDone = true;
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("Spawned-node visuals (this pass): %d vanilla rock + %d quartz placeholder (modded) + %d oil decal"),
+            SpawnedRockVanilla, SpawnedRockQuartz, SpawnedRockLiquid);
     }
 
-    // Phantom cleanup (catch-all): no matter which path produced it, any mesh
-    // NodeShuffle owns that is larger than a rock can be is scenery that got
-    // mis-skinned — a walk-through "shelf". Hide it and name it so the exact
-    // source (spawned mesh actor vs. swept rock) is identified in the log.
     if (bChangedWorld)
     {
         RefreshScannersAndRadarTowers();
     }
 }
 
-void ANodeShuffleSubsystem::PurgePhantomMeshes()
-{
-    const auto CheckAndHide = [this](UStaticMeshComponent* C, const TCHAR* Source, const FGuid& Guid)
-    {
-        if (!IsValid(C) || !C->GetStaticMesh() || !C->IsVisible())
-        {
-            return;
-        }
-        // BoxExtent (true geometry half-size, pivot-independent) × 2 × scale =
-        // real world size. SphereRadius was unreliable (pivot-inflated).
-        const float R = C->GetStaticMesh()->GetBounds().BoxExtent.GetMax() * 2.0f * C->GetComponentScale().GetAbsMax();
-        if (R > 1500.0f)
-        {
-            UE_LOG(LogNodeShuffle, Display, TEXT("PHANTOM purged: %s mesh '%s' radius %.0f at %s (guid %s)"),
-                Source, *C->GetStaticMesh()->GetName(), R, *C->GetComponentLocation().ToCompactString(),
-                *Guid.ToString());
-            C->SetVisibility(false, true);
-            C->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-        }
-    };
-
-    for (const auto& Pair : SpawnedMeshActors)
-    {
-        if (AFGNodeMeshActor* MA = Cast<AFGNodeMeshActor>(Pair.Value))
-        {
-            CheckAndHide(MA->GetStaticMeshComponent(), TEXT("spawned-mesh-actor"), Pair.Key);
-        }
-    }
-    for (const auto& Pair : SweptRocks)
-    {
-        CheckAndHide(Pair.Value.Get(), TEXT("swept-rock"), Pair.Key);
-    }
-}
+// correct-visual-11: PurgePhantomMeshes DELETED — it was dead code (zero call sites) and an
+// unguarded modded-hide loaded gun (it iterated SweptRocks and hid by size with no modded guard).
+// Phantom/shelf protection is unnecessary now: managed rocks copy the authentic native rock's exact
+// world scale, so a size-blowout can't occur.
 
 void ANodeShuffleSubsystem::SweepMismatchedDeposits()
 {
@@ -1332,328 +1402,675 @@ void ANodeShuffleSubsystem::SweepMismatchedDeposits()
     }
 }
 
-void ANodeShuffleSubsystem::ApplyVanillaRetype(FNodeShuffleEntry& Entry, AFGResourceNode* Node, bool& bOutChangedWorld)
+UStaticMesh* ANodeShuffleSubsystem::ResolveNodeMesh(UClass* OverrideClass)
 {
-    UClass* AssignedClass = LoadClassByPath(Entry.AssignedResourceClassPath);
-    UClass* OriginalClass = LoadClassByPath(Entry.OriginalResourceClassPath);
-    if (!AssignedClass || !OriginalClass)
+    // correct-visual-1: the OVERRIDE resource's authored NODE-rock mesh (the big rock,
+    // ResourceNode_<X>_01) from the NodeShuffleNodeAssets table. Cached. Null if uncovered —
+    // do NOT fall back to GetDepositMesh (that's the small SM_Deposit_Ores outcrop).
+    if (!OverrideClass)
+    {
+        return nullptr;
+    }
+    const FString ResPath = OverrideClass->GetPathName();
+    if (const TWeakObjectPtr<UStaticMesh>* Cached = NodeMeshCache.Find(ResPath))
+    {
+        return Cached->Get();
+    }
+    UStaticMesh* Mesh = nullptr;
+    const FName ShortName(*OverrideClass->GetName());
+    if (const FNodeShuffleVisual* Visual = FNodeShuffleNodeAssets::FindVisual(ShortName))
+    {
+        if (Visual->MeshPath)
+        {
+            Mesh = LoadObject<UStaticMesh>(nullptr, Visual->MeshPath);
+        }
+    }
+    NodeMeshCache.Add(ResPath, Mesh);
+    return Mesh;
+}
+
+const TArray<TWeakObjectPtr<UMaterialInterface>>* ANodeShuffleSubsystem::ResolveNodeMaterials(UClass* OverrideClass)
+{
+    // correct-visual-1: the OVERRIDE resource's correct PER-SLOT NODE materials from the
+    // authored NodeShuffleNodeAssets table (outer shell ResourceNode_<X>_Inst + glowing core
+    // ResourceNode_Middle_<X>_Inst), in slot order. Cached.
+    //
+    // POLICY (user goal): if the resource has NO table entry, return an EMPTY array — do NOT
+    // tint with GetDepositMaterial. An uncovered modded crafted-item resource (esc_) then keeps
+    // its existing CLEAN rock instead of the rejected "dirty" wrong-tint look.
+    if (!OverrideClass)
+    {
+        return nullptr;
+    }
+    const FString ResPath = OverrideClass->GetPathName();
+    if (const TArray<TWeakObjectPtr<UMaterialInterface>>* Cached = NodeMaterialCache.Find(ResPath))
+    {
+        return Cached;
+    }
+    TArray<TWeakObjectPtr<UMaterialInterface>> Mats;
+    const FName ShortName(*OverrideClass->GetName());
+    if (const FNodeShuffleVisual* Visual = FNodeShuffleNodeAssets::FindVisual(ShortName))
+    {
+        for (const TCHAR* MatPath : Visual->MaterialPaths)
+        {
+            Mats.Add(LoadObject<UMaterialInterface>(nullptr, MatPath)); // keep slot order
+        }
+    }
+    return &NodeMaterialCache.Add(ResPath, MoveTemp(Mats));
+}
+
+UStaticMesh* ANodeShuffleSubsystem::GetQuartzPlaceholderMesh()
+{
+    // redesign-1: the quartz placeholder for any spawned node whose resource has no authored table
+    // entry (modded resources). Resolved from the Desc_RawQuartz_C table row (ResourceNode_Quartz).
+    static const FName QuartzKey(TEXT("Desc_RawQuartz_C"));
+    if (const TWeakObjectPtr<UStaticMesh>* Cached = NodeMeshCache.Find(QuartzKey.ToString()))
+    {
+        return Cached->Get();
+    }
+    UStaticMesh* Mesh = nullptr;
+    if (const FNodeShuffleVisual* Visual = FNodeShuffleNodeAssets::FindVisual(QuartzKey))
+    {
+        if (Visual->MeshPath) { Mesh = LoadObject<UStaticMesh>(nullptr, Visual->MeshPath); }
+    }
+    NodeMeshCache.Add(QuartzKey.ToString(), Mesh);
+    return Mesh;
+}
+
+const TArray<TWeakObjectPtr<UMaterialInterface>>* ANodeShuffleSubsystem::GetQuartzPlaceholderMaterials()
+{
+    static const FName QuartzKey(TEXT("Desc_RawQuartz_C"));
+    if (const TArray<TWeakObjectPtr<UMaterialInterface>>* Cached = NodeMaterialCache.Find(QuartzKey.ToString()))
+    {
+        return Cached;
+    }
+    TArray<TWeakObjectPtr<UMaterialInterface>> Mats;
+    if (const FNodeShuffleVisual* Visual = FNodeShuffleNodeAssets::FindVisual(QuartzKey))
+    {
+        for (const TCHAR* MatPath : Visual->MaterialPaths)
+        {
+            Mats.Add(LoadObject<UMaterialInterface>(nullptr, MatPath));
+        }
+    }
+    return &NodeMaterialCache.Add(QuartzKey.ToString(), MoveTemp(Mats));
+}
+
+void ANodeShuffleSubsystem::SpawnVisualRockForNode(AFGResourceNode* Node, UClass* ResourceClass, const FGuid& EntryGuid)
+{
+    // redesign-5 PRIMARY: dress the node's OWN RockMesh (a CONSTRUCTOR default subobject on
+    // ANodeShuffleResourceNode). redesign-4's separate plain AActor + runtime NewObject<UStaticMeshComponent>
+    // spawned + logged but never rendered (ROCKDIAG found NONE at node transforms). A constructor subobject is
+    // guaranteed to register with the render scene and moves/persists with the node. So we no longer spawn a
+    // standalone actor at all — we just set the mesh/materials/relative-scale/relative-offset on RockMesh.
+    if (!IsValid(Node) || !ResourceClass)
     {
         return;
     }
-
-    const bool bClassRight = Node->GetResourceClass() == AssignedClass;
-    const bool bPurityRight = Node->GetResourcePurity() == Entry.AssignedPurity;
-
-    // DATA (SaveGame override on the node — persists across reloads): apply only
-    // when actually wrong, so reloads no-op here. This is the rock-solid core.
-    if (!bClassRight)
+    ANodeShuffleResourceNode* OurNode = Cast<ANodeShuffleResourceNode>(Node);
+    if (!OurNode)
     {
-        Node->SetResourceClassOverride(AssignedClass);
-        Node->OnResourceClassOverrideReplication.Broadcast(Node, OriginalClass, AssignedClass);
-    }
-    if (!bPurityRight)
-    {
-        Node->SetResourcePurityOverride(Entry.AssignedPurity);
-    }
-    if (!bClassRight || !bPurityRight)
-    {
-        // Keep radiation truthful in both directions: nodes retyped TO uranium
-        // start irradiating, nodes retyped AWAY from it stop. (Friend access.)
-        Node->InitRadioactivity();
-        Node->UpdateRadioactivity();
-        UE_LOG(LogNodeShuffle, Verbose, TEXT("Retyped %s: %s -> %s"),
-            *Node->GetName(), *OriginalClass->GetName(), *AssignedClass->GetName());
-        bOutChangedWorld = true;
+        return; // only our own nodes carry the RockMesh subobject
     }
 
-    // VISUAL (runtime mesh swap — does NOT persist, and reverts to the node's
-    // original rock whenever the node streams back in): re-skin whenever the
-    // rock is not already the donor mesh. Idempotent and self-healing across
-    // reloads and streaming, where the early-return on data state used to skip
-    // it entirely (leaving retyped nodes wearing their old rock after a reload).
-    const FDonorVisual* Donor = DonorVisuals.Find(Entry.AssignedResourceClassPath);
-    if (!Donor)
+    UStaticMesh* Mesh = ResolveNodeMesh(ResourceClass);
+    const TArray<TWeakObjectPtr<UMaterialInterface>>* Mats = ResolveNodeMaterials(ResourceClass);
+    bool bQuartz = false;
+    // The authored table row carries the correct per-mesh scale (ore ~2.0, coal/sulfur ~0.917, stone ~2.4)
+    // and a vertical offset. redesign-5 restores per-mesh scale + Z offset (redesign-4 collapsed to a uniform
+    // (0,0,-40)). We force the LATERAL offset to 0 (the table's (-400,..) X was the off-center bug) and keep
+    // only the table's Z (clamped to a small sink) so each rock sits centered with its authored footprint.
+    const FNodeShuffleVisual* Visual = FNodeShuffleNodeAssets::FindVisual(FName(*ResourceClass->GetName()));
+    if (!Mesh)
     {
-        return; // no known look for this resource yet → leave the node's original
+        // Modded resource with no authored entry -> quartz placeholder (clean, fully controlled).
+        Mesh = GetQuartzPlaceholderMesh();
+        Mats = GetQuartzPlaceholderMaterials();
+        bQuartz = true;
+        Visual = FNodeShuffleNodeAssets::FindVisual(FName(TEXT("Desc_RawQuartz_C"))); // quartz scale/offset
     }
-    if (Donor->Kind == EDonorKind::Liquid)
+    if (!Mesh)
     {
-        // Distinguish a GENUINE liquid (oil) from a SOLID resource that only got a
-        // "native rebuild" fallback because no mesh donor was ever found. Only a
-        // genuine liquid may hide the node's existing rocks (it renders a decal
-        // instead); for a solid fallback we MUST NOT hide the rocks — that is the
-        // SAM "invisible but minable" bug (FIX 3). Form is read from the descriptor.
-        const bool bGenuineLiquid =
-            UFGItemDescriptor::GetForm(TSubclassOf<UFGItemDescriptor>(AssignedClass)) == EResourceForm::RF_LIQUID;
-
-        // Always rebuild the native visual from the (overridden) descriptor: for oil
-        // this builds the puddle decal; for a solid fallback it lets the game draw
-        // whatever the descriptor defines (a mesh, if the descriptor has one).
-        RebuildNodeNativeVisual(Node);
-
-        if (bGenuineLiquid)
-        {
-            // An ore node retyped to oil must lose BOTH possible solid rocks: its
-            // swept separate rock AND any AFGNodeMeshActor. Oil has no mesh.
-            if (const TWeakObjectPtr<UStaticMeshComponent>* Rock = SweptRocks.Find(Entry.EntryGuid))
-            {
-                if (UStaticMeshComponent* RockSmc = Rock->Get())
-                {
-                    if (RockSmc->IsVisible()) { RockSmc->SetVisibility(false, true); }
-                }
-            }
-            if (AFGNodeMeshActor* MeshActor = FindMeshActorForNode(Node))
-            {
-                if (UStaticMeshComponent* MaSmc = MeshActor->GetStaticMeshComponent())
-                {
-                    if (MaSmc->IsVisible()) { MaSmc->SetVisibility(false, true); }
-                }
-            }
-            UE_LOG(LogNodeShuffle, Verbose, TEXT("Re-skinned %s to LIQUID (oil decal) %s"),
-                *Node->GetName(), *AssignedClass->GetName());
-        }
-        else
-        {
-            // FIX 3: solid resource, no mesh donor. Keep every existing visual VISIBLE
-            // — the node must always show something even if it is the node's original
-            // rock. Never hide here.
-            UE_LOG(LogNodeShuffle, Verbose,
-                TEXT("Native-rebuilt %s to solid %s (no mesh donor — kept existing visual, NOT hidden)"),
-                *Node->GetName(), *AssignedClass->GetName());
-        }
-        bOutChangedWorld = true;
+        UE_LOG(LogNodeShuffle, Warning, TEXT("SpawnVisualRockForNode: no mesh (not even quartz) for %s"),
+            *ResourceClass->GetName());
         return;
     }
-    if (!Donor->Mesh.Get())
+    // Per-mesh scale from the table; empirical 2.0 only if a mesh resolved with no table row.
+    const FVector WantScale = Visual ? Visual->MeshScale : FVector(2.0f, 2.0f, 2.0f);
+    // Centered laterally; keep the table's Z (a vertical sink), clamped so we never sink the rock absurdly.
+    const float TableZ = Visual ? Visual->MeshOffset.Z : -40.0f;
+    const FVector RelOffset(0.f, 0.f, FMath::Clamp(TableZ, -120.0f, 60.0f));
+
+    // Build a plain material array for DressRock.
+    TArray<UMaterialInterface*> MatPtrs;
+    if (Mats)
     {
-        return; // donor recorded but mesh stale → leave original this tick
+        for (const TWeakObjectPtr<UMaterialInterface>& M : *Mats) { MatPtrs.Add(M.Get()); }
     }
-    UStaticMeshComponent* Smc = Node->FindComponentByClass<UStaticMeshComponent>();
-    if (!Smc)
-    {
-        const TWeakObjectPtr<UStaticMeshComponent>* Rock = SweptRocks.Find(Entry.EntryGuid);
-        Smc = Rock ? Rock->Get() : nullptr;
-    }
-    if (Smc && Smc->GetStaticMesh() == Donor->Mesh.Get())
-    {
-        return; // already wearing the right rock
-    }
-    // FIX B (one visual per node — kill double rocks): re-skin via EXACTLY ONE
-    // mechanism. ApplyNodeOwnMesh stamps the faithful donor copy onto the node's
-    // single rock component (its own mesh, or — for ore-style nodes — its one
-    // swept separate rock). The OLD code ALSO unconditionally called the game's
-    // OverrideMeshAndMaterials on FindMeshActorForNode, which for ore nodes targets
-    // a *second* visual (the AFGNodeMeshActor) and/or fights our stamp on the same
-    // actor — producing the reported two-rocks-at-one-location bug. Now we only fall
-    // back to OverrideMeshAndMaterials when the donor stamp could NOT be applied,
-    // and we make sure the OTHER candidate visual is hidden so a node shows one rock.
-    const bool bMeshSwapped = ApplyNodeOwnMesh(Node, AssignedClass, Entry);
-    AFGNodeMeshActor* MeshActor = FindMeshActorForNode(Node);
-    UStaticMeshComponent* StampedSmc = Node->FindComponentByClass<UStaticMeshComponent>();
-    if (!StampedSmc)
-    {
-        const TWeakObjectPtr<UStaticMeshComponent>* Rock = SweptRocks.Find(Entry.EntryGuid);
-        StampedSmc = Rock ? Rock->Get() : nullptr;
-    }
-    if (bMeshSwapped)
-    {
-        // FIX 3 (never leave a node invisible): only hide a SEPARATE mesh actor when
-        // (a) it is a genuine duplicate of THIS node's visual (not the component we
-        // just stamped) AND (b) the visual we applied is a REAL donor — a correct
-        // rock. If we only had a FALLBACK donor (deposit mesh / native rebuild), we
-        // keep the other mesh visible so the node never ends up with no rock at all
-        // (the reported "visual removed but still minable" over-hide). A node must
-        // always show something.
-        if (MeshActor && !Donor->bIsFallback)
-        {
-            UStaticMeshComponent* MaSmc = MeshActor->GetStaticMeshComponent();
-            if (MaSmc && MaSmc != StampedSmc && MaSmc->IsVisible())
-            {
-                MaSmc->SetVisibility(false, true);
-                MaSmc->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-                UE_LOG(LogNodeShuffle, Verbose, TEXT("Hid duplicate mesh-actor rock on retyped %s"), *Node->GetName());
-            }
-        }
-        UE_LOG(LogNodeShuffle, Verbose, TEXT("Re-skinned %s to %s%s"), *Node->GetName(), *AssignedClass->GetName(),
-            Donor->bIsFallback ? TEXT(" (fallback look)") : TEXT(""));
-        bOutChangedWorld = true;
-    }
-    else if (MeshActor)
-    {
-        // No donor mesh stamped (donor not yet captured this tick): fall back to the
-        // game's own override so the node is at least not wearing its old resource.
-        MeshActor->OverrideMeshAndMaterials(Node, OriginalClass, AssignedClass);
-    }
+
+    OurNode->DressRock(Mesh, MatPtrs, WantScale, RelOffset);
+
+    if (bQuartz) { SpawnedRockQuartz++; } else { SpawnedRockVanilla++; }
+    UE_LOG(LogNodeShuffle, Verbose,
+        TEXT("dressed %s rock (node subobject) for %s: mesh '%s' scale=(%.2f,%.2f,%.2f) relZ=%.0f %d mat(s)"),
+        bQuartz ? TEXT("QUARTZ-placeholder") : TEXT("vanilla"),
+        *ResourceClass->GetName(), *Mesh->GetName(),
+        WantScale.X, WantScale.Y, WantScale.Z, RelOffset.Z, MatPtrs.Num());
 }
 
-void ANodeShuffleSubsystem::ApplyVanillaDeactivate(FNodeShuffleEntry& Entry, AFGResourceNode* Node, bool& bOutChangedWorld)
+void ANodeShuffleSubsystem::AppendStarterNodes(TArray<FNodeShuffleEntry>& NewLayout, FRandomStream& Rng,
+                                               const TArray<FVector>& AvoidLocations)
 {
-    // LOSSLESS DEACTIVATION (architectural change, build lossless-5):
-    //
-    // The OLD code called Node->Destroy() here. Satisfactory PERSISTS destruction
-    // of persistent-level actors, so every re-roll permanently removed the inactive
-    // vanilla nodes — over many re-rolls the world emptied out (the proven root
-    // cause). We now make the node reversibly INACTIVE instead:
-    //   - hidden in game + collision disabled (so it can't be seen, mined or
-    //     placed-on), re-applied idempotently every tick because that runtime
-    //     state reverts on reload AND whenever the actor streams back in;
-    //   - tracked in DeactivatedNodePaths (SaveGame) so a later re-roll can fully
-    //     reactivate it (ReactivateVanillaNode) — nothing is ever lost.
-    //
-    // SCANNER CONSISTENCY: a hidden + collision-disabled node is removed from the
-    // Resource Manager because (a) ApplyLayout calls RefreshScannersAndRadarTowers
-    // whenever the world changed, forcing every scanner to rebuild its node
-    // clusters, and (b) the persistent SuppressOriginalNodes pass also keeps these
-    // spots hidden on stream-in. We deliberately do NOT alter the node's resource
-    // class/purity override here: leaving the data untouched is what makes
-    // reactivation a clean, lossless restore.
-    DeactivatedNodePaths.Add(Entry.VanillaNodePath);
+    // redesign-1: place 2 Iron, 2 Limestone, 1 Copper (PURE) near the captured player-start. Drawn
+    // FROM the relocated pool when possible (re-home an already-active node of that resource near
+    // spawn, preserving counts); spawned additionally only if the pool can't supply that type.
+    const FNodeShuffleConfigStruct Config = FNodeShuffleConfigStruct::GetActiveConfig(this);
+    const float RadiusCm = FMath::Max(5000.f, static_cast<float>(Config.StarterNodeRadiusMeters) * 100.f);
 
-    if (IsValid(Node))
+    struct FStarter { const TCHAR* Path; int32 Count; };
+    const FStarter Wanted[] = {
+        { TEXT("/Game/FactoryGame/Resource/RawResources/OreIron/Desc_OreIron.Desc_OreIron_C"), 2 },
+        { TEXT("/Game/FactoryGame/Resource/RawResources/Stone/Desc_Stone.Desc_Stone_C"), 2 },
+        { TEXT("/Game/FactoryGame/Resource/RawResources/OreCopper/Desc_OreCopper.Desc_OreCopper_C"), 1 },
+    };
+
+    // A spawnable solid node class: reuse the first one already on a spawned/new entry.
+    FString SolidNodeClassPath;
+    for (const FNodeShuffleEntry& E : NewLayout)
     {
-        bool bChanged = false;
-        // Never hide an occupied node out from under a miner/extractor the player
-        // built (occupancy wins over the rolled layout, same rule as elsewhere).
-        if (!IsNodeOccupiedAnyway(Node))
-        {
-            if (Node->GetActorEnableCollision()) { Node->SetActorEnableCollision(false); bChanged = true; }
-            if (!Node->IsHidden()) { Node->SetActorHiddenInGame(true); bChanged = true; }
-            if (AFGNodeMeshActor* MeshActor = FindMeshActorForNode(Node))
-            {
-                MeshActor->SetActorHiddenInGame(true);
-                MeshActor->SetActorEnableCollision(false);
-            }
-        }
-        if (bChanged)
-        {
-            UE_LOG(LogNodeShuffle, Verbose, TEXT("Deactivated %s (hidden, reversible — NOT destroyed)"),
-                *Entry.VanillaNodePath);
-            bOutChangedWorld = true;
-        }
+        if (E.bIsNewNode && !E.NodeClassPath.IsEmpty()) { SolidNodeClassPath = E.NodeClassPath; break; }
     }
 
-    // VISUAL (runtime-only — reverts on reload AND whenever the rock streams
-    // back in): re-hide the paired separate ore-rock whenever it is present and
-    // currently shown. Idempotent: once hidden this is a no-op. Without this the
-    // rock returns as a ghost on every reload/stream-in.
-    if (const TWeakObjectPtr<UStaticMeshComponent>* Rock = SweptRocks.Find(Entry.EntryGuid))
+    // Candidate placement points: a few random spots within the radius around the player start.
+    auto PickStarterLocation = [&](const TArray<FVector>& AlreadyPlaced) -> FVector
     {
-        if (UStaticMeshComponent* RockSmc = Rock->Get())
+        constexpr float GoldenAngleRad = 2.39996323f;
+        for (int32 i = 1; i <= 24; i++)
         {
-            if (RockSmc->IsVisible() || RockSmc->GetCollisionEnabled() != ECollisionEnabled::NoCollision)
+            const float R = RadiusCm * FMath::Sqrt(Rng.FRand());
+            const float A = GoldenAngleRad * i + Rng.FRandRange(0.f, GoldenAngleRad);
+            const FVector Cand(PlayerStartLocation.X + R * FMath::Cos(A),
+                               PlayerStartLocation.Y + R * FMath::Sin(A),
+                               PlayerStartLocation.Z);
+            bool bTooClose = false;
+            for (const FVector& V : AvoidLocations)
             {
-                RockSmc->SetVisibility(false, true);
-                RockSmc->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-                UE_LOG(LogNodeShuffle, Verbose, TEXT("Re-hid rock for inactive %s"), *Entry.VanillaNodePath);
-                bOutChangedWorld = true;
+                if (FVector::DistSquared2D(V, Cand) < FMath::Square(MinNodeSpacing)) { bTooClose = true; break; }
+            }
+            if (!bTooClose)
+            {
+                for (const FVector& V : AlreadyPlaced)
+                {
+                    if (FVector::DistSquared2D(V, Cand) < FMath::Square(MinNodeSpacing)) { bTooClose = true; break; }
+                }
+            }
+            if (!bTooClose) { return Cand; }
+        }
+        // Fall back to a small offset right at the start if everything is crowded.
+        return PlayerStartLocation + FVector(MinNodeSpacing, 0.f, 0.f);
+    };
+
+    TArray<FVector> Placed;
+    int32 Reused = 0, Added = 0;
+    for (const FStarter& W : Wanted)
+    {
+        const FString WantPath(W.Path);
+        for (int32 n = 0; n < W.Count; n++)
+        {
+            const FVector Loc = PickStarterLocation(Placed);
+            Placed.Add(Loc);
+
+            // Try to RE-HOME an existing active relocated node of this resource (preserve counts).
+            FNodeShuffleEntry* Reuse = nullptr;
+            for (FNodeShuffleEntry& E : NewLayout)
+            {
+                if (E.bIsNewNode && E.bActive && !E.bPinned
+                    && E.AssignedResourceClassPath == WantPath)
+                {
+                    // Skip ones we already moved to a starter spot this call.
+                    bool bAlready = false;
+                    for (const FVector& P : Placed)
+                    {
+                        if (E.Location.Equals(P, 1.0f)) { bAlready = true; break; }
+                    }
+                    if (!bAlready) { Reuse = &E; break; }
+                }
+            }
+            if (Reuse)
+            {
+                Reuse->Location = Loc;
+                Reuse->Rotation = FRotator(0.f, Rng.FRandRange(0.f, 360.f), 0.f);
+                Reuse->AssignedPurity = RP_Pure;
+                Reuse->bRayCasted = false;
+                Reuse->OverlapNudges = 0;
+                Reused++;
+            }
+            else
+            {
+                // Pool can't supply this type — spawn it additionally.
+                FNodeShuffleEntry E;
+                E.EntryGuid = FGuid::NewGuid();
+                E.bIsNewNode = true;
+                E.bActive = true;
+                E.Location = Loc;
+                E.Rotation = FRotator(0.f, Rng.FRandRange(0.f, 360.f), 0.f);
+                E.AssignedResourceClassPath = WantPath;
+                E.OriginalResourceClassPath = WantPath;
+                E.AssignedPurity = RP_Pure;
+                E.OriginalPurity = RP_Pure;
+                E.ResourceForm = FormSolid;
+                E.NodeClassPath = SolidNodeClassPath;
+                NewLayout.Add(E);
+                Added++;
             }
         }
     }
+    UE_LOG(LogNodeShuffle, Display,
+        TEXT("Starter nodes: placed 5 near %s (radius %.0f m) — %d re-homed from pool, %d spawned additionally"),
+        *PlayerStartLocation.ToCompactString(), RadiusCm / 100.f, Reused, Added);
 }
 
-void ANodeShuffleSubsystem::ReactivateVanillaNode(FNodeShuffleEntry& Entry, AFGResourceNode* Node, bool& bOutChangedWorld)
+void ANodeShuffleSubsystem::AdoptRestoredSpawnedNodes()
 {
-    // Reverse of ApplyVanillaDeactivate: a node that was hidden in a PRIOR layout
-    // is ACTIVE again in the current one. Because nothing was destroyed, the live
-    // actor (and its rock) are still in the world — just un-hide + re-enable them.
-    // The actual retype to the new resource is done by the normal retype path in
-    // ApplyLayout after this returns; here we only undo the suppression so that
-    // path (and the scanner) sees a live, visible node.
-    DeactivatedNodePaths.Remove(Entry.VanillaNodePath);
+    // redesign-3 BUG B: spawned nodes are ANodeShuffleResourceNode with a UPROPERTY(SaveGame) EntryGuid
+    // that survives reload (AActor::Tags do NOT — that was the redesign-2 root cause: adopt matched 0 of
+    // 732, so every node re-spawned and occupied nodes moved off their miners). Iterate the subclass,
+    // read each one's saved EntryGuid, repopulate SpawnedNodes[guid] so EnsureNewNodeSpawned's
+    // SpawnedNodes.Find guard short-circuits and we never re-spawn. ONE iteration, once per session.
 
+    // VERIFY-FIRST (the make-or-break for redesign-3): count how many of OUR subclass nodes actually
+    // exist in the world post-reload. ~N (the expected spawned count) => they persist (adopt them).
+    // ~0/1 => a raw subclass still isn't save-collected and we must wrap as a buildable (report it).
+    int32 SubclassInWorld = 0;
+    int32 Adopted = 0;
+    int32 PinnedOnLoad = 0;
+    const int32 ExpectedSpawned = static_cast<int32>(Algo::CountIf(Layout,
+        [](const FNodeShuffleEntry& E){ return E.bIsNewNode; }));
+
+    // Map EntryGuid -> layout index so adoption can flip a saved pin / occupancy onto the entry.
+    TMap<FGuid, int32> EntryByGuid;
+    for (int32 i = 0; i < Layout.Num(); i++)
+    {
+        if (Layout[i].bIsNewNode) { EntryByGuid.Add(Layout[i].EntryGuid, i); }
+    }
+
+    for (TActorIterator<ANodeShuffleResourceNode> It(GetWorld()); It; ++It)
+    {
+        ANodeShuffleResourceNode* Node = *It;
+        if (!IsValid(Node)) { continue; }
+        SubclassInWorld++;
+        if (!Node->EntryGuid.IsValid()) { continue; }
+
+        AFGResourceNode* const* Existing = SpawnedNodes.Find(Node->EntryGuid);
+        if (!Existing || !IsValid(*Existing))
+        {
+            SpawnedNodes.Add(Node->EntryGuid, Node);
+            Adopted++;
+        }
+
+        // redesign-3b BLOCKER FIX: every adopted/restored node lost its (unserialized) "Resource" UseBox
+        // on reload. Recreate it HERE so even far nodes (never reached by EnsureNewNodeSpawned this pass)
+        // are interactable. Idempotent — no-op if the box is already present.
+        EnsureNodeUseBox(Node);
+
+        // redesign-21 (THE ACTUAL MK1 SNAP FIX): re-assert both placement gates on every adopted node. The CDO
+        // ctor default now carries mCanPlaceResourceExtractor=true, but set it here too so an old save (written by
+        // a pre-r21 class version) is corrected on load. This is the flag the Mk1 extractor hologram checks; the
+        // r20 InitResource block below was chasing the wrong gate (resource-completeness, not the placement bool).
+        Node->mCanPlaceResourceExtractor = true;
+        Node->mCanPlacePortableMiner = true;
+
+        // redesign-20 (THE MK1 SNAP FIX): on reload an adopted node is NOT resource-complete. mResourceClass
+        // (EditAnywhere) AND mAmount (EditInstanceOnly) are NOT SaveGame, so after reload the node can report
+        // HasAnyResources()=false / a stale class / 0 extraction-speed. r19 proved the gate: the Mk1 extractor's
+        // CanOccupyResource=0 AND IsAllowedOnResource=0 reject our node even though the resource class+form look
+        // valid — because those checks read the FULL extractable state (amount/has-resources), which a half-
+        // restored adopted node lacks. A real level node always has it. FIX: fully re-run InitResource on adopt
+        // (it sets mResourceClass + mAmount=Infinite + mResourcesLeft + radioactivity) from the persisted
+        // override class, so an adopted node is byte-for-byte resource-complete like a fresh spawn. Then re-seat
+        // the SaveGame override == the (now-restored) original and refresh the rep.
+        if (Node->mResourceClassOverride && (!Node->GetResourceClassOriginal().Get() || !Node->HasAnyResources()))
+        {
+            const EResourcePurity Pur = Node->GetResourcePurity();
+            const TSubclassOf<UFGResourceDescriptor> Cls = Node->mResourceClassOverride;
+            Node->InitResource(Cls, EResourceAmount::RA_Infinite, Pur);
+            Node->mResourceClassOverride = Cls;
+            Node->InitRadioactivity();
+            Node->UpdateRadioactivity();
+            Node->OnRep_ResourceClassOverride();
+        }
+
+        // Occupancy pin: a restored spawned node that has a miner/extractor on it (or carries the saved
+        // pin) must NEVER be relocated again. Mark its entry pinned so settle/re-roll skip it, and stamp
+        // the node's saved pin so the state survives further reloads.
+        if (int32* Idx = EntryByGuid.Find(Node->EntryGuid))
+        {
+            const bool bOccupied = IsNodeOccupiedAnyway(Node) || Node->bNodeShuffleOccupiedPinned;
+            if (bOccupied)
+            {
+                Node->bNodeShuffleOccupiedPinned = true;
+                Layout[*Idx].bPinned = true;
+                Layout[*Idx].bRayCasted = true; // already settled where the miner expects it
+                Layout[*Idx].Location = Node->GetActorLocation(); // lock the entry to the live node
+                PinnedOnLoad++;
+            }
+        }
+    }
+
+    // FOLD-IN 2: the PASS signal is `adopted N` ≈ `live subclass count` (the actors that actually exist
+    // post-reload), NOT ≈ ExpectedSpawned. ExpectedSpawned counts ALL bIsNewNode entries (~732), but only
+    // streamed-in/active nodes ever spawned this/last session — so "60 vs expected 732" is NORMAL, not a
+    // failure. The real failure mode is SubclassInWorld <= 1 (a raw subclass not save-collected at all).
+    const TCHAR* Verdict = (SubclassInWorld <= 1 && ExpectedSpawned > 1)
+        ? TEXT("<-- WARNING: ANodeShuffleResourceNode NOT save-collected (count <=1) — must wrap as buildable")
+        : TEXT("(OK: subclass nodes persist & adopted)");
+    UE_LOG(LogNodeShuffle, Display,
+        TEXT("Adopt-on-load (redesign-3): adopted %d of %d live ANodeShuffleResourceNode actors in world (these persisted across reload); pinned %d occupied. [%d of %d total layout spawn-entries have streamed in so far — far/undiscovered entries spawn later, so a count below the total is normal.] %s"),
+        Adopted, SubclassInWorld, PinnedOnLoad,
+        SubclassInWorld, ExpectedSpawned,
+        Verdict);
+}
+
+void ANodeShuffleSubsystem::EnsureNodeUseBox(AFGResourceNode* Node)
+{
+    // redesign-10 (MIRROR VANILLA NODE STRUCTURE FOR MK1 SNAP). The UseBox is now a CONSTRUCTOR default
+    // subobject AND the actor root on ANodeShuffleResourceNode (mirroring a vanilla node whose root IS its
+    // BoxComponent). So this helper no longer CREATES the box at runtime — it just (re)asserts the box's
+    // named "Resource" profile + extent and wires mBoxComponent (which is not SaveGame, so it's null again
+    // after a reload). CRITICAL: do NOT add per-channel overrides — SNAPDIAG showed the r9 BuildGun→Overlap
+    // override flipped the named profile to 'Custom'; vanilla IGNORES BuildGun. Keep the NAMED profile.
     if (!IsValid(Node))
     {
-        return; // not streamed in yet (or genuinely missing — respawn covers that)
+        return;
     }
+    ANodeShuffleResourceNode* OurNode = Cast<ANodeShuffleResourceNode>(Node);
+    UBoxComponent* UseBox = OurNode ? OurNode->UseBox : nullptr;
 
-    bool bChanged = false;
-    if (!Node->GetActorEnableCollision()) { Node->SetActorEnableCollision(true); bChanged = true; }
-    if (Node->IsHidden()) { Node->SetActorHiddenInGame(false); bChanged = true; }
-    if (AFGNodeMeshActor* MeshActor = FindMeshActorForNode(Node))
+    // Defensive fallback: if the ctor subobject is somehow missing, find/create a named box (legacy path).
+    if (!IsValid(UseBox))
     {
-        MeshActor->SetActorHiddenInGame(false);
-        MeshActor->SetActorEnableCollision(true);
-    }
-    // Un-hide its separate ore-rock too (the deactivate path hid it).
-    if (const TWeakObjectPtr<UStaticMeshComponent>* Rock = SweptRocks.Find(Entry.EntryGuid))
-    {
-        if (UStaticMeshComponent* RockSmc = Rock->Get())
+        TInlineComponentArray<UBoxComponent*> Boxes(Node);
+        for (UBoxComponent* Box : Boxes)
         {
-            if (!RockSmc->IsVisible())
-            {
-                RockSmc->SetVisibility(true, true);
-                RockSmc->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-                bChanged = true;
-            }
+            if (IsValid(Box) && Box->GetFName() == FName(TEXT("NodeShuffleUseBox"))) { UseBox = Box; break; }
+        }
+        if (!UseBox)
+        {
+            UseBox = NewObject<UBoxComponent>(Node, TEXT("NodeShuffleUseBox_Rt"));
+            if (USceneComponent* Root = Node->GetRootComponent()) { UseBox->SetupAttachment(Root); }
+            else { Node->SetRootComponent(UseBox); UseBox->SetWorldLocationAndRotation(Node->GetActorLocation(), Node->GetActorRotation()); }
+            UseBox->SetBoxExtent(FVector(650.f, 650.f, 180.f));
+            UseBox->RegisterComponent();
         }
     }
-    if (bChanged)
+
+    // Re-assert the NAMED "Resource" profile + extent (no per-channel overrides → stays 'Resource', not
+    // 'Custom'; BuildGun=Ignore exactly like vanilla). Idempotent.
+    if (UseBox->GetCollisionProfileName() != FName(TEXT("Resource")))
     {
-        UE_LOG(LogNodeShuffle, Verbose, TEXT("Reactivated %s (un-hidden in place — lossless restore)"),
-            *Entry.VanillaNodePath);
-        bOutChangedWorld = true;
+        UseBox->SetCollisionProfileName(TEXT("Resource"));
+    }
+    if (!UseBox->GetUnscaledBoxExtent().Equals(FVector(650.f, 650.f, 180.f), 1.0f))
+    {
+        UseBox->SetBoxExtent(FVector(650.f, 650.f, 180.f));
+    }
+
+    // THE SNAP FIX (r9, kept): wire our box in as the node's engine mBoxComponent (the resource collider
+    // the extractor hologram resolves). Not SaveGame → re-wire whenever it's null. Friend access.
+    if (AFGResourceNodeBase* Base = Cast<AFGResourceNodeBase>(Node))
+    {
+        if (!IsValid(Base->mBoxComponent))
+        {
+            Base->mBoxComponent = UseBox;
+        }
     }
 }
 
-void ANodeShuffleSubsystem::EnsureMissingVanillaRespawned(FNodeShuffleEntry& Entry, bool& bOutChangedWorld)
+void ANodeShuffleSubsystem::LogNodeSnapState(AFGResourceNodeBase* Node, const TCHAR* Label) const
 {
-    // COMPREHENSIVE RESPAWN (task #3): an ACTIVE non-new entry whose live actor is
-    // genuinely missing — it never streams in. This happens for saves degraded by
-    // the OLD destroy-based builds (those destructions are baked into the save and
-    // cannot be undone) and for any node that is simply gone. Rather than leave a
-    // hole in the world, materialize a managed node from the entry's recorded
-    // location + assigned resource via the new-node spawn machinery (which gives it
-    // collision, a rock mesh, radioactivity and terrain settling). Once spawned it
-    // is tracked in SpawnedNodes by EntryGuid, so this fires at most once per entry.
-    //
-    // Only act once the player is near AND the level has had time to stream, so we
-    // never spawn a duplicate for a node that is merely not-yet-streamed (a real
-    // live actor that streams in later is matched by path and short-circuits the
-    // caller before this is reached).
-    if (AFGResourceNode* const* Existing = SpawnedNodes.Find(Entry.EntryGuid))
+    if (!IsValid(Node)) { return; }
+    // Channel mapping (DefaultEngine.ini): Hologram=GTC2, Resource=GTC3, Clearance=GTC4, BuildGun=GTC5.
+    const ECollisionChannel ChHologram = ECC_GameTraceChannel2;
+    const ECollisionChannel ChResource = ECC_GameTraceChannel3;
+    const ECollisionChannel ChClearance = ECC_GameTraceChannel4;
+    const ECollisionChannel ChBuildGun = ECC_GameTraceChannel5;
+    auto RespStr = [](ECollisionResponse R) -> const TCHAR*
     {
-        if (IsValid(*Existing)) { return; }
-    }
+        return R == ECR_Block ? TEXT("Block") : R == ECR_Overlap ? TEXT("Overlap") : TEXT("Ignore");
+    };
 
-    // CACHE-STALENESS SAFETY: VanillaNodeCache is built once per session, so a node
-    // that streamed in AFTER it was built is absent from the cache and
-    // FindVanillaNodeByPath wrongly reports it missing. Before spawning, do a
-    // definitive live-world scan for ANY resource node at this entry's location.
-    // If one is present, the level actor is merely slow to stream / cache-stale —
-    // adopt it into the cache and abort the respawn (no duplicate). Only a spot
-    // with genuinely no live node proceeds to respawn (a real, pre-lossless hole).
+    UE_LOG(LogNodeShuffle, Display,
+        TEXT("SNAPDIAG [%s] node='%s' class='%s' nodeType=%d occupied=%d mBoxComponent=%s root='%s'"),
+        Label, *Node->GetName(), *Node->GetClass()->GetName(),
+        (int32)Node->GetResourceNodeType(), Node->IsOccupied() ? 1 : 0,
+        IsValid(Node->mBoxComponent) ? *Node->mBoxComponent->GetName() : TEXT("<NULL>"),
+        Node->GetRootComponent() ? *Node->GetRootComponent()->GetName() : TEXT("<none>"));
+
+    TInlineComponentArray<UPrimitiveComponent*> Prims(Node);
+    for (UPrimitiveComponent* P : Prims)
     {
-        constexpr float PresentRadius = 1500.0f; // 15 m: same spot
-        const float PresentSq = FMath::Square(PresentRadius);
-        for (TActorIterator<AFGResourceNode> It(GetWorld()); It; ++It)
+        if (!IsValid(P)) { continue; }
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("SNAPDIAG [%s]   comp='%s' class='%s' collEnabled=%d profile='%s' objType=%d | Resource=%s BuildGun=%s Clearance=%s Hologram=%s"),
+            Label, *P->GetName(), *P->GetClass()->GetName(),
+            (int32)P->GetCollisionEnabled(),
+            *P->GetCollisionProfileName().ToString(),
+            (int32)P->GetCollisionObjectType(),
+            RespStr(P->GetCollisionResponseToChannel(ChResource)),
+            RespStr(P->GetCollisionResponseToChannel(ChBuildGun)),
+            RespStr(P->GetCollisionResponseToChannel(ChClearance)),
+            RespStr(P->GetCollisionResponseToChannel(ChHologram)));
+    }
+}
+
+void ANodeShuffleSubsystem::DiagnoseSnapState()
+{
+    // redesign-9 SNAPDIAG (mandatory, diagnose-don't-guess). Run ONCE when BOTH a spawned node and a
+    // streamed-in VANILLA node exist, dumping each one's components/collision so the log names the exact
+    // delta the extractor hologram detects (vanilla works, ours didn't). Friend access reads mBoxComponent.
+    if (bSnapDiagLogged) { return; }
+
+    // Find one live spawned node (ours).
+    ANodeShuffleResourceNode* OurNode = nullptr;
+    for (const auto& Pair : SpawnedNodes)
+    {
+        if (ANodeShuffleResourceNode* N = Cast<ANodeShuffleResourceNode>(Pair.Value))
         {
-            AFGResourceNode* Live = *It;
-            if (!IsValid(Live) || Live->IsA<AFGResourceDeposit>() || Live->HasAnyFlags(RF_Transient))
-            {
-                continue; // ignore deposits and our own transient spawns
-            }
-            if (FVector::DistSquared2D(Live->GetActorLocation(), Entry.Location) < PresentSq)
-            {
-                // The real level node is here after all — refresh the cache so the
-                // normal retype/keep path picks it up, and don't respawn.
-                VanillaNodeCache.Add(Entry.VanillaNodePath, Live);
-                return;
-            }
+            if (IsValid(N)) { OurNode = N; break; }
         }
     }
+    if (!OurNode) { return; } // wait until at least one of ours is materialized
 
-    // Drive the standard new-node spawn path. It already raycasts terrain, guards
-    // overlap with any live node (so if the original streams in nearby we won't
-    // double up), dresses the rock and adds collision. We do not flip bIsNewNode on
-    // the persisted entry (it must stay a vanilla entry for pool/balance identity on
-    // the next re-roll), so we ensure the spawn path has what it needs: a node class
-    // and an assigned resource. Assigned == original for a respawned vanilla node
-    // unless the layout retyped it.
-    if (Entry.NodeClassPath.IsEmpty() || Entry.AssignedResourceClassPath.IsEmpty())
+    // Find a streamed-in VANILLA node (a /Game/ AFGResourceNode that is NOT ours, plain Node type).
+    AFGResourceNode* Vanilla = nullptr;
+    for (TActorIterator<AFGResourceNode> It(GetWorld()); It; ++It)
     {
-        return; // cannot spawn without a class + resource; leave as data
+        AFGResourceNode* N = *It;
+        if (!IsValid(N) || N->IsA<ANodeShuffleResourceNode>()) { continue; }
+        if (N->GetResourceNodeType() != EResourceNodeType::Node) { continue; }
+        if (!N->GetClass()->GetPathName().StartsWith(TEXT("/Game/"))) { continue; }
+        Vanilla = N;
+        break;
     }
-    EnsureNewNodeSpawned(Entry, bOutChangedWorld);
+
+    bSnapDiagLogged = true;
+    LogNodeSnapState(OurNode, TEXT("OURS"));
+    if (Vanilla)
+    {
+        LogNodeSnapState(Vanilla, TEXT("VANILLA"));
+    }
+    else
+    {
+        UE_LOG(LogNodeShuffle, Display, TEXT("SNAPDIAG: no streamed-in vanilla AFGResourceNode found to compare against this pass."));
+    }
+}
+
+AFGResourceNodeManager* ANodeShuffleSubsystem::GetNodeManager() const
+{
+    // redesign-11: AFGResourceNodeManager::Get(UWorld*) is NOT dll-exported (LNK2019 if called), so resolve
+    // the live manager instance by actor iteration instead (it's an AFGSubsystem actor, one per world).
+    for (TActorIterator<AFGResourceNodeManager> It(GetWorld()); It; ++It)
+    {
+        if (IsValid(*It)) { return *It; }
+    }
+    return nullptr;
+}
+
+void ANodeShuffleSubsystem::RegisterNodeWithManager(AFGResourceNode* Node)
+{
+    // redesign-11 (THE MK1 SNAP FIX). The extractor hologram resolves the node to snap to via
+    // AFGResourceNodeManager::GetClosestNode over the manager's mResourceNodes list. Vanilla level nodes
+    // are added to it at world init; our runtime-spawned nodes never are -> "Must be placed on a Resource
+    // Node!". Add our node to mResourceNodes (friend access). The list is runtime (no UPROPERTY -> not
+    // save-persisted), so we re-add at spawn AND on adopt-after-reload. Idempotent (Contains guard).
+    if (!IsValid(Node)) { return; }
+    AFGResourceNodeManager* Mgr = GetNodeManager();
+    if (!Mgr) { return; } // manager not up yet — retried next pass (adopt/spawn run every pass)
+
+    const int32 Before = Mgr->mResourceNodes.Num();
+    const bool bWasIn = Mgr->mResourceNodes.Contains(Node);
+    if (!bWasIn)
+    {
+        Mgr->mResourceNodes.Add(Node);
+    }
+
+    // REGDIAG full-set (redesign-12): the r11 REGDIAG only sampled ONE node. Count ALL our
+    // ANodeShuffleResourceNode entries actually present in mResourceNodes vs how many we've spawned, to
+    // confirm the WHOLE set registers (not just the sample). One-shot, logged after the list has grown.
+    if (!bRegDiagLogged)
+    {
+        bRegDiagLogged = true;
+        int32 OursInList = 0;
+        for (AFGResourceNode* N : Mgr->mResourceNodes)
+        {
+            if (IsValid(N) && N->IsA<ANodeShuffleResourceNode>()) { OursInList++; }
+        }
+        int32 OursSpawned = 0;
+        for (const auto& Pair : SpawnedNodes)
+        {
+            if (Pair.Value && Pair.Value->IsA<ANodeShuffleResourceNode>()) { OursSpawned++; }
+        }
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("REGDIAG full-set: mResourceNodes was %d -> now %d; OUR nodes in list = %d (of %d spawned this session); last add: %s '%s' Contains=%d"),
+            Before, Mgr->mResourceNodes.Num(), OursInList, OursSpawned,
+            bWasIn ? TEXT("already had") : TEXT("ADDED"), *Node->GetName(),
+            Mgr->mResourceNodes.Contains(Node) ? 1 : 0);
+    }
+}
+
+void ANodeShuffleSubsystem::LogNodeValidationState(AFGResourceNode* Node, const TCHAR* Label) const
+{
+    if (!IsValid(Node)) { return; }
+    const UClass* ResClass = Node->GetResourceClass();
+    const UClass* OrigClass = Node->GetResourceClassOriginal().Get(); // mResourceClass
+    // CanPlaceResourceExtractor / CanBecomeOccupied are virtual engine-DLL bodies — these are exactly the
+    // checks AFGResourceExtractorHologram::CanOccupyResource/IsAllowedOnResource read. One WILL differ.
+    UE_LOG(LogNodeShuffle, Display,
+        TEXT("VALIDDIAG [%s] node='%s' | CanPlaceExtractor=%d CanBecomeOccupied=%d IsOccupied=%d nodeType=%d form=%d purity=%d mCanPlaceResourceExtractor=%d | resClass='%s'(null=%d) origClass(mResourceClass)='%s'(null=%d)"),
+        Label, *Node->GetName(),
+        Node->CanPlaceResourceExtractor() ? 1 : 0,
+        Node->CanBecomeOccupied() ? 1 : 0,
+        Node->IsOccupied() ? 1 : 0,
+        (int32)Node->GetResourceNodeType(),
+        (int32)Node->GetResourceForm(),
+        (int32)Node->GetResourcePurity(),
+        Node->mCanPlaceResourceExtractor ? 1 : 0,
+        ResClass ? *ResClass->GetName() : TEXT("<null>"), ResClass ? 0 : 1,
+        OrigClass ? *OrigClass->GetName() : TEXT("<null>"), OrigClass ? 0 : 1);
+}
+
+// redesign-13 (item 2): dump the FULL collision of EVERY primitive on a node — incl Visibility/Camera/
+// WorldStatic/WorldDynamic (which SNAPDIAG never logged) + bounds/extent + world location — so we can see,
+// OURS vs VANILLA, exactly which channels each collider answers and where it sits. The r12 hook proved the
+// build trace never lands on our node; this names what our box/rock lacks vs a node the trace DOES hit.
+static void LogNodeCollisionFull(AActor* Node, const TCHAR* Label)
+{
+    if (!IsValid(Node)) { return; }
+    auto R = [](ECollisionResponse X) -> const TCHAR*
+    { return X == ECR_Block ? TEXT("Block") : X == ECR_Overlap ? TEXT("Overlap") : TEXT("Ignore"); };
+    TInlineComponentArray<UPrimitiveComponent*> Prims(Node);
+    UE_LOG(LogNodeShuffle, Display, TEXT("COLLDIAG [%s] node='%s' root='%s' actorLoc=%s : %d primitive(s)"),
+        Label, *Node->GetName(),
+        Node->GetRootComponent() ? *Node->GetRootComponent()->GetName() : TEXT("<null>"),
+        *Node->GetActorLocation().ToCompactString(), Prims.Num());
+    for (UPrimitiveComponent* C : Prims)
+    {
+        if (!C) { continue; }
+        const FBoxSphereBounds B = C->Bounds;
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("COLLDIAG [%s]   comp='%s' class='%s' collEnabled=%d profile='%s' objType=%d boundsR=%.0f extent=%s worldLoc=%s | Visibility=%s Camera=%s WorldStatic=%s WorldDynamic=%s Resource=%s BuildGun=%s"),
+            Label, *C->GetName(), *C->GetClass()->GetName(),
+            (int32)C->GetCollisionEnabled(), *C->GetCollisionProfileName().ToString(),
+            (int32)C->GetCollisionObjectType(),
+            B.SphereRadius, *B.BoxExtent.ToCompactString(), *C->GetComponentLocation().ToCompactString(),
+            R(C->GetCollisionResponseToChannel(ECC_Visibility)),
+            R(C->GetCollisionResponseToChannel(ECC_Camera)),
+            R(C->GetCollisionResponseToChannel(ECC_WorldStatic)),
+            R(C->GetCollisionResponseToChannel(ECC_WorldDynamic)),
+            R(C->GetCollisionResponseToChannel(ECC_GameTraceChannel3)),   // Resource
+            R(C->GetCollisionResponseToChannel(ECC_GameTraceChannel5)));  // BuildGun
+    }
+}
+
+void ANodeShuffleSubsystem::DiagnoseValidationGate()
+{
+    // redesign-12 VALIDDIAG (diagnostics only). Collision (r10 SNAPDIAG byte-match) + manager registration
+    // (r11 REGDIAG Contains=1) are BOTH ruled out — the Mk1 hologram FINDS our node but REJECTS it at the
+    // validation gate. Log OURS vs a nearby VANILLA node on the validation-relevant props/methods so the
+    // next test names the exact differing gate. One-shot (like SNAPDIAG).
+    if (bValidDiagLogged) { return; }
+
+    ANodeShuffleResourceNode* OurNode = nullptr;
+    for (const auto& Pair : SpawnedNodes)
+    {
+        if (ANodeShuffleResourceNode* N = Cast<ANodeShuffleResourceNode>(Pair.Value))
+        {
+            if (IsValid(N)) { OurNode = N; break; }
+        }
+    }
+    if (!OurNode) { return; } // wait until at least one of ours is materialized
+
+    AFGResourceNode* Vanilla = nullptr;
+    for (TActorIterator<AFGResourceNode> It(GetWorld()); It; ++It)
+    {
+        AFGResourceNode* N = *It;
+        if (!IsValid(N) || N->IsA<ANodeShuffleResourceNode>()) { continue; }
+        if (N->GetResourceNodeType() != EResourceNodeType::Node) { continue; }
+        if (!N->GetClass()->GetPathName().StartsWith(TEXT("/Game/"))) { continue; }
+        Vanilla = N;
+        break;
+    }
+
+    bValidDiagLogged = true;
+    LogNodeValidationState(OurNode, TEXT("OURS"));
+    if (Vanilla)
+    {
+        LogNodeValidationState(Vanilla, TEXT("VANILLA"));
+    }
+    else
+    {
+        UE_LOG(LogNodeShuffle, Display, TEXT("VALIDDIAG: no streamed-in vanilla AFGResourceNode found to compare against this pass."));
+    }
+    // redesign-13 (item 2): full per-component collision (incl Visibility/Camera) OURS vs VANILLA — the hook
+    // can't capture our node (the trace never lands on it), so log it directly here.
+    LogNodeCollisionFull(OurNode, TEXT("OURS"));
+    if (Vanilla) { LogNodeCollisionFull(Vanilla, TEXT("VANILLA")); }
+}
+
+void ANodeShuffleSubsystem::DeregisterNodeFromManager(AFGResourceNodeBase* Node)
+{
+    // redesign-11 SECONDARY (correctness): when we HIDE an original node, remove it from the manager's
+    // mResourceNodes so the player can't snap a Mk1 onto an invisible ghost original. Only called for
+    // originals we hide (SuppressOriginalNodes) — never our own spawned nodes. mResourceNodes is
+    // TArray<AFGResourceNode*>, so only the AFGResourceNode-typed entries are removable here.
+    if (!IsValid(Node)) { return; }
+    AFGResourceNode* AsNode = Cast<AFGResourceNode>(Node);
+    if (!AsNode) { return; } // Base-only (esc_) originals aren't in mResourceNodes anyway
+    if (AsNode->IsA<ANodeShuffleResourceNode>()) { return; } // never deregister OUR spawned nodes
+    AFGResourceNodeManager* Mgr = GetNodeManager();
+    if (Mgr)
+    {
+        Mgr->mResourceNodes.RemoveSingleSwap(AsNode);
+    }
 }
 
 void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool& bOutChangedWorld)
@@ -1661,6 +2078,49 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
     AFGResourceNode* const* Existing = SpawnedNodes.Find(Entry.EntryGuid);
     if (Existing && IsValid(*Existing))
     {
+        // redesign-3b BLOCKER FIX: a restored/adopted node lost its (unserialized) "Resource" UseBox on
+        // reload -> non-interactable. Recreate it (idempotent — no-op if already present). This is the
+        // path adopted nodes flow through every pass, so it covers them generally, not just first sight.
+        EnsureNodeUseBox(*Existing);
+
+        // redesign-11 (THE MK1 SNAP FIX): the manager's mResourceNodes list is runtime (not save-persisted),
+        // so a restored/adopted node is NOT in it after reload — re-register so Mk1 can snap to it again.
+        RegisterNodeWithManager(*Existing);
+
+        // redesign-5: the node is already live (spawned this session OR a save-restored node adopted on
+        // load). The NODE persists, but RockMesh's static mesh/materials are NOT SaveGame, so after a
+        // reload the RockMesh subobject is EMPTY — re-dress it. Cost-guarded (DressRock no-ops when set).
+        ANodeShuffleResourceNode* OurNode = Cast<ANodeShuffleResourceNode>(*Existing);
+        // redesign-7 FIX 2 (THE LOCATION BUG): guarantee RockMesh is a CHILD of the restored root (never
+        // the root) BEFORE re-dressing, so the re-dress relative offset can't teleport the node to origin.
+        if (OurNode) { OurNode->EnsureRockChildOfRoot(); }
+        const bool bNeedsDress = OurNode && (!IsValid(OurNode->RockMesh) || OurNode->RockMesh->GetStaticMesh() == nullptr);
+        if (bNeedsDress)
+        {
+            UClass* RC = LoadClassByPath(Entry.AssignedResourceClassPath);
+            const EResourceForm F = RC
+                ? UFGItemDescriptor::GetForm(TSubclassOf<UFGItemDescriptor>(RC))
+                : EResourceForm::RF_SOLID;
+            if (RC && F != EResourceForm::RF_LIQUID)
+            {
+                SpawnVisualRockForNode(*Existing, RC, Entry.EntryGuid); // -> DressRock -> ForceVisible
+            }
+            else if (RC && F == EResourceForm::RF_LIQUID)
+            {
+                RebuildNodeNativeVisual(*Existing);
+            }
+        }
+        // redesign-6 FIX 1: a restored node may be left actor-hidden after reload — force the whole chain
+        // visible every pass (idempotent), and log the runtime state for the first N adopted nodes.
+        if (OurNode)
+        {
+            OurNode->ForceVisible();
+            if (RenderDiagAdoptLogged < RenderDiagMax)
+            {
+                OurNode->LogRenderState(TEXT("adopt"));
+                RenderDiagAdoptLogged++;
+            }
+        }
         return;
     }
 
@@ -1771,49 +2231,103 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
         }
     }
 
+    // redesign-2 FIX 1 (THE CRASH — save-correct spawned nodes). A Miner the player builds on a
+    // spawned node is SAVED with a ref to the node. In redesign-1 the node was RF_Transient (never
+    // written) and its resource class lived only in mResourceClass (NOT a SaveGame field), so on
+    // reload the node was gone and the miner's BeginPlay hit check(GetResourceClass()) -> hard
+    // assert, corrupt save. Fix: (a) DROP RF_Transient so the node is a persistent, save-collectable
+    // actor (AFGResourceNode implements IFGSaveInterface with ShouldSave()==true), and (b) ALSO set
+    // the SaveGame field mResourceClassOverride so GetResourceClass() is valid the instant the node
+    // is restored, BEFORE any miner BeginPlay runs. (The visual AFGNodeMeshActor stays RF_Transient —
+    // only the NODE must persist; the rock is re-dressed from the layout each session.)
+    // redesign-3 BUG B (SAVED NODE IDENTITY): spawn OUR OWN ANodeShuffleResourceNode subclass, not the
+    // raw BP NodeClass. The subclass carries UPROPERTY(SaveGame) EntryGuid, which (unlike AActor::Tags)
+    // round-trips a save/reload — so AdoptRestoredSpawnedNodes can match restored nodes and we never
+    // re-spawn (which moved occupied nodes off their miners). It inherits the base constructor defaults
+    // (mCanPlaceResourceExtractor=true etc.), so mining/placement is identical to a vanilla node.
     FActorSpawnParameters Params;
     Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-    Params.ObjectFlags = RF_Transient; // never serialized: the layout respawns it
-    AFGResourceNode* Node = GetWorld()->SpawnActor<AFGResourceNode>(NodeClass, Entry.Location, Entry.Rotation, Params);
+    // NOTE: intentionally NO RF_Transient — the node must be collected by the save system.
+    ANodeShuffleResourceNode* Node = GetWorld()->SpawnActor<ANodeShuffleResourceNode>(
+        ANodeShuffleResourceNode::StaticClass(), Entry.Location, Entry.Rotation, Params);
     if (!Node)
     {
         UE_LOG(LogNodeShuffle, Warning, TEXT("Failed to spawn new node at %s"), *Entry.Location.ToCompactString());
         return;
     }
+    Node->EntryGuid = Entry.EntryGuid; // SaveGame identity — survives reload (Tags do not)
     Node->InitResource(ResourceClass, RA_Infinite, Entry.AssignedPurity.GetValue());
+    // PERSIST the resource class in the only SaveGame class field (mResourceClass is EditAnywhere,
+    // NOT saved). mResourceClassOverride is UPROPERTY(SaveGame, ReplicatedUsing=OnRep_...). Friend
+    // access (AccessTransformers grants a class-wide friend on AFGResourceNodeBase). After reload the
+    // engine restores this BEFORE BeginPlay, so GetResourceClass() returns it -> no assert.
+    Node->mResourceClassOverride = ResourceClass;
+    // redesign-3 FOLD-IN (reviewer note 1): persist purity too. mPurity is EditInstanceOnly (NOT saved);
+    // only mPurityOverride is UPROPERTY(SaveGame), so set it so a built miner's rate survives reload.
+    Node->mPurityOverride = Entry.AssignedPurity;
+    Node->OnRep_ResourceClassOverride(); // singleplayer-safe: refresh the live representation/visual
+    // redesign-21: set BOTH placement flags at the instance level (in addition to the CDO ctor default).
+    // mCanPlaceResourceExtractor (EditDefaultsOnly, BP-sourced — NOT the C++ ctor as previously assumed) is the
+    // gate the Mk1 extractor hologram checks; without it the Mk1 snap was rejected while portable miners worked.
+    // mCanPlacePortableMiner is the separate handheld-miner gate. Set both so every snap path accepts the node.
+    Node->mCanPlaceResourceExtractor = true;
+    Node->mCanPlacePortableMiner = true;
     // Radiation is computed separately from the resource class: without this,
     // spawned uranium nodes look right but never irradiate. (Friend access.)
     Node->InitRadioactivity();
     Node->UpdateRadioactivity();
-    Node->Tags.Add(FName(*Entry.EntryGuid.ToString()));
+    // redesign-3 BUG C: register this relocated node's scanner/map representation at the NEW spot so
+    // it pings the resource scanner there. Logged so we can SEE it run (redesign-2's call was silent).
+    Node->UpdateNodeRepresentation();
+    UE_LOG(LogNodeShuffle, Verbose, TEXT("scanner: registered spawned node representation at %s (%s)"),
+        *Entry.Location.ToCompactString(), *ResourceClass->GetName());
 
-    // Spawned nodes need usable collision: the look-at prompt, build gun and
-    // miner placement all trace against the Resource profile. Level-placed
-    // nodes get this from per-instance level data, so the spawned BP has none.
-    {
-        UBoxComponent* UseBox = NewObject<UBoxComponent>(Node, TEXT("NodeShuffleUseBox"));
-        if (Node->GetRootComponent())
-        {
-            UseBox->SetupAttachment(Node->GetRootComponent());
-        }
-        else
-        {
-            Node->SetRootComponent(UseBox);
-            UseBox->SetWorldLocationAndRotation(Entry.Location, Entry.Rotation);
-        }
-        UseBox->SetBoxExtent(FVector(650.f, 650.f, 180.f));
-        UseBox->SetCollisionProfileName(TEXT("Resource"));
-        UseBox->RegisterComponent();
-        // NOTE: deliberately NO extra blocking box. A solid invisible box
-        // becomes a mid-air wall before the node settles to terrain — far
-        // worse than the minor cosmetic of walking through the visual rock.
-    }
+    // Spawned nodes need usable collision: the look-at prompt, build gun and miner placement all trace
+    // against the Resource profile. Level-placed nodes get this from per-instance level data; ours need
+    // a UseBox created in code. Factored into EnsureNodeUseBox so the adopt/early-return path can also
+    // (re)create it after reload (the box is not serialized).
+    EnsureNodeUseBox(Node);
+
+    // redesign-11 (THE MK1 SNAP FIX): register the node into the resource-node MANAGER's mResourceNodes
+    // list — the registry the Miner Mk1 hologram queries (collision is a confirmed byte-match; registration
+    // was the real gap). Re-asserted on adopt too (the list is runtime, not save-persisted).
+    RegisterNodeWithManager(Node);
 
     SpawnedNodes.Add(Entry.EntryGuid, Node);
-    // Primary visual path: the node BP carries its own rock mesh — retarget it.
-    if (!ApplyNodeOwnMesh(Node, ResourceClass, Entry))
+
+    // redesign-6 FIX 1 (THE BLOCKER): AFGResourceNode actors are LOGICAL and may be left actor-hidden
+    // (they normally render via a separate engine mesh actor / significance management). Un-hide the
+    // node actor so our child RockMesh can render. (DressRock -> ForceVisible below also re-asserts this
+    // AFTER OnRep_ResourceClassOverride, which may toggle the engine's own visual.)
+    Node->SetActorHiddenInGame(false);
+
+    // redesign-7 FIX 2 (THE LOCATION BUG): now the actor exists and has its real root — GUARANTEE RockMesh
+    // is a CHILD of the root (never the root itself) BEFORE dressing. If RockMesh were the root, DressRock's
+    // SetRelativeLocation((0,0,-40)) would teleport the whole node to the world origin (the redesign-6 bug).
+    Node->EnsureRockChildOfRoot();
+
+    // VISUAL (redesign-5/6): dress the node's OWN RockMesh subobject + force the whole chain visible.
+    const EResourceForm SpawnForm =
+        UFGItemDescriptor::GetForm(TSubclassOf<UFGItemDescriptor>(ResourceClass));
+    if (SpawnForm == EResourceForm::RF_LIQUID)
     {
-        DressSpawnedNode(Node, Entry, ResourceClass);
+        RebuildNodeNativeVisual(Node);
+        SpawnedRockLiquid++;
+        UE_LOG(LogNodeShuffle, Verbose, TEXT("spawned LIQUID node %s (oil decal, no mesh actor)"),
+            *ResourceClass->GetName());
+    }
+    else
+    {
+        SpawnVisualRockForNode(Node, ResourceClass, Entry.EntryGuid); // -> DressRock -> ForceVisible
+    }
+
+    // redesign-6 FIX 1 RUNTIME-STATE DIAGNOSTIC (mandatory): log the actual render-state truth for the
+    // first N spawned nodes right after dressing, so we KNOW whether the rock is registered+visible at
+    // the right location (code review said "should render" 3x while it didn't).
+    if (RenderDiagSpawnLogged < RenderDiagMax)
+    {
+        Node->LogRenderState(TEXT("spawn"));
+        RenderDiagSpawnLogged++;
     }
 
     // The node was already settled onto terrain BEFORE the spawn (Entry.bRayCasted
@@ -1824,90 +2338,6 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
     bOutChangedWorld = true;
 }
 
-void ANodeShuffleSubsystem::CaptureRockScales()
-{
-    if (bRockScalesCaptured)
-    {
-        return;
-    }
-    // Record the real world scale of each node-rock mesh as it sits in the
-    // level. New nodes reuse these to match vanilla size exactly.
-    for (TObjectIterator<UStaticMeshComponent> It; It; ++It)
-    {
-        UStaticMeshComponent* Smc = *It;
-        if (!IsValid(Smc) || Smc->GetWorld() != GetWorld() || !Smc->GetStaticMesh()
-            || Smc->GetOwner() == nullptr || Smc->GetOwner()->HasAnyFlags(RF_Transient))
-        {
-            continue; // skip our own transient spawns
-        }
-        const FString Name = Smc->GetStaticMesh()->GetName();
-        if (!RockScaleByMesh.Contains(Name))
-        {
-            RockScaleByMesh.Add(Name, Smc->GetComponentScale());
-        }
-    }
-    bRockScalesCaptured = true;
-}
-
-void ANodeShuffleSubsystem::DressSpawnedNode(AFGResourceNode* Node, FNodeShuffleEntry& Entry, UClass* ResourceClass)
-{
-    // LIQUID (oil): never spawn a rock mesh actor — rebuild the native decal. (The
-    // spawn path normally handles this via ApplyNodeOwnMesh returning true, so this
-    // is a defensive guard for any direct caller.)
-    if (const FDonorVisual* LD = DonorVisuals.Find(ResourceClass->GetPathName()))
-    {
-        if (LD->Kind == EDonorKind::Liquid)
-        {
-            RebuildNodeNativeVisual(Node);
-            return;
-        }
-    }
-    // Spawn a mesh actor and stamp the donor look for the assigned resource —
-    // the SAME faithful-copy approach as retypes (mesh + materials + world
-    // scale from a real vanilla rock). No guessed scales, no size gating.
-    AFGNodeMeshActor* MeshActor = GetWorld()->SpawnActorDeferred<AFGNodeMeshActor>(
-        AFGNodeMeshActor::StaticClass(), FTransform(Entry.Rotation, Entry.Location),
-        nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
-    if (!MeshActor)
-    {
-        return;
-    }
-    MeshActor->SetFlags(RF_Transient);
-    MeshActor->mNodeActor = Node;
-    MeshActor->FinishSpawning(FTransform(Entry.Rotation, Entry.Location));
-    SpawnedMeshActors.Add(Entry.EntryGuid, MeshActor);
-
-    UStaticMeshComponent* Smc = MeshActor->GetStaticMeshComponent();
-    if (!Smc)
-    {
-        return;
-    }
-    Smc->SetMobility(EComponentMobility::Movable);
-
-    const FDonorVisual* Donor = DonorVisuals.Find(ResourceClass->GetPathName());
-    if (Donor && Donor->Mesh.Get())
-    {
-        Smc->SetStaticMesh(Donor->Mesh.Get());
-        for (int32 i = 0; i < Donor->Materials.Num(); i++)
-        {
-            if (UMaterialInterface* Mat = Donor->Materials[i].Get())
-            {
-                Smc->SetMaterial(i, Mat);
-            }
-        }
-        MeshActor->SetActorScale3D(Donor->RelativeTransform.GetScale3D());
-        MeshActor->SetActorLocation(Entry.Location);
-    }
-
-    // Solid collision so the player stands ON the spawned rock like a vanilla
-    // node, instead of walking through a ghost.
-    if (Smc->GetStaticMesh())
-    {
-        Smc->SetVisibility(true, true);
-        Smc->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-        Smc->SetCollisionProfileName(TEXT("BlockAll"));
-    }
-}
 
 void ANodeShuffleSubsystem::SettleNewNodesNearPlayers()
 {
@@ -1943,14 +2373,10 @@ void ANodeShuffleSubsystem::SettleNewNodesNearPlayers()
             continue;
         }
         AFGResourceNode* const* Node = SpawnedNodes.Find(Entry.EntryGuid);
-        AActor* const* Mesh = SpawnedMeshActors.Find(Entry.EntryGuid);
-        if (Node && IsValid(*Node) && RaycastSettle(Entry, *Node, Mesh ? *Mesh : nullptr))
+        if (Node && IsValid(*Node) && RaycastSettle(Entry, *Node, nullptr))
         {
+            // redesign-5: the rock is a subobject of the node, so moving the node moves the rock too.
             (*Node)->SetActorLocationAndRotation(Entry.Location, Entry.Rotation);
-            if (Mesh && IsValid(*Mesh))
-            {
-                (*Mesh)->SetActorLocationAndRotation(Entry.Location, Entry.Rotation);
-            }
             Entry.bRayCasted = true;
         }
     }
@@ -1997,6 +2423,9 @@ void ANodeShuffleSubsystem::CaptureOriginalNodeRecord()
         FNodeShuffleSuppressedOriginal Rec;
         Rec.VanillaNodePath = E.VanillaNodePath;
         Rec.Location = E.Location;
+        // correct-visual-6: flag modded-origin records so SuppressOriginalNodes never hides them
+        // (its node OR its native rock) — the second hide path that re-opened the modded-blank bug.
+        Rec.bModdedOrigin = !E.OriginalResourceClassPath.StartsWith(TEXT("/Game/"));
         OriginalNodeRecord.Add(Rec);
     }
     UE_LOG(LogNodeShuffle, Display, TEXT("Captured original-node record: %d vanilla locations"), OriginalNodeRecord.Num());
@@ -2007,21 +2436,6 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
     if (OriginalNodeRecord.Num() == 0)
     {
         return;
-    }
-
-    // Build the set of vanilla paths that the CURRENT layout still uses as live
-    // vanilla nodes (active, not destroyed) — those must NOT be suppressed. A path
-    // is "reused/kept" when it appears as an active non-new entry. Inactive vanilla
-    // entries are the ones we want gone; their nodes are destroyed by
-    // ApplyVanillaDeactivate, but their separate rocks (and the node on a fresh
-    // stream-in before deactivate runs) still need hiding.
-    TSet<FString> KeptVanillaPaths;
-    for (const FNodeShuffleEntry& E : Layout)
-    {
-        if (!E.bIsNewNode && E.bActive && !E.VanillaNodePath.IsEmpty())
-        {
-            KeptVanillaPaths.Add(E.VanillaNodePath);
-        }
     }
 
     // Only act on streamed-in originals near a player (cheap, and matches the
@@ -2041,13 +2455,11 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
     constexpr float SuppressPlayerRange = 30000.0f; // 300 m: only streamed-in originals
     constexpr float RockOwnRange = 800.0f;          // 8 m: a rock sits ON its node
 
+    // redesign-1: every recorded original is an UNOCCUPIED node we want GONE (vanilla AND modded).
+    // The only protection is live occupancy (a miner the player built) — checked per node.
     int32 NodesHidden = 0;
     for (const FNodeShuffleSuppressedOriginal& Rec : OriginalNodeRecord)
     {
-        if (KeptVanillaPaths.Contains(Rec.VanillaNodePath))
-        {
-            continue; // this original is still a live, kept node — leave it alone
-        }
         bool bNear = false;
         for (const FVector& P : Players)
         {
@@ -2058,12 +2470,15 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
             continue;
         }
 
-        // If the original node actor itself streamed back in (and is not occupied),
-        // hide+disable it so it can't be mined as a ghost. Occupied nodes are never
-        // touched (a miner could be on a node the player kept building on).
-        if (AFGResourceNode* Node = FindVanillaNodeByPath(Rec.VanillaNodePath))
+        // Hide the original node actor whole (this is what removes its rock, INCLUDING an instanced
+        // one — the analyst-validated mechanism). Never touch an occupied node (a built miner).
+        // redesign-6 FIX 2: use the BASE finder so esc_ (Base-only) originals are hidden too. Occupancy
+        // is checked on the Base (IsOccupied is a Base method) plus the Node-only portable-miner check.
+        if (AFGResourceNodeBase* Node = FindOriginalBaseByPath(Rec.VanillaNodePath))
         {
-            if (!IsNodeOccupiedAnyway(Node))
+            AFGResourceNode* AsNode = Cast<AFGResourceNode>(Node);
+            const bool bOcc = Node->IsOccupied() || (AsNode && IsNodeOccupiedAnyway(AsNode));
+            if (!bOcc)
             {
                 bool bChanged = false;
                 if (Node->GetActorEnableCollision()) { Node->SetActorEnableCollision(false); bChanged = true; }
@@ -2073,70 +2488,79 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
                     MeshActor->SetActorHiddenInGame(true);
                     MeshActor->SetActorEnableCollision(false);
                 }
+                // redesign-3 BUG C: SetActorHiddenInGame hides the rock but does NOT remove the node from
+                // the resource-map / scanner registry, so emptied originals still PING the scanner.
+                // redesign-2's calls produced ZERO log evidence — they were gated on bChanged (so a node
+                // hidden in a prior pass was never deregistered) and silent. Now: deregister on the FIRST
+                // time we see this original (tracked in ScannerDeregistered), independent of bChanged, and
+                // LOG it so we can confirm it actually runs. RemoveResourceNodeScan_Local clears the local
+                // map reveal; UpdateNodeRepresentation refreshes the map entry so the empty spot stops showing.
+                if (!ScannerDeregistered.Contains(Rec.VanillaNodePath))
+                {
+                    Node->RemoveResourceNodeScan_Local();
+                    Node->UpdateNodeRepresentation();
+                    // redesign-11 SECONDARY: also remove this hidden original from the resource-node MANAGER's
+                    // mResourceNodes so a Mk1 can't snap to an invisible ghost original (the registry the
+                    // hologram queries). Only ever removes an original we just hid — never our spawned nodes.
+                    DeregisterNodeFromManager(Node);
+                    ScannerDeregistered.Add(Rec.VanillaNodePath);
+                    ScannerDeregisterCount++;
+                    UE_LOG(LogNodeShuffle, Verbose,
+                        TEXT("scanner: DEREGISTERED hidden original %s (scan + representation + manager mResourceNodes)"),
+                        *Rec.VanillaNodePath);
+                }
                 if (bChanged) { NodesHidden++; }
             }
         }
     }
 
-    // Hide any node-rock mesh sitting at a suppressed original's location (the
-    // separate ore-rock that has no node behind it after a wipe). This is the
-    // reliable orphan-rock kill driven by the persistent record. Instanced
-    // components are world-shared — never touch them.
+    // BACKSTOP: hide any separate node-rock mesh sitting at a suppressed original's location with no
+    // node actor behind it (a rare actor-independent rock). Never touch deposits, fracking, our own
+    // spawned rocks, or instanced components (world-shared).
     int32 RocksHidden = 0;
-    if (NodesHidden >= 0) // always run; cheap and self-healing on stream-in
+    for (TObjectIterator<UStaticMeshComponent> It; It; ++It)
     {
-        for (TObjectIterator<UStaticMeshComponent> It; It; ++It)
+        UStaticMeshComponent* Smc = *It;
+        if (!IsValid(Smc) || Smc->GetWorld() != GetWorld() || !Smc->GetStaticMesh()
+            || Cast<UInstancedStaticMeshComponent>(Smc) || !Smc->IsVisible())
         {
-            UStaticMeshComponent* Smc = *It;
-            if (!IsValid(Smc) || Smc->GetWorld() != GetWorld() || !Smc->GetStaticMesh()
-                || Cast<UInstancedStaticMeshComponent>(Smc) || !Smc->IsVisible())
-            {
-                continue;
-            }
-            // FIX 3: never hide a deposit's own visual mesh (child of the deposit
-            // actor) — a deposit at a suppressed original spot must stay minable.
-            if (Cast<AFGResourceDeposit>(Smc->GetOwner()))
-            {
-                continue;
-            }
-            if (!IsNodeRockMeshName(Smc->GetStaticMesh()->GetName(), TArray<FString>()))
-            {
-                continue;
-            }
-            const FVector Loc = Smc->GetComponentLocation();
-            bool bNear = false;
-            for (const FVector& P : Players)
-            {
-                if (FVector::DistSquared2D(P, Loc) < FMath::Square(SuppressPlayerRange)) { bNear = true; break; }
-            }
-            if (!bNear)
-            {
-                continue;
-            }
-            // Is this rock at a suppressed (not kept) original, and NOT at a kept one?
-            bool bAtSuppressed = false, bAtKept = false;
-            for (const FNodeShuffleSuppressedOriginal& Rec : OriginalNodeRecord)
-            {
-                if (FVector::DistSquared2D(Rec.Location, Loc) < FMath::Square(RockOwnRange))
-                {
-                    if (KeptVanillaPaths.Contains(Rec.VanillaNodePath)) { bAtKept = true; break; }
-                    bAtSuppressed = true;
-                }
-            }
-            if (bAtSuppressed && !bAtKept)
-            {
-                Smc->SetVisibility(false, true);
-                Smc->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-                RocksHidden++;
-            }
+            continue;
+        }
+        AActor* RockOwner = Smc->GetOwner();
+        if (Cast<AFGResourceDeposit>(RockOwner) || IsFrackingActor(RockOwner)
+            || (RockOwner && RockOwner->IsA<ANodeShuffleResourceNode>()))
+        {
+            continue; // deposit / fracking / our own spawned rock (RockMesh subobject) — never hide
+        }
+        if (!IsNodeRockMeshName(Smc->GetStaticMesh()->GetName(), TArray<FString>()))
+        {
+            continue;
+        }
+        const FVector Loc = Smc->GetComponentLocation();
+        bool bNear = false;
+        for (const FVector& P : Players)
+        {
+            if (FVector::DistSquared2D(P, Loc) < FMath::Square(SuppressPlayerRange)) { bNear = true; break; }
+        }
+        if (!bNear) { continue; }
+        bool bAtSuppressed = false;
+        for (const FNodeShuffleSuppressedOriginal& Rec : OriginalNodeRecord)
+        {
+            if (FVector::DistSquared2D(Rec.Location, Loc) < FMath::Square(RockOwnRange)) { bAtSuppressed = true; break; }
+        }
+        if (bAtSuppressed)
+        {
+            Smc->SetVisibility(false, true);
+            Smc->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+            RocksHidden++;
         }
     }
 
-    if (NodesHidden > 0 || RocksHidden > 0)
+    if (NodesHidden > 0 || RocksHidden > 0 || ScannerDeregisterCount > 0)
     {
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("Suppress originals: hid %d original nodes and %d original rocks (wipe-on-reroll clean slate)"),
-            NodesHidden, RocksHidden);
+            TEXT("Hide originals: hid %d original nodes and %d stray original rocks; deregistered %d from scanner (running total) (Hide & Replace)"),
+            NodesHidden, RocksHidden, ScannerDeregisterCount);
     }
 }
 
@@ -2326,6 +2750,14 @@ bool ANodeShuffleSubsystem::IsEligibleVanillaNodeReason(const AFGResourceNode* N
         OutReason = TEXT("transient (mod-spawned)");
         return false;
     }
+    // redesign-3: our OWN spawned relocated nodes now PERSIST (non-transient) and are our own subclass.
+    // Identify them by TYPE (Tags don't survive reload). A re-roll must never treat a restored spawned
+    // node as an original to shuffle again (it would compound relocations every roll).
+    if (Node->IsA<ANodeShuffleResourceNode>())
+    {
+        OutReason = TEXT("ANodeShuffleResourceNode (our spawned node, not an original)");
+        return false;
+    }
     // Resource deposits are the small one-off pickup rocks, never a shuffle node.
     if (Node->IsA<AFGResourceDeposit>())
     {
@@ -2333,71 +2765,72 @@ bool ANodeShuffleSubsystem::IsEligibleVanillaNodeReason(const AFGResourceNode* N
         return false;
     }
 
-    // The resource class must be a genuine raw-resource descriptor. Mods like
-    // AllMinable scatter invisible nodes carrying crafted-ITEM descriptors
-    // (rotors, plates, ...) across the map; without this check they pollute
-    // the pool AND the per-resource balance floor then guarantees active
-    // nodes of every crafted item.
     const UClass* ResClass = Node->GetResourceClass();
-    if (ResClass == nullptr || !ResClass->IsChildOf(UFGResourceDescriptor::StaticClass()))
+    if (ResClass == nullptr)
     {
-        OutReason = TEXT("resource class is not a UFGResourceDescriptor");
-        return false;
-    }
-    const bool bVanillaResource = ResClass->GetPathName().StartsWith(TEXT("/Game/"));
-    // Mod-added descriptors (AllMinable's item nodes, modded ores incl. lithium's
-    // /Lithium/ alkali descriptor) live outside /Game/. They join the pool only
-    // when the user opts in; the completability floor never applies to them either way.
-    if (!bVanillaResource && !bIncludeModded)
-    {
-        OutReason = TEXT("modded resource and IncludeModdedNodes is off");
+        OutReason = TEXT("no resource class");
         return false;
     }
 
-    // PURITY GATE.
-    // Vanilla nodes: strict — a non-standard purity ("Other Purity" in node
-    // listings) is a non-functional companion artifact and is excluded.
-    // Modded nodes (FIX 4): AlkaLib's "advanced Resource Nodes" (e.g. lithium's
-    // BP_ResourdeNode_Alkali_C) can report a purity OUTSIDE {Impure,Normal,Pure}
-    // yet are fully functional, mineable nodes carrying their own rock mesh. So
-    // for modded nodes we do NOT reject on purity here — the roll path clamps a
-    // non-standard purity to RP_Normal so the node still shuffles correctly.
-    const EResourcePurity Purity = Node->GetResourcePurity();
-    const bool bStandardPurity = (Purity == RP_Inpure || Purity == RP_Normal || Purity == RP_Pure);
-    if (bVanillaResource && !bStandardPurity)
+    // redesign-4 BUG 2 (THE SPINE — 3rd attempt, stop guessing). DECOUPLE pool-eligibility from
+    // modded-classification. Eligibility now admits ANY real AFGResourceNode by NODE PROPERTIES alone
+    // (resource class present, Node-type, eligible form) — the /Game/-vs-modded distinction is computed
+    // ONLY to drive (a) the vanilla strictness on a genuine vanilla node and (b) the VISUAL later
+    // (authored rock vs quartz). It NO LONGER gates whether the node enters the pool. This is what finally
+    // admits AllMinable's esc_ SOLID nodes (esc_OreIron/Stone/Coal/...), which carry crafted-ITEM
+    // descriptors and/or report a non-solid/RF_INVALID form — both previously rejected them.
+    const bool bResourceVanilla = ResClass->GetPathName().StartsWith(TEXT("/Game/"));
+    const bool bNodeClassVanilla = Node->GetClass()->GetPathName().StartsWith(TEXT("/Game/"));
+    const bool bVanillaNode = bResourceVanilla && bNodeClassVanilla; // genuine vanilla = both vanilla
+
+    // MODDED opt-in: a non-vanilla node only joins when IncludeModdedNodes is on.
+    if (!bVanillaNode && !bIncludeModded)
     {
-        OutReason = TEXT("vanilla node with non-standard purity (Other Purity artifact)");
+        OutReason = TEXT("modded node and IncludeModdedNodes is off");
         return false;
     }
 
-    // NODE-TYPE GATE. Only plain Node type participates; geysers, fracking
-    // cores/satellites and deposits are never shuffled (same for modded).
+    // VANILLA strictness (applies ONLY to genuine vanilla nodes — keeps vanilla non-resource junk and
+    // companion artifacts out of the pool/balance floor). Modded nodes skip all of these.
+    if (bVanillaNode)
+    {
+        if (!ResClass->IsChildOf(UFGResourceDescriptor::StaticClass()))
+        {
+            OutReason = TEXT("vanilla resource class is not a UFGResourceDescriptor");
+            return false;
+        }
+        const EResourcePurity Purity = Node->GetResourcePurity();
+        if (Purity != RP_Inpure && Purity != RP_Normal && Purity != RP_Pure)
+        {
+            OutReason = TEXT("vanilla node with non-standard purity (Other Purity artifact)");
+            return false;
+        }
+        if (Node->GetResourceAmount() != EResourceAmount::RA_Infinite)
+        {
+            OutReason = TEXT("vanilla node is not RA_Infinite");
+            return false;
+        }
+    }
+
+    // NODE-TYPE GATE (vanilla AND modded). Only plain Node type participates; geysers, fracking
+    // cores/satellites and deposits are never shuffled.
     if (Node->GetResourceNodeType() != EResourceNodeType::Node)
     {
         OutReason = TEXT("not EResourceNodeType::Node (geyser/fracking/deposit)");
         return false;
     }
 
-    // RESOURCE-AMOUNT GATE.
-    // Vanilla: must be infinite (poor/normal/rich finite veins do not exist as
-    // shufflable infinite nodes). Modded (FIX 4): AlkaLib advanced nodes may
-    // report a non-Infinite amount enum yet still mine forever in practice; do
-    // not reject modded nodes on amount so lithium shuffles.
-    if (bVanillaResource && Node->GetResourceAmount() != EResourceAmount::RA_Infinite)
-    {
-        OutReason = TEXT("vanilla node is not RA_Infinite");
-        return false;
-    }
-
-    // RESOURCE FORM GATE (generic, property-driven — no name/class hardcoding).
-    // Solid is ALWAYS allowed. Liquid (oil) AND gas (e.g. lithium, Desc_OreLithium
-    // form=RF_GAS) join ONLY when the experimental flag is on: both need special
-    // extractors (the same caveat that has always gated oil), so they share one gate
-    // rather than a hardcoded per-form/per-name allow-list. RF_INVALID and any future
-    // non-extractable form stay excluded as principled junk.
+    // RESOURCE FORM GATE. SOLID is always allowed. Liquid/gas (oil, gas-form modded) join ONLY with the
+    // experimental flag (both need special extractors). redesign-4 BUG 2 relaxation: a MODDED node whose
+    // descriptor reports RF_INVALID/unknown (common for AllMinable's crafted-ITEM esc_ descriptors) is
+    // treated as SOLID so it still enters the pool — its mining is driven by the node, not the descriptor
+    // form. RF_INVALID on a VANILLA node stays rejected as principled junk.
     const EResourceForm Form = Node->GetResourceForm();
     const bool bExperimentalForm = (Form == EResourceForm::RF_LIQUID) || (Form == EResourceForm::RF_GAS);
+    const bool bModdedUnknownForm = (!bVanillaNode) && (Form != EResourceForm::RF_LIQUID)
+        && (Form != EResourceForm::RF_GAS); // modded solid OR modded RF_INVALID -> treat as solid
     const bool bFormAllowed = (Form == EResourceForm::RF_SOLID)
+        || bModdedUnknownForm
         || (bIncludeLiquid && bExperimentalForm);
     if (!bFormAllowed)
     {
@@ -2408,6 +2841,52 @@ bool ANodeShuffleSubsystem::IsEligibleVanillaNodeReason(const AFGResourceNode* N
     }
 
     return true;
+}
+
+void ANodeShuffleSubsystem::DiagnoseEscClassHierarchy()
+{
+    // redesign-6 FIX 2: the analyst proved esc_ AllMinable nodes are NOT enumerated by
+    // TActorIterator<AFGResourceNode> — a different actor class entirely. Find every distinct actor whose
+    // class name/path mentions esc_ / AllMinable and print its FULL super-class chain, plus whether it is
+    // an AFGResourceNodeBase / AFGResourceNode. This names their real type so we route them correctly.
+    if (bEscClassHierarchyLogged)
+    {
+        return;
+    }
+    bEscClassHierarchyLogged = true;
+    TSet<FString> SeenClasses;
+    int32 Logged = 0;
+    for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+    {
+        AActor* A = *It;
+        if (!IsValid(A)) { continue; }
+        const FString ClassPath = A->GetClass()->GetPathName();
+        const FString ClassName = A->GetClass()->GetName();
+        const bool bEsc = ClassPath.Contains(TEXT("esc_")) || ClassName.Contains(TEXT("esc_"))
+            || ClassPath.Contains(TEXT("AllMinable")) || A->GetName().Contains(TEXT("esc_"));
+        if (!bEsc) { continue; }
+        if (SeenClasses.Contains(ClassName)) { continue; }
+        SeenClasses.Add(ClassName);
+
+        // Build the super-class chain.
+        FString Chain;
+        for (UClass* C = A->GetClass(); C; C = C->GetSuperClass())
+        {
+            Chain += C->GetName();
+            if (C->GetSuperClass()) { Chain += TEXT(" <- "); }
+        }
+        const bool bIsBase = A->IsA<AFGResourceNodeBase>();
+        const bool bIsNode = A->IsA<AFGResourceNode>();
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("ESC-HIERARCHY: actor='%s' class='%s' isResNodeBase=%d isResNode=%d chain=[%s]"),
+            *A->GetName(), *ClassPath, bIsBase ? 1 : 0, bIsNode ? 1 : 0, *Chain);
+        if (++Logged >= 12) { break; } // a handful of distinct classes is enough to identify the type
+    }
+    if (Logged == 0)
+    {
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("ESC-HIERARCHY: no actor with 'esc_'/'AllMinable' in its class/name found in the streamed world."));
+    }
 }
 
 void ANodeShuffleSubsystem::DiagnoseModdedNodeEligibility(bool bIncludeModded, bool bIncludeLiquid) const
@@ -2432,12 +2911,16 @@ void ANodeShuffleSubsystem::DiagnoseModdedNodeEligibility(bool bIncludeModded, b
 
         const TCHAR* Reason = nullptr;
         const bool bEligible = IsEligibleVanillaNodeReason(Node, bIncludeModded, bIncludeLiquid, Reason);
+        const bool bIsResDesc = ResClass && ResClass->IsChildOf(UFGResourceDescriptor::StaticClass());
+        // redesign-4 BUG 2: full per-distinct-class diagnostic — node-class PATH, resource-class PATH,
+        // whether it's a UFGResourceDescriptor, form, and the EXACT gate that decided. Once per class.
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("Modded-node eligibility: class '%s' resource '%s' purity=%d nodeType=%d amount=%d form=%d -> %s (%s)"),
-            *Node->GetClass()->GetName(), ResClass ? *ResClass->GetName() : TEXT("<null>"),
+            TEXT("Modded-node eligibility: nodeClass='%s' resClass='%s' isResDesc=%d purity=%d nodeType=%d amount=%d form=%d -> %s (gate: %s)"),
+            *Node->GetClass()->GetPathName(), ResClass ? *ResClass->GetPathName() : TEXT("<null>"),
+            bIsResDesc ? 1 : 0,
             (int32)Node->GetResourcePurity(), (int32)Node->GetResourceNodeType(),
             (int32)Node->GetResourceAmount(), (int32)Node->GetResourceForm(),
-            bEligible ? TEXT("SHUFFLED") : TEXT("excluded"), Reason);
+            bEligible ? TEXT("SHUFFLED") : TEXT("EXCLUDED"), Reason);
     }
 }
 
@@ -2457,255 +2940,17 @@ bool ANodeShuffleSubsystem::IsNodeOccupiedAnyway(const AFGResourceNode* Node) co
     return false;
 }
 
-void ANodeShuffleSubsystem::SweepRockComponents()
+
+bool ANodeShuffleSubsystem::IsFrackingActor(const AActor* Actor)
 {
-    // Drop pairings whose rock streamed out (weak ptr gone stale) so they can be
-    // re-found when that area streams back in.
-    for (auto It = SweptRocks.CreateIterator(); It; ++It)
-    {
-        if (!It->Value.IsValid()) { It.RemoveCurrent(); }
-    }
-
-    // Rocks stream in as the player explores, so a single up-front sweep can't
-    // pair them all. Re-sweep (rate-limited) while a node that still needs its
-    // separate rock sits near a player unpaired; stop once everything reachable
-    // is paired or proven to have none (RockSearchExhausted), so we don't sweep
-    // the whole component set every tick forever.
-    const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
-    if (bRocksSwept)
-    {
-        if (Now - LastRockSweepSeconds < RockResweepCooldownSeconds || !HasNonNewEntryNeedingRock())
-        {
-            return;
-        }
-    }
-    LastRockSweepSeconds = Now;
-
-    // User-extendable rock names: mods with vanilla-style separate rock
-    // actors can be taught to the matcher without a rebuild. The unmatched-
-    // name diagnostic in the log tells users exactly what to add here.
-    // File: <game>/FactoryGame/Configs/NodeShuffle_RockPatterns.json
-    //   { "Patterns": [ "SM_MyModRock", "CrystalNode_" ] }   (prefix match)
-    TArray<FString> ExtraPatterns;
-    LoadExtraRockPatterns(ExtraPatterns);
-    if (ExtraPatterns.Num() > 0)
-    {
-        UE_LOG(LogNodeShuffle, Display, TEXT("Loaded %d extra rock patterns from NodeShuffle_RockPatterns.json"), ExtraPatterns.Num());
-    }
-
-    // Candidate rocks: any static mesh component in this world whose mesh
-    // name matches the game's node-rock naming (same names as the asset
-    // table: ResourceNode_*, CoalResource_*, SulfurResource_*, Resource_*).
-    TArray<UStaticMeshComponent*> Candidates;
-    for (TObjectIterator<UStaticMeshComponent> It; It; ++It)
-    {
-        UStaticMeshComponent* Smc = *It;
-        if (!IsValid(Smc) || Smc->GetWorld() != GetWorld() || !Smc->GetStaticMesh())
-        {
-            continue;
-        }
-        if (IsNodeRockMeshName(Smc->GetStaticMesh()->GetName(), ExtraPatterns))
-        {
-            Candidates.Add(Smc);
-        }
-    }
-
-    // Instanced components are shared across MANY rocks: hiding or re-meshing
-    // one would change every instance in the world. Exclude them entirely.
-    int32 SkippedInstanced = 0;
-    Candidates.RemoveAll([&SkippedInstanced](UStaticMeshComponent* Smc)
-    {
-        if (Cast<UInstancedStaticMeshComponent>(Smc)) { SkippedInstanced++; return true; }
-        return false;
-    });
-
-    // Exclusive greedy pairing by distance: each rock belongs to at most ONE
-    // node, so a neighbor's deactivation can never hide this node's rock.
-    constexpr float RockPairDistance = 800.0f; // rocks sit ON their node
-    struct FPairCandidate { int32 EntryIdx; UStaticMeshComponent* Smc; float DistSq; };
-    TArray<FPairCandidate> Pairs;
-    for (int32 i = 0; i < Layout.Num(); i++)
-    {
-        if (Layout[i].bIsNewNode)
-        {
-            continue;
-        }
-        for (UStaticMeshComponent* Smc : Candidates)
-        {
-            const float DistSq = FVector::DistSquared2D(Smc->GetComponentLocation(), Layout[i].Location);
-            if (DistSq < FMath::Square(RockPairDistance))
-            {
-                Pairs.Add({i, Smc, DistSq});
-            }
-        }
-    }
-    Pairs.Sort([](const FPairCandidate& A, const FPairCandidate& B){ return A.DistSq < B.DistSq; });
-    TSet<UStaticMeshComponent*> ClaimedRocks;
-    // Protect pairings made in earlier sweeps so a re-sweep never reassigns an
-    // already-claimed rock to a different (closer) node.
-    for (const auto& Pair : SweptRocks)
-    {
-        if (Pair.Value.IsValid()) { ClaimedRocks.Add(Pair.Value.Get()); }
-    }
-    int32 Paired = 0;
-    for (const FPairCandidate& P : Pairs)
-    {
-        if (SweptRocks.Contains(Layout[P.EntryIdx].EntryGuid) || ClaimedRocks.Contains(P.Smc))
-        {
-            continue;
-        }
-        SweptRocks.Add(Layout[P.EntryIdx].EntryGuid, P.Smc);
-        ClaimedRocks.Add(P.Smc);
-        Paired++;
-    }
-    bRocksSwept = true;
-    UE_LOG(LogNodeShuffle, Display, TEXT("Rock sweep: %d candidate rock meshes (%d instanced skipped), %d nodes paired"),
-        Candidates.Num(), SkippedInstanced, Paired);
-
-    // Auto-learn pass: no name list can know every mod's rocks, but rock
-    // meshes betray themselves statistically — their instances live almost
-    // exclusively at nodes, while scenery (cliffs, water, foliage) is spread
-    // across the whole map. Any mesh name whose instances are mostly at
-    // unpaired nodes is adopted as a rock automatically.
-    TArray<int32> UnpairedIdx;
-    for (int32 i = 0; i < Layout.Num(); i++)
-    {
-        if (!Layout[i].bIsNewNode && !SweptRocks.Contains(Layout[i].EntryGuid))
-        {
-            UnpairedIdx.Add(i);
-        }
-    }
-    if (UnpairedIdx.Num() > 0)
-    {
-        TMap<FString, int32> TotalByName;
-        TMap<FString, TArray<FPairCandidate>> NearByName;
-        for (TObjectIterator<UStaticMeshComponent> It; It; ++It)
-        {
-            UStaticMeshComponent* Smc = *It;
-            if (!IsValid(Smc) || Smc->GetWorld() != GetWorld() || !Smc->GetStaticMesh()
-                || Cast<UInstancedStaticMeshComponent>(Smc) || ClaimedRocks.Contains(Smc))
-            {
-                continue;
-            }
-            const FString MeshName = Smc->GetStaticMesh()->GetName();
-            TotalByName.FindOrAdd(MeshName)++;
-            for (int32 Idx : UnpairedIdx)
-            {
-                const float DistSq = FVector::DistSquared2D(Smc->GetComponentLocation(), Layout[Idx].Location);
-                if (DistSq < FMath::Square(RockPairDistance))
-                {
-                    NearByName.FindOrAdd(MeshName).Add({Idx, Smc, DistSq});
-                    break;
-                }
-            }
-        }
-        int32 AutoLearned = 0;
-        for (auto& Pair : NearByName)
-        {
-            const int32 Near = Pair.Value.Num();
-            const int32 Total = TotalByName.FindRef(Pair.Key);
-            // Adopt: at least 3 instances at nodes AND >=60% of all instances at nodes.
-            if (Near >= 3 && Total > 0 && (Near * 100) / Total >= 60)
-            {
-                Pair.Value.Sort([](const FPairCandidate& A, const FPairCandidate& B){ return A.DistSq < B.DistSq; });
-                int32 Adopted = 0;
-                for (const FPairCandidate& P : Pair.Value)
-                {
-                    if (!SweptRocks.Contains(Layout[P.EntryIdx].EntryGuid) && !ClaimedRocks.Contains(P.Smc))
-                    {
-                        SweptRocks.Add(Layout[P.EntryIdx].EntryGuid, P.Smc);
-                        ClaimedRocks.Add(P.Smc);
-                        Adopted++;
-                    }
-                }
-                AutoLearned += Adopted;
-                UE_LOG(LogNodeShuffle, Display, TEXT("Auto-learned rock '%s': %d/%d instances at nodes, %d paired"),
-                    *Pair.Key, Near, Total, Adopted);
-            }
-            else
-            {
-                UE_LOG(LogNodeShuffle, Verbose, TEXT("Rejected mesh '%s' near %d unpaired nodes (%d total instances)"),
-                    *Pair.Key, Near, Total);
-            }
-        }
-        UE_LOG(LogNodeShuffle, Display, TEXT("Auto-learn: %d additional nodes paired (%d still unpaired)"),
-            AutoLearned, UnpairedIdx.Num() - AutoLearned);
-    }
-
-    // Give up on entries that are still unpaired even though a player is close
-    // enough that any real rock would have streamed in — they are self-meshed
-    // (their visual died with the destroyed node) or simply have no separate
-    // rock. Marking them stops HasNonNewEntryNeedingRock from forcing a fresh
-    // full sweep every cooldown for the rest of the session.
-    {
-        TArray<FVector> Players;
-        for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
-        {
-            if (const APlayerController* Pc = It->Get())
-            {
-                if (const APawn* Pawn = Pc->GetPawn()) { Players.Add(Pawn->GetActorLocation()); }
-            }
-        }
-        for (const FNodeShuffleEntry& E : Layout)
-        {
-            if (E.bIsNewNode || RockSearchExhausted.Contains(E.EntryGuid)) { continue; }
-            const TWeakObjectPtr<UStaticMeshComponent>* Rock = SweptRocks.Find(E.EntryGuid);
-            if (Rock && Rock->IsValid()) { continue; }
-            for (const FVector& P : Players)
-            {
-                if (FVector::DistSquared2D(P, E.Location) < FMath::Square(RockSearchRange))
-                {
-                    RockSearchExhausted.Add(E.EntryGuid);
-                    break;
-                }
-            }
-        }
-    }
-}
-
-bool ANodeShuffleSubsystem::HasNonNewEntryNeedingRock() const
-{
-    TArray<FVector> Players;
-    for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
-    {
-        if (const APlayerController* Pc = It->Get())
-        {
-            if (const APawn* Pawn = Pc->GetPawn()) { Players.Add(Pawn->GetActorLocation()); }
-        }
-    }
-    if (Players.Num() == 0)
-    {
-        return false;
-    }
-    for (const FNodeShuffleEntry& E : Layout)
-    {
-        if (E.bIsNewNode || RockSearchExhausted.Contains(E.EntryGuid))
-        {
-            continue;
-        }
-        // Only entries that actually consume a separate rock: inactive nodes
-        // (hide it) or ore-style retypes (re-skin it). Active untouched nodes
-        // and self-meshed retypes use the node's own component — no pairing.
-        const bool bRetyped = E.bActive && (E.AssignedResourceClassPath != E.OriginalResourceClassPath
-                                            || E.AssignedPurity != E.OriginalPurity);
-        if (E.bActive && !bRetyped)
-        {
-            continue;
-        }
-        const TWeakObjectPtr<UStaticMeshComponent>* Rock = SweptRocks.Find(E.EntryGuid);
-        if (Rock && Rock->IsValid())
-        {
-            continue; // already paired
-        }
-        for (const FVector& P : Players)
-        {
-            if (FVector::DistSquared2D(P, E.Location) < FMath::Square(RockSearchRange))
-            {
-                return true;
-            }
-        }
-    }
-    return false;
+    // FIX B: detect fracking wells GENERICALLY by node TYPE (not mesh name). Both the
+    // core (AFGResourceNodeFrackingCore) and each satellite
+    // (AFGResourceNodeFrackingSatellite) report their type via GetResourceNodeType().
+    // Anything that is a fracking core/satellite is left exactly as vanilla.
+    const AFGResourceNodeBase* Base = Cast<AFGResourceNodeBase>(Actor);
+    if (!Base) { return false; }
+    const EResourceNodeType T = Base->GetResourceNodeType();
+    return T == EResourceNodeType::FrackingCore || T == EResourceNodeType::FrackingSatellite;
 }
 
 void ANodeShuffleSubsystem::RebuildNodeNativeVisual(AFGResourceNode* Node)
@@ -2734,594 +2979,88 @@ void ANodeShuffleSubsystem::RebuildNodeNativeVisual(AFGResourceNode* Node)
     }
 }
 
-bool ANodeShuffleSubsystem::IsMeshClaimedByOtherResource(const FString& MeshPath, const FString& ForResourcePath) const
+
+void ANodeShuffleSubsystem::RebuildMeshActorCache()
 {
-    // DONOR-HYGIENE: the one-mesh-one-resource invariant. A rock mesh that is
-    // already the REAL donor of a DIFFERENT resource is a shared placeholder when a
-    // second resource tries to claim it (the classic 'ResourceNode_quartz' reused by
-    // dozens of modded nodes). Reject the second (and later) claimants generically —
-    // no mesh-name or mod-class hardcoding; the collision itself is the signal.
-    if (MeshPath.IsEmpty())
-    {
-        return false;
-    }
-    const FString* MeshOwner = RealDonorMeshOwner.Find(MeshPath);
-    return MeshOwner && *MeshOwner != ForResourcePath;
-}
-
-void ANodeShuffleSubsystem::ClaimRealDonorMesh(const FString& MeshPath, const FString& ResourcePath)
-{
-    if (MeshPath.IsEmpty() || ResourcePath.IsEmpty())
-    {
-        return;
-    }
-    RealDonorMeshOwner.Add(MeshPath, ResourcePath);
-}
-
-void ANodeShuffleSubsystem::RevalidatePersistedDonors()
-{
-    // DONOR-HYGIENE: do not blindly trust SaveGame donors. A donor persisted by an
-    // older build (or this build before a placeholder was rejected) may itself be a
-    // polluted record — a resource whose stored mesh is really a shared placeholder.
-    // After rehydrate, enforce the one-mesh-one-resource invariant on the persisted
-    // store: the FIRST resource to claim a mesh keeps it; any later resource sharing
-    // that exact mesh is a placeholder collision and is DISCARDED (both from the in-
-    // memory donor and from the SaveGame store) so a genuine native node can re-capture
-    // it later. Liquid donors carry no mesh and are exempt.
-    if (bPersistedDonorsRevalidated)
-    {
-        return;
-    }
-    bPersistedDonorsRevalidated = true;
-
-    // Prefer to seed ownership from resources whose NATIVE (vanilla /Game/) class is
-    // most likely the mesh's rightful owner: process vanilla resources first so a
-    // vanilla rock (e.g. real quartz -> ResourceNode_quartz) claims the mesh before a
-    // modded placeholder resource that merely reuses it. Within each group, first-come.
-    TArray<FString> Order;
-    DonorVisuals.GenerateKeyArray(Order);
-    Order.Sort([](const FString& A, const FString& B)
-    {
-        const bool bAV = A.StartsWith(TEXT("/Game/"));
-        const bool bBV = B.StartsWith(TEXT("/Game/"));
-        if (bAV != bBV) { return bAV; } // vanilla resources first
-        return A < B;                    // stable
-    });
-
-    int32 Discarded = 0;
-    for (const FString& ResPath : Order)
-    {
-        FDonorVisual* D = DonorVisuals.Find(ResPath);
-        if (!D || D->Kind == EDonorKind::Liquid || D->bIsFallback)
-        {
-            continue; // only REAL solid donors participate in the one-mesh invariant
-        }
-        UStaticMesh* Mesh = D->Mesh.Get();
-        const FString MeshPath = Mesh ? Mesh->GetPathName() : FString();
-        if (MeshPath.IsEmpty())
-        {
-            continue;
-        }
-        if (IsMeshClaimedByOtherResource(MeshPath, ResPath))
-        {
-            // Placeholder collision: a different resource already owns this mesh.
-            // Discard this resource's polluted donor so a genuine native node can
-            // re-capture the correct rock (it goes back into the needing-donor set).
-            UE_LOG(LogNodeShuffle, Warning,
-                TEXT("Donor hygiene: DISCARDED persisted donor for %s — its mesh '%s' is a shared placeholder already owned by %s (will re-capture from a genuine node)"),
-                *FPackageName::ObjectPathToObjectName(ResPath),
-                *Mesh->GetName(),
-                *FPackageName::ObjectPathToObjectName(*RealDonorMeshOwner.Find(MeshPath)));
-            DonorVisuals.Remove(ResPath);
-            PersistedDonors.RemoveAll([&](const FNodeShuffleDonorRecord& R){ return R.ResourceClassPath == ResPath; });
-            Discarded++;
-            continue;
-        }
-        ClaimRealDonorMesh(MeshPath, ResPath);
-    }
-    if (Discarded > 0)
-    {
-        UE_LOG(LogNodeShuffle, Display,
-            TEXT("Donor hygiene: revalidated persisted donors, discarded %d polluted (placeholder) record(s)"), Discarded);
-    }
-}
-
-void ANodeShuffleSubsystem::CaptureDonorVisuals()
-{
-    // INCREMENTAL CAPTURE (visual-6): the old one-shot ran against a partially
-    // streamed world and captured only the resources whose nodes happened to be
-    // loaded (the log's "10 of 12" — oil + the modded lead ore were missing and
-    // rendered a wrong rock). We now capture missing donors continuously as live
-    // nodes stream in, until every ASSIGNED resource in the layout is covered.
+    // engine-reskin-3 ROOT-CAUSE FIX. Pair every node to its OWN AFGNodeMeshActor.
     //
-    // Donors are keyed by the ASSIGNED resource path (the thing we must reproduce),
-    // captured from ANY live node currently carrying that resource as its ORIGINAL
-    // type (its rock is still vanilla-correct). Three coverage cases:
-    //   - SOLID vanilla/modded: stamp mesh + materials + WORLD scale from a real node.
-    //   - LIQUID (oil): no static mesh; mark Liquid -> rebuild the node's native decal.
-    //   - modded with no live donor mesh: fall back to the descriptor's deposit mesh,
-    //     else a Liquid-style native rebuild — never a wrong ore rock.
+    // -2 built this cache ONLY from the mesh-actor SIDE back-link
+    // (AFGNodeMeshActor::mNodeActor). In this heavily-modded world that back-link is
+    // unpopulated for ~98% of nodes, so the cache was nearly empty and EngineReskinNode
+    // fell back to the (non-mesh) decal rebuild — proven by the log (562 via-mesh-actor
+    // vs 27,773 no-mesh-actor). The authoritative link is the NODE side:
+    // AFGResourceNodeBase::mMeshActor (a TSoftObjectPtr<AActor> set per level instance,
+    // friend-accessible). We resolve THAT for every node; when it points at an
+    // AFGNodeMeshActor we cache it AND repair the missing back-link via SetNodeActor so
+    // OverrideMeshAndMaterials applies the OVERRIDE resource's AUTHORED visual.
+    //
+    // Rebuilt fresh each ApplyLayout pass (mirrors VanillaNodeCache): mesh actors stream
+    // in/out, and a re-sweep drops stale/null weak keys for free.
+    MeshActorCache.Reset();
+    int32 FromBackLink = 0, FromForwardLink = 0;
 
-    // 1. Build the target set once: every distinct resource the layout assigns.
-    if (!bDonorTargetsBuilt)
+    // 1. Back-link sweep (kept): mesh actors that DID get their mNodeActor set.
+    for (TActorIterator<AFGNodeMeshActor> It(GetWorld()); It; ++It)
     {
-        AssignedResourcesNeedingDonor.Reset();
-        for (const FNodeShuffleEntry& E : Layout)
+        if (AFGResourceNodeBase* Paired = It->mNodeActor.Get())
         {
-            if (E.AssignedResourceClassPath.IsEmpty()) { continue; }
-            AssignedResourcesNeedingDonor.Add(E.AssignedResourceClassPath);
-            // Originals also need a donor so a re-roll that restores them re-skins
-            // correctly even if that resource is no longer assigned anywhere.
-            if (!E.bIsNewNode && !E.OriginalResourceClassPath.IsEmpty())
-            {
-                AssignedResourcesNeedingDonor.Add(E.OriginalResourceClassPath);
-            }
+            MeshActorCache.Add(Paired, *It);
+            FromBackLink++;
         }
-        bDonorTargetsBuilt = true;
-    }
-    if (bAllDonorsCovered)
-    {
-        return;
     }
 
-    // 2. Map each still-needed resource to a live node carrying it (by ORIGINAL
-    //    type, whose visual is still authentic). One pass over the live world.
-    TMap<FString, AFGResourceNode*> LiveByResource;
+    // 2. Forward-link sweep (THE fix): each node's own mMeshActor link. Friend access lets
+    //    us read the private soft pointer directly. Cast the target to AFGNodeMeshActor;
+    //    only that class exposes OverrideMeshAndMaterials. Skip our own transient spawns
+    //    (they are cached at spawn time) and fracking (left vanilla).
     for (TActorIterator<AFGResourceNode> It(GetWorld()); It; ++It)
     {
         AFGResourceNode* Node = *It;
-        if (!IsValid(Node) || Node->IsA<AFGResourceDeposit>() || Node->HasAnyFlags(RF_Transient))
-        {
-            continue; // ignore deposits and our own transient spawns
-        }
-        const UClass* Orig = Node->GetResourceClassOriginal().Get();
-        if (!Orig) { continue; }
-        // Only nodes whose visual is STILL their original look are valid donors: a
-        // node we have already re-skinned (override active and different from its
-        // original) now wears the WRONG rock, so capturing from it would propagate
-        // that wrong look. Accept only un-overridden nodes (override null or == original).
-        const UClass* Override = Node->GetResourceClassOverride().Get();
-        if (Override && Override != Orig) { continue; }
-        const FString Path = Orig->GetPathName();
-        // FIX 2: a resource that only has a FALLBACK donor (deposit mesh / rehydrated
-        // fallback) is still a real-donor target — a pristine live node lets us
-        // upgrade it to the correct rock. Treat only a REAL donor as "covered".
-        const FDonorVisual* HaveDonor = DonorVisuals.Find(Path);
-        const bool bHaveReal = HaveDonor && !HaveDonor->bIsFallback;
-        if (AssignedResourcesNeedingDonor.Contains(Path) && !bHaveReal)
-        {
-            LiveByResource.FindOrAdd(Path) = Node; // first live un-retyped node of this resource
-        }
-    }
-
-    const auto LogCoverage = [this](const FString& Path, const TCHAR* How)
-    {
-        if (!DonorCoverageLogged.Contains(Path))
-        {
-            DonorCoverageLogged.Add(Path);
-            UE_LOG(LogNodeShuffle, Display, TEXT("Donor coverage: %s -> %s"),
-                *FPackageName::ObjectPathToObjectName(Path), How);
-        }
-    };
-
-    // 3. Capture a donor for each still-needed resource we can now reach.
-    // DONOR-HYGIENE: process VANILLA (/Game/) resources first so a genuine vanilla
-    // rock claims a shared mesh before any modded placeholder resource that merely
-    // reuses it (the one-mesh-one-resource guard then rejects the placeholder). The
-    // TSet's own order is unspecified, so iterate a sorted snapshot and remove from
-    // the set explicitly when a resource is finished.
-    TArray<FString> NeedOrder = AssignedResourcesNeedingDonor.Array();
-    NeedOrder.Sort([](const FString& A, const FString& B)
-    {
-        const bool bAV = A.StartsWith(TEXT("/Game/"));
-        const bool bBV = B.StartsWith(TEXT("/Game/"));
-        if (bAV != bBV) { return bAV; } // vanilla first
-        return A < B;                    // stable
-    });
-    for (const FString& Path : NeedOrder)
-    {
-        const auto RemoveNeed = [&]() { AssignedResourcesNeedingDonor.Remove(Path); };
-        // FIX 2: only a REAL donor finishes a resource. A fallback (deposit mesh /
-        // rehydrated fallback) stays in the needing set so a pristine live node can
-        // still upgrade it to the correct rock — but we DON'T re-log it as needing.
-        const FDonorVisual* HaveDonor = DonorVisuals.Find(Path);
-        if (HaveDonor && !HaveDonor->bIsFallback)
-        {
-            RemoveNeed();
-            continue;
-        }
-        const bool bHaveFallback = (HaveDonor != nullptr); // fallback present, try to upgrade
-
-        UClass* ResClass = LoadClassByPath(Path);
-        const bool bLiquid = ResClass
-            && UFGItemDescriptor::GetForm(TSubclassOf<UFGItemDescriptor>(ResClass)) == EResourceForm::RF_LIQUID;
-
-        // LIQUID (oil): there is no rock mesh to copy — the node renders a ground
-        // decal from its descriptor. Record a Liquid donor (the apply path rebuilds
-        // the native decal). Captured immediately, no live node required.
-        if (bLiquid)
-        {
-            FDonorVisual Donor;
-            Donor.Kind = EDonorKind::Liquid;
-            DonorVisuals.Add(Path, Donor);
-            PersistDonor(Path, Donor); // FIX 2: liquid look survives reload/reroll
-            LogCoverage(Path, TEXT("REAL (liquid decal from descriptor)"));
-            RemoveNeed();
-            continue;
-        }
-
-        // SOLID: capture mesh + materials + world scale from a live node of this
-        // resource (its own component, or its swept separate rock).
-        AFGResourceNode* Live = LiveByResource.FindRef(Path);
-        UStaticMeshComponent* Smc = Live ? Live->FindComponentByClass<UStaticMeshComponent>() : nullptr;
-        if ((!Smc || !Smc->GetStaticMesh()) && Live)
-        {
-            // ore-style nodes carry no mesh: try the swept rock paired to its entry.
-            for (const FNodeShuffleEntry& E : Layout)
-            {
-                if (!E.bIsNewNode && E.VanillaNodePath == Live->GetPathName())
-                {
-                    const TWeakObjectPtr<UStaticMeshComponent>* Rock = SweptRocks.Find(E.EntryGuid);
-                    if (Rock && Rock->Get() && Rock->Get()->GetStaticMesh()) { Smc = Rock->Get(); }
-                    break;
-                }
-            }
-        }
-        if (Smc && Smc->GetStaticMesh())
-        {
-            // DONOR-HYGIENE: enforce one-mesh-one-resource. If this candidate mesh is
-            // already the REAL donor of a DIFFERENT resource, it is a shared
-            // placeholder (e.g. a modded node's 'ResourceNode_quartz' that several
-            // resources reuse, or a placeholder rock sitting on an ore node and grabbed
-            // by proximity). Capturing it here is exactly the pollution that turns
-            // iron's rock to quartz. Reject it: DON'T capture, and leave this resource
-            // in the needing set so a genuine native node (or the deposit-mesh
-            // fallback) supplies the correct rock instead. No mesh-name/mod hardcoding;
-            // the cross-resource mesh collision is the generic placeholder signal.
-            const FString CandMeshPath = Smc->GetStaticMesh()->GetPathName();
-            if (IsMeshClaimedByOtherResource(CandMeshPath, Path))
-            {
-                UE_LOG(LogNodeShuffle, Warning,
-                    TEXT("Donor hygiene: REJECTED placeholder donor for %s — candidate mesh '%s' is already the real rock of %s (one mesh serves many resources). Will use a genuine node or deposit-mesh fallback."),
-                    *FPackageName::ObjectPathToObjectName(Path),
-                    *Smc->GetStaticMesh()->GetName(),
-                    *FPackageName::ObjectPathToObjectName(*RealDonorMeshOwner.Find(CandMeshPath)));
-                // Leave Path in AssignedResourcesNeedingDonor; do not RemoveCurrent.
-                continue;
-            }
-
-            FDonorVisual Donor;
-            Donor.Kind = EDonorKind::SolidMesh;
-            Donor.Mesh = Smc->GetStaticMesh();
-            for (int32 i = 0; i < Smc->GetNumMaterials(); i++)
-            {
-                Donor.Materials.Add(Smc->GetMaterial(i));
-            }
-            Donor.RelativeTransform = FTransform(FQuat::Identity, FVector::ZeroVector, Smc->GetComponentScale());
-            DonorVisuals.Add(Path, Donor);
-            ClaimRealDonorMesh(CandMeshPath, Path); // this mesh now belongs to this resource
-            PersistDonor(Path, Donor); // FIX 2: real rock look survives reload/reroll
-            UE_LOG(LogNodeShuffle, Display, TEXT("donor[%s] = mesh '%s'"),
-                *FPackageName::ObjectPathToObjectName(Path), *Smc->GetStaticMesh()->GetName());
-            LogCoverage(Path, TEXT("REAL (live-node rock mesh)"));
-            RemoveNeed();
-            continue;
-        }
-
-        // No live donor node yet: keep this resource in the needing-donor set so a
-        // later tick (more streamed in) captures a REAL donor. Do NOT install a
-        // fallback yet — only once below, after streaming has had ample time.
-    }
-
-    // 4. FALLBACK only when streaming has clearly settled but a resource still has
-    //    no real donor (a modded ore with no live node anywhere this session).
-    //    Use the descriptor's own deposit mesh; if it has none, mark Liquid-style
-    //    native rebuild. Never leave an obviously-wrong ore rock.
-    const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
-    if (Now > 60.f && AssignedResourcesNeedingDonor.Num() > 0)
-    {
-        for (auto It = AssignedResourcesNeedingDonor.CreateIterator(); It; ++It)
-        {
-            const FString Path = *It;
-            if (DonorVisuals.Contains(Path)) { It.RemoveCurrent(); continue; }
-            UClass* ResClass = LoadClassByPath(Path);
-            UStaticMesh* DepositMesh = ResClass
-                ? UFGResourceDescriptor::GetDepositMesh(TSubclassOf<UFGResourceDescriptor>(ResClass)) : nullptr;
-            FDonorVisual Donor;
-            if (DepositMesh)
-            {
-                Donor.Kind = EDonorKind::SolidMesh;
-                Donor.Mesh = DepositMesh;
-                Donor.RelativeTransform = FTransform(FQuat::Identity, FVector::ZeroVector, FVector(1.f));
-                Donor.bIsFallback = true;
-                DonorVisuals.Add(Path, Donor);
-                PersistDonor(Path, Donor); // persisted as fallback; upgraded if a real donor appears
-                LogCoverage(Path, TEXT("FALLBACK (descriptor deposit mesh)"));
-            }
-            else
-            {
-                Donor.Kind = EDonorKind::Liquid; // native rebuild from descriptor
-                Donor.bIsFallback = true;
-                DonorVisuals.Add(Path, Donor);
-                PersistDonor(Path, Donor);
-                LogCoverage(Path, TEXT("FALLBACK (native descriptor rebuild — no mesh)"));
-            }
-            It.RemoveCurrent();
-        }
-    }
-
-    if (AssignedResourcesNeedingDonor.Num() == 0)
-    {
-        if (!bAllDonorsCovered)
-        {
-            bAllDonorsCovered = true;
-            UE_LOG(LogNodeShuffle, Display,
-                TEXT("Donor coverage COMPLETE: %d resource types (all assigned + original resources covered)"),
-                DonorVisuals.Num());
-        }
-    }
-}
-
-void ANodeShuffleSubsystem::PersistDonor(const FString& ResourcePath, const FDonorVisual& Donor)
-{
-    // FIX 2: mirror a captured donor into the SaveGame store as soft paths. A REAL
-    // capture (bIsFallback=false) upgrades any prior fallback record; a fallback
-    // never downgrades an existing real record.
-    FNodeShuffleDonorRecord* Existing = PersistedDonors.FindByPredicate(
-        [&](const FNodeShuffleDonorRecord& R){ return R.ResourceClassPath == ResourcePath; });
-    if (Existing && !Existing->bIsFallback && Donor.bIsFallback)
-    {
-        return; // keep the better (real) record we already have
-    }
-
-    FNodeShuffleDonorRecord Rec;
-    Rec.ResourceClassPath = ResourcePath;
-    Rec.Kind = (Donor.Kind == EDonorKind::Liquid) ? 1 : 0;
-    Rec.bIsFallback = Donor.bIsFallback;
-    Rec.Scale = Donor.RelativeTransform.GetScale3D();
-    if (Donor.Kind == EDonorKind::SolidMesh && Donor.Mesh.Get())
-    {
-        Rec.MeshPath = Donor.Mesh.Get()->GetPathName();
-        for (const TWeakObjectPtr<UMaterialInterface>& M : Donor.Materials)
-        {
-            Rec.MaterialPaths.Add(M.Get() ? M.Get()->GetPathName() : FString());
-        }
-    }
-
-    if (Existing)
-    {
-        *Existing = Rec;
-    }
-    else
-    {
-        PersistedDonors.Add(Rec);
-    }
-}
-
-void ANodeShuffleSubsystem::RehydrateDonorsFromPersisted()
-{
-    // FIX 2: rebuild in-memory DonorVisuals from the persisted store at session
-    // start. This is the fix for the reload case: every live vanilla node is already
-    // retyped (SaveGame override), so CaptureDonorVisuals could not find a pristine
-    // donor and fell back to the wrong deposit mesh. Resolving the persisted real
-    // mesh/materials/scale gives the correct rock with no live donor required.
-    if (bDonorsRehydrated)
-    {
-        return;
-    }
-    bDonorsRehydrated = true;
-
-    int32 Real = 0, Fallback = 0;
-    for (const FNodeShuffleDonorRecord& Rec : PersistedDonors)
-    {
-        if (Rec.ResourceClassPath.IsEmpty() || DonorVisuals.Contains(Rec.ResourceClassPath))
+        if (!IsValid(Node) || Node->HasAnyFlags(RF_Transient) || IsFrackingActor(Node))
         {
             continue;
         }
-        FDonorVisual Donor;
-        Donor.bIsFallback = Rec.bIsFallback;
-        if (Rec.Kind == 1)
+        if (MeshActorCache.Contains(Node))
         {
-            Donor.Kind = EDonorKind::Liquid;
-            DonorVisuals.Add(Rec.ResourceClassPath, Donor);
-            Rec.bIsFallback ? Fallback++ : Real++;
-            continue;
+            continue; // already paired via the back-link
         }
-        // Solid: resolve the rock mesh + materials from their soft paths.
-        Donor.Kind = EDonorKind::SolidMesh;
-        UStaticMesh* Mesh = Rec.MeshPath.IsEmpty()
-            ? nullptr : LoadObject<UStaticMesh>(nullptr, *Rec.MeshPath);
-        if (!Mesh)
+        // mMeshActor is private on AFGResourceNodeBase; friend access (AccessTransformers)
+        // makes the soft pointer readable. .Get() resolves it if the actor is loaded.
+        AActor* RockActor = Node->mMeshActor.Get();
+        if (AFGNodeMeshActor* MA = Cast<AFGNodeMeshActor>(RockActor))
         {
-            // Mesh asset unresolved (mod removed / path stale) — skip; a live capture
-            // or the deposit-mesh fallback will cover this resource later.
-            continue;
-        }
-        Donor.Mesh = Mesh;
-        for (const FString& MatPath : Rec.MaterialPaths)
-        {
-            Donor.Materials.Add(MatPath.IsEmpty() ? nullptr : LoadObject<UMaterialInterface>(nullptr, *MatPath));
-        }
-        Donor.RelativeTransform = FTransform(FQuat::Identity, FVector::ZeroVector, Rec.Scale);
-        DonorVisuals.Add(Rec.ResourceClassPath, Donor);
-        Rec.bIsFallback ? Fallback++ : Real++;
-    }
-    if (Real + Fallback > 0)
-    {
-        UE_LOG(LogNodeShuffle, Display,
-            TEXT("Rehydrated %d persisted donors (%d real, %d fallback) from save — no deposit-mesh guess needed on reload"),
-            Real + Fallback, Real, Fallback);
-    }
-}
-
-bool ANodeShuffleSubsystem::ApplyNodeOwnMesh(AFGResourceNode* Node, UClass* ResourceClass, const FNodeShuffleEntry& Entry)
-{
-    // LIQUID (oil): no rock to stamp — rebuild the node's native decal from its
-    // descriptor. The caller (spawn path) has already InitResource'd the node to
-    // the liquid resource, so the descriptor is live. Return true (handled).
-    if (const FDonorVisual* LD = DonorVisuals.Find(ResourceClass->GetPathName()))
-    {
-        if (LD->Kind == EDonorKind::Liquid)
-        {
-            RebuildNodeNativeVisual(Node);
-            return true;
-        }
-    }
-    // FIX 1 (no double visual on self-meshed nodes): a node may own MORE THAN ONE
-    // static mesh component. AllMinable/AlkaLib modded nodes (Res_Plastic2_C, the
-    // lithium BP_ResourdeNode_Alkali, ...) carry their OWN base rock mesh component
-    // (the shared ResourceNode_quartz). The old code stamped the donor onto whatever
-    // FindComponentByClass returned FIRST and left every other node-owned mesh
-    // VISIBLE — so the node showed two rocks (the correct donor + the leftover
-    // quartz). Proof from the orphan diag: 'ResourceNode_quartz' KEPT -> owned by
-    // live Res_Plastic2_C at 0.0m.
-    //
-    // The donor must REPLACE the node's visual, not add a second one. So: collect
-    // every node-OWNED static mesh component, stamp the donor onto ONE of them
-    // (preferring one that already carries a node-rock mesh — that IS the base rock),
-    // and HIDE/clear every OTHER node-owned rock component so exactly ONE correct
-    // rock shows. Instanced components are shared across many rocks and are never
-    // touched. Ore-style nodes (no own mesh) fall back to the swept separate rock;
-    // brand-new spawned nodes get a fresh NodeShuffleVisual.
-    TArray<FString> ExtraRockPatterns;
-    LoadExtraRockPatterns(ExtraRockPatterns);
-    TArray<UStaticMeshComponent*> OwnedMeshes;
-    {
-        TArray<UStaticMeshComponent*> All;
-        Node->GetComponents<UStaticMeshComponent>(All);
-        for (UStaticMeshComponent* Candidate : All)
-        {
-            if (!IsValid(Candidate) || Cast<UInstancedStaticMeshComponent>(Candidate))
+            // Repair the engine's own back-link so the game (and our cache) agree.
+            if (!MA->mNodeActor.Get())
             {
-                continue; // never re-mesh/hide a shared instanced component
+                MA->SetNodeActor(Node);
             }
-            OwnedMeshes.Add(Candidate);
-        }
-        // Stamp target preference: a component already wearing a recognized node-rock
-        // mesh (the base rock we must REPLACE) wins; otherwise the first owned mesh.
-        OwnedMeshes.StableSort([&](const UStaticMeshComponent& A, const UStaticMeshComponent& B)
-        {
-            const bool bARock = A.GetStaticMesh() && IsNodeRockMeshName(A.GetStaticMesh()->GetName(), ExtraRockPatterns);
-            const bool bBRock = B.GetStaticMesh() && IsNodeRockMeshName(B.GetStaticMesh()->GetName(), ExtraRockPatterns);
-            return bARock && !bBRock; // rock-mesh components first
-        });
-    }
-
-    UStaticMeshComponent* Smc = OwnedMeshes.Num() > 0 ? OwnedMeshes[0] : nullptr;
-    if (!Smc)
-    {
-        const TWeakObjectPtr<UStaticMeshComponent>* Rock = SweptRocks.Find(Entry.EntryGuid);
-        Smc = Rock ? Rock->Get() : nullptr;
-    }
-    bool bCreatedComponent = false;
-    if (!Smc && DonorVisuals.Contains(ResourceClass->GetPathName()))
-    {
-        // Spawned NEW nodes (never swept, no own mesh) get their own visual
-        // component, dressed from donor visuals below.
-        UStaticMeshComponent* Created = NewObject<UStaticMeshComponent>(Node, TEXT("NodeShuffleVisual"));
-        if (Node->GetRootComponent())
-        {
-            Created->SetupAttachment(Node->GetRootComponent());
-        }
-        Created->RegisterComponent();
-        Created->SetWorldLocationAndRotation(Node->GetActorLocation(), Node->GetActorRotation());
-        Smc = Created;
-        bCreatedComponent = true;
-    }
-    if (!Smc)
-    {
-        return false;
-    }
-
-    // Stamp a faithful copy of a REAL rock of the assigned resource: the donor
-    // captured its mesh, materials AND world scale from an actual vanilla node.
-    // Applying all three (never the target's own scale) renders the rock
-    // exactly as it looks in vanilla — no size metric, no guessing, no shelves.
-    const FDonorVisual* Donor = DonorVisuals.Find(ResourceClass->GetPathName());
-    if (!Donor || !Donor->Mesh.Get())
-    {
-        return false; // no known look for this resource → leave node's original
-    }
-    Smc->SetMobility(EComponentMobility::Movable);
-    Smc->SetStaticMesh(Donor->Mesh.Get());
-    // Replace existing material slots and clear any that the donor mesh does not
-    // override, so no leftover material from the base mesh bleeds through.
-    for (int32 i = 0; i < Donor->Materials.Num(); i++)
-    {
-        if (UMaterialInterface* Mat = Donor->Materials[i].Get())
-        {
-            Smc->SetMaterial(i, Mat);
-        }
-    }
-    Smc->SetWorldScale3D(Donor->RelativeTransform.GetScale3D());
-    Smc->SetWorldLocation(Node->GetActorLocation());
-
-    // FIX 1: now that ONE component wears the correct donor rock, HIDE every OTHER
-    // node-owned mesh component that still shows a node-rock mesh (the leftover
-    // quartz base mesh on self-meshed modded nodes). This is what kills the second
-    // visual. We only hide recognized node-rock meshes — never some unrelated
-    // child decoration the node might legitimately own. The stamped component (Smc)
-    // is skipped. Idempotent: a re-skin re-runs this and the already-hidden leftover
-    // stays hidden.
-    {
-        for (UStaticMeshComponent* Other : OwnedMeshes)
-        {
-            if (Other == Smc || !IsValid(Other) || !Other->GetStaticMesh())
-            {
-                continue;
-            }
-            // Only hide a leftover that is itself a recognized node rock AND is not
-            // already the donor mesh (would be the correct rock, e.g. coincidental).
-            if (Other->GetStaticMesh() == Donor->Mesh.Get())
-            {
-                continue;
-            }
-            if (IsNodeRockMeshName(Other->GetStaticMesh()->GetName(), ExtraRockPatterns) && Other->IsVisible())
-            {
-                Other->SetVisibility(false, true);
-                Other->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-                UE_LOG(LogNodeShuffle, Verbose,
-                    TEXT("FIX 1: hid leftover base rock '%s' on self-meshed node %s (donor stamped on a separate component)"),
-                    *Other->GetStaticMesh()->GetName(), *Node->GetName());
-            }
+            MeshActorCache.Add(Node, MA);
+            FromForwardLink++;
         }
     }
 
-    // Our own created visual (new nodes) must be made solid using the ROCK
-    // MESH's own collision — it matches the irregular, slanted rock shape
-    // exactly, so the player stands on the actual rock (a box never could).
-    // Existing vanilla rocks already have their own collision; leave them.
-    if (bCreatedComponent)
-    {
-        Smc->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-        Smc->SetCollisionProfileName(TEXT("BlockAll"));
-        Smc->RecreatePhysicsState(); // rebuild collision for the swapped mesh
-    }
-    return true;
+    UE_LOG(LogNodeShuffle, Display,
+        TEXT("Mesh-actor cache: %d paired (%d via mesh-actor back-link, %d via node->mMeshActor forward link)"),
+        MeshActorCache.Num(), FromBackLink, FromForwardLink);
 }
 
 AFGNodeMeshActor* ANodeShuffleSubsystem::FindMeshActorForNode(AFGResourceNodeBase* Node) const
 {
-    auto* MutableThis = const_cast<ANodeShuffleSubsystem*>(this);
-    if (!bMeshActorCacheBuilt)
-    {
-        for (TActorIterator<AFGNodeMeshActor> It(GetWorld()); It; ++It)
-        {
-            if (AFGResourceNodeBase* Paired = It->mNodeActor.Get())
-            {
-                MutableThis->MeshActorCache.Add(Paired, *It);
-            }
-        }
-        MutableThis->bMeshActorCacheBuilt = true;
-    }
     const TWeakObjectPtr<AFGNodeMeshActor>* Found = MeshActorCache.Find(Node);
     return Found && Found->IsValid() ? Found->Get() : nullptr;
 }
 
 AFGResourceNode* ANodeShuffleSubsystem::FindVanillaNodeByPath(const FString& Path) const
 {
-    const TWeakObjectPtr<AFGResourceNode>* Found = VanillaNodeCache.Find(Path);
-    return Found && Found->IsValid() ? Found->Get() : nullptr;
+    // The cache is now keyed by BASE node; Cast to Node (null for Base-only esc_ originals).
+    const TWeakObjectPtr<AFGResourceNodeBase>* Found = VanillaNodeCache.Find(Path);
+    return (Found && Found->IsValid()) ? Cast<AFGResourceNode>(Found->Get()) : nullptr;
+}
+
+AFGResourceNodeBase* ANodeShuffleSubsystem::FindOriginalBaseByPath(const FString& Path) const
+{
+    const TWeakObjectPtr<AFGResourceNodeBase>* Found = VanillaNodeCache.Find(Path);
+    return (Found && Found->IsValid()) ? Found->Get() : nullptr;
 }
 
 UClass* ANodeShuffleSubsystem::LoadClassByPath(const FString& Path)
@@ -3420,17 +3159,10 @@ void ANodeShuffleSubsystem::OrphanRockCleanup()
     }
     LastOrphanSweepSeconds = Now;
 
-    // Meshes proven to be real node rocks (captured from live nodes at roll).
-    TSet<UStaticMesh*> NodeRockMeshes;
-    for (const auto& Pair : DonorVisuals)
-    {
-        if (UStaticMesh* M = Pair.Value.Mesh.Get()) { NodeRockMeshes.Add(M); }
-    }
-    // A mesh whose original node was destroyed in a PAST roll was never captured
-    // as a donor (no live node carried it at this session's roll), so the donor
-    // set above misses it — the reported orphan-rock ghost (e.g. Resource_Stone_01).
-    // Also recognize rocks by NAME, the same families SweepRockComponents matches,
-    // so name-matched orphans are hidden even without a donor capture.
+    // (engine-reskin-1) The donor-capture mesh set is gone. Orphan node-rocks are now
+    // recognized by NAME alone — the same families SweepRockComponents matches — which is
+    // sufficient: a free node-rock mesh with no live node/deposit within the owner radius
+    // is an orphan ghost from a past layout regardless of how it was created.
     TArray<FString> ExtraPatterns;
     LoadExtraRockPatterns(ExtraPatterns);
 
@@ -3451,6 +3183,13 @@ void ANodeShuffleSubsystem::OrphanRockCleanup()
     for (TActorIterator<AFGResourceNode> It(GetWorld()); It; ++It)
     {
         if (IsValid(*It) && !It->IsA<AFGResourceDeposit>()) { Owners.Add({It->GetActorLocation(), *It}); }
+    }
+    // FIX B: fracking cores derive from AFGResourceNodeBase (not AFGResourceNode), so
+    // the iterator above misses them. Add every fracking core/satellite as an OWNER so
+    // their rocks are always protected from orphan-hiding — fracking wells stay vanilla.
+    for (TActorIterator<AFGResourceNodeBase> It(GetWorld()); It; ++It)
+    {
+        if (IsValid(*It) && IsFrackingActor(*It)) { Owners.Add({It->GetActorLocation(), *It}); }
     }
 
     constexpr float OrphanOwnerRadius = 1200.0f;    // 12 m: a real node owns the rock
@@ -3473,11 +3212,23 @@ void ANodeShuffleSubsystem::OrphanRockCleanup()
         {
             continue;
         }
-        const bool bProvenDonor = NodeRockMeshes.Contains(Smc->GetStaticMesh());
-        const bool bNameMatch = IsNodeRockMeshName(Smc->GetStaticMesh()->GetName(), ExtraPatterns);
-        if (!bProvenDonor && !bNameMatch)
+        // FIX B: never hide a fracking core/satellite's own mesh — fracking wells are
+        // left exactly as vanilla (the "well center disappeared" bug was this pass
+        // hiding a name-matched fracking rock that had no AFGResourceNode within 12 m).
+        if (IsFrackingActor(Smc->GetOwner()))
         {
-            continue; // neither a captured donor mesh nor a name-matched node rock — leave scenery alone
+            continue;
+        }
+        // redesign-5: never hide OUR OWN spawned node rock (now a RockMesh subobject OF our node, which
+        // wears an authored ResourceNode_* mesh, so it would otherwise name-match and get hidden as orphan).
+        if (Smc->GetOwner() && Smc->GetOwner()->IsA<ANodeShuffleResourceNode>())
+        {
+            continue;
+        }
+        const bool bNameMatch = IsNodeRockMeshName(Smc->GetStaticMesh()->GetName(), ExtraPatterns);
+        if (!bNameMatch)
+        {
+            continue; // not a name-matched node rock — leave scenery alone
         }
         const FVector Loc = Smc->GetComponentLocation();
         bool bNearPlayer = false;
@@ -3522,8 +3273,8 @@ void ANodeShuffleSubsystem::OrphanRockCleanup()
             {
                 OrphanReasonLogged.Add(Smc);
                 UE_LOG(LogNodeShuffle, Verbose,
-                    TEXT("ORPHANDIAG: '%s' at %s KEPT (donor=%d name=%d) -> owned by live %s '%s' at %.1fm"),
-                    *MeshName, *Loc.ToCompactString(), bProvenDonor ? 1 : 0, bNameMatch ? 1 : 0,
+                    TEXT("ORPHANDIAG: '%s' at %s KEPT (name=%d) -> owned by live %s '%s' at %.1fm"),
+                    *MeshName, *Loc.ToCompactString(), bNameMatch ? 1 : 0,
                     OwnerActor ? *OwnerActor->GetClass()->GetName() : TEXT("?"),
                     OwnerActor ? *OwnerActor->GetName() : TEXT("?"),
                     FMath::Sqrt(OwnerDistSq) / 100.0f);
@@ -3537,8 +3288,8 @@ void ANodeShuffleSubsystem::OrphanRockCleanup()
         {
             OrphanReasonLogged.Add(Smc);
             UE_LOG(LogNodeShuffle, Verbose,
-                TEXT("ORPHANDIAG: '%s' at %s HIDDEN (donor=%d name=%d) -> nearest live node/deposit %.1fm away (> %.0fm owner radius)"),
-                *MeshName, *Loc.ToCompactString(), bProvenDonor ? 1 : 0, bNameMatch ? 1 : 0,
+                TEXT("ORPHANDIAG: '%s' at %s HIDDEN (name=%d) -> nearest live node/deposit %.1fm away (> %.0fm owner radius)"),
+                *MeshName, *Loc.ToCompactString(), bNameMatch ? 1 : 0,
                 OwnerActor ? FMath::Sqrt(OwnerDistSq) / 100.0f : -1.0f, OrphanOwnerRadius / 100.0f);
         }
         Hidden++;
@@ -3571,11 +3322,15 @@ void ANodeShuffleSubsystem::DiagnoseRocksNearPlayers()
 
     constexpr float DiagRange = 1500.0f; // 15 m around the player
 
-    // Build the set of currently-claimed rock components for the paired check.
+    // redesign-5: the "ours" set is each spawned node's OWN RockMesh subobject (the rock now lives on the
+    // node, not a separate actor). Used only to annotate the diagnostic line (is this rock one WE spawned?).
     TSet<UStaticMeshComponent*> Claimed;
-    for (const auto& Pair : SweptRocks)
+    for (const auto& Pair : SpawnedNodes)
     {
-        if (Pair.Value.IsValid()) { Claimed.Add(Pair.Value.Get()); }
+        if (ANodeShuffleResourceNode* OurNode = Cast<ANodeShuffleResourceNode>(Pair.Value))
+        {
+            if (IsValid(OurNode->RockMesh)) { Claimed.Add(OurNode->RockMesh); }
+        }
     }
 
     for (TObjectIterator<UStaticMeshComponent> It; It; ++It)
@@ -3598,16 +3353,8 @@ void ANodeShuffleSubsystem::DiagnoseRocksNearPlayers()
         }
 
         const FString MeshName = Smc->GetStaticMesh()->GetName();
-        // Only rock-like meshes: matches the sweep's name families, OR its mesh
-        // is one of our captured donor rocks (a rock we re-skinned ourselves).
-        bool bLooksLikeRock = IsNodeRockMeshName(MeshName, TArray<FString>());
-        if (!bLooksLikeRock)
-        {
-            for (const auto& Pair : DonorVisuals)
-            {
-                if (Pair.Value.Mesh.Get() == Smc->GetStaticMesh()) { bLooksLikeRock = true; break; }
-            }
-        }
+        // Only rock-like meshes: matches the sweep's name families.
+        const bool bLooksLikeRock = IsNodeRockMeshName(MeshName, TArray<FString>());
         if (!bLooksLikeRock)
         {
             continue;

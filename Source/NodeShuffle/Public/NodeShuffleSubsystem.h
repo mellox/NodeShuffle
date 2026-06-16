@@ -76,34 +76,16 @@ struct FNodeShuffleSuppressedOriginal
 
     UPROPERTY(SaveGame) FString VanillaNodePath;
     UPROPERTY(SaveGame) FVector Location = FVector::ZeroVector;
+    // correct-visual-6: true when this record's node is MODDED-origin (original resource class path
+    // not under /Game/). Such nodes are LEFT NATIVE and must NEVER be suppressed/hidden — set at
+    // CaptureOriginalNodeRecord time so SuppressOriginalNodes can skip them in BOTH hide loops.
+    UPROPERTY(SaveGame) bool bModdedOrigin = false;
 };
 
-// FIX 2 (persisted donor visuals): the authentic look of one resource's rock,
-// captured from a PRISTINE (un-retyped) live node and stored as soft asset paths
-// so it survives reload/reroll. On a reloaded shuffled save every vanilla node is
-// already retyped (the override is SaveGame), so no pristine donor exists to copy
-// from live — without persistence the capture fell back to the wrong descriptor
-// DEPOSIT mesh (visual-6's bug). Persisting the real mesh/materials/scale lets the
-// apply path re-stamp the correct rock with no live donor needed.
-USTRUCT()
-struct FNodeShuffleDonorRecord
-{
-    GENERATED_BODY()
-
-    // Resource descriptor class path this look reproduces.
-    UPROPERTY(SaveGame) FString ResourceClassPath;
-    // Soft object path of the rock UStaticMesh (empty for liquid donors).
-    UPROPERTY(SaveGame) FString MeshPath;
-    // Soft object paths of the rock's materials, in slot order.
-    UPROPERTY(SaveGame) TArray<FString> MaterialPaths;
-    // World scale captured from the real vanilla rock (the only correct scale).
-    UPROPERTY(SaveGame) FVector Scale = FVector::OneVector;
-    // 0 = solid mesh donor, 1 = liquid (rebuild native decal from descriptor).
-    UPROPERTY(SaveGame) uint8 Kind = 0;
-    // True when this record was NOT captured from a real live node (deposit-mesh or
-    // native-rebuild fallback). A real donor seen later upgrades a fallback record.
-    UPROPERTY(SaveGame) bool bIsFallback = false;
-};
+// (2026-06-15-engine-reskin-1) The old FNodeShuffleDonorRecord + PersistedDonors
+// SaveGame store was part of the deleted donor-CAPTURE system. It is gone; any old
+// saved donor data is simply ignored on load (no migration needed — the property no
+// longer exists, and visuals are now reapplied from authored data every session).
 
 // Server-side brain of NodeShuffle.
 //
@@ -156,10 +138,11 @@ private:
     // prove the world has streamed in, after a short post-load settle.
     bool IsWorldReadyForReroll() const;
     void RollLayout(int32 Seed, bool bIsReroll);
-    // Before a re-roll rescans the vanilla pool, restore each non-new live node's
-    // resource class/purity to the original values stored in its layout entry, so
-    // the rescan sees the true vanilla pool instead of the previously-shuffled one.
-    // Destroyed nodes cannot return; that is logged and accepted.
+    // redesign-1: before a re-roll, UN-HIDE every previously-suppressed original node (and its
+    // mesh actor) that is streamed in, so the world returns to its pristine state before the new
+    // layout re-hides per the new roll. Nothing was ever destroyed (whole-actor hide is reversible),
+    // so this is a clean restore. The reroll pool itself is rebuilt from the saved Layout's stored
+    // ORIGINAL resources (streaming-independent), not from a live rescan.
     void RestoreOriginalsForReroll();
     // Map-wide spread: distribute new locations across the bounding box of the
     // full known-node set (whole playable map) rather than clustered around the
@@ -177,36 +160,63 @@ private:
 
     // ---- apply ----
     void ApplyLayout();
-    void ApplyVanillaRetype(FNodeShuffleEntry& Entry, AFGResourceNode* Node, bool& bOutChangedWorld);
-    // LOSSLESS DEACTIVATION (architectural change, build lossless-5): a vanilla
-    // node is NEVER destroyed. It is made reversibly inactive — hidden, no
-    // collision, and re-hidden idempotently every tick (the runtime hide reverts
-    // on reload AND on stream-in). Its path is tracked in DeactivatedNodePaths
-    // (SaveGame) so it can be fully reactivated by a later re-roll. The node's
-    // separate ore-rock (ore-style nodes) is hidden the same way.
-    void ApplyVanillaDeactivate(FNodeShuffleEntry& Entry, AFGResourceNode* Node, bool& bOutChangedWorld);
-    // Reverse of deactivation: un-hide, re-enable collision, drop from the
-    // deactivated set, and (via the normal retype path) restore the live node to
-    // its assigned resource. Called when a previously-deactivated node is ACTIVE
-    // in the current layout. Idempotent.
-    void ReactivateVanillaNode(FNodeShuffleEntry& Entry, AFGResourceNode* Node, bool& bOutChangedWorld);
-    // Comprehensive respawn (task #3): an ACTIVE non-new entry whose live actor is
-    // genuinely missing (never streams in — destroyed in a pre-lossless save, or
-    // simply gone) is materialized as a managed node from its recorded location +
-    // original resource, via the new-node spawn machinery. Generalizes the old
-    // FIX-3 resurrect to ALL active entries with no live node.
-    void EnsureMissingVanillaRespawned(FNodeShuffleEntry& Entry, bool& bOutChangedWorld);
+    // redesign-3 BUG B: ONE-TIME post-load reconciliation. Spawned nodes are now ANodeShuffleResourceNode
+    // with a UPROPERTY(SaveGame) EntryGuid that survives reload (Tags do NOT). Iterate the subclass, read
+    // each saved EntryGuid, repopulate SpawnedNodes[guid] so EnsureNewNodeSpawned's SpawnedNodes.Find
+    // guard skips re-spawning. Also pins occupied restored nodes. Includes the VERIFY-FIRST count.
+    void AdoptRestoredSpawnedNodes();
+    bool bAdoptedRestoredNodes = false;
+    // redesign-3 BUG C: originals already deregistered from the scanner this session (path set, so we
+    // call RemoveResourceNodeScan_Local/UpdateNodeRepresentation once per original, not every pass) + a
+    // running count for the log evidence (redesign-2's calls were silent).
+    TSet<FString> ScannerDeregistered;
+    int32 ScannerDeregisterCount = 0;
+    // redesign-1: spawn one of OUR relocated nodes (the only kind of active node besides the
+    // untouched occupied originals). Handles solid (authored rock or quartz placeholder) and oil.
     void EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool& bOutChangedWorld);
+    // redesign-3b BLOCKER FIX: the "Resource"-profile UseBox a spawned node needs for interaction
+    // (look-at, build-gun, miner placement, hand-mine) is a runtime NewObject component and is NOT
+    // serialized, so a restored/adopted node loses it on reload -> non-interactable. Idempotent helper
+    // that creates the box if the node has none — called on BOTH spawn AND adopt/early-return paths.
+    void EnsureNodeUseBox(AFGResourceNode* Node);
+    // redesign-9 (MK1 RESOURCE-SNAP DETECTION). One-shot SNAPDIAG: when a spawned node AND a nearby
+    // VANILLA node are both streamed in, log the FULL collision/component state of EACH so the log names
+    // the EXACT vanilla-vs-ours delta the extractor hologram cares about. Friend access reads mBoxComponent.
+    void DiagnoseSnapState();
+    bool bSnapDiagLogged = false;
+    // Helper: dump one node's components/collision for SNAPDIAG.
+    void LogNodeSnapState(AFGResourceNodeBase* Node, const TCHAR* Label) const;
+    // redesign-12 VALIDDIAG (diagnostics only): collision (r10) + manager registration (r11) are BOTH
+    // ruled out — the Mk1 hologram FINDS our node but REJECTS it at VALIDATION. One-shot side-by-side log
+    // of OURS vs a nearby VANILLA node on the validation-relevant props/methods the extractor hologram's
+    // CanOccupyResource/IsAllowedOnResource path reads, so the next log names the exact differing gate.
+    void DiagnoseValidationGate();
+    bool bValidDiagLogged = false;
+    void LogNodeValidationState(AFGResourceNode* Node, const TCHAR* Label) const;
+    // redesign-11 (REGISTER NODES WITH THE RESOURCE-NODE MANAGER). The Miner Mk1 extractor hologram finds
+    // the node to snap to via AFGResourceNodeManager::GetClosestNode over the manager's mResourceNodes
+    // list. Our runtime-spawned nodes never auto-join it (it's built from level nodes at world init), so
+    // Mk1 snap fails even with a vanilla collision byte-match. Register each spawned node into mResourceNodes
+    // at spawn AND on adopt-after-reload (the list is runtime, not save-persisted). Friend access. Idempotent.
+    // Resolve the live AFGResourceNodeManager instance by actor iteration (its static Get(UWorld*) is NOT
+    // dll-exported — LNK2019 if called). One manager per world.
+    class AFGResourceNodeManager* GetNodeManager() const;
+    void RegisterNodeWithManager(AFGResourceNode* Node);
+    // redesign-11 SECONDARY: when we hide an original (SuppressOriginalNodes), remove it from mResourceNodes
+    // so the player can't place a Mk1 on an invisible ghost original. Only ever removes originals we hid.
+    void DeregisterNodeFromManager(AFGResourceNodeBase* Node);
+    // REGDIAG: one-shot — log the manager's mResourceNodes count + whether our node is Contains()'d, so the
+    // next test confirms our nodes joined the manager (mirrors how SNAPDIAG confirmed the collision match).
+    bool bRegDiagLogged = false;
     // Spawn-on-discovery: true if any player is within SpawnRadius of Loc.
     bool IsLocationNearAnyPlayer(const FVector& Loc, float RadiusCm) const;
-    // FIX 1: DespawnFarNewNodes removed — materialized new nodes are kept for the
-    // session (despawn-back-to-data caused disappearing/only-visual nodes).
-    // Wipe-on-reroll: hide every original vanilla node + its rock when it streams
-    // in, unless the spot is occupied or reused by the active new layout. Driven
-    // by the persistent OriginalNodeRecord so it works across sessions.
+    // redesign-1 (Hide & Replace): hide EVERY unoccupied original node (vanilla AND modded) + its
+    // rock whenever it streams in. This IS the new core — all unoccupied originals are gone, their
+    // resources live on as our spawned relocated nodes. Occupied/pinned originals are never touched.
+    // Driven by the persistent OriginalNodeRecord so it works across sessions and stream-ins.
     void SuppressOriginalNodes();
-    // Build/refresh the persistent record of all original vanilla node locations
-    // (used by SuppressOriginalNodes). Captured at roll time from the layout.
+    // Build/refresh the persistent record of EVERY unoccupied original node location (vanilla AND
+    // modded) so SuppressOriginalNodes can hide them. Captured at roll time from the layout.
     void CaptureOriginalNodeRecord();
     void SettleNewNodesNearPlayers();
     void ReassociateOrphanedExtractors();
@@ -238,101 +248,64 @@ private:
     // states the exact gate. Runs at roll time.
     void DiagnoseModdedNodeEligibility(bool bIncludeModded, bool bIncludeLiquid) const;
     TSet<FString> ModdedEligibilityLogged;
+    // redesign-5 SECONDARY: distinct node-class|resource-class keys already logged by the UPSTREAM-SCAN
+    // diagnostic at the top of the initial-roll node loop (so each class is reported once, not per node).
+    TSet<FString> UpstreamScanLogged;
+    // redesign-6 FIX 2: one-shot diagnostic — walk the full class hierarchy of every distinct actor whose
+    // class name/path contains "esc_" or "AllMinable", so we learn their REAL base type (the analyst
+    // proved esc_ nodes are NOT AFGResourceNode; this names what they actually are). Runs once per roll.
+    void DiagnoseEscClassHierarchy();
     // True if the node has an extractor or a portable miner on it.
     bool IsNodeOccupiedAnyway(const AFGResourceNode* Node) const;
-    // Swaps the rock mesh carried by the node actor itself (vanilla layouts
-    // have no paired AFGNodeMeshActor). Visuals are donated by live nodes
-    // that natively carry the target resource (version-proof, covers modded
-    // ores); the static asset-path table is the fallback. Returns true if a
-    // mesh was applied.
-    bool ApplyNodeOwnMesh(AFGResourceNode* Node, UClass* ResourceClass, const FNodeShuffleEntry& Entry);
-    // INCREMENTAL DONOR CAPTURE (visual-6): runs every tick (NOT one-shot). The
-    // one-shot capture only saw the partially-streamed world at roll time, so it
-    // missed any resource whose nodes had not streamed in yet (the log's "10 of
-    // 12" — oil + the modded lead ore had no donor and rendered a wrong rock).
-    // Now we capture a missing donor whenever a live node of that resource
-    // streams in, until every ASSIGNED resource is covered. Liquids (oil) are
-    // captured as a decal/native-rebuild donor, not a rock mesh.
-    void CaptureDonorVisuals();
-    bool bDonorsRehydrated = false;
-    // True once every distinct assigned resource in the active layout has a donor
-    // (real or fallback) — lets the incremental capture stop scanning.
-    bool bAllDonorsCovered = false;
-    // Per-resource coverage diagnostic: emitted once when a resource first gets a
-    // donor, stating whether it is a REAL live-node donor or a FALLBACK.
-    TSet<FString> DonorCoverageLogged;
+    // FIX B: true if this actor is a fracking core or satellite (by node TYPE, not
+    // mesh name) — those wells (core + satellites + activator) are left EXACTLY as
+    // vanilla: never deactivated, retyped, relocated, re-skinned, or rock-hidden.
+    static bool IsFrackingActor(const AActor* Actor);
 
-    // How a resource's visual is reproduced.
-    enum class EDonorKind : uint8
-    {
-        SolidMesh,  // stamp mesh + materials + world scale onto a rock component
-        Liquid,     // oil/liquid: rebuild the node's native decal from its descriptor
-    };
-    struct FDonorVisual
-    {
-        TWeakObjectPtr<UStaticMesh> Mesh;
-        TArray<TWeakObjectPtr<UMaterialInterface>> Materials;
-        FTransform RelativeTransform;
-        EDonorKind Kind = EDonorKind::SolidMesh;
-        bool bIsFallback = false;   // true when not captured from a real live node
-    };
-    TMap<FString, FDonorVisual> DonorVisuals;   // resource class path -> look
-
-    // DONOR-HYGIENE (visual-9): the world is full of modded PLACEHOLDER nodes that
-    // all reuse ONE shared rock mesh (e.g. AllMinable/AlkaLib reuse
-    // 'ResourceNode_quartz' for dozens of resources). Capturing a donor from such a
-    // node poisons a resource's look (iron's rock turns to quartz) and the bad donor
-    // is then persisted and spread map-wide. The cure is a generic invariant:
-    //   ONE real rock mesh -> AT MOST ONE resource's donor.
-    // We track which mesh is already claimed as a REAL donor and reject any other
-    // resource from claiming that same mesh; a mesh that several resources try to
-    // claim is a shared placeholder and is rejected for all but its rightful owner
-    // (the resource whose NATIVE nodes actually use it). Keyed by mesh path name so
-    // it survives weak-ptr churn. Built from DonorVisuals + revalidated on load.
-    TMap<FString, FString> RealDonorMeshOwner; // rock mesh path -> resource that owns it
-    // Returns true if MeshPath is already the REAL donor mesh of a resource OTHER
-    // than ForResourcePath (i.e. claiming it here would be placeholder pollution).
-    bool IsMeshClaimedByOtherResource(const FString& MeshPath, const FString& ForResourcePath) const;
-    // Records MeshPath as the real-donor mesh owned by ResourcePath (one-to-one map).
-    void ClaimRealDonorMesh(const FString& MeshPath, const FString& ResourcePath);
-    // Revalidates rehydrated/persisted donors against the one-mesh-one-resource
-    // invariant: drops any persisted REAL donor whose mesh collides with another
-    // resource's real donor (keeping the better-justified owner) so a polluted
-    // SaveGame donor is never trusted. Runs once after rehydrate.
-    void RevalidatePersistedDonors();
-    bool bPersistedDonorsRevalidated = false;
-
-    // FIX 2: write a captured donor into the persisted store (and update the in-
-    // memory DonorVisuals). A real (non-fallback) capture overwrites a prior
-    // fallback record for the same resource. MeshPath/MaterialPaths are soft paths.
-    // (Declared after FDonorVisual so the parameter type is complete.)
-    void PersistDonor(const FString& ResourcePath, const FDonorVisual& Donor);
-    // FIX 2: on first apply of a session, rebuild DonorVisuals from PersistedDonors
-    // (resolving soft paths via the on-disk asset). This is what makes a reloaded
-    // shuffled save re-stamp the CORRECT rock — no pristine live node needed, so no
-    // deposit-mesh fallback. Real donors still captured live for any resource not
-    // yet persisted (e.g. first-ever roll). Idempotent; runs once.
-    void RehydrateDonorsFromPersisted();
-    // Set of resource paths still needing a real (non-fallback) donor; shrinks as
-    // live nodes stream in. Drives the incremental rescan + coverage logging.
-    TSet<FString> AssignedResourcesNeedingDonor;
-    bool bDonorTargetsBuilt = false;
-    // Re-applies the native visual (mesh or oil decal) a node draws for its CURRENT
-    // (overridden) resource descriptor. Used for liquid donors and as the modded
-    // fallback when no donor mesh exists. Friend access to UpdateMeshFromDescriptor.
+    // redesign-1 (Hide & Replace). The 21-build reskin saga is GONE. We no longer touch any
+    // existing node's rock: every UNOCCUPIED original node is hidden whole-actor and its resource
+    // is re-spawned as OUR OWN node at a relocated location. This is the visual for those spawned
+    // nodes — one mod-owned AFGNodeMeshActor at the node's OWN transform (no significance fight, no
+    // instanced wall, no offset). Vanilla resource -> authored ResourceNode_<X>_01 mesh+materials;
+    // MODDED resource (no authored entry) -> the quartz placeholder (Desc_RawQuartz_C visual).
+    // Strong-ref'd in SpawnedMeshActors (decay-proof). Liquids draw a decal instead (no rock).
+    void SpawnVisualRockForNode(AFGResourceNode* Node, UClass* ResourceClass, const FGuid& EntryGuid);
+    // Resolve & cache a resource's authored node MESH (the big node rock ResourceNode_<X>_01, NOT
+    // the deposit outcrop). Null if the resource has no table entry (-> caller uses the quartz
+    // placeholder for modded resources).
+    UStaticMesh* ResolveNodeMesh(UClass* ResourceClass);
+    TMap<FString, TWeakObjectPtr<UStaticMesh>> NodeMeshCache;
+    // Resolve & cache a resource's authored PER-SLOT node materials from the table. Empty when the
+    // resource has no table entry.
+    const TArray<TWeakObjectPtr<UMaterialInterface>>* ResolveNodeMaterials(UClass* ResourceClass);
+    TMap<FString, TArray<TWeakObjectPtr<UMaterialInterface>>> NodeMaterialCache;
+    // The quartz placeholder visual (mesh + materials) used for any spawned node whose resource has
+    // no authored table entry (modded resources: esc_/lithium/etc.). Resolved from Desc_RawQuartz_C.
+    UStaticMesh* GetQuartzPlaceholderMesh();
+    const TArray<TWeakObjectPtr<UMaterialInterface>>* GetQuartzPlaceholderMaterials();
+    // redesign-1: place the starter node set (config) near the captured player-start on the FIRST
+    // roll of a brand-new game. Drawn from the pool when possible. Spawned as normal new entries.
+    void AppendStarterNodes(TArray<FNodeShuffleEntry>& NewLayout, FRandomStream& Rng,
+                            const TArray<FVector>& AvoidLocations);
+    // Re-applies the native visual (mesh-actor refresh or oil/gas decal) a node draws
+    // for its CURRENT descriptor, by invoking the game's own OnRep_ResourceClassOverride via
+    // ProcessEvent. Handles liquids (oil decal, no rock) and the no-mesh-actor case.
     void RebuildNodeNativeVisual(AFGResourceNode* Node);
+    // Per-pass spawned-visual coverage counters (reset + logged each ApplyLayout).
+    int32 SpawnedRockVanilla = 0;
+    int32 SpawnedRockQuartz = 0;
+    int32 SpawnedRockLiquid = 0;
+    // redesign-6 FIX 1: limit the per-node RENDERDIAG runtime-state log to the first N spawned + first N
+    // adopted nodes (so we get the truth without spamming thousands of lines). Session counters.
+    int32 RenderDiagSpawnLogged = 0;
+    int32 RenderDiagAdoptLogged = 0;
+    static constexpr int32 RenderDiagMax = 10;
+    // redesign-6 FIX 2: one-shot esc_/AllMinable class-hierarchy diagnostic done flag.
+    bool bEscClassHierarchyLogged = false;
 
-    // Ore-style vanilla nodes carry no mesh of their own: their rock is a
-    // separate level actor. Swept once per session by mesh-name + proximity.
-    void SweepRockComponents();
-    TMap<FGuid, TWeakObjectPtr<UStaticMeshComponent>> SweptRocks; // entry -> rock
-    bool bRocksSwept = false;
-    float LastRockSweepSeconds = 0.f;          // last (re)sweep time, for rate-limiting
     float LastOrphanSweepSeconds = 0.f;        // last orphan-rock cleanup, for rate-limiting
-    TSet<FGuid> RockSearchExhausted;           // entries proven to have no findable rock
-    // Hides node-rock meshes left with no node behind them (a node destroyed in
-    // an earlier layout then dropped from the pool by a re-roll). World-state
-    // based, so it needs no surviving entry. Rate-limited.
+    // redesign-1 backstop: hides any node-rock mesh left with no node behind it (a rare
+    // actor-independent rock at a suppressed original spot). World-state based, rate-limited.
     void OrphanRockCleanup();
     // Rock components already explained by OrphanRockCleanup's per-rock reason
     // log, so the reason for each is stated at most once (hidden OR why-not).
@@ -343,22 +316,12 @@ private:
     static bool IsNodeRockMeshName(const FString& MeshName, const TArray<FString>& ExtraPatterns);
     // Reads NodeShuffle_RockPatterns.json prefixes (best-effort; empty on miss).
     void LoadExtraRockPatterns(TArray<FString>& OutPatterns) const;
-    // A non-new entry that still needs its separate rock paired (inactive nodes
-    // to hide, or ore-style retypes to re-skin) sits near a player unpaired.
-    bool HasNonNewEntryNeedingRock() const;
 
-    // Correct world scale per rock-mesh name, measured once from real vanilla
-    // rocks in the level — so spawned new nodes match vanilla size instead of
-    // using guessed table scales (which were ~6x too big and got purged).
-    void CaptureRockScales();
-    TMap<FString, FVector> RockScaleByMesh;
-    bool bRockScalesCaptured = false;
-
-    // Catch-all: hide any NodeShuffle-owned mesh larger than a rock (a
-    // mis-skinned scenery "shelf"), logging its source for diagnosis.
-    void PurgePhantomMeshes();
     AFGNodeMeshActor* FindMeshActorForNode(AFGResourceNodeBase* Node) const;
+    // Returns the live original node for a path as AFGResourceNode (null for Base-only esc_ originals).
     AFGResourceNode* FindVanillaNodeByPath(const FString& Path) const;
+    // redesign-6 FIX 2: the live original as AFGResourceNodeBase (covers esc_ Base-only originals too).
+    AFGResourceNodeBase* FindOriginalBaseByPath(const FString& Path) const;
     static UClass* LoadClassByPath(const FString& Path);
     bool RaycastSettle(FNodeShuffleEntry& Entry, const AActor* IgnoreNode, const AActor* IgnoreMesh) const;
     // FIX A (land-only placement): true if a world point sits inside a streamed-in
@@ -373,7 +336,6 @@ private:
     bool RaycastGroundAt(const FVector& ProbeXY, float StartZ, const AActor* IgnoreNode,
                          const AActor* IgnoreMesh, FVector& OutLoc, FRotator& OutRot,
                          bool& bOutWater) const;
-    void DressSpawnedNode(AFGResourceNode* Node, FNodeShuffleEntry& Entry, UClass* ResourceClass);
     void LogLayoutSummary() const;
     // Writes RerollNow=false back to the live config and flushes it to disk so the
     // one-shot "Re-roll Now" toggle fires exactly once per enable. Returns true on
@@ -390,26 +352,17 @@ private:
     UPROPERTY(SaveGame) int32 LayoutVersion = 1;
     UPROPERTY(SaveGame) TArray<FNodeShuffleEntry> Layout;
 
-    // Persistent record of every original vanilla node location, used to suppress
-    // (hide node + rock) any original that streams in after a wipe-on-reroll —
-    // reliable across sessions, and the catch-all for orphan-rock ghosts. Rebuilt
-    // from the layout each roll.
+    // redesign-1: persistent record of EVERY unoccupied original node location (vanilla AND
+    // modded), used by SuppressOriginalNodes to hide each original whole-actor whenever it streams
+    // in. Reliable across sessions; the catch-all for orphan rocks. Rebuilt from the layout each roll.
     UPROPERTY(SaveGame) TArray<FNodeShuffleSuppressedOriginal> OriginalNodeRecord;
 
-    // LOSSLESS DEACTIVATION (build lossless-5): paths of vanilla nodes the current
-    // layout marks inactive. These nodes are HIDDEN, not destroyed, so they remain
-    // in the world and can be reactivated by a later re-roll. Persisted so the hide
-    // can be re-applied reliably across sessions and a reactivation knows exactly
-    // which previously-hidden nodes to restore. Replaces the old "destroyed forever"
-    // model entirely.
-    UPROPERTY(SaveGame) TSet<FString> DeactivatedNodePaths;
-
-    // FIX 2: persisted real-rock donor visuals (resource path -> mesh/materials/
-    // scale as soft paths). Captured from pristine nodes at the initial roll and
-    // reused across reload/reroll so the correct rock is always re-stampable even
-    // when every live vanilla node is already retyped. Replaces visual-6's
-    // deposit-mesh fallback for any resource that has ever had a real donor.
-    UPROPERTY(SaveGame) TArray<FNodeShuffleDonorRecord> PersistedDonors;
+    // redesign-1: STARTER NODES. Captured player-start world location (the player pawn's position at
+    // the earliest tick it exists on a brand-new game) and whether starters have already been placed.
+    // Both SaveGame so starters are placed exactly once per save and never on an existing save.
+    UPROPERTY(SaveGame) bool bStarterNodesPlaced = false;
+    UPROPERTY(SaveGame) bool bPlayerStartCaptured = false;
+    UPROPERTY(SaveGame) FVector PlayerStartLocation = FVector::ZeroVector;
 
     // ---- session state ----
     FTimerHandle TickTimerHandle;
@@ -418,12 +371,15 @@ private:
     bool bDidInitialApply = false;
     bool bDepositSweepDone = false;
 
-    // Live actors for new-node entries (spawned this session, transient).
+    // Live nodes for new-node entries (spawned this session + adopted-on-load). redesign-5: the visual
+    // rock is now a RockMesh subobject OF each node (no separate rock actors — that machinery is gone).
     UPROPERTY() TMap<FGuid, AFGResourceNode*> SpawnedNodes;
-    UPROPERTY() TMap<FGuid, AActor*> SpawnedMeshActors;
 
-    // Cache: vanilla path -> live node, rebuilt when stale.
-    TMap<FString, TWeakObjectPtr<AFGResourceNode>> VanillaNodeCache;
+    // Cache: original-node path -> live BASE node, rebuilt when stale. redesign-6 FIX 2: broadened from
+    // AFGResourceNode to AFGResourceNodeBase so esc_ (Base-only) originals can be found + hidden too.
+    TMap<FString, TWeakObjectPtr<AFGResourceNodeBase>> VanillaNodeCache;
+    // Node -> its own AFGNodeMeshActor (engine back/forward link), rebuilt every ApplyLayout pass.
+    // Used by SuppressOriginalNodes to hide an original node's paired mesh actor on stream-in.
     TMap<TWeakObjectPtr<AFGResourceNodeBase>, TWeakObjectPtr<AFGNodeMeshActor>> MeshActorCache;
-    bool bMeshActorCacheBuilt = false;
+    void RebuildMeshActorCache();
 };

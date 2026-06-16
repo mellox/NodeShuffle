@@ -77,6 +77,20 @@ struct NODESHUFFLE_API FNodeShuffleConfigStruct
     UPROPERTY(BlueprintReadWrite)
     bool EnableExperimentalFeatures{false};
 
+    // redesign-1 (Hide & Replace): on a BRAND-NEW game's first roll only, place a
+    // starter set of nodes (2 Iron, 2 Limestone, 1 Copper, PURE) within
+    // StarterNodeRadiusMeters of the player's real spawn point, so the early game is
+    // playable no matter how the shuffle relocated the world's nodes. Drawn from the
+    // relocated pool when possible (preserving counts), spawned additionally if the
+    // pool can't supply a type. NEVER placed on an existing save.
+    UPROPERTY(BlueprintReadWrite)
+    bool EnableStarterNodes{true};
+
+    // redesign-1: radius (metres) around the player's captured spawn location within
+    // which the starter nodes are placed. Default 200 m.
+    UPROPERTY(BlueprintReadWrite)
+    int32 StarterNodeRadiusMeters{200};
+
     static FNodeShuffleConfigStruct GetActiveConfig(UObject* WorldContext);
 };
 

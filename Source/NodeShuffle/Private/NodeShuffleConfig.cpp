@@ -147,5 +147,13 @@ void UNodeShuffleConfig::PostInitProperties()
         TEXT("Enable Experimental Features"),
         TEXT("Enables experimental oil/liquid node shuffling. When ON, crude oil nodes are scanned, shuffled and spawned alongside ore nodes, and the new oil locations can be mined with oil extractors. This is in-development and not yet proven stable — leave it OFF for a guaranteed-stable solid-resource-only shuffle. (Applies when the layout is rolled, so toggle it then re-roll.)"));
 
+    AddBool(TEXT("EnableStarterNodes"), true,
+        TEXT("Starter Nodes Near Spawn"),
+        TEXT("On a BRAND-NEW game only, place a small starter set (2 Iron, 2 Limestone, 1 Copper, Pure purity) near where you spawn, so the early game is always playable no matter how the shuffle moved the world's nodes. Taken from the shuffled pool when possible. Never added to an existing save."));
+
+    AddInt(TEXT("StarterNodeRadiusMeters"), 200, 50, 1000,
+        TEXT("Starter Node Radius (m)"),
+        TEXT("How far from your spawn point the starter nodes may be placed. Smaller keeps them right at your feet; larger spreads them out. Only used on a brand-new game's first roll."));
+
     RootSection = Root;
 }
