@@ -12,6 +12,11 @@ and their purity — so every world is a fresh puzzle, while staying completable
   destroyed, so it's save-safe and reversible).
 - **Adds ~100+ new node locations** — spawned across the map, settled onto the
   terrain, visible, solid, and mineable like any vanilla node.
+- **Fully buildable** — relocated and new nodes accept hand-mining, portable
+  miners, **and Miner buildings (Mk.1 and up)**; placed miners keep their node
+  through save/load and re-roll.
+- **Starter nodes (optional)** — on a brand-new game, a small guaranteed set
+  near spawn (Iron/Limestone/Copper) keeps the early game playable.
 - **Per-save, deterministic** — the layout is rolled once per save from a seed
   and persists; identical on every reload. Never re-rolled unless you opt in.
 - **Balance guarantees** — every vanilla resource keeps a configurable minimum
@@ -29,19 +34,26 @@ All settings are in the in-game **Mods → Node Shuffle** panel (and persist to
 
 | Setting | Default | Meaning |
 |---|---|---|
-| Enabled | on | master switch |
-| Seed Override | 0 | 0 = random seed at first roll; non-zero = fixed seed |
-| Allow Re-roll Of Existing Saves | off | let a new seed re-roll an existing save at next load |
-| Active Percent Of Node Pool | 70 | % of the total pool (vanilla + new) that is active |
-| New Node Locations | 100 | how many new locations to generate (at first roll) |
-| Minimum Active Nodes Per Resource | 5 | completability floor (vanilla resources only) |
-| Randomize Purity | on | shuffle purities from the vanilla distribution |
-| Allow Vanilla Nodes To Disappear | on | when off, every vanilla node stays active |
-| Include Modded Nodes | on | shuffle nodes added by other mods too |
-| Enable Experimental Features | off | master switch for in-development features; this version has none, so it does nothing |
+| Enabled | on | Master switch. Off = nothing spawns and no vanilla nodes deactivate (stored changes persist). |
+| Seed Override | 0 | 0 = random seed at first roll; non-zero = fixed seed. |
+| Allow Re-roll Of Existing Saves | off | Lets a non-zero Seed Override re-roll an existing save at next load. |
+| Re-roll Now (applies once) | off | Turn on, then load the save → re-rolls the whole layout **once**, then auto-turns itself off. The reliable way to re-roll. |
+| Active Percent Of Node Pool | 70 | % of all locations (vanilla + new) that are active. |
+| New Node Locations | 100 | How many extra locations to generate (0–300). |
+| Minimum Active Nodes Per Resource | 5 | Completability floor for vanilla resources. |
+| Minimum Active Nodes Per Modded Resource | 2 | Same floor for resources added by other mods (0 = no floor). |
+| Randomize Purity | on | Shuffle purities, dealt from the vanilla distribution (overall balance preserved). |
+| Allow Vanilla Nodes To Disappear | on | Off = every vanilla node stays active; only new locations roll. |
+| Include Modded Nodes | on | Shuffle nodes added by other mods too. |
+| Spawn-On-Discovery Radius (m) | 600 | New nodes materialize once you come within this range and the terrain has streamed in. |
+| Enable Experimental Features | off | Experimental **oil/liquid** node shuffling (in development — leave off for a guaranteed-stable solid-only shuffle). |
+| Enable Diagnostic Logging (Experimental) | off | Verbose placement/node logging to `FactoryGame.log` for troubleshooting. The mod's fixes work whether this is on or off. |
+| Starter Nodes Near Spawn | on | New game only: place a small starter set (2 Iron, 2 Limestone, 1 Copper, Pure) near spawn. |
+| Starter Node Radius (m) | 200 | How far from spawn the starter nodes may sit. |
 
-Generation-time settings (seed, counts, percentages) affect a save only at its
-first roll or an explicit re-roll.
+Generation-time settings (seed, counts, percentages, purity) affect a save only
+at its first roll or an explicit re-roll. Toggles like Diagnostic Logging apply
+live.
 
 ### Advanced data files
 
@@ -69,8 +81,11 @@ target and package with Alpakit, or via UAT `PackagePlugin -DLCName=NodeShuffle`
 
 ## Logging
 
-Quiet by default (session summaries only). For detailed per-node output, run in
-the console: `Log LogNodeShuffle Verbose`.
+Quiet by default (session summaries only). For troubleshooting, enable
+**Enable Diagnostic Logging** in the in-game Mods → Node Shuffle panel (writes
+verbose placement / node diagnostics to `FactoryGame.log`; toggles live, off by
+default). For detailed per-node console output you can also run
+`Log LogNodeShuffle Verbose`.
 
 ## License
 
