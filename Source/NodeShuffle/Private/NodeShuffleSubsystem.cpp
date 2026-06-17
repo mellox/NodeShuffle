@@ -2567,6 +2567,14 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
 
     // redesign-1: every recorded original is an UNOCCUPIED node we want GONE (vanilla AND modded).
     // The only protection is live occupancy (a miner the player built) — checked per node.
+    // DIAGNOSTIC FUNNEL (issue: originals not hiding on reload). Counts WHY each near record does/doesn't
+    // hide, and — crucially — for path-lookup MISSES, whether a live node exists AT the record's LOCATION
+    // (proximity-resolvable). If MissedByPath is high AND ProxResolvable ≈ MissedByPath, the bug is path
+    // instability across save/reload (fix = match by location, not path). Gated behind EnableDiagnostics.
+    const bool bDiagHide = FNodeShuffleModule::AreDiagnosticsEnabled();
+    int32 DbgNear = 0, DbgFoundPath = 0, DbgAlreadyHidden = 0, DbgOcc = 0, DbgMissedPath = 0, DbgProxResolvable = 0;
+    bool bLoggedSample = false;
+
     int32 NodesHidden = 0;
     for (const FNodeShuffleSuppressedOriginal& Rec : OriginalNodeRecord)
     {
@@ -2579,15 +2587,43 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
         {
             continue;
         }
+        if (bDiagHide) { DbgNear++; }
 
         // Hide the original node actor whole (this is what removes its rock, INCLUDING an instanced
         // one — the analyst-validated mechanism). Never touch an occupied node (a built miner).
         // redesign-6 FIX 2: use the BASE finder so esc_ (Base-only) originals are hidden too. Occupancy
         // is checked on the Base (IsOccupied is a Base method) plus the Node-only portable-miner check.
-        if (AFGResourceNodeBase* Node = FindOriginalBaseByPath(Rec.VanillaNodePath))
+        AFGResourceNodeBase* Node = FindOriginalBaseByPath(Rec.VanillaNodePath);
+        if (bDiagHide && !Node)
         {
+            // Path lookup MISSED. Is there a live original AT this location anyway (proximity-resolvable)?
+            DbgMissedPath++;
+            AFGResourceNodeBase* ProxNode = nullptr;
+            for (const auto& Pair : VanillaNodeCache)
+            {
+                AFGResourceNodeBase* Live = Pair.Value.Get();
+                if (Live && FVector::DistSquared(Live->GetActorLocation(), Rec.Location) < FMath::Square(RockOwnRange))
+                { ProxNode = Live; break; }
+            }
+            if (ProxNode)
+            {
+                DbgProxResolvable++;
+                if (!bLoggedSample)
+                {
+                    bLoggedSample = true;
+                    UE_LOG(LogNodeShuffle, Display,
+                        TEXT("HIDEDIAG SAMPLE path-MISS but live node AT location: recPath='%s' livePath='%s' liveClass='%s' dist=%.0f"),
+                        *Rec.VanillaNodePath, *ProxNode->GetPathName(), *ProxNode->GetClass()->GetName(),
+                        FVector::Dist(ProxNode->GetActorLocation(), Rec.Location));
+                }
+            }
+        }
+        if (Node)
+        {
+            if (bDiagHide) { DbgFoundPath++; if (Node->IsHidden()) { DbgAlreadyHidden++; } }
             AFGResourceNode* AsNode = Cast<AFGResourceNode>(Node);
             const bool bOcc = Node->IsOccupied() || (AsNode && IsNodeOccupiedAnyway(AsNode));
+            if (bDiagHide && bOcc) { DbgOcc++; }
             if (!bOcc)
             {
                 bool bChanged = false;
@@ -2671,6 +2707,14 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
         UE_LOG(LogNodeShuffle, Display,
             TEXT("Hide originals: hid %d original nodes and %d stray original rocks; deregistered %d from scanner (running total) (Hide & Replace)"),
             NodesHidden, RocksHidden, ScannerDeregisterCount);
+    }
+    if (bDiagHide && DbgNear > 0)
+    {
+        // The decisive line: of records NEAR the player, how many resolved by PATH vs MISSED, and of the
+        // misses how many have a live node AT their location (proximity-resolvable = path-instability bug).
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("HIDEDIAG funnel: recordsTotal=%d near=%d | foundByPath=%d (alreadyHidden=%d occupied=%d) | MISSEDbyPath=%d of which proximityResolvable=%d"),
+            OriginalNodeRecord.Num(), DbgNear, DbgFoundPath, DbgAlreadyHidden, DbgOcc, DbgMissedPath, DbgProxResolvable);
     }
 }
 
