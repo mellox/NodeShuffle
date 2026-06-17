@@ -1417,6 +1417,15 @@ void ANodeShuffleSubsystem::ApplyLayout()
     // props/methods (collision + registration already ruled out; the gate is acceptance/validation).
     DiagnoseValidationGate();
 
+    // CAPTURE-ON-DISCOVERY (experimental): pull any eligible original that streamed in near a player and
+    // was NOT captured at roll time (Satisfactory streams nodes, so the roll misses regions loaded later)
+    // into the shuffle — reassign + record-for-hiding + relocated entry. MUST run BEFORE
+    // SuppressOriginalNodes so the just-added record is hidden in this same pass (no one-tick duplicate).
+    if (Config.CaptureUndiscoveredNodes)
+    {
+        CaptureUndiscoveredNodes(Config);
+    }
+
     // redesign-1 CORE: hide EVERY unoccupied original node (vanilla AND modded) + its rock whenever
     // it streams in. This is what removes the world's original nodes so only our relocated nodes and
     // the untouched occupied originals remain. Reliable across sessions via the persistent record.
@@ -2553,6 +2562,167 @@ void ANodeShuffleSubsystem::CaptureOriginalNodeRecord()
         OriginalNodeRecord.Add(Rec);
     }
     UE_LOG(LogNodeShuffle, Display, TEXT("Captured original-node record: %d vanilla locations"), OriginalNodeRecord.Num());
+}
+
+void ANodeShuffleSubsystem::AssignCapturedResource(const AFGResourceNodeBase* Node, uint8 NodeForm,
+    FString& OutResourcePath, TEnumAsByte<EResourcePurity>& OutPurity) const
+{
+    // Deterministic per node: seed from save seed XOR the node's stable path hash, so the same node always
+    // draws the same resource regardless of WHEN it is discovered (order-independent). Sample the existing
+    // layout's same-FORM distribution (which already encodes the roll's balance/floors) so captured nodes
+    // reinforce the existing shuffle. Captured nodes always take a VANILLA (/Game/) resource for proper
+    // visuals (mirrors the roll's new-node rule); fall back to any same-form resource if none exist.
+    if (!Node) { OutResourcePath.Reset(); OutPurity = RP_Normal; return; }
+    FRandomStream Rng(static_cast<int32>(GetTypeHash(Node->GetPathName()) ^ static_cast<uint32>(SavedSeed)));
+    TArray<FString> Pile, VanillaPile;
+    TArray<TEnumAsByte<EResourcePurity>> PurityPile;
+    for (const FNodeShuffleEntry& E : Layout)
+    {
+        if (E.AssignedResourceClassPath.IsEmpty()) { continue; }
+        const uint8 EForm = E.ResourceForm != 0 ? E.ResourceForm : FormSolid;
+        if (EForm != NodeForm) { continue; }
+        Pile.Add(E.AssignedResourceClassPath);
+        if (E.AssignedResourceClassPath.StartsWith(TEXT("/Game/"))) { VanillaPile.Add(E.AssignedResourceClassPath); }
+        PurityPile.Add(E.AssignedPurity);
+    }
+    const TArray<FString>& Draw = VanillaPile.Num() > 0 ? VanillaPile : Pile;
+    if (Draw.Num() == 0) { OutResourcePath.Reset(); OutPurity = RP_Normal; return; }
+    OutResourcePath = Draw[Rng.RandRange(0, Draw.Num() - 1)];
+    if (PurityPile.Num() > 0) { OutPurity = PurityPile[Rng.RandRange(0, PurityPile.Num() - 1)]; }
+    else { OutPurity = EResourcePurity::RP_Normal; }
+}
+
+void ANodeShuffleSubsystem::CaptureUndiscoveredNodes(const FNodeShuffleConfigStruct& Config)
+{
+    TArray<FVector> Players;
+    for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+    {
+        if (const APlayerController* Pc = It->Get())
+        {
+            if (const APawn* Pawn = Pc->GetPawn()) { Players.Add(Pawn->GetActorLocation()); }
+        }
+    }
+    if (Players.Num() == 0) { return; }
+
+    constexpr float CapturePlayerRange = 30000.0f; // 300 m — same as the hide range
+    constexpr float SameSpotRadius     = 800.0f;   // 8 m — already-represented dedupe
+
+    // Build the dedupe set from the live layout + hide records: a candidate already in the layout (by path)
+    // or sitting at a known location is skipped. KnownLocs doubles as the relocation avoid-set; MapLocs is
+    // the bounding-box source for GenerateNewLocations (map-wide after a roll).
+    TSet<FString> KnownPaths;
+    TArray<FVector> KnownLocs, MapLocs;
+    KnownLocs.Reserve(Layout.Num() + OriginalNodeRecord.Num());
+    MapLocs.Reserve(Layout.Num());
+    for (const FNodeShuffleEntry& E : Layout)
+    {
+        if (!E.VanillaNodePath.IsEmpty()) { KnownPaths.Add(E.VanillaNodePath); }
+        KnownLocs.Add(E.Location);
+        MapLocs.Add(E.Location);
+    }
+    for (const FNodeShuffleSuppressedOriginal& R : OriginalNodeRecord)
+    {
+        if (!R.VanillaNodePath.IsEmpty()) { KnownPaths.Add(R.VanillaNodePath); }
+        KnownLocs.Add(R.Location);
+    }
+
+    int32 Captured = 0;
+    for (TActorIterator<AFGResourceNodeBase> It(GetWorld()); It; ++It)
+    {
+        AFGResourceNodeBase* Base = *It;
+        if (!IsValid(Base) || IsFrackingActor(Base)) { continue; }
+        if (Base->IsA<ANodeShuffleResourceNode>()) { continue; } // our own spawned nodes
+        if (Base->IsHidden()) { continue; }                       // already suppressed
+        const UClass* RC = Base->GetResourceClass();
+        if (!RC) { continue; }
+        const EResourceForm BF = Base->GetResourceForm();
+        if (BF == EResourceForm::RF_LIQUID || BF == EResourceForm::RF_GAS) { continue; } // solid only
+        if (Base->GetResourceNodeType() != EResourceNodeType::Node) { continue; }
+
+        const FVector L = Base->GetActorLocation();
+        bool bNear = false;
+        for (const FVector& P : Players) { if (FVector::DistSquared2D(P, L) < FMath::Square(CapturePlayerRange)) { bNear = true; break; } }
+        if (!bNear) { continue; }
+
+        const bool bModded = !RC->GetPathName().StartsWith(TEXT("/Game/"))
+            || !Base->GetClass()->GetPathName().StartsWith(TEXT("/Game/"));
+        AFGResourceNode* Node = Cast<AFGResourceNode>(Base);
+        if (bModded)
+        {
+            if (!Config.IncludeModdedNodes) { continue; }
+            if (Node && !IsEligibleVanillaNode(Node, true, false)) { continue; }
+        }
+        else
+        {
+            if (!Node || !IsEligibleVanillaNode(Node, Config.IncludeModdedNodes, false)) { continue; }
+        }
+
+        const FString Path = Base->GetPathName();
+        if (KnownPaths.Contains(Path)) { continue; }
+        bool bKnownLoc = false;
+        for (const FVector& K : KnownLocs) { if (FVector::DistSquared2D(K, L) < FMath::Square(SameSpotRadius)) { bKnownLoc = true; break; } }
+        if (bKnownLoc) { continue; }
+
+        const bool bOccupied = Base->IsOccupied() || (Node && IsNodeOccupiedAnyway(Node));
+        const EResourcePurity OrigPurity = NormalizePurity(Node ? Node->GetResourcePurity() : RP_Normal);
+        const FString OrigResPath = RC->GetPathName();
+
+        FNodeShuffleEntry E;
+        E.EntryGuid = FGuid::NewGuid();
+        E.OriginalResourceClassPath = OrigResPath;
+        E.OriginalPurity = OrigPurity;
+        E.NodeClassPath = Base->GetClass()->GetPathName();
+        E.ResourceForm = FormSolid;
+
+        if (bOccupied)
+        {
+            // Occupied (player's miner on it): pin in place, never relocate, never record for hiding.
+            E.bIsNewNode = false; E.bPinned = true; E.bActive = true;
+            E.VanillaNodePath = Path; E.Location = L; E.Rotation = Base->GetActorRotation();
+            E.AssignedResourceClassPath = OrigResPath; E.AssignedPurity = OrigPurity;
+            Layout.Add(E);
+            KnownPaths.Add(Path); KnownLocs.Add(L);
+            Captured++;
+            continue;
+        }
+
+        // Unoccupied: record original for hiding + build a relocated spawned entry carrying a shuffled resource.
+        FNodeShuffleSuppressedOriginal Rec;
+        Rec.VanillaNodePath = Path; Rec.Location = L; Rec.bModdedOrigin = bModded;
+        OriginalNodeRecord.Add(Rec);
+        KnownPaths.Add(Path); KnownLocs.Add(L);
+
+        FString AssignedPath; TEnumAsByte<EResourcePurity> AssignedPurity = OrigPurity;
+        AssignCapturedResource(Base, FormSolid, AssignedPath, AssignedPurity);
+        if (AssignedPath.IsEmpty()) { AssignedPath = OrigResPath; AssignedPurity = OrigPurity; }
+
+        FRandomStream Rng(static_cast<int32>(GetTypeHash(Path) ^ static_cast<uint32>(SavedSeed)));
+        TArray<FVector> Spot;
+        GenerateNewLocations(Rng, MapLocs, KnownLocs, 1, Spot);
+        const FVector Dest = (Spot.Num() > 0) ? Spot[0] : L; // fallback: in-place (still hidden + respawned)
+
+        E.bIsNewNode = true;
+        E.VanillaNodePath = Path; // keep identity (redesign-6 FIX 3) so reroll dedupe skips it
+        E.Location = Dest;
+        E.Rotation = FRotator(0.f, Rng.FRandRange(0.f, 360.f), 0.f);
+        E.AssignedResourceClassPath = AssignedPath;
+        E.AssignedPurity = AssignedPurity;
+        E.bActive = true; E.bPinned = false; E.bRayCasted = false; E.OverlapNudges = 0;
+        Layout.Add(E);
+        KnownLocs.Add(Dest);
+        Captured++;
+    }
+
+    if (Captured > 0)
+    {
+        CapturedThisSessionCount += Captured;
+        if (FNodeShuffleModule::AreDiagnosticsEnabled())
+        {
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("CAPTUREDIAG: captured %d undiscovered original(s) this pass (session total %d; layout now %d entries, %d hide-records)"),
+                Captured, CapturedThisSessionCount, Layout.Num(), OriginalNodeRecord.Num());
+        }
+    }
 }
 
 void ANodeShuffleSubsystem::SuppressOriginalNodes()

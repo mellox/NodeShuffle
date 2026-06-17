@@ -71,6 +71,16 @@ struct NODESHUFFLE_API FNodeShuffleConfigStruct
     UPROPERTY(BlueprintReadWrite)
     bool RelocateModdedNodes{false};
 
+    // EXPERIMENTAL. Off by default. Satisfactory STREAMS resource nodes in/out with the
+    // world, so the roll only ever captures nodes loaded at roll time — nodes in regions
+    // you load later were never shuffled and sit visible at their original spots. When ON,
+    // such originals are captured the moment they stream in near you (resource reassigned,
+    // original hidden, a relocated copy spawned), making the shuffle complete across the
+    // whole map as you explore. Captured nodes are saved so they stay shuffled. Respects
+    // IncludeModdedNodes for modded originals. Off = only roll/re-roll-time-loaded nodes shuffle.
+    UPROPERTY(BlueprintReadWrite)
+    bool CaptureUndiscoveredNodes{false};
+
     // Spawn-on-discovery radius (metres). A new node only materializes (spawns
     // its actor + visual) once a player is within this distance of it AND the
     // terrain there has streamed in. Far, undiscovered nodes stay as data until
