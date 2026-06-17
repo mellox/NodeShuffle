@@ -2627,6 +2627,9 @@ void ANodeShuffleSubsystem::CaptureUndiscoveredNodes(const FNodeShuffleConfigStr
     }
 
     int32 Captured = 0;
+    // CAPTUREDIAG rejection funnel: count WHY near candidates are skipped, so a zero-capture pass is explained.
+    int32 DbgNearCand = 0, DbgRejType = 0, DbgRejEligible = 0, DbgRejKnownPath = 0, DbgRejKnownLoc = 0;
+    const TCHAR* SampleRejReason = nullptr; FString SampleRejInfo;
     for (TActorIterator<AFGResourceNodeBase> It(GetWorld()); It; ++It)
     {
         AFGResourceNodeBase* Base = *It;
@@ -2636,32 +2639,58 @@ void ANodeShuffleSubsystem::CaptureUndiscoveredNodes(const FNodeShuffleConfigStr
         const UClass* RC = Base->GetResourceClass();
         if (!RC) { continue; }
         const EResourceForm BF = Base->GetResourceForm();
-        if (BF == EResourceForm::RF_LIQUID || BF == EResourceForm::RF_GAS) { continue; } // solid only
-        if (Base->GetResourceNodeType() != EResourceNodeType::Node) { continue; }
 
         const FVector L = Base->GetActorLocation();
         bool bNear = false;
         for (const FVector& P : Players) { if (FVector::DistSquared2D(P, L) < FMath::Square(CapturePlayerRange)) { bNear = true; break; } }
         if (!bNear) { continue; }
+        DbgNearCand++; // a non-ours, visible, near candidate — the census would call this 'uncaptured'
+
+        if (BF == EResourceForm::RF_LIQUID || BF == EResourceForm::RF_GAS) { DbgRejType++; continue; } // solid only
+        if (Base->GetResourceNodeType() != EResourceNodeType::Node)
+        {
+            DbgRejType++;
+            if (!SampleRejReason) { SampleRejReason = TEXT("nodeType!=Node"); SampleRejInfo = FString::Printf(TEXT("type=%d res=%s"), (int32)Base->GetResourceNodeType(), *RC->GetName()); }
+            continue;
+        }
 
         const bool bModded = !RC->GetPathName().StartsWith(TEXT("/Game/"))
             || !Base->GetClass()->GetPathName().StartsWith(TEXT("/Game/"));
         AFGResourceNode* Node = Cast<AFGResourceNode>(Base);
+        const TCHAR* EligReason = TEXT("eligible");
+        bool bElig;
         if (bModded)
         {
-            if (!Config.IncludeModdedNodes) { continue; }
-            if (Node && !IsEligibleVanillaNode(Node, true, false)) { continue; }
+            bElig = Config.IncludeModdedNodes && (!Node || IsEligibleVanillaNodeReason(Node, true, false, EligReason));
+            if (!Config.IncludeModdedNodes) { EligReason = TEXT("modded off"); }
         }
         else
         {
-            if (!Node || !IsEligibleVanillaNode(Node, Config.IncludeModdedNodes, false)) { continue; }
+            bElig = Node && IsEligibleVanillaNodeReason(Node, Config.IncludeModdedNodes, false, EligReason);
+            if (!Node) { EligReason = TEXT("not AFGResourceNode"); }
+        }
+        if (!bElig)
+        {
+            DbgRejEligible++;
+            if (!SampleRejReason) { SampleRejReason = TEXT("ineligible"); SampleRejInfo = FString::Printf(TEXT("reason='%s' res=%s class=%s"), EligReason, *RC->GetName(), *Base->GetClass()->GetName()); }
+            continue;
         }
 
         const FString Path = Base->GetPathName();
-        if (KnownPaths.Contains(Path)) { continue; }
+        if (KnownPaths.Contains(Path))
+        {
+            DbgRejKnownPath++;
+            if (!SampleRejReason) { SampleRejReason = TEXT("inKnownPath"); SampleRejInfo = FString::Printf(TEXT("path=%s"), *Path); }
+            continue;
+        }
         bool bKnownLoc = false;
         for (const FVector& K : KnownLocs) { if (FVector::DistSquared2D(K, L) < FMath::Square(SameSpotRadius)) { bKnownLoc = true; break; } }
-        if (bKnownLoc) { continue; }
+        if (bKnownLoc)
+        {
+            DbgRejKnownLoc++;
+            if (!SampleRejReason) { SampleRejReason = TEXT("nearKnownLoc"); SampleRejInfo = FString::Printf(TEXT("loc=%s"), *L.ToCompactString()); }
+            continue;
+        }
 
         const bool bOccupied = Base->IsOccupied() || (Node && IsNodeOccupiedAnyway(Node));
         const EResourcePurity OrigPurity = NormalizePurity(Node ? Node->GetResourcePurity() : RP_Normal);
@@ -2713,15 +2742,13 @@ void ANodeShuffleSubsystem::CaptureUndiscoveredNodes(const FNodeShuffleConfigStr
         Captured++;
     }
 
-    if (Captured > 0)
+    CapturedThisSessionCount += Captured;
+    if (FNodeShuffleModule::AreDiagnosticsEnabled() && DbgNearCand > 0)
     {
-        CapturedThisSessionCount += Captured;
-        if (FNodeShuffleModule::AreDiagnosticsEnabled())
-        {
-            UE_LOG(LogNodeShuffle, Display,
-                TEXT("CAPTUREDIAG: captured %d undiscovered original(s) this pass (session total %d; layout now %d entries, %d hide-records)"),
-                Captured, CapturedThisSessionCount, Layout.Num(), OriginalNodeRecord.Num());
-        }
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("CAPTUREDIAG: captured %d (session %d) | nearCandidates=%d rejected: type=%d ineligible=%d inKnownPath=%d nearKnownLoc=%d | sample: %s [%s]"),
+            Captured, CapturedThisSessionCount, DbgNearCand, DbgRejType, DbgRejEligible, DbgRejKnownPath, DbgRejKnownLoc,
+            SampleRejReason ? SampleRejReason : TEXT("<none>"), *SampleRejInfo);
     }
 }
 
