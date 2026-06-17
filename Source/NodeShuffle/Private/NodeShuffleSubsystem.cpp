@@ -2784,52 +2784,31 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
     // instability across save/reload (fix = match by location, not path). Gated behind EnableDiagnostics.
     const bool bDiagHide = FNodeShuffleModule::AreDiagnosticsEnabled();
     int32 DbgNear = 0, DbgFoundPath = 0, DbgAlreadyHidden = 0, DbgOcc = 0, DbgMissedPath = 0, DbgProxResolvable = 0;
-    bool bLoggedSample = false;
 
     int32 NodesHidden = 0;
     for (const FNodeShuffleSuppressedOriginal& Rec : OriginalNodeRecord)
     {
+        // THE FIX (stale record location after re-roll). Resolve the live node BY PATH first, then test
+        // proximity against its REAL location. On a re-roll the pool is rebuilt from the saved Layout,
+        // whose entries store Location = the previous RELOCATED dest (the original's true spot was never
+        // persisted), so Rec.Location is NOT where the original sits. The old proximity test on Rec.Location
+        // therefore skipped records for nodes the player is standing right next to -> they never hid (the
+        // whole "uncaptured nodes" saga was this: the nodes WERE captured, just never hidden). Path lookup
+        // is an O(1)-ish cache hit, so resolving every record each pass is cheap. esc_ (Base-only) originals
+        // resolve via the BASE finder too.
+        AFGResourceNodeBase* Node = FindOriginalBaseByPath(Rec.VanillaNodePath);
+        if (!Node) { if (bDiagHide) { DbgMissedPath++; } continue; } // not streamed in (or genuinely gone)
+        const FVector NodeLoc = Node->GetActorLocation();
         bool bNear = false;
         for (const FVector& P : Players)
         {
-            if (FVector::DistSquared2D(P, Rec.Location) < FMath::Square(SuppressPlayerRange)) { bNear = true; break; }
+            if (FVector::DistSquared2D(P, NodeLoc) < FMath::Square(SuppressPlayerRange)) { bNear = true; break; }
         }
-        if (!bNear)
-        {
-            continue;
-        }
+        if (!bNear) { continue; }
         if (bDiagHide) { DbgNear++; }
 
-        // Hide the original node actor whole (this is what removes its rock, INCLUDING an instanced
-        // one — the analyst-validated mechanism). Never touch an occupied node (a built miner).
-        // redesign-6 FIX 2: use the BASE finder so esc_ (Base-only) originals are hidden too. Occupancy
-        // is checked on the Base (IsOccupied is a Base method) plus the Node-only portable-miner check.
-        AFGResourceNodeBase* Node = FindOriginalBaseByPath(Rec.VanillaNodePath);
-        if (bDiagHide && !Node)
-        {
-            // Path lookup MISSED. Is there a live original AT this location anyway (proximity-resolvable)?
-            DbgMissedPath++;
-            AFGResourceNodeBase* ProxNode = nullptr;
-            for (const auto& Pair : VanillaNodeCache)
-            {
-                AFGResourceNodeBase* Live = Pair.Value.Get();
-                if (Live && FVector::DistSquared(Live->GetActorLocation(), Rec.Location) < FMath::Square(RockOwnRange))
-                { ProxNode = Live; break; }
-            }
-            if (ProxNode)
-            {
-                DbgProxResolvable++;
-                if (!bLoggedSample)
-                {
-                    bLoggedSample = true;
-                    UE_LOG(LogNodeShuffle, Display,
-                        TEXT("HIDEDIAG SAMPLE path-MISS but live node AT location: recPath='%s' livePath='%s' liveClass='%s' dist=%.0f"),
-                        *Rec.VanillaNodePath, *ProxNode->GetPathName(), *ProxNode->GetClass()->GetName(),
-                        FVector::Dist(ProxNode->GetActorLocation(), Rec.Location));
-                }
-            }
-        }
-        if (Node)
+        // Hide the original node actor whole (this removes its rock, INCLUDING an instanced one). Never
+        // touch an occupied node (a built miner). Occupancy checked on the Base + the Node-only portable check.
         {
             if (bDiagHide) { DbgFoundPath++; if (Node->IsHidden()) { DbgAlreadyHidden++; } }
             AFGResourceNode* AsNode = Cast<AFGResourceNode>(Node);
