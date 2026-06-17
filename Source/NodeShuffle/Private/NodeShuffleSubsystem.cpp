@@ -1309,21 +1309,26 @@ void ANodeShuffleSubsystem::ApplyLayout()
     // mis-set 0 never disables all spawning.
     const float SpawnRadiusCm = FMath::Max(10000.f, static_cast<float>(Config.SpawnRadiusMeters) * 100.f);
 
-    // Rebuild the vanilla path cache when stale (level actors reload per session).
-    bool bCacheStale = VanillaNodeCache.Num() == 0;
-    for (const auto& Pair : VanillaNodeCache)
+    // Refresh the vanilla path cache EVERY pass (not just when empty). The cache feeds
+    // FindOriginalBaseByPath, which SuppressOriginalNodes uses to hide relocated originals. The old
+    // "build once when empty" logic only captured originals STREAMED IN at the first pass, so any
+    // original that streamed in later (as the player explored to it) was never cached → never hidden →
+    // it lingered visible at its old spot next to its relocated copy (the "un-hidden duplicate" bug,
+    // very visible after a big re-roll). Scan the BASE class (so esc_/Base-only originals are cached
+    // too) and incrementally ADD any newly-streamed original; also REFRESH an entry whose weak ptr went
+    // invalid (a node that unstreamed then re-streamed gets a new actor at the same path). Existing
+    // valid entries are untouched. Cost is one actor iteration per discovery tick — negligible.
+    int32 CacheAdded = 0;
+    for (TActorIterator<AFGResourceNodeBase> It(GetWorld()); It; ++It)
     {
-        if (!Pair.Value.IsValid()) { /* destroyed inactive nodes are expected */ }
+        if (It->IsA<ANodeShuffleResourceNode>()) { continue; } // our own spawned (relocated) nodes, not originals
+        TWeakObjectPtr<AFGResourceNodeBase>& Slot = VanillaNodeCache.FindOrAdd(It->GetPathName());
+        if (!Slot.IsValid()) { Slot = *It; CacheAdded++; }
     }
-    if (bCacheStale)
+    if (FNodeShuffleModule::AreDiagnosticsEnabled() && CacheAdded > 0)
     {
-        // redesign-6 FIX 2: iterate the BASE class so esc_ (Base-only) originals are cached + hidable.
-        // Skip our own spawned subclass (those are the relocated nodes, not originals).
-        for (TActorIterator<AFGResourceNodeBase> It(GetWorld()); It; ++It)
-        {
-            if (It->IsA<ANodeShuffleResourceNode>()) { continue; }
-            VanillaNodeCache.Add(It->GetPathName(), *It);
-        }
+        UE_LOG(LogNodeShuffle, Display, TEXT("CACHE-REFRESH: +%d newly-streamed originals cached (total %d) — now hidable"),
+            CacheAdded, VanillaNodeCache.Num());
     }
 
     // redesign-2 FIX 1: ONE-TIME adopt-on-load — map GUID-tagged restored spawned nodes back into
