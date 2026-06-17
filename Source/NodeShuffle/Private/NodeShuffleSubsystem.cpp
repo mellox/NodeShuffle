@@ -1238,6 +1238,9 @@ void ANodeShuffleSubsystem::ApplyLayout()
     bool bChangedWorld = false;
 
     const FNodeShuffleConfigStruct Config = FNodeShuffleConfigStruct::GetActiveConfig(this);
+    // Push the diagnostics toggle to the module so the HOLOGRAMHOOK logging gate tracks the
+    // config live (this pass runs on the discovery tick). OFF by default → clean user logs.
+    FNodeShuffleModule::SetDiagnosticsEnabled(Config.EnableDiagnostics);
     // Spawn-on-discovery radius (config metres -> cm). Clamp to a sane floor so a
     // mis-set 0 never disables all spawning.
     const float SpawnRadiusCm = FMath::Max(10000.f, static_cast<float>(Config.SpawnRadiusMeters) * 100.f);

@@ -15,4 +15,11 @@ public:
     // static helper can call the hologram's PROTECTED CanOccupyResource/IsAllowedOnResource on the resource
     // our trace hit, and log which check rejects our node (TrySnapToActor -> 0 with a valid resource).
     static void DbgLogAcceptance(class AFGResourceExtractorHologram* Hologram, class AActor* ResourceActor);
+
+    // Diagnostics gate (config-driven, OFF by default). The behavioral hooks (Mk1 accept-fix)
+    // ALWAYS run; only the verbose diagnostic LOGGING is gated by this so normal users get a
+    // clean log and zero overhead. The subsystem pushes the config value here each ApplyLayout
+    // pass, so toggling "Enable Diagnostic Logging" in the Mods menu takes effect live.
+    static void SetDiagnosticsEnabled(bool bEnabled);
+    static bool AreDiagnosticsEnabled();
 };

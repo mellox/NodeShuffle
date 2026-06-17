@@ -147,6 +147,10 @@ void UNodeShuffleConfig::PostInitProperties()
         TEXT("Enable Experimental Features"),
         TEXT("Enables experimental oil/liquid node shuffling. When ON, crude oil nodes are scanned, shuffled and spawned alongside ore nodes, and the new oil locations can be mined with oil extractors. This is in-development and not yet proven stable — leave it OFF for a guaranteed-stable solid-resource-only shuffle. (Applies when the layout is rolled, so toggle it then re-roll.)"));
 
+    AddBool(TEXT("EnableDiagnostics"), false,
+        TEXT("Enable Diagnostic Logging (Experimental)"),
+        TEXT("OFF by default. Turn ON only when troubleshooting (e.g. to capture why a miner won't place): the mod writes verbose placement / node diagnostics to FactoryGame.log. Leave OFF for normal play — it keeps your log clean and avoids any overhead. The mod's actual fixes are always active whether this is on or off."));
+
     AddBool(TEXT("EnableStarterNodes"), true,
         TEXT("Starter Nodes Near Spawn"),
         TEXT("On a BRAND-NEW game only, place a small starter set (2 Iron, 2 Limestone, 1 Copper, Pure purity) near where you spawn, so the early game is always playable no matter how the shuffle moved the world's nodes. Taken from the shuffled pool when possible. Never added to an existing save."));

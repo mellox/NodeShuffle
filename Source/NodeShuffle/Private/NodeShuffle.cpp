@@ -12,6 +12,14 @@
 
 DEFINE_LOG_CATEGORY(LogNodeShuffle);
 
+// Diagnostics gate. OFF by default; set from config (EnableDiagnostics) by the subsystem each
+// ApplyLayout pass. Game-thread only (placement hooks + config read both run on the game thread),
+// so a plain bool is sufficient. Gates the verbose HOLOGRAMHOOK logging ONLY — the Mk1 accept-hook
+// behavior is never gated.
+static bool GNodeShuffleDiagnosticsEnabled = false;
+void FNodeShuffleModule::SetDiagnosticsEnabled(bool bEnabled) { GNodeShuffleDiagnosticsEnabled = bEnabled; }
+bool FNodeShuffleModule::AreDiagnosticsEnabled() { return GNodeShuffleDiagnosticsEnabled; }
+
 namespace
 {
     // redesign-13: dump a component's FULL collision so the comparator (nodes the build trace DID hit:
@@ -47,6 +55,7 @@ namespace
 void FNodeShuffleModule::DbgLogAcceptance(AFGResourceExtractorHologram* Hologram, AActor* ResourceActor)
 {
     if (!Hologram || !ResourceActor) { return; }
+    if (!GNodeShuffleDiagnosticsEnabled) { return; } // diagnostics gated OFF by default (config: EnableDiagnostics)
     TScriptInterface<IFGExtractableResourceInterface> Res;
     Res.SetObject(ResourceActor);
     Res.SetInterface(Cast<IFGExtractableResourceInterface>(ResourceActor));
@@ -101,7 +110,7 @@ void FNodeShuffleModule::DbgLogAcceptance(AFGResourceExtractorHologram* Hologram
 void FNodeShuffleModule::StartupModule()
 {
     UE_LOG(LogNodeShuffle, Log, TEXT("NodeShuffle module loaded"));
-    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle BUILD 2026-06-16-redesign-23 LOADED ====="));
+    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle BUILD 2026-06-16-redesign-24 LOADED ====="));
 
 #if !WITH_EDITOR
     // redesign-13 HOLOGRAM HOOK (DIAGNOSTICS). r12 proved the Mk1 build trace NEVER hits our node (0 hits on
@@ -114,6 +123,7 @@ void FNodeShuffleModule::StartupModule()
         [](auto& Scope, const AFGResourceExtractorHologram* Self, const FHitResult& hitResult)
     {
         const bool bOriginal = Scope(Self, hitResult); // run the real check, READ but never Override()
+        if (!GNodeShuffleDiagnosticsEnabled) { return; } // logging gated OFF by default (config: EnableDiagnostics)
         AActor* HitActor = hitResult.GetActor();
         UPrimitiveComponent* HitComp = hitResult.GetComponent();
         static TSet<FString> LoggedHits;
@@ -154,6 +164,7 @@ void FNodeShuffleModule::StartupModule()
         [](auto& Scope, AFGResourceExtractorHologram* Self, const FHitResult& hitResult)
     {
         const bool r = Scope(Self, hitResult);
+        if (!GNodeShuffleDiagnosticsEnabled) { return; } // logging gated OFF by default (config: EnableDiagnostics)
         AActor* HitActor = hitResult.GetActor();
         const bool bOurs = HitActor && HitActor->GetClass()->GetName() == TEXT("NodeShuffleResourceNode");
         static TSet<FString> Logged;
@@ -210,9 +221,9 @@ void FNodeShuffleModule::StartupModule()
         if (IsOurNode(resource))
         {
             static bool bLoggedOnce = false;
-            if (!bLoggedOnce) { bLoggedOnce = true;
+            if (GNodeShuffleDiagnosticsEnabled && !bLoggedOnce) { bLoggedOnce = true;
                 UE_LOG(LogNodeShuffle, Display, TEXT("HOLOGRAMHOOK FORCE-ACCEPT IsAllowedOnResource->true (our node)")); }
-            Scope.Override(true); // accept our node; skip the BP_ResourceNode_C IsA() rejection
+            Scope.Override(true); // accept our node; skip the BP_ResourceNode_C IsA() rejection (ALWAYS active)
         }
     });
     SUBSCRIBE_UOBJECT_METHOD(AFGResourceExtractorHologram, CanOccupyResource,
@@ -222,9 +233,9 @@ void FNodeShuffleModule::StartupModule()
         if (IsOurNode(resource))
         {
             static bool bLoggedOnce = false;
-            if (!bLoggedOnce) { bLoggedOnce = true;
+            if (GNodeShuffleDiagnosticsEnabled && !bLoggedOnce) { bLoggedOnce = true;
                 UE_LOG(LogNodeShuffle, Display, TEXT("HOLOGRAMHOOK FORCE-ACCEPT CanOccupyResource->true (our node)")); }
-            Scope.Override(true);
+            Scope.Override(true); // ALWAYS active (the fix); only the log above is diagnostics-gated
         }
     });
 #endif

@@ -77,6 +77,13 @@ struct NODESHUFFLE_API FNodeShuffleConfigStruct
     UPROPERTY(BlueprintReadWrite)
     bool EnableExperimentalFeatures{false};
 
+    // Diagnostics gate. OFF by default so normal users get NO extra log output and
+    // no overhead. When ON, the mod writes verbose HOLOGRAMHOOK / placement / node
+    // diagnostics to FactoryGame.log for troubleshooting (e.g. Miner snap issues).
+    // The actual fixes (e.g. the Mk1 accept-hook) are always active regardless.
+    UPROPERTY(BlueprintReadWrite)
+    bool EnableDiagnostics{false};
+
     // redesign-1 (Hide & Replace): on a BRAND-NEW game's first roll only, place a
     // starter set of nodes (2 Iron, 2 Limestone, 1 Copper, PURE) within
     // StarterNodeRadiusMeters of the player's real spawn point, so the early game is
