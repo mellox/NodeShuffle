@@ -62,6 +62,15 @@ struct NODESHUFFLE_API FNodeShuffleConfigStruct
     UPROPERTY(BlueprintReadWrite)
     bool IncludeModdedNodes{true};
 
+    // EXPERIMENTAL. Off by default. When ON (and IncludeModdedNodes is on), a re-roll
+    // live-rescans modded SOLID nodes (e.g. AllMinable's esc_ item nodes) and adds them
+    // to the relocation pool, so they MOVE like vanilla nodes instead of shuffling in
+    // place. The re-roll pool is otherwise rebuilt from the saved layout (which never
+    // captured modded solids), so without this they stay put forever. Off = stable 1.1.1
+    // behavior (modded solids retype/visualize in place). Toggle ON then re-roll to apply.
+    UPROPERTY(BlueprintReadWrite)
+    bool RelocateModdedNodes{false};
+
     // Spawn-on-discovery radius (metres). A new node only materializes (spawns
     // its actor + visual) once a player is within this distance of it AND the
     // terrain there has streamed in. Far, undiscovered nodes stay as data until

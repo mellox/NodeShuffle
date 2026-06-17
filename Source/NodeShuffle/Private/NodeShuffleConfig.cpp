@@ -139,6 +139,10 @@ void UNodeShuffleConfig::PostInitProperties()
         TEXT("Include Modded Nodes"),
         TEXT("Shuffle nodes added by other mods too (e.g. AllMinable's item nodes, modded ores). Modded resources use the separate 'Minimum Active Nodes Per Modded Resource' floor, and non-vanilla resources may lack proper rock visuals for now. Applied when the layout is rolled."));
 
+    AddBool(TEXT("RelocateModdedNodes"), false,
+        TEXT("Relocate Modded Nodes (Experimental)"),
+        TEXT("EXPERIMENTAL, OFF by default. When ON (and 'Include Modded Nodes' is on), modded SOLID nodes (e.g. AllMinable's esc_ item nodes) MOVE to new locations on a re-roll, like vanilla nodes, instead of shuffling in place. Without this, a re-roll rebuilds the pool from the saved layout (which never captured modded solids), so they stay put. Leave OFF for stable behavior. Toggle ON, then re-roll, to apply."));
+
     AddInt(TEXT("SpawnRadiusMeters"), 600, 100, 5000,
         TEXT("Spawn-On-Discovery Radius (m)"),
         TEXT("New node locations only materialize (their rock + minable node appear) once you come within this many metres AND the terrain there has streamed in, so they always settle correctly on the ground. Smaller = more exploration, fewer live actors at once; larger = nodes pop in from further away. Far, undiscovered nodes stay as data until you reach them."));

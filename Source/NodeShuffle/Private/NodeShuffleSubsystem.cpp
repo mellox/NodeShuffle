@@ -543,6 +543,70 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                 TEXT("Experimental-form augment: experimental ON -> added %d live RF_LIQUID/RF_GAS nodes not in the saved pool to the reroll pool (captured into the layout for determinism)"),
                 ExperimentalAdded);
         }
+
+        // MODDED-SOLID augment (RelocateModdedNodes). The reroll pool is rebuilt from the saved Layout,
+        // which was captured with modded SOLID nodes (AllMinable esc_ item nodes) left IN PLACE — the
+        // initial roll admits them but a reroll, rebuilding from the layout, never re-introduces them,
+        // so they perpetually stay put. Mirror the experimental-form augment above, but for MODDED SOLID
+        // originals: live-scan the BASE class (esc_ nodes are NOT AFGResourceNode), admit eligible modded
+        // solids not already in the pool, and add them as real entries so the deal/convert/suppress path
+        // relocates them like vanilla. Gated behind the experimental RelocateModdedNodes toggle (default
+        // off) so stable behavior is byte-for-byte preserved. Liquid/gas modded nodes are handled by the
+        // experimental-form augment above; this is SOLID-only.
+        if (Config.RelocateModdedNodes && Config.IncludeModdedNodes)
+        {
+            int32 ModdedSolidAdded = 0;
+            for (TActorIterator<AFGResourceNodeBase> It(GetWorld()); It; ++It)
+            {
+                AFGResourceNodeBase* BaseNode = *It;
+                if (!IsValid(BaseNode) || IsFrackingActor(BaseNode)) { continue; }
+                if (BaseNode->IsA<ANodeShuffleResourceNode>()) { continue; } // never our own spawned nodes
+                const UClass* RC = BaseNode->GetResourceClass();
+                if (!RC) { continue; }
+                // MODDED only: resource class OR node class outside /Game/ (vanilla solids are already in the pool).
+                const bool bModded = !RC->GetPathName().StartsWith(TEXT("/Game/"))
+                    || !BaseNode->GetClass()->GetPathName().StartsWith(TEXT("/Game/"));
+                if (!bModded) { continue; }
+                // SOLID only here (liquid/gas modded handled above); plain Node type only (no fracking/geyser).
+                const EResourceForm BF = BaseNode->GetResourceForm();
+                if (BF == EResourceForm::RF_LIQUID || BF == EResourceForm::RF_GAS) { continue; }
+                if (BaseNode->GetResourceNodeType() != EResourceNodeType::Node) { continue; }
+                const FString Path = BaseNode->GetPathName();
+                if (ExistingPaths.Contains(Path)) { continue; }
+                ExistingPaths.Add(Path);
+
+                AFGResourceNode* Node = Cast<AFGResourceNode>(BaseNode); // null for Base-only esc_ nodes
+                const bool bOccupied = BaseNode->IsOccupied() || (Node && PortableMinerNodes.Contains(Node));
+                const EResourcePurity NodePurity = Node ? Node->GetResourcePurity() : RP_Normal;
+
+                FNodeShuffleEntry E;
+                E.EntryGuid = FGuid::NewGuid();
+                E.bIsNewNode = false;
+                E.VanillaNodePath = Path;
+                E.Location = BaseNode->GetActorLocation();
+                E.Rotation = BaseNode->GetActorRotation();
+                E.OriginalResourceClassPath = RC->GetPathName();
+                E.OriginalPurity = NormalizePurity(NodePurity);
+                E.AssignedResourceClassPath = E.OriginalResourceClassPath;
+                E.AssignedPurity = E.OriginalPurity;
+                E.ResourceForm = FormSolid;
+                E.bPinned = bOccupied;
+                E.bActive = true;
+                E.NodeClassPath = BaseNode->GetClass()->GetPathName();
+                NewLayout.Add(E);
+
+                VanillaLocations.Add(E.Location);
+                VanillaResourceCounts.FindOrAdd(E.OriginalResourceClassPath)++;
+                FormByResource.FindOrAdd(E.OriginalResourceClassPath) = FormSolid;
+                if (E.OriginalPurity != RP_MAX) { PurityDeckSource.Add(E.OriginalPurity); }
+                if (SpawnableNodeClassPath.IsEmpty()) { SpawnableNodeClassPath = E.NodeClassPath; }
+                VanillaCount++;
+                ModdedSolidAdded++;
+            }
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("Modded-solid augment (RelocateModdedNodes ON): added %d live modded SOLID nodes not in the saved pool to the reroll pool (they now relocate like vanilla; captured into the layout)"),
+                ModdedSolidAdded);
+        }
     }
     else
     {
@@ -1552,6 +1616,20 @@ void ANodeShuffleSubsystem::SpawnVisualRockForNode(AFGResourceNode* Node, UClass
 
     OurNode->DressRock(Mesh, MatPtrs, WantScale, RelOffset);
 
+    // DIAGNOSTIC (issue #1 snap off-center): the miner snaps to the node ORIGIN / GetPlacementLocation,
+    // but the rock renders at its mesh bounds center. Log both so we can measure the lateral offset (the
+    // rock's pivot is not its visual center). Gated behind EnableDiagnostics.
+    if (FNodeShuffleModule::AreDiagnosticsEnabled() && IsValid(OurNode->RockMesh))
+    {
+        const FVector NodeOrigin = OurNode->GetActorLocation();
+        const FVector RockCenter = OurNode->RockMesh->Bounds.Origin;
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("ROCK-CENTER node='%s' resource='%s' nodeOrigin=%s rockBoundsCenter=%s offset(center-origin)=%s"),
+            *OurNode->GetName(), *ResourceClass->GetName(),
+            *NodeOrigin.ToCompactString(), *RockCenter.ToCompactString(),
+            *(RockCenter - NodeOrigin).ToCompactString());
+    }
+
     if (bQuartz) { SpawnedRockQuartz++; } else { SpawnedRockVanilla++; }
     UE_LOG(LogNodeShuffle, Verbose,
         TEXT("dressed %s rock (node subobject) for %s: mesh '%s' scale=(%.2f,%.2f,%.2f) relZ=%.0f %d mat(s)"),
@@ -1815,6 +1893,30 @@ void ANodeShuffleSubsystem::EnsureNodeUseBox(AFGResourceNode* Node)
     if (!UseBox->GetUnscaledBoxExtent().Equals(FVector(650.f, 650.f, 180.f), 1.0f))
     {
         UseBox->SetBoxExtent(FVector(650.f, 650.f, 180.f));
+    }
+
+    // DIAGNOSTIC (issue #2 collision box rising): log how far the box top sticks above the terrain, plus
+    // the Pawn/World collision responses — to confirm whether the player-blocking channel is WorldDynamic
+    // (profile drift) rather than Pawn, and how much the 180-half-height scales up. Gated behind EnableDiagnostics.
+    if (FNodeShuffleModule::AreDiagnosticsEnabled())
+    {
+        auto RStr = [](ECollisionResponse X){ return X==ECR_Block?TEXT("Block"):X==ECR_Overlap?TEXT("Overlap"):TEXT("Ignore"); };
+        const FVector BoxCenter = UseBox->GetComponentLocation();
+        const float BoxTopZ = BoxCenter.Z + UseBox->GetScaledBoxExtent().Z;
+        const FVector NodeLoc = Node->GetActorLocation();
+        float TerrainZ = NodeLoc.Z;
+        FHitResult Hit;
+        const FVector TraceTop = FVector(NodeLoc.X, NodeLoc.Y, NodeLoc.Z + 1000.f);
+        const FVector TraceBot = FVector(NodeLoc.X, NodeLoc.Y, NodeLoc.Z - 1000.f);
+        if (GetWorld()->LineTraceSingleByChannel(Hit, TraceTop, TraceBot, ECC_Visibility)) { TerrainZ = Hit.ImpactPoint.Z; }
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("USEBOX-RISE node='%s' profile='%s' collEnabled=%d | scaledExtent=%s actorScale=%s | boxCenterZ=%.1f boxTopZ=%.1f nodeZ=%.1f terrainZ=%.1f topAboveTerrain=%.1f | Pawn=%s WorldDynamic=%s WorldStatic=%s"),
+            *Node->GetName(), *UseBox->GetCollisionProfileName().ToString(), (int32)UseBox->GetCollisionEnabled(),
+            *UseBox->GetScaledBoxExtent().ToCompactString(), *Node->GetActorScale3D().ToCompactString(),
+            BoxCenter.Z, BoxTopZ, NodeLoc.Z, TerrainZ, BoxTopZ - TerrainZ,
+            RStr(UseBox->GetCollisionResponseToChannel(ECC_Pawn)),
+            RStr(UseBox->GetCollisionResponseToChannel(ECC_WorldDynamic)),
+            RStr(UseBox->GetCollisionResponseToChannel(ECC_WorldStatic)));
     }
 
     // THE SNAP FIX (r9, kept): wire our box in as the node's engine mBoxComponent (the resource collider

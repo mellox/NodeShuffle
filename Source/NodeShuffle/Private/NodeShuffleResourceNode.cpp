@@ -81,6 +81,25 @@ void ANodeShuffleResourceNode::DressRock(UStaticMesh* Mesh, const TArray<UMateri
         else if (Materials.Num() > 0) { Pick = Materials.Last(); }
         if (Pick && RockMesh->GetMaterial(i) != Pick) { RockMesh->SetMaterial(i, Pick); }
     }
+    // DIAGNOSTIC (issue #3 flat color): dump each material slot — what was applied, where it came from
+    // (table vs back-filled from the last table material vs the mesh's own default), and the mesh's
+    // intended default. A core slot showing source=BACKFILL means the table lacked a Middle material and
+    // the core got painted with the outer material (the flat look). Gated behind EnableDiagnostics.
+    if (FNodeShuffleModule::AreDiagnosticsEnabled())
+    {
+        UE_LOG(LogNodeShuffle, Display, TEXT("ROCKDIAG node='%s' mesh='%s' meshSlots=%d tableMats=%d"),
+            *GetName(), *Mesh->GetName(), RockMesh->GetNumMaterials(), Materials.Num());
+        for (int32 i = 0; i < Slots; i++)
+        {
+            UMaterialInterface* Applied = RockMesh->GetMaterial(i);
+            UMaterialInterface* MeshDef = Mesh->GetMaterial(i);
+            const TCHAR* Src = (i < Materials.Num()) ? TEXT("TABLE")
+                : (Materials.Num() > 0 ? TEXT("BACKFILL(Last)") : TEXT("UNSET"));
+            UE_LOG(LogNodeShuffle, Display, TEXT("ROCKDIAG   slot[%d] applied='%s' source=%s meshDefault='%s'"),
+                i, Applied ? *Applied->GetName() : TEXT("<null>"), Src,
+                MeshDef ? *MeshDef->GetName() : TEXT("<none>"));
+        }
+    }
     // Centered on the node (relative to root): lateral 0, small Z sink only. Table scale applied.
     if (!RockMesh->GetRelativeLocation().Equals(RelativeOffset, 1.0f))
     {
