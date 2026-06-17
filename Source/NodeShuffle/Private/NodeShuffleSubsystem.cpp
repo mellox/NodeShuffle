@@ -2716,6 +2716,42 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
             TEXT("HIDEDIAG funnel: recordsTotal=%d near=%d | foundByPath=%d (alreadyHidden=%d occupied=%d) | MISSEDbyPath=%d of which proximityResolvable=%d"),
             OriginalNodeRecord.Num(), DbgNear, DbgFoundPath, DbgAlreadyHidden, DbgOcc, DbgMissedPath, DbgProxResolvable);
     }
+
+    // SCENE CENSUS (gated): categorize EVERY live resource node near the player so we KNOW what the visible
+    // ones are. ours=our relocated spawns; uncapturedVisible=non-ours visible node NOT at any record location
+    // (= an original the roll never captured → never shuffled/hidden, the prime suspect); shouldBeHiddenButVisible
+    // = non-ours visible node AT a record location (= a real hide failure). One iteration, diagnostics only.
+    if (bDiagHide)
+    {
+        int32 OursVisible=0, OursHidden=0, UncapturedVisible=0, ShouldHideButVisible=0, NonOursHidden=0;
+        FString SampleUncaptured;
+        for (TActorIterator<AFGResourceNodeBase> It(GetWorld()); It; ++It)
+        {
+            AFGResourceNodeBase* N = *It;
+            if (!IsValid(N)) { continue; }
+            const FVector L = N->GetActorLocation();
+            bool bNear = false;
+            for (const FVector& P : Players) { if (FVector::DistSquared2D(P, L) < FMath::Square(SuppressPlayerRange)) { bNear = true; break; } }
+            if (!bNear) { continue; }
+            const bool bOurs = N->IsA<ANodeShuffleResourceNode>();
+            const bool bIsHid = N->IsHidden();
+            if (bOurs) { bIsHid ? OursHidden++ : OursVisible++; continue; }
+            if (bIsHid) { NonOursHidden++; continue; }
+            // non-ours, visible: at a record location?
+            bool bAtRecord = false;
+            for (const FNodeShuffleSuppressedOriginal& Rec : OriginalNodeRecord)
+            { if (FVector::DistSquared2D(Rec.Location, L) < FMath::Square(RockOwnRange)) { bAtRecord = true; break; } }
+            if (bAtRecord) { ShouldHideButVisible++; }
+            else { UncapturedVisible++; if (SampleUncaptured.IsEmpty()) {
+                const UClass* RC2 = N->GetResourceClass();
+                SampleUncaptured = FString::Printf(TEXT("class='%s' res='%s' loc=%s"),
+                    *N->GetClass()->GetName(), RC2 ? *RC2->GetName() : TEXT("<null>"), *L.ToCompactString()); } }
+        }
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("HIDEDIAG census (near player): oursVisible=%d oursHidden=%d | nonOurs: uncapturedVisible=%d shouldHideButVisible=%d hidden=%d | sampleUncaptured: %s"),
+            OursVisible, OursHidden, UncapturedVisible, ShouldHideButVisible, NonOursHidden,
+            SampleUncaptured.IsEmpty() ? TEXT("<none>") : *SampleUncaptured);
+    }
 }
 
 bool ANodeShuffleSubsystem::IsPointInWater(const FVector& Point) const
