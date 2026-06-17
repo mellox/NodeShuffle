@@ -544,18 +544,18 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                 ExperimentalAdded);
         }
 
-        // MODDED-SOLID augment (RelocateModdedNodes). The reroll pool is rebuilt from the saved Layout,
-        // which was captured with modded SOLID nodes (AllMinable esc_ item nodes) left IN PLACE — the
-        // initial roll admits them but a reroll, rebuilding from the layout, never re-introduces them,
-        // so they perpetually stay put. Mirror the experimental-form augment above, but for MODDED SOLID
-        // originals: live-scan the BASE class (esc_ nodes are NOT AFGResourceNode), admit eligible modded
-        // solids not already in the pool, and add them as real entries so the deal/convert/suppress path
-        // relocates them like vanilla. Gated behind the experimental RelocateModdedNodes toggle (default
-        // off) so stable behavior is byte-for-byte preserved. Liquid/gas modded nodes are handled by the
-        // experimental-form augment above; this is SOLID-only.
-        if (Config.RelocateModdedNodes && Config.IncludeModdedNodes)
+        // FULL RE-SCAN augment. The reroll pool is rebuilt from the saved Layout (streaming-independent),
+        // which is INCOMPLETE: the original roll only captured nodes that were LOADED at roll time, and a
+        // reroll rebuilding from that layout never re-introduces the rest — so uncaptured originals stay
+        // visible at their spots forever (proven by HIDEDIAG census: nonOurs uncapturedVisible BP_Resource
+        // Node_C). Satisfactory uses a STATIC map with all resource-node actors effectively loaded (our
+        // CACHE-REFRESH showed ~1012 nodes stable), and Resource Roulette likewise collects every node via
+        // a plain TActorIterator — so a live re-scan HERE captures everything the saved layout missed.
+        // SOLID-only (liquid/gas handled by the experimental-form augment above). Deduped by path against
+        // the rebuilt pool. VANILLA solids: always captured (the core fix). MODDED solids (AllMinable esc_,
+        // modded ores): only when the experimental RelocateModdedNodes is on (kept opt-in one more cycle).
         {
-            int32 ModdedSolidAdded = 0;
+            int32 VanillaAdded = 0, ModdedAdded = 0;
             for (TActorIterator<AFGResourceNodeBase> It(GetWorld()); It; ++It)
             {
                 AFGResourceNodeBase* BaseNode = *It;
@@ -563,19 +563,33 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                 if (BaseNode->IsA<ANodeShuffleResourceNode>()) { continue; } // never our own spawned nodes
                 const UClass* RC = BaseNode->GetResourceClass();
                 if (!RC) { continue; }
-                // MODDED only: resource class OR node class outside /Game/ (vanilla solids are already in the pool).
-                const bool bModded = !RC->GetPathName().StartsWith(TEXT("/Game/"))
-                    || !BaseNode->GetClass()->GetPathName().StartsWith(TEXT("/Game/"));
-                if (!bModded) { continue; }
-                // SOLID only here (liquid/gas modded handled above); plain Node type only (no fracking/geyser).
+                // SOLID only; plain Node type only (no geyser/fracking).
                 const EResourceForm BF = BaseNode->GetResourceForm();
                 if (BF == EResourceForm::RF_LIQUID || BF == EResourceForm::RF_GAS) { continue; }
                 if (BaseNode->GetResourceNodeType() != EResourceNodeType::Node) { continue; }
+
+                const bool bModded = !RC->GetPathName().StartsWith(TEXT("/Game/"))
+                    || !BaseNode->GetClass()->GetPathName().StartsWith(TEXT("/Game/"));
+                AFGResourceNode* Node = Cast<AFGResourceNode>(BaseNode); // null for Base-only esc_ nodes
+
+                // ELIGIBILITY + GATING. Vanilla: must be an AFGResourceNode passing the full predicate.
+                // Modded: gated behind IncludeModdedNodes AND the experimental RelocateModdedNodes; a
+                // Base-only esc_ node (Node==null) is admitted by the checks already done (RC set, Node
+                // type, solid form) like the initial scan does.
+                if (bModded)
+                {
+                    if (!(Config.RelocateModdedNodes && Config.IncludeModdedNodes)) { continue; }
+                    if (Node && !IsEligibleVanillaNode(Node, true, false)) { continue; }
+                }
+                else
+                {
+                    if (!Node || !IsEligibleVanillaNode(Node, Config.IncludeModdedNodes, false)) { continue; }
+                }
+
                 const FString Path = BaseNode->GetPathName();
                 if (ExistingPaths.Contains(Path)) { continue; }
                 ExistingPaths.Add(Path);
 
-                AFGResourceNode* Node = Cast<AFGResourceNode>(BaseNode); // null for Base-only esc_ nodes
                 const bool bOccupied = BaseNode->IsOccupied() || (Node && PortableMinerNodes.Contains(Node));
                 const EResourcePurity NodePurity = Node ? Node->GetResourcePurity() : RP_Normal;
 
@@ -601,11 +615,11 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                 if (E.OriginalPurity != RP_MAX) { PurityDeckSource.Add(E.OriginalPurity); }
                 if (SpawnableNodeClassPath.IsEmpty()) { SpawnableNodeClassPath = E.NodeClassPath; }
                 VanillaCount++;
-                ModdedSolidAdded++;
+                bModded ? ModdedAdded++ : VanillaAdded++;
             }
             UE_LOG(LogNodeShuffle, Display,
-                TEXT("Modded-solid augment (RelocateModdedNodes ON): added %d live modded SOLID nodes not in the saved pool to the reroll pool (they now relocate like vanilla; captured into the layout)"),
-                ModdedSolidAdded);
+                TEXT("Full re-scan augment: added %d uncaptured VANILLA + %d MODDED solid nodes to the reroll pool via live scan (modded gated by RelocateModdedNodes=%d). These were loaded but missing from the saved layout."),
+                VanillaAdded, ModdedAdded, Config.RelocateModdedNodes ? 1 : 0);
         }
     }
     else
