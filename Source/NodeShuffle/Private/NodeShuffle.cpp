@@ -3,6 +3,8 @@
 #include "Patching/NativeHookManager.h"
 #include "Hologram/FGResourceExtractorHologram.h"
 #include "Buildables/FGBuildableResourceExtractorBase.h"
+#include "Equipment/FGResourceScanner.h"
+#include "Resources/FGResourceNode.h"
 #include "Resources/FGResourceNodeBase.h"
 #include "Resources/FGExtractableResourceInterface.h"
 #include "UObject/ScriptInterface.h"
@@ -110,7 +112,7 @@ void FNodeShuffleModule::DbgLogAcceptance(AFGResourceExtractorHologram* Hologram
 void FNodeShuffleModule::StartupModule()
 {
     UE_LOG(LogNodeShuffle, Log, TEXT("NodeShuffle module loaded"));
-    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle BUILD 2026-06-18-scanner-3 LOADED ====="));
+    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle BUILD 2026-06-18-scanner-4 LOADED ====="));
 
 #if !WITH_EDITOR
     // redesign-13 HOLOGRAM HOOK (DIAGNOSTICS). r12 proved the Mk1 build trace NEVER hits our node (0 hits on
@@ -237,6 +239,39 @@ void FNodeShuffleModule::StartupModule()
                 UE_LOG(LogNodeShuffle, Display, TEXT("HOLOGRAMHOOK FORCE-ACCEPT CanOccupyResource->true (our node)")); }
             Scope.Override(true); // ALWAYS active (the fix); only the log above is diagnostics-gated
         }
+    });
+
+    // SCANDIAG (diagnostics-only): the resource scanner still pings hidden originals. Hook the scanner's
+    // per-cluster representation creation and dump EXACTLY what it's marking — resource, midpoint, node
+    // count, and per node: amount enum + hidden state + class. This definitively shows whether the scanner
+    // includes our hidden (RA_Poor) nodes (=> its filter is NOT RA_Infinite) or uses something else.
+    SUBSCRIBE_UOBJECT_METHOD(AFGResourceScanner, CreateResourceNodeRepresentations,
+        [](auto& Scope, AFGResourceScanner* Self, const FNodeClusterData& cluster)
+    {
+        if (!GNodeShuffleDiagnosticsEnabled) { return; }
+        const UClass* RC = cluster.ResourceDescriptor.Get();
+        int32 NumHidden = 0;
+        int32 NumInfinite = 0;
+        FString Sample;
+        for (AFGResourceNodeBase* N : cluster.Nodes)
+        {
+            if (!N) { continue; }
+            AFGResourceNode* AsN = Cast<AFGResourceNode>(N);
+            const int32 Amt = AsN ? (int32)AsN->GetResourceAmount() : -1;
+            const bool bHid = N->IsHidden();
+            if (bHid) { NumHidden++; }
+            if (Amt == (int32)EResourceAmount::RA_Infinite) { NumInfinite++; }
+            if (Sample.IsEmpty())
+            {
+                Sample = FString::Printf(TEXT("class='%s' amt=%d hidden=%d collEnabled=%d loc=%s"),
+                    *N->GetClass()->GetName(), Amt, bHid ? 1 : 0, N->GetActorEnableCollision() ? 1 : 0,
+                    *N->GetActorLocation().ToCompactString());
+            }
+        }
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("SCANDIAG cluster res='%s' mid=%s nodes=%d hidden=%d infinite=%d | sample: %s"),
+            RC ? *RC->GetName() : TEXT("<null>"), *cluster.MidPoint.ToCompactString(),
+            cluster.Nodes.Num(), NumHidden, NumInfinite, Sample.IsEmpty() ? TEXT("<none>") : *Sample);
     });
 #endif
 }
