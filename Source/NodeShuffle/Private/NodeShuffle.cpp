@@ -252,10 +252,15 @@ void FNodeShuffleModule::StartupModule()
         [](auto& Scope, AFGResourceScanner* Self, const FNodeClusterData& cluster)
     {
         if (cluster.Nodes.Num() == 0) { return; } // empty cluster: let the game handle it
+        // A node counts as "real/visible" only if it is valid, not hidden, AND has collision enabled. Our
+        // suppressed originals are BOTH hidden AND collision-disabled (SCANDIAG: hidden=1 collEnabled=0), so
+        // requiring collision too narrows suppression to exactly our originals — a node hidden for some OTHER
+        // reason (engine culling, another mod) is very unlikely to also have collision off, so its cluster is
+        // kept. (Cold-review hardening.)
         bool bAnyVisible = false;
         for (AFGResourceNodeBase* N : cluster.Nodes)
         {
-            if (IsValid(N) && !N->IsHidden()) { bAnyVisible = true; break; }
+            if (IsValid(N) && !N->IsHidden() && N->GetActorEnableCollision()) { bAnyVisible = true; break; }
         }
         if (!bAnyVisible)
         {
