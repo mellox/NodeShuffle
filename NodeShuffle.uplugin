@@ -5,7 +5,7 @@
 	"SemVersion": "1.2.0",
 	"GameVersion": ">=491125",
 	"FriendlyName": "Node Shuffle",
-	"Description": "Adds ~100 new resource node locations and randomizes, per save, which nodes are active and what resource and purity each one carries. Balance minimums keep every playthrough completable. Layout is rolled once per save and never changes unless you explicitly re-roll.",
+	"Description": "Randomizes the planet's resource nodes per save — relocates nodes to new locations and shuffles which are active, their resource, and purity, for solids, oil/liquids, and modded nodes alike. Adds ~100 extra locations; balance minimums keep every playthrough completable. Re-roll the layout live anytime.",
 	"Category": "Modding",
 	"CreatedBy": "mello",
 	"CreatedByURL": "",

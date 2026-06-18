@@ -1,15 +1,18 @@
 # Node Shuffle
 
 A Satisfactory mod (SML 3.12+, game version ≥ 491125 / Satisfactory 1.1) that
-**randomizes the planet's resource nodes per save**. It adds new node locations
-across the map and shuffles which nodes are active, what resource each carries,
-and their purity — so every world is a fresh puzzle, while staying completable.
+**randomizes the planet's resource nodes per save**. It **relocates nodes to new
+locations** across the map and shuffles which are active, what resource each
+carries, and their purity — for **solids, oil/liquids, and modded nodes** alike —
+so every world is a fresh puzzle, while staying completable.
 
 ## What it does
 
-- **Shuffles existing nodes** — each node may become a different resource and
-  purity, using the game's own native node-override system (nodes are never
-  destroyed, so it's save-safe and reversible).
+- **Relocates & shuffles nodes** — nodes move to new map-wide locations and may
+  change resource and purity. This covers solid ore, **oil/liquid and gas nodes**
+  (minable with the matching extractors), and **modded nodes** added by other
+  mods. Originals are hidden, never destroyed, so it stays save-safe and
+  reversible (disabling the mod restores the vanilla world).
 - **Adds ~100+ new node locations** — spawned across the map, settled onto the
   terrain, visible, solid, and mineable like any vanilla node.
 - **Fully buildable** — relocated and new nodes accept hand-mining, portable
@@ -41,7 +44,7 @@ All settings are in the in-game **Mods → Node Shuffle** panel (and persist to
 | Setting | Default | Meaning |
 |---|---|---|
 | Enabled | on | Master switch. Off = nothing spawns and no vanilla nodes deactivate (stored changes persist). |
-| Seed Override | 0 | 0 = random seed at first roll; non-zero = fixed seed. To apply a new seed to an existing save, set it and use **Re-roll Now**. |
+| Seed Override | 0 | 0 = random seed at first roll; non-zero = fixed seed. To apply a new seed to an existing save, set it and use **Re-roll Layout**. |
 | Re-roll Layout | off | Turn on to re-roll the whole layout **once** (using Seed Override, or a fresh random seed if 0), then it auto-turns itself off. Applies **live** within a few seconds if toggled in-game, or on the next load otherwise. New locations are map-wide and **reveal as you explore near them** (even previously-visited areas), so the world looks emptier right after. Miners are kept. |
 | Active Percent Of Node Pool | 70 | % of all locations (vanilla + new) that are active. |
 | New Node Locations | 100 | How many extra locations to generate (0–300). |
