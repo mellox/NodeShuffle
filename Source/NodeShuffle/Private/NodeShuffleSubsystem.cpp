@@ -39,6 +39,7 @@
 #include "Buildables/FGBuildableResourceExtractorBase.h"
 #include "FGPortableMiner.h"
 #include "FGWaterVolume.h"
+#include "FGActorRepresentationManager.h"
 
 namespace
 {
@@ -2187,9 +2188,20 @@ void ANodeShuffleSubsystem::DeregisterNodeFromManager(AFGResourceNodeBase* Node)
     // originals we hide (SuppressOriginalNodes) — never our own spawned nodes. mResourceNodes is
     // TArray<AFGResourceNode*>, so only the AFGResourceNode-typed entries are removable here.
     if (!IsValid(Node)) { return; }
+    if (Node->IsA<ANodeShuffleResourceNode>()) { return; } // never deregister OUR spawned nodes
+
+    // scanner-2 (compass/map FIX): remove the node's ACTOR REPRESENTATION — the discovered-node icon on the
+    // compass and map. Hiding the actor + clearing the scan + removing it from mResourceNodes does NOT remove
+    // this representation, so a relocated/hidden original kept showing a phantom marker the player could chase
+    // (user-reported limestone marker over empty ground). RemoveRepresentationOfActor works for any actor,
+    // including Base-only esc_ nodes, so do it BEFORE the AFGResourceNode-only mResourceNodes removal below.
+    if (AFGActorRepresentationManager* RepMgr = AFGActorRepresentationManager::Get(GetWorld()))
+    {
+        RepMgr->RemoveRepresentationOfActor(Node);
+    }
+
     AFGResourceNode* AsNode = Cast<AFGResourceNode>(Node);
-    if (!AsNode) { return; } // Base-only (esc_) originals aren't in mResourceNodes anyway
-    if (AsNode->IsA<ANodeShuffleResourceNode>()) { return; } // never deregister OUR spawned nodes
+    if (!AsNode) { return; } // Base-only (esc_) originals aren't in the mResourceNodes registry
     AFGResourceNodeManager* Mgr = GetNodeManager();
     if (Mgr)
     {
