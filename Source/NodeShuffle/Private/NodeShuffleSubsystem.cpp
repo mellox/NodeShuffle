@@ -2917,6 +2917,10 @@ void ANodeShuffleSubsystem::RefreshScannersAndRadarTowers()
     // (pre-shuffle) resource set on the map until rebuilt. Force every built radar tower to re-scan so
     // the map reflects the relocated/retyped/deactivated nodes. (This function previously only touched
     // resource scanners despite its name — a built radar tower stayed stale. Mirrors Resource Roulette.)
+    // COST NOTE: ScanForResources walks the world's resource nodes AND pushes a representation update per
+    // found node (network-replicated). This function is gated by bChangedWorld in ApplyLayout, so it only
+    // runs on actual world mutations (rolls / nodes settling), never in steady state — keep it that way;
+    // do NOT call this from a per-tick hot path.
     for (TActorIterator<AFGBuildableRadarTower> It(GetWorld()); It; ++It)
     {
         AFGBuildableRadarTower* Tower = *It;
