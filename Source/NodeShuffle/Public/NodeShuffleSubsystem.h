@@ -114,7 +114,7 @@ public:
     virtual void PreSaveGame_Implementation(int32 saveVersion, int32 gameVersion) override {}
     virtual void PostSaveGame_Implementation(int32 saveVersion, int32 gameVersion) override {}
     virtual void PreLoadGame_Implementation(int32 saveVersion, int32 gameVersion) override {}
-    virtual void PostLoadGame_Implementation(int32 saveVersion, int32 gameVersion) override {}
+    virtual void PostLoadGame_Implementation(int32 saveVersion, int32 gameVersion) override;
     virtual void GatherDependencies_Implementation(TArray<UObject*>& out_dependentObjects) override {}
 
 protected:
@@ -349,6 +349,10 @@ private:
     // ---- persisted state ----
     UPROPERTY(SaveGame) int32 SavedSeed = 0;
     UPROPERTY(SaveGame) bool bLayoutGenerated = false;
+    // Current layout-FORMAT version. Bump this whenever FNodeShuffleEntry / the saved layout semantics
+    // change, and add a migration case in PostLoadGame_Implementation. Saves stamp LayoutVersion with this
+    // at roll time; on load, an older saved value triggers migration (see PostLoadGame_Implementation).
+    static constexpr int32 CurrentLayoutVersion = 2;
     UPROPERTY(SaveGame) int32 LayoutVersion = 1;
     UPROPERTY(SaveGame) TArray<FNodeShuffleEntry> Layout;
 

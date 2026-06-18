@@ -40,6 +40,7 @@
 #include "FGPortableMiner.h"
 #include "FGWaterVolume.h"
 #include "FGActorRepresentationManager.h"
+#include "Buildables/FGBuildableRadarTower.h"
 
 namespace
 {
@@ -314,6 +315,24 @@ bool ANodeShuffleSubsystem::ClearRerollNowFlag()
     ConfigManager->MarkConfigurationDirty(ConfigId);
     ConfigManager->FlushPendingSaves();
     return true;
+}
+
+void ANodeShuffleSubsystem::PostLoadGame_Implementation(int32 /*saveVersion*/, int32 /*gameVersion*/)
+{
+    // Layout-format version gate (cheap insurance, mirrors Resource Roulette's version-compare-on-load).
+    // If a save's layout predates the current format, run migration (today a logged no-op) then re-stamp,
+    // so a FUTURE FNodeShuffleEntry/layout change can migrate old saves deterministically instead of
+    // silently misreading stored entries. LayoutVersion is loaded from SaveGame before this runs.
+    if (bLayoutGenerated && LayoutVersion < CurrentLayoutVersion)
+    {
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("Layout migration: saved layout v%d < current v%d. No structural migration is required for "
+                 "this version (the entry format is unchanged); re-stamping to v%d."),
+            LayoutVersion, CurrentLayoutVersion, CurrentLayoutVersion);
+        // FUTURE: per-version migration steps go here, e.g.
+        //   if (LayoutVersion < 3) { /* convert v2 entries -> v3 */ }
+        LayoutVersion = CurrentLayoutVersion;
+    }
 }
 
 void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
@@ -1152,6 +1171,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     NewLayout.Append(CarriedEntries);
     Layout = MoveTemp(NewLayout);
     SavedSeed = Seed;
+    LayoutVersion = CurrentLayoutVersion; // stamp the format version so future loads can migrate
     bLayoutGenerated = true;
     bDidInitialApply = false;
 
@@ -2892,6 +2912,17 @@ void ANodeShuffleSubsystem::RefreshScannersAndRadarTowers()
     {
         // Friend access (AccessTransformers): force cluster rebuild on next use.
         It->mNodeClustersUpToDate = false;
+    }
+    // Radar towers cache the resources they scanned; without a re-scan they keep showing the OLD
+    // (pre-shuffle) resource set on the map until rebuilt. Force every built radar tower to re-scan so
+    // the map reflects the relocated/retyped/deactivated nodes. (This function previously only touched
+    // resource scanners despite its name — a built radar tower stayed stale. Mirrors Resource Roulette.)
+    for (TActorIterator<AFGBuildableRadarTower> It(GetWorld()); It; ++It)
+    {
+        AFGBuildableRadarTower* Tower = *It;
+        if (!IsValid(Tower)) { continue; }
+        Tower->ClearScannedResources();
+        Tower->ScanForResources();
     }
 }
 
