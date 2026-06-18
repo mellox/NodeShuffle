@@ -215,17 +215,6 @@ private:
     // resources live on as our spawned relocated nodes. Occupied/pinned originals are never touched.
     // Driven by the persistent OriginalNodeRecord so it works across sessions and stream-ins.
     void SuppressOriginalNodes();
-    // CAPTURE-ON-DISCOVERY (experimental, behind CaptureUndiscoveredNodes). Satisfactory streams nodes,
-    // so the roll only captures what was loaded then. This runs on the discovery tick: any eligible
-    // original that streamed in near a player and is NOT yet in the layout is pulled into the shuffle —
-    // resource reassigned (deterministic per node), original recorded for hiding, a relocated bIsNewNode
-    // entry appended. The existing SuppressOriginalNodes + spawn-on-discovery path then finishes it.
-    void CaptureUndiscoveredNodes(const struct FNodeShuffleConfigStruct& Config);
-    // Deterministic per-node resource for an incrementally-captured node (seeded by node path + save seed,
-    // sampled from the current layout's same-form distribution, so it's order-independent and balanced-ish).
-    void AssignCapturedResource(const class AFGResourceNodeBase* Node, uint8 NodeForm,
-                                FString& OutResourcePath, TEnumAsByte<EResourcePurity>& OutPurity) const;
-    int32 CapturedThisSessionCount = 0; // CAPTUREDIAG running total (not SaveGame — diagnostic only)
     // Build/refresh the persistent record of EVERY unoccupied original node location (vanilla AND
     // modded) so SuppressOriginalNodes can hide them. Captured at roll time from the layout.
     void CaptureOriginalNodeRecord();

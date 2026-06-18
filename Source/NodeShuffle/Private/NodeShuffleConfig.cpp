@@ -143,10 +143,6 @@ void UNodeShuffleConfig::PostInitProperties()
         TEXT("Relocate Modded Nodes (Experimental)"),
         TEXT("EXPERIMENTAL, OFF by default. When ON (and 'Include Modded Nodes' is on), modded SOLID nodes (e.g. AllMinable's esc_ item nodes) MOVE to new locations on a re-roll, like vanilla nodes, instead of shuffling in place. Without this, a re-roll rebuilds the pool from the saved layout (which never captured modded solids), so they stay put. Leave OFF for stable behavior. Toggle ON, then re-roll, to apply."));
 
-    AddBool(TEXT("CaptureUndiscoveredNodes"), false,
-        TEXT("Capture Undiscovered Nodes (Experimental)"),
-        TEXT("EXPERIMENTAL, OFF by default. Satisfactory streams resource nodes in/out with the world, so the roll only captures nodes loaded at roll time — nodes in regions you load later stay un-shuffled at their original spots. When ON, those originals are shuffled the moment they stream in near you (resource reassigned, original hidden, a relocated copy spawned), so the shuffle becomes complete across the whole map as you explore. The change is saved. Respects 'Include Modded Nodes'. Nodes with a miner already on them are left in place. Leave OFF for the roll-time-only shuffle."));
-
     AddInt(TEXT("SpawnRadiusMeters"), 600, 100, 5000,
         TEXT("Spawn-On-Discovery Radius (m)"),
         TEXT("New node locations only materialize (their rock + minable node appear) once you come within this many metres AND the terrain there has streamed in, so they always settle correctly on the ground. Smaller = more exploration, fewer live actors at once; larger = nodes pop in from further away. Far, undiscovered nodes stay as data until you reach them."));
