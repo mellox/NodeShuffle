@@ -2562,8 +2562,9 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
         return;
     }
 
-    // Only act on streamed-in originals near a player (cheap, and matches the
-    // streaming reality — far records can't have live actors anyway).
+    // The Players array is used ONLY by the stray-rock backstop below (rocks near a player) and the
+    // no-player early-out — the main hide loop now acts on EVERY loaded original regardless of distance
+    // (scanner-1 fix: world partition streams wider than 300 m, so far-but-loaded originals must hide too).
     TArray<FVector> Players;
     for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
     {
@@ -2576,7 +2577,7 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
     {
         return;
     }
-    constexpr float SuppressPlayerRange = 30000.0f; // 300 m: only streamed-in originals
+    constexpr float SuppressPlayerRange = 30000.0f; // 300 m: backstop's rock-near-player gate only
     constexpr float RockOwnRange = 800.0f;          // 8 m: a rock sits ON its node
 
     // redesign-1: every recorded original is an UNOCCUPIED node we want GONE (vanilla AND modded).
@@ -2593,6 +2594,7 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
     // rock BACKSTOP below uses these instead of the stale Rec.Location (which is the relocated dest after a
     // re-roll) so a lingering separate rock next to a just-hidden node is still caught.
     TArray<FVector> NearOriginalLocs;
+    NearOriginalLocs.Reserve(OriginalNodeRecord.Num());
     for (const FNodeShuffleSuppressedOriginal& Rec : OriginalNodeRecord)
     {
         // THE FIX (stale record location after re-roll). Resolve the live node BY PATH first, then test
@@ -2709,11 +2711,11 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
     }
     if (bDiagHide && (DbgNear > 0 || DbgMissedPath > 0))
     {
-        // Hide funnel: of records near a player — resolved by path / already hidden / occupied / path-missed
-        // (record whose node isn't streamed in this pass). Since the hidefix-1 fix the proximity test uses the
-        // node's REAL location, so any near record with a live node gets hidden. (See docs/DIAGNOSTICS.md.)
+        // Hide funnel: of all records — how many resolved to a LOADED actor (scanner-1: every loaded original
+        // hides, any distance), of those how many were already hidden / occupied (skipped), and how many were
+        // path-missed (record whose node isn't streamed in this pass). (See docs/DIAGNOSTICS.md.)
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("HIDEDIAG funnel: recordsTotal=%d near=%d foundByPath=%d alreadyHidden=%d occupied=%d pathMissed=%d"),
+            TEXT("HIDEDIAG funnel: recordsTotal=%d loaded=%d foundByPath=%d alreadyHidden=%d occupied=%d pathMissed=%d"),
             OriginalNodeRecord.Num(), DbgNear, DbgFoundPath, DbgAlreadyHidden, DbgOcc, DbgMissedPath);
     }
 }
