@@ -2605,14 +2605,15 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
         // resolve via the BASE finder too.
         AFGResourceNodeBase* Node = FindOriginalBaseByPath(Rec.VanillaNodePath);
         if (!Node) { if (bDiagHide) { DbgMissedPath++; } continue; } // not streamed in (or genuinely gone)
+        // SCANNER FIX: hide EVERY loaded original, not just those within 300 m of a player. World partition
+        // streams a region LARGER than the old 300 m hide gate, so a relocated original that was loaded but
+        // >300 m away stayed visible AND registered with the resource scanner — the scanner pinged it, the
+        // player walked toward it, and it vanished the instant they crossed 300 m (a real false lead the user
+        // hit). Hiding ANY loaded (path-resolvable) original closes the gap: it's deregistered before a player
+        // can scan-and-walk to it. Cheap — the hide is idempotent (skip-if-already-hidden) and the deregister
+        // runs once per node (ScannerDeregistered), and only loaded actors ever reach this point.
         const FVector NodeLoc = Node->GetActorLocation();
-        bool bNear = false;
-        for (const FVector& P : Players)
-        {
-            if (FVector::DistSquared2D(P, NodeLoc) < FMath::Square(SuppressPlayerRange)) { bNear = true; break; }
-        }
-        if (!bNear) { continue; }
-        NearOriginalLocs.Add(NodeLoc); // for the stray-rock backstop (real location, not stale Rec.Location)
+        NearOriginalLocs.Add(NodeLoc); // hidden-original locations for the stray-rock backstop below
         if (bDiagHide) { DbgNear++; }
 
         // Hide the original node actor whole (this removes its rock, INCLUDING an instanced one). Never
