@@ -30,6 +30,7 @@ the shipping build to keep it lean; for those, the "Restore from" column gives t
 | **Original nodes linger visible at old locations after relocate/re-roll** | `HIDEDIAG funnel`, `HIDEDIAG census`, `Hide originals` | NodeShuffleSubsystem.cpp | THE hide probe. Funnel: of records near a player, found-by-path / already-hidden / occupied / missed. Census: categorizes every node near the player (ours vis/hidden, uncapturedVisible, shouldHideButVisible). **Caveat: the census's "uncapturedVisible" uses `Rec.Location` and mislabels correctly-captured nodes after a re-roll — trust `Hide originals: hid N` climbing, not the census.** Also: `BP_ResourceDeposit_C` deposits are never shuffled and always show as census "uncaptured". |
 | Node cache not finding originals to hide | `CACHE-REFRESH` | NodeShuffleSubsystem.cpp | Newly-streamed originals added to `VanillaNodeCache` (the path→node lookup). NOTE the count is cumulative (cache never evicts) — not a live "loaded now" count. |
 | "Are uncaptured nodes real or already captured?" | `CAPTUREDIAG` | NodeShuffleSubsystem.cpp | Per-pass capture count + **rejection funnel** (type/ineligible/inKnownPath/nearKnownLoc) with a sample. The `inKnownPath` vs `ineligible` split is what proved nodes were already captured (just unhidden), not uncaptured. |
+| **Resource scanner pings/marks empty ground (old node spots)** | `SCANDIAG GENCLUSTERS` (root fix), `SCANDIAG SUPPRESS`/`CLEAN`/`KEPT-FOREIGN` (representation backstop) | NodeShuffle.cpp | `GENCLUSTERS filtered: dropped=N cleaned=M remaining=K` = phantom clusters of hidden originals stripped from `mNodeClusters` at the `GenerateNodeClusters` source (so the scan PING EFFECT and markers both stop). `KEPT-FOREIGN` would name an *escaped un-hidden original* if one ever leaks (it didn't — count 0 = clean hide). See [[nodeshuffle-scanner-phantom-ping]]. |
 
 ## Removed (restore on demand)
 
@@ -50,3 +51,8 @@ on branch `feature/shuffle-modded-nodes` and copy the block.
   the metric's own inputs.
 - Resource nodes DO stream (the cumulative cache count looked "stable" but wasn't a live count); deposits
   are intentionally never shuffled.
+- **Fix the shared SOURCE, not one consumer.** The resource scanner feeds BOTH the scan ping effect
+  (`PlayClusterEffects`) AND the compass/map markers (`CreateResourceNodeRepresentations`) from the same
+  `mNodeClusters` list. Five builds suppressed only the markers — the ping kept firing because it reads the
+  list directly. The fix that worked filtered `mNodeClusters` at the `GenerateNodeClusters` source, so every
+  consumer sees clean data. When a structure has multiple readers, patch where it's built.

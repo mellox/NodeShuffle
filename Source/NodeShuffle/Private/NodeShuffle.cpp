@@ -112,7 +112,7 @@ void FNodeShuffleModule::DbgLogAcceptance(AFGResourceExtractorHologram* Hologram
 void FNodeShuffleModule::StartupModule()
 {
     UE_LOG(LogNodeShuffle, Log, TEXT("NodeShuffle module loaded"));
-    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle BUILD 2026-06-18-scanner-5 LOADED ====="));
+    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle BUILD 2026-06-18-scanner-7 LOADED ====="));
 
 #if !WITH_EDITOR
     // redesign-13 HOLOGRAM HOOK (DIAGNOSTICS). r12 proved the Mk1 build trace NEVER hits our node (0 hits on
@@ -241,38 +241,133 @@ void FNodeShuffleModule::StartupModule()
         }
     });
 
-    // SCANNER PHANTOM-PING FIX (scanner-5). PROVEN by SCANDIAG: the resource scanner groups EVERY
-    // AFGResourceNode by resource class with NO filter on hidden/collision/amount, so our hidden originals
-    // (BP_ResourceNode_C, hidden=1, collEnabled=0) still get clustered and pinged at their old spots. Hook
-    // the scanner's per-cluster representation creation and CANCEL it when the cluster has no VISIBLE node
-    // (= a phantom cluster of only our hidden originals) — so no map/compass marker is created for it. Real
-    // clusters (our relocated copies, or any visible node) are untouched and ping normally. This needs no
-    // node-state change (no crash risk) and runs on every scan. CreateResourceNodeRepresentations is public.
+    // SCANNER PHANTOM-PING ROOT FIX (scanner-7). scanner-5/6 cancelled the per-cluster map REPRESENTATION, but
+    // SCANDIAG proved the scan PING still fires on empty ground: the scanner builds mNodeClusters from ALL
+    // resource nodes (ignoring hidden/collision), then plays the scan effect (PlayClusterEffects) AND picks
+    // closest clusters from that SAME list — so suppressing only CreateResourceNodeRepresentations leaves the
+    // ping effect intact (12 SUPPRESS lines, yet the user still saw those exact iron clusters ping). Fix at the
+    // SOURCE: hook GenerateNodeClusters, let it build mNodeClusters, then strip hidden-only clusters and
+    // recenter mixed ones IN PLACE — so every downstream consumer (effects, compass/map markers, closest pick)
+    // sees only real, visible nodes. mNodeClusters + GenerateNodeClusters are protected; Friend-granted to the
+    // module via AccessTransformers. The scanner-6 representation hook below is kept as a harmless backstop.
+    SUBSCRIBE_UOBJECT_METHOD(AFGResourceScanner, GenerateNodeClusters,
+        [](auto& Scope, AFGResourceScanner* Self)
+    {
+        Scope(Self); // build mNodeClusters normally first
+        if (!IsValid(Self)) { return; }
+
+        int32 Dropped = 0;
+        int32 Cleaned = 0;
+        TArray<FNodeClusterData>& Clusters = Self->mNodeClusters;
+        for (int32 i = Clusters.Num() - 1; i >= 0; --i)
+        {
+            FNodeClusterData& C = Clusters[i];
+            TArray<TObjectPtr<AFGResourceNodeBase>> Visible;
+            FVector Sum(FVector::ZeroVector);
+            for (AFGResourceNodeBase* N : C.Nodes)
+            {
+                if (IsValid(N) && !N->IsHidden() && N->GetActorEnableCollision())
+                {
+                    Visible.Add(N);
+                    Sum += N->GetActorLocation();
+                }
+            }
+            if (Visible.Num() == 0)
+            {
+                Clusters.RemoveAt(i); // phantom cluster of only hidden originals -> gone before any consumer
+                ++Dropped;
+            }
+            else if (Visible.Num() != C.Nodes.Num())
+            {
+                C.Nodes = MoveTemp(Visible); // drop the hidden originals dragging the midpoint
+                C.MidPoint = Sum / C.Nodes.Num();
+                ++Cleaned;
+            }
+        }
+        if (GNodeShuffleDiagnosticsEnabled && (Dropped > 0 || Cleaned > 0))
+        {
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("SCANDIAG GENCLUSTERS filtered: dropped=%d cleaned=%d remaining=%d"),
+                Dropped, Cleaned, Clusters.Num());
+        }
+    });
+
+    // SCANNER PHANTOM-PING FIX (scanner-6). scanner-5 proved (SCANDIAG) the resource scanner groups EVERY
+    // AFGResourceNode by resource class with NO filter on hidden/collision, so our hidden originals
+    // (BP_ResourceNode_C, hidden=1, collEnabled=0) still get clustered. scanner-5 cancelled a cluster only when
+    // EVERY node was hidden — but GenerateNodeClusters MERGES nodes within mDistBetweenNodesInCluster, so a MIXED
+    // cluster (one visible relocated node + nearby hidden originals) slipped through: the kept hidden nodes still
+    // produced markers and dragged the averaged MidPoint onto empty ground. Fix: rebuild the cluster with
+    // VISIBLE-only nodes (valid, not hidden, collision on) and recompute the midpoint over just those, then run
+    // the original on the cleaned cluster. 0 visible -> cancel (pure phantom). all visible -> forward unchanged.
+    // Calling Scope(Self, Clean) runs the original with substituted args and suppresses the dirty auto-forward
+    // (TCallScope<void>::operator() sets bForwardCall=false). CreateResourceNodeRepresentations is public.
     SUBSCRIBE_UOBJECT_METHOD(AFGResourceScanner, CreateResourceNodeRepresentations,
         [](auto& Scope, AFGResourceScanner* Self, const FNodeClusterData& cluster)
     {
-        if (cluster.Nodes.Num() == 0) { return; } // empty cluster: let the game handle it
+        const int32 Total = cluster.Nodes.Num();
+        if (Total == 0) { return; } // empty cluster: let the game handle it
+
         // A node counts as "real/visible" only if it is valid, not hidden, AND has collision enabled. Our
-        // suppressed originals are BOTH hidden AND collision-disabled (SCANDIAG: hidden=1 collEnabled=0), so
-        // requiring collision too narrows suppression to exactly our originals — a node hidden for some OTHER
-        // reason (engine culling, another mod) is very unlikely to also have collision off, so its cluster is
-        // kept. (Cold-review hardening.)
-        bool bAnyVisible = false;
+        // suppressed originals are BOTH hidden AND collision-disabled (SCANDIAG: hidden=1 collEnabled=0).
+        FNodeClusterData Clean;
+        Clean.ResourceDescriptor = cluster.ResourceDescriptor;
+        FVector Sum(FVector::ZeroVector);
         for (AFGResourceNodeBase* N : cluster.Nodes)
         {
-            if (IsValid(N) && !N->IsHidden() && N->GetActorEnableCollision()) { bAnyVisible = true; break; }
+            if (IsValid(N) && !N->IsHidden() && N->GetActorEnableCollision())
+            {
+                Clean.Nodes.Add(N);
+                Sum += N->GetActorLocation();
+                // Diagnostic: a KEPT node that is NOT one of our relocated copies is a candidate "escaped
+                // original" (a vanilla node we failed to hide). If phantom pings persist after this fix, these
+                // lines name the offender. Logged once each, gated.
+                if (GNodeShuffleDiagnosticsEnabled && N->GetClass()->GetName() != TEXT("NodeShuffleResourceNode"))
+                {
+                    static TSet<FString> LoggedForeign;
+                    const FString Key = N->GetName();
+                    if (!LoggedForeign.Contains(Key))
+                    {
+                        LoggedForeign.Add(Key);
+                        UE_LOG(LogNodeShuffle, Display,
+                            TEXT("SCANDIAG KEPT-FOREIGN node='%s' class='%s' loc=%s hidden=%d coll=%d res='%s'"),
+                            *Key, *N->GetClass()->GetName(), *N->GetActorLocation().ToCompactString(),
+                            N->IsHidden() ? 1 : 0, N->GetActorEnableCollision() ? 1 : 0,
+                            cluster.ResourceDescriptor.Get() ? *cluster.ResourceDescriptor.Get()->GetName() : TEXT("<null>"));
+                    }
+                }
+            }
         }
-        if (!bAnyVisible)
+        const int32 Kept = Clean.Nodes.Num();
+
+        if (Kept == 0)
         {
             if (GNodeShuffleDiagnosticsEnabled)
             {
                 const UClass* RC = cluster.ResourceDescriptor.Get();
                 UE_LOG(LogNodeShuffle, Display,
                     TEXT("SCANDIAG SUPPRESS phantom cluster res='%s' mid=%s nodes=%d (all hidden originals)"),
-                    RC ? *RC->GetName() : TEXT("<null>"), *cluster.MidPoint.ToCompactString(), cluster.Nodes.Num());
+                    RC ? *RC->GetName() : TEXT("<null>"), *cluster.MidPoint.ToCompactString(), Total);
             }
-            Scope.Cancel(); // do not create the representation -> no phantom ping/marker
+            Scope.Cancel(); // pure phantom: create no representation at all
+            return;
         }
+
+        if (Kept == Total)
+        {
+            return; // nothing hidden in this cluster: forward the original unchanged (auto-forward)
+        }
+
+        // Mixed cluster: drop the hidden originals and recenter on the visible nodes only.
+        Clean.MidPoint = Sum / Kept;
+        if (GNodeShuffleDiagnosticsEnabled)
+        {
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("SCANDIAG CLEAN mixed cluster res='%s' kept=%d/%d oldMid=%s newMid=%s"),
+                cluster.ResourceDescriptor.Get() ? *cluster.ResourceDescriptor.Get()->GetName() : TEXT("<null>"),
+                Kept, Total, *cluster.MidPoint.ToCompactString(), *Clean.MidPoint.ToCompactString());
+        }
+        Scope(Self, Clean); // run the original on the cleaned, recentered cluster (suppresses the dirty auto-forward)
     });
 #endif
 }
