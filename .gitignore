@@ -12,3 +12,6 @@ DerivedDataCache/
 build_nodeshuffle.log
 *.log
 graphify-out/
+.claude-flow/
+.ruflo/
+*.tmp
