@@ -1,0 +1,14 @@
+[
+  {
+    "id": "task-nodeshuffle-cleanup-1-review",
+    "key": "nodeshuffle-cleanup-1-review",
+    "content": "Task completed: nodeshuffle-cleanup-1-review",
+    "namespace": "tasks",
+    "type": "task-outcome",
+    "metadata": {
+      "success": true,
+      "quality": 0.85
+    },
+    "createdAt": 1781741242338
+  }
+]
