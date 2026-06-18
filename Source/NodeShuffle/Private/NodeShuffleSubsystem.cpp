@@ -40,6 +40,7 @@
 #include "FGPortableMiner.h"
 #include "FGWaterVolume.h"
 #include "FGActorRepresentationManager.h"
+#include "Representation/FGResourceNodeRepresentation.h"
 #include "Buildables/FGBuildableRadarTower.h"
 
 namespace
@@ -143,54 +144,29 @@ void ANodeShuffleSubsystem::RefreshTick()
         const int32 Seed = Config.SeedOverride != 0 ? Config.SeedOverride
             : static_cast<int32>(FPlatformTime::Cycles());
         RollLayout(Seed, false);
-        bRerollCheckDone = true; // a layout just rolled this session needs no re-roll check
+        // A fresh FIRST roll supersedes any pending re-roll request (e.g. RerollNow left on for a new game).
+        if (Config.RerollNow) { ClearRerollNowFlag(); }
     }
-    else if (!bRerollCheckDone && IsWorldReadyForReroll())
+    // LIVE / LOAD re-roll. Edge-triggered: fires on each OFF->ON transition of the Re-roll toggle, so it behaves
+    // identically whether the user set it and reloaded (load-time) OR toggled it mid-session (LIVE, no reload).
+    // The world must have streamed in (the SHUFFLE-AWARE gate, not the strict pristine-vanilla one — a shuffled
+    // save never passes the strict 50+ /Game/ count). Occupied/pinned nodes are carried; the new locations
+    // reveal as the player explores near them (the same spawn-on-discovery behavior as a load-time re-roll).
+    else if (Config.RerollNow && !bPrevRerollNow && IsWorldReadyForReroll())
     {
-        // Decide the explicit re-roll only once the world has streamed in. Uses
-        // the SHUFFLE-AWARE gate (IsWorldReadyForReroll), not the strict pristine-
-        // vanilla gate: a previously-shuffled save has most originally-vanilla
-        // nodes retyped or destroyed, so the strict 50+ /Game/ count never passes
-        // on reload — the historical reason the re-roll never fired.
-        //
-        // Two triggers, in priority order:
-        //   1. "Re-roll Now" one-shot toggle (RerollNow). Reliable and user-visible:
-        //      always re-rolls regardless of seed, then clears itself.
-        //   2. AllowReroll + a SeedOverride that differs from the saved seed. The
-        //      legacy mechanism, kept for compatibility but fragile (SavedSeed is
-        //      invisible to users).
-        const bool bRerollNow = Config.RerollNow;
-        const bool bSeedReroll = Config.AllowReroll && Config.SeedOverride != 0
-                                 && Config.SeedOverride != SavedSeed;
-        const TCHAR* Decision = bRerollNow ? TEXT("RE-ROLLING (Re-roll Now toggle)")
-            : bSeedReroll ? TEXT("RE-ROLLING (seed changed)")
-            : TEXT("no change (Re-roll Now off; seed matches saved seed or AllowReroll off)");
-        UE_LOG(LogNodeShuffle, Display,
-            TEXT("Re-roll check: RerollNow=%d AllowReroll=%d SeedOverride=%d SavedSeed=%d -> %s"),
-            bRerollNow ? 1 : 0, Config.AllowReroll ? 1 : 0, Config.SeedOverride, SavedSeed, Decision);
-
-        if (bRerollNow || bSeedReroll)
-        {
-            // Restore originals first so the rescan sees the true vanilla pool,
-            // not the already-shuffled resources.
-            RestoreOriginalsForReroll();
-            const int32 RerollSeed = Config.SeedOverride != 0 ? Config.SeedOverride
-                : static_cast<int32>(FPlatformTime::Cycles());
-            UE_LOG(LogNodeShuffle, Display, TEXT("Re-rolling layout: seed %d -> %d"),
-                SavedSeed, RerollSeed);
-            RollLayout(RerollSeed, true);
-
-            // Clear the one-shot toggle so it never loops. Do this only for the
-            // RerollNow path; the seed mechanism self-limits via SavedSeed equality.
-            if (bRerollNow)
-            {
-                const bool bCleared = ClearRerollNowFlag();
-                UE_LOG(LogNodeShuffle, Display, TEXT("Re-roll Now flag cleared in config: %s"),
-                    bCleared ? TEXT("yes") : TEXT("NO (could not write config; turn it off manually)"));
-            }
-        }
-        bRerollCheckDone = true;
+        RestoreOriginalsForReroll(); // restore originals first so the rescan sees the true vanilla pool
+        const int32 RerollSeed = Config.SeedOverride != 0 ? Config.SeedOverride
+            : static_cast<int32>(FPlatformTime::Cycles());
+        UE_LOG(LogNodeShuffle, Display, TEXT("Re-roll triggered (Re-roll toggle): seed %d -> %d (LIVE if mid-session)"),
+            SavedSeed, RerollSeed);
+        RollLayout(RerollSeed, true);
+        RefreshScannersAndRadarTowers(); // live re-roll: refresh handheld-scanner clusters + radar towers now
+        const bool bCleared = ClearRerollNowFlag(); // one-shot: clear so it never loops
+        UE_LOG(LogNodeShuffle, Display, TEXT("Re-roll done; Re-roll toggle cleared in config: %s"),
+            bCleared ? TEXT("yes") : TEXT("NO (could not write config; turn it off manually)"));
     }
+    bPrevRerollNow = Config.RerollNow; // track for the OFF->ON edge (after a clear the local copy is still true;
+                                       // next tick re-reads the cleared value, so it can't loop)
 
     if (bLayoutGenerated)
     {
@@ -343,7 +319,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     // FIX 4: name exactly which modded node classes shuffle (and why the rest do
     // not). Once per class per session. This is how "lithium never shuffles" stops
     // being a guess.
-    DiagnoseModdedNodeEligibility(Config.IncludeModdedNodes, Config.EnableExperimentalFeatures);
+    DiagnoseModdedNodeEligibility(Config.IncludeModdedNodes, true);
 
     // Carry occupied new-node entries through a re-roll: anything with a live
     // spawned actor that is occupied keeps its position/resource and is pinned.
@@ -506,15 +482,16 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
         {
             if (!E.bIsNewNode && !E.VanillaNodePath.IsEmpty()) { ExistingPaths.Add(E.VanillaNodePath); }
         }
-        if (Config.EnableExperimentalFeatures)
         {
+            // Liquid (oil) + gas (e.g. lithium) live scan — these forms join the re-roll pool. Solids are
+            // already in the rebuilt pool; this captures liquid/gas the saved layout did not.
             int32 ExperimentalAdded = 0;
             for (TActorIterator<AFGResourceNode> It(GetWorld()); It; ++It)
             {
                 AFGResourceNode* Node = *It;
                 const EResourceForm LiveForm = Node->GetResourceForm();
                 const bool bExpForm = (LiveForm == EResourceForm::RF_LIQUID) || (LiveForm == EResourceForm::RF_GAS);
-                // Experimental-form-only live scan: solids are already in the rebuilt pool.
+                // Liquid/gas-only live scan: solids are already in the rebuilt pool.
                 if (!bExpForm || !IsEligibleVanillaNode(Node, Config.IncludeModdedNodes, true))
                 {
                     continue;
@@ -573,7 +550,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
         // a plain TActorIterator — so a live re-scan HERE captures everything the saved layout missed.
         // SOLID-only (liquid/gas handled by the experimental-form augment above). Deduped by path against
         // the rebuilt pool. VANILLA solids: always captured (the core fix). MODDED solids (AllMinable esc_,
-        // modded ores): only when the experimental RelocateModdedNodes is on (kept opt-in one more cycle).
+        // modded ores): captured when IncludeModdedNodes is on (they relocate like vanilla nodes).
         {
             int32 VanillaAdded = 0, ModdedAdded = 0;
             for (TActorIterator<AFGResourceNodeBase> It(GetWorld()); It; ++It)
@@ -593,12 +570,11 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                 AFGResourceNode* Node = Cast<AFGResourceNode>(BaseNode); // null for Base-only esc_ nodes
 
                 // ELIGIBILITY + GATING. Vanilla: must be an AFGResourceNode passing the full predicate.
-                // Modded: gated behind IncludeModdedNodes AND the experimental RelocateModdedNodes; a
-                // Base-only esc_ node (Node==null) is admitted by the checks already done (RC set, Node
-                // type, solid form) like the initial scan does.
+                // Modded: gated behind IncludeModdedNodes; a Base-only esc_ node (Node==null) is admitted
+                // by the checks already done (RC set, Node type, solid form) like the initial scan does.
                 if (bModded)
                 {
-                    if (!(Config.RelocateModdedNodes && Config.IncludeModdedNodes)) { continue; }
+                    if (!Config.IncludeModdedNodes) { continue; }
                     if (Node && !IsEligibleVanillaNode(Node, true, false)) { continue; }
                 }
                 else
@@ -638,16 +614,15 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                 bModded ? ModdedAdded++ : VanillaAdded++;
             }
             UE_LOG(LogNodeShuffle, Display,
-                TEXT("Full re-scan augment: added %d uncaptured VANILLA + %d MODDED solid nodes to the reroll pool via live scan (modded gated by RelocateModdedNodes=%d). These were loaded but missing from the saved layout."),
-                VanillaAdded, ModdedAdded, Config.RelocateModdedNodes ? 1 : 0);
+                TEXT("Full re-scan augment: added %d uncaptured VANILLA + %d MODDED solid nodes to the reroll pool via live scan (modded gated by IncludeModdedNodes=%d). These were loaded but missing from the saved layout."),
+                VanillaAdded, ModdedAdded, Config.IncludeModdedNodes ? 1 : 0);
         }
     }
     else
     {
         // INITIAL roll: live scan of the (fully streamed) vanilla pool.
-        // Experimental forms (liquid oil AND gas, e.g. lithium) join only when the
-        // experimental flag is on; the stable mod is solid-only.
-        const bool bIncludeLiquid = Config.EnableExperimentalFeatures;
+        // Liquid (oil) AND gas (e.g. lithium) forms join the pool alongside solids.
+        const bool bIncludeLiquid = true;
 
         // redesign-6 FIX 2: one-shot esc_/AllMinable class-hierarchy diagnostic (names their real type).
         DiagnoseEscClassHierarchy();
@@ -692,13 +667,13 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
             else
             {
                 // Base-only node (esc_ candidate). Admit only when modded is on, it's plain Node-type, has
-                // a resource class, and is solid/unknown form (experimental gates liquid/gas). Keeps junk out.
+                // a resource class, and is a plain Node. bIncludeLiquid is true, so liquid/gas pass too.
                 if (!Config.IncludeModdedNodes) { continue; }
                 if (!RC) { continue; }
                 if (BaseNode->GetResourceNodeType() != EResourceNodeType::Node) { continue; }
                 const EResourceForm BF = BaseNode->GetResourceForm();
                 const bool bExp = (BF == EResourceForm::RF_LIQUID) || (BF == EResourceForm::RF_GAS);
-                if (bExp && !bIncludeLiquid) { continue; } // liquid/gas only under experimental
+                if (bExp && !bIncludeLiquid) { continue; } // bIncludeLiquid==true now; kept as a defensive guard
             }
 
             const bool bOccupied = BaseNode->IsOccupied() || (Node && PortableMinerNodes.Contains(Node));
@@ -1054,9 +1029,8 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     // Phase 2: now that every active new node has its resource, stamp its form and
     // choose the correct node BP class to spawn from. A new oil (RF_LIQUID) node
     // must spawn from a liquid node class so oil extractors accept it; solid nodes
-    // keep the solid class. Liquid only ever appears here when the experimental
-    // flag was on at scan time (oil was eligible) — otherwise FormByResource has no
-    // liquid entries and this is a no-op for the stable, solid-only shuffle.
+    // keep the solid class. Liquid/gas are part of the pool now, so this handles
+    // them whenever FormByResource has such entries.
     for (FNodeShuffleEntry& E : NewLayout)
     {
         if (!E.bIsNewNode || !E.bActive || E.bPinned || E.AssignedResourceClassPath.IsEmpty())
@@ -2249,6 +2223,19 @@ void ANodeShuffleSubsystem::DeregisterNodeFromManager(AFGResourceNodeBase* Node)
     if (AFGActorRepresentationManager* RepMgr = AFGActorRepresentationManager::Get(GetWorld()))
     {
         RepMgr->RemoveRepresentationOfActor(Node);
+        // oil-rep FIX: a resource node's persistent compass/map marker is a UFGResourceNodeRepresentation that
+        // RemoveRepresentationOfActor does NOT always clear — oil/liquid originals that got shuffled out kept
+        // showing a phantom map/scanner marker with no node there to mine. Remove the node's representation
+        // DIRECTLY by node (the proper API). Harmless for solids (already cleared); fixes the lingering oil marker.
+        if (UFGResourceNodeRepresentation* NodeRep = RepMgr->FindResourceNodeRepresentation(Node))
+        {
+            RepMgr->RemoveRepresentation(NodeRep);
+            if (FNodeShuffleModule::AreDiagnosticsEnabled())
+            {
+                UE_LOG(LogNodeShuffle, Display, TEXT("OIL-REP removed lingering node representation for '%s' form=%d loc=%s"),
+                    *Node->GetName(), (int32)Node->GetResourceForm(), *Node->GetActorLocation().ToCompactString());
+            }
+        }
     }
 
     // mResourceNodes is the AFGResourceNode-only registry (the Mk1 snap list) — esc_ nodes aren't in it.

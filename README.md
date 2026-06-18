@@ -41,19 +41,17 @@ All settings are in the in-game **Mods → Node Shuffle** panel (and persist to
 | Setting | Default | Meaning |
 |---|---|---|
 | Enabled | on | Master switch. Off = nothing spawns and no vanilla nodes deactivate (stored changes persist). |
-| Seed Override | 0 | 0 = random seed at first roll; non-zero = fixed seed. |
-| Allow Re-roll Of Existing Saves | off | Lets a non-zero Seed Override re-roll an existing save at next load. |
-| Re-roll Now (applies once) | off | Turn on, then load the save → re-rolls the whole layout **once**, then auto-turns itself off. The reliable way to re-roll. |
+| Seed Override | 0 | 0 = random seed at first roll; non-zero = fixed seed. To apply a new seed to an existing save, set it and use **Re-roll Now**. |
+| Re-roll Layout | off | Turn on to re-roll the whole layout **once** (using Seed Override, or a fresh random seed if 0), then it auto-turns itself off. Applies **live** within a few seconds if toggled in-game, or on the next load otherwise. New locations are map-wide and **reveal as you explore near them** (even previously-visited areas), so the world looks emptier right after. Miners are kept. |
 | Active Percent Of Node Pool | 70 | % of all locations (vanilla + new) that are active. |
 | New Node Locations | 100 | How many extra locations to generate (0–300). |
 | Minimum Active Nodes Per Resource | 5 | Completability floor for vanilla resources. |
 | Minimum Active Nodes Per Modded Resource | 2 | Same floor for resources added by other mods (0 = no floor). |
 | Randomize Purity | on | Shuffle purities, dealt from the vanilla distribution (overall balance preserved). |
 | Allow Vanilla Nodes To Disappear | on | Off = every vanilla node stays active; only new locations roll. |
-| Include Modded Nodes | on | Shuffle nodes added by other mods too. |
+| Include Modded Nodes | on | Shuffle nodes added by other mods too; their solid nodes also **relocate** on a re-roll, like vanilla nodes. |
 | Spawn-On-Discovery Radius (m) | 600 | New nodes materialize once you come within this range and the terrain has streamed in. |
-| Enable Experimental Features | off | Experimental **oil/liquid** node shuffling (in development — leave off for a guaranteed-stable solid-only shuffle). |
-| Enable Diagnostic Logging (Experimental) | off | Verbose placement/node logging to `FactoryGame.log` for troubleshooting. The mod's fixes work whether this is on or off. |
+| Enable Diagnostic Logging | off | Verbose placement/node logging to `FactoryGame.log` for troubleshooting. The mod's fixes work whether this is on or off. |
 | Starter Nodes Near Spawn | on | New game only: place a small starter set (2 Iron, 2 Limestone, 1 Copper, Pure) near spawn. |
 | Starter Node Radius (m) | 200 | How far from spawn the starter nodes may sit. |
 

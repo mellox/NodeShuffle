@@ -20,11 +20,6 @@ struct NODESHUFFLE_API FNodeShuffleConfigStruct
     UPROPERTY(BlueprintReadWrite)
     int32 SeedOverride{0};
 
-    // When true AND SeedOverride is non-zero AND differs from the seed stored
-    // in the save, the layout is re-rolled at the next session start.
-    UPROPERTY(BlueprintReadWrite)
-    bool AllowReroll{false};
-
     // User-facing reliable re-roll trigger. When true at load and the world is
     // ready, the layout re-rolls once regardless of seed equality, then the mod
     // clears this flag back to false and saves the config so it fires only once.
@@ -57,20 +52,12 @@ struct NODESHUFFLE_API FNodeShuffleConfigStruct
     UPROPERTY(BlueprintReadWrite)
     bool AllowVanillaDisappear{true};
 
-    // Shuffle mod-added nodes (AllMinable items, modded ores) too. The
-    // completability floor never applies to non-vanilla resources.
+    // Shuffle mod-added nodes (AllMinable items, modded ores) too. When on, modded
+    // SOLID nodes also RELOCATE (move to new locations) on a re-roll, like vanilla
+    // nodes, instead of shuffling in place. The completability floor never applies to
+    // non-vanilla resources.
     UPROPERTY(BlueprintReadWrite)
     bool IncludeModdedNodes{true};
-
-    // EXPERIMENTAL. Off by default. When ON (and IncludeModdedNodes is on), a re-roll
-    // live-rescans modded SOLID nodes (e.g. AllMinable's esc_ item nodes) and adds them
-    // to the relocation pool, so they MOVE like vanilla nodes instead of shuffling in
-    // place. The re-roll pool is otherwise rebuilt from the saved layout (which never
-    // captured modded solids), so without this they stay put forever. Off = stable 1.1.1
-    // behavior (modded solids retype/visualize in place). Toggle ON then re-roll to apply.
-    UPROPERTY(BlueprintReadWrite)
-    bool RelocateModdedNodes{false};
-
 
     // Spawn-on-discovery radius (metres). A new node only materializes (spawns
     // its actor + visual) once a player is within this distance of it AND the
@@ -79,13 +66,6 @@ struct NODESHUFFLE_API FNodeShuffleConfigStruct
     // ground instead of floating in unloaded regions.
     UPROPERTY(BlueprintReadWrite)
     int32 SpawnRadiusMeters{600};
-
-    // Standard "experimental features" gate. Off by default. Experimental,
-    // not-yet-stable features check this before activating; stable features
-    // ignore it. In this version it enables oil/liquid node shuffling
-    // (oil nodes join the scan/pool/spawn and can be mined with oil extractors).
-    UPROPERTY(BlueprintReadWrite)
-    bool EnableExperimentalFeatures{false};
 
     // Diagnostics gate. OFF by default so normal users get NO extra log output and
     // no overhead. When ON, the mod writes verbose HOLOGRAMHOOK / placement / node

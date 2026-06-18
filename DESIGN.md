@@ -180,11 +180,14 @@ For each entry, compare desired state to live state and fix only differences:
 - A node with a miner/extractor (or portable miner) is **never** retyped,
   never purity-changed, never deactivated — at roll time *and* re-checked at
   apply time.
-- Re-rolling never happens implicitly. Only when `AllowReroll` is enabled AND
-  `SeedOverride` is non-zero AND differs from the seed stored in the save, and
-  only at session start. During a re-roll every currently-occupied node
-  (including occupied *new* nodes, detected via live actors or orphaned
-  extractor positions) is pinned with its current resource/purity.
+- Re-rolling never happens implicitly. Only when the user turns on the
+  `RerollNow` one-shot toggle. It is EDGE-TRIGGERED (fires on each off→on
+  transition), so it applies **live** mid-session if toggled in-game, or on the
+  next load otherwise — both reuse the same restore→roll→apply path. It re-rolls
+  once using `SeedOverride` (or a fresh random seed if 0), then clears itself.
+  During a re-roll every currently-occupied node (including occupied *new* nodes,
+  detected via live actors or orphaned extractor positions) is pinned with its
+  current resource/purity. New locations reveal via spawn-on-discovery.
 - Master `Enabled=false`: the subsystem does nothing. Note: class/purity
   overrides already written into the save persist (they are the game's own
   SaveGame properties); deactivated vanilla nodes come back and new nodes
@@ -208,7 +211,7 @@ Friend=(Class="AFGResourceScanner",  FriendClass="ANodeShuffleSubsystem")
 |---|---|---|
 | `Enabled` | true | master switch |
 | `SeedOverride` | 0 | 0 = roll a random seed at first generation; non-zero = use this seed |
-| `AllowReroll` | false | allow `SeedOverride` ≠ saved seed to re-roll an existing save at next load |
+| `RerollNow` | false | one-shot: re-roll the whole layout once at next load (using `SeedOverride`, or random if 0), then auto-clears. The single re-roll control. |
 | `ActivePercent` | 70 | % of the total pool (vanilla + new) that is active |
 | `NewNodeCount` | 100 | candidate new locations (used at generation time only) |
 | `MinNodesPerResource` | 5 | per-resource-type active minimum (completability floor) |

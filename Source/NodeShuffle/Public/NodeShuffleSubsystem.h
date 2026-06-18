@@ -92,7 +92,7 @@ struct FNodeShuffleSuppressedOriginal
 // Lifecycle per session:
 //   BeginPlay -> repeating timer -> Tick():
 //     1. (first tick) roll the layout if the save has none, or re-roll if the
-//        user explicitly enabled AllowReroll with a new SeedOverride.
+//        user turned on the Re-roll Now toggle.
 //     2. apply the layout idempotently: retype vanilla nodes via the game's
 //        native SaveGame class/purity overrides, deactivate inactive vanilla
 //        nodes, spawn + dress missing new nodes, settle new nodes near
@@ -230,10 +230,9 @@ private:
     // a genuine AFGResourceNode with a UFGResourceDescriptor resource, plain Node
     // type (GetResourceNodeType() == EResourceNodeType::Node — no geyser/fracking/
     // deposit), not skeletal/transient. bIncludeModded admits non-/Game/ resource
-    // descriptors (AllMinable etc.). bIncludeLiquid is the EXPERIMENTAL-form gate:
-    // solid is always allowed; liquid (oil) AND gas (e.g. lithium, Desc_OreLithium
-    // form=RF_GAS) join only when EnableExperimentalFeatures is on (both need
-    // special extractors). Nothing is special-cased by mod/class name.
+    // descriptors (AllMinable etc.). bIncludeLiquid admits non-solid forms: solid is
+    // always allowed; liquid (oil) AND gas (e.g. lithium, Desc_OreLithium form=RF_GAS)
+    // join when it is true (callers now pass true). Nothing is special-cased by mod/class name.
     static bool IsEligibleVanillaNode(const AFGResourceNode* Node, bool bIncludeModded, bool bIncludeLiquid);
     // Same gate, but reports WHY a node was rejected (for the once-per-class
     // modded-eligibility diagnostic). Accepts genuinely-functional modded nodes
@@ -370,7 +369,10 @@ private:
 
     // ---- session state ----
     FTimerHandle TickTimerHandle;
-    bool bRerollCheckDone = false;
+    // Previous-tick value of the Re-roll toggle, for EDGE-TRIGGERED re-roll: the re-roll fires on each OFF->ON
+    // transition of Config.RerollNow — so it works the same whether the user set it and reloaded (load-time) or
+    // toggled it mid-session (LIVE, no reload). Edge-triggering also prevents a loop if the config clear is slow.
+    bool bPrevRerollNow = false;
     bool bLoggedDisabled = false;
     bool bDidInitialApply = false;
     bool bDepositSweepDone = false;
