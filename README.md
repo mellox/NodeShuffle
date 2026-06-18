@@ -28,13 +28,13 @@ so every world is a fresh puzzle, while staying completable.
   changed, retyped, or removed (checked at roll time and continuously).
 - **Radioactivity follows the shuffle** — a node retyped to uranium irradiates;
   one retyped away from it stops.
+- **Multiplayer-aware** — all logic is server-side; overrides replicate.
 
 > **Note on player-built nodes** (if you use a mod that lets you *build* resource
 > nodes): the shuffle is rolled once per save, so a node you build during normal
 > play is left alone. But if you **re-roll**, an unoccupied built node is shuffled
 > just like any world node — to keep one exactly as built, place a miner on it
 > first (occupied nodes are always pinned and never moved or retyped).
-- **Multiplayer-aware** — all logic is server-side; overrides replicate.
 
 ## Configuration
 
