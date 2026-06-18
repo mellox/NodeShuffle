@@ -58,6 +58,19 @@ ANodeShuffleResourceNode::ANodeShuffleResourceNode()
         // the rock (no footprint block). Blocking BuildGun makes the rock a build-gun surface like any vanilla
         // node rock — you build around it; it does NOT gate the miner you snap onto it (snapped node is exempt).
         RockMesh->SetCollisionResponseToChannel(ECC_GameTraceChannel5, ECR_Block); // BuildGun <-- THE FIX
+        // polish-2 (RESTORE PLAYER SOLIDITY — user-requested regression fix). redesign-8 made the rock fully
+        // walk-through by setting objType=Resource, because the Pawn preset IGNORES the Resource object type
+        // (that is why the player passes through). The reason r8 left objType=Resource was the Miner Mk1
+        // CLEARANCE: r8 had the rock as objType=WorldStatic and the miner footprint rejected it. BUT the modern
+        // FG clearance is buildable-vs-buildable CLEARANCE-DATA (FFGClearanceData / CheckClearance) — our
+        // cosmetic rock carries NO clearance data, so it cannot block the Mk1 that way. Restore solidity by
+        // making the rock block the PAWN with objType=WorldDynamic (the player blocks WorldDynamic -> you stand
+        // on / bump the rock like a vanilla node) — deliberately NOT WorldStatic, the one type r8 proved the
+        // miner footprint/encroachment test rejects. BuildGun stays Block (Mk1 snap), all other channels stay
+        // ignored (Clearance included), so the Mk1 path is unchanged. QueryOnly is enough: character movement
+        // sweeps respect Pawn=Block, so the player is solid against and can stand on the rock.
+        RockMesh->SetCollisionObjectType(ECC_WorldDynamic);
+        RockMesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Block); // solid to the player (standable)
         RockMesh->SetGenerateOverlapEvents(false);
     }
 }
@@ -76,10 +89,22 @@ void ANodeShuffleResourceNode::DressRock(UStaticMesh* Mesh, const TArray<UMateri
     const int32 Slots = FMath::Max(1, RockMesh->GetNumMaterials());
     for (int32 i = 0; i < Slots; i++)
     {
-        UMaterialInterface* Pick = nullptr;
-        if (i < Materials.Num()) { Pick = Materials[i]; }
-        else if (Materials.Num() > 0) { Pick = Materials.Last(); }
-        if (Pick && RockMesh->GetMaterial(i) != Pick) { RockMesh->SetMaterial(i, Pick); }
+        // issue #3 (flat color): apply a table material ONLY to the slots the table actually covers (the outer
+        // rock). Slots the table doesn't cover (e.g. the rock's "Middle"/core slot) keep the MESH'S OWN default
+        // material — we must NOT back-fill them with the last table material, which painted the core with the
+        // outer color and produced the flat/uniform look (ROCKDIAG: slot[1] meshDefault=ResourceNode_Middle_*
+        // was being overwritten with the outer ResourceNode_*_Inst). Re-assert the mesh default on uncovered
+        // slots so a re-dress (re-roll) never leaves a stale back-fill override behind.
+        if (i < Materials.Num())
+        {
+            UMaterialInterface* Pick = Materials[i];
+            if (Pick && RockMesh->GetMaterial(i) != Pick) { RockMesh->SetMaterial(i, Pick); }
+        }
+        else
+        {
+            UMaterialInterface* MeshDef = Mesh->GetMaterial(i);
+            if (RockMesh->GetMaterial(i) != MeshDef) { RockMesh->SetMaterial(i, MeshDef); }
+        }
     }
     // DIAGNOSTIC (issue #3 flat color): dump each material slot — what was applied, where it came from
     // (table vs back-filled from the last table material vs the mesh's own default), and the mesh's
@@ -100,7 +125,10 @@ void ANodeShuffleResourceNode::DressRock(UStaticMesh* Mesh, const TArray<UMateri
                 MeshDef ? *MeshDef->GetName() : TEXT("<none>"));
         }
     }
-    // Centered on the node (relative to root): lateral 0, small Z sink only. Table scale applied.
+    // RelativeOffset centers the rock laterally (XY) on the node origin (computed by the caller from the mesh's
+    // local bounds-center) plus a small authored Z sink so it grounds into terrain. Table scale applied. The rock
+    // stays prominent; a placed miner no longer clips it because the extractor places on TOP of the rock
+    // (GetPlacementLocation override below), vanilla-style, rather than at the node origin under it.
     if (!RockMesh->GetRelativeLocation().Equals(RelativeOffset, 1.0f))
     {
         RockMesh->SetRelativeLocation(RelativeOffset);

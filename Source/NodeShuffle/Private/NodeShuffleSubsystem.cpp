@@ -1624,8 +1624,8 @@ void ANodeShuffleSubsystem::SpawnVisualRockForNode(AFGResourceNode* Node, UClass
     bool bQuartz = false;
     // The authored table row carries the correct per-mesh scale (ore ~2.0, coal/sulfur ~0.917, stone ~2.4)
     // and a vertical offset. redesign-5 restores per-mesh scale + Z offset (redesign-4 collapsed to a uniform
-    // (0,0,-40)). We force the LATERAL offset to 0 (the table's (-400,..) X was the off-center bug) and keep
-    // only the table's Z (clamped to a small sink) so each rock sits centered with its authored footprint.
+    // (0,0,-40)). We derive the LATERAL offset from the mesh's own bounds (below) — the table's authored X was
+    // wrong — and keep only the table's Z (clamped to a small sink) so each rock sits centered + grounded.
     const FNodeShuffleVisual* Visual = FNodeShuffleNodeAssets::FindVisual(FName(*ResourceClass->GetName()));
     if (!Mesh)
     {
@@ -1645,7 +1645,18 @@ void ANodeShuffleSubsystem::SpawnVisualRockForNode(AFGResourceNode* Node, UClass
     const FVector WantScale = Visual ? Visual->MeshScale : FVector(2.0f, 2.0f, 2.0f);
     // Centered laterally; keep the table's Z (a vertical sink), clamped so we never sink the rock absurdly.
     const float TableZ = Visual ? Visual->MeshOffset.Z : -40.0f;
-    const FVector RelOffset(0.f, 0.f, FMath::Clamp(TableZ, -120.0f, 60.0f));
+    // issue #1 (snap off-center): the donor mesh's geometric center is offset from its pivot (ROCK-CENTER showed
+    // the quartz placeholder ~350uu laterally), so with the actor's random yaw the rock renders to the side of the
+    // node. Counter the mesh's LOCAL bounds-center in XY (scaled) so the rock's visual center lands on the node
+    // origin regardless of yaw (RockMesh's relative rotation is identity; actor yaw spins the centered rock about
+    // the origin). Z keeps the authored sink so the rock stays PROMINENT and grounded (NOT buried — polish-3 tried
+    // sinking it and the user rightly rejected that). NOTE: miners place at the node origin (vanilla snap), so a
+    // prominent centered rock pokes up where the miner sits — rock-vs-miner fit is still an open visual question.
+    const FVector MeshLocalCenter = Mesh->GetBoundingBox().GetCenter();
+    const FVector RelOffset(
+        -WantScale.X * MeshLocalCenter.X,
+        -WantScale.Y * MeshLocalCenter.Y,
+        FMath::Clamp(TableZ, -120.0f, 60.0f));
 
     // Build a plain material array for DressRock.
     TArray<UMaterialInterface*> MatPtrs;
@@ -1957,6 +1968,26 @@ void ANodeShuffleSubsystem::EnsureNodeUseBox(AFGResourceNode* Node)
             RStr(UseBox->GetCollisionResponseToChannel(ECC_Pawn)),
             RStr(UseBox->GetCollisionResponseToChannel(ECC_WorldDynamic)),
             RStr(UseBox->GetCollisionResponseToChannel(ECC_WorldStatic)));
+        // issue #2 (player bumps node / must jump): the box is Pawn=Ignore above, so it is NOT what blocks the
+        // player. Probe the ROCK MESH's own collision — if its Pawn response is Block (or its profile is a
+        // blocking one), the visible rock is the obstacle. This names the real culprit before we change it
+        // (making the rock pawn-passthrough vs. standable-like-vanilla is a design call for the user).
+        if (ANodeShuffleResourceNode* RockNode = Cast<ANodeShuffleResourceNode>(Node))
+        {
+            if (IsValid(RockNode->RockMesh))
+            {
+                UStaticMeshComponent* RM = RockNode->RockMesh;
+                UE_LOG(LogNodeShuffle, Display,
+                    TEXT("USEBOX-RISE   rock profile='%s' collEnabled=%d scaledBoxExtent=%s | Pawn=%s Visibility=%s Camera=%s WorldStatic=%s WorldDynamic=%s"),
+                    *RM->GetCollisionProfileName().ToString(), (int32)RM->GetCollisionEnabled(),
+                    *RM->Bounds.BoxExtent.ToCompactString(),
+                    RStr(RM->GetCollisionResponseToChannel(ECC_Pawn)),
+                    RStr(RM->GetCollisionResponseToChannel(ECC_Visibility)),
+                    RStr(RM->GetCollisionResponseToChannel(ECC_Camera)),
+                    RStr(RM->GetCollisionResponseToChannel(ECC_WorldStatic)),
+                    RStr(RM->GetCollisionResponseToChannel(ECC_WorldDynamic)));
+            }
+        }
     }
 
     // THE SNAP FIX (r9, kept): wire our box in as the node's engine mBoxComponent (the resource collider
@@ -2907,6 +2938,12 @@ void ANodeShuffleSubsystem::ReassociateOrphanedExtractors()
             }
         }
     }
+
+    // polish-9: portable-miner burial is fixed at the SOURCE — a hook on AFGPortableMinerDispenser::
+    // Server_SpawnPortableMiner (in NodeShuffle.cpp) raises the spawn point onto the rock surface where the
+    // player aimed, so each portable miner sits ON the rock (visible + interactable), any number of them, and
+    // coexisting with a Mk1. No rock hiding here (a node is a SHARED marker — multiple portable miners + a Mk1
+    // can all be on it), so the prominent solid rock simply stays.
 }
 
 void ANodeShuffleSubsystem::RefreshScannersAndRadarTowers()

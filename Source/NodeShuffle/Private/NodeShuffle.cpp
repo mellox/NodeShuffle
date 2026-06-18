@@ -4,6 +4,9 @@
 #include "Hologram/FGResourceExtractorHologram.h"
 #include "Buildables/FGBuildableResourceExtractorBase.h"
 #include "Equipment/FGResourceScanner.h"
+#include "Equipment/FGPortableMinerDispenser.h"
+#include "NodeShuffleResourceNode.h"
+#include "Components/StaticMeshComponent.h"
 #include "Resources/FGResourceNode.h"
 #include "Resources/FGResourceNodeBase.h"
 #include "Resources/FGExtractableResourceInterface.h"
@@ -112,7 +115,7 @@ void FNodeShuffleModule::DbgLogAcceptance(AFGResourceExtractorHologram* Hologram
 void FNodeShuffleModule::StartupModule()
 {
     UE_LOG(LogNodeShuffle, Log, TEXT("NodeShuffle module loaded"));
-    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle BUILD 2026-06-18-scanner-7 LOADED ====="));
+    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle BUILD 2026-06-18-polish-9 LOADED ====="));
 
 #if !WITH_EDITOR
     // redesign-13 HOLOGRAM HOOK (DIAGNOSTICS). r12 proved the Mk1 build trace NEVER hits our node (0 hits on
@@ -368,6 +371,39 @@ void FNodeShuffleModule::StartupModule()
                 Kept, Total, *cluster.MidPoint.ToCompactString(), *Clean.MidPoint.ToCompactString());
         }
         Scope(Self, Clean); // run the original on the cleaned, recentered cluster (suppresses the dirty auto-forward)
+    });
+
+    // PORTABLE-MINER SURFACE PLACEMENT (polish-9). A portable miner is spawned by AFGPortableMinerDispenser at a
+    // location its placement trace computed — and that trace passes THROUGH our cosmetic rock (the rock only
+    // blocks Pawn/BuildGun), so the miner lands on the terrain UNDER the rock and is buried (invisible + the
+    // solid rock wins the look-at, so you can't reach it). Hook the server spawn and, when the target is one of
+    // OUR nodes, raise the spawn point onto the ROCK SURFACE at the aimed X/Y (a line trace against the rock
+    // mesh). The miner then sits ON the rock where you placed it — visible, interactable, any number of them,
+    // coexisting with a Mk1. Node origin/snapping is untouched; only the portable miner's spawn Z is adjusted.
+    SUBSCRIBE_UOBJECT_METHOD(AFGPortableMinerDispenser, Server_SpawnPortableMiner_Implementation,
+        [](auto& Scope, AFGPortableMinerDispenser* Self, const FVector& location, AFGResourceNode* resourceNode)
+    {
+        ANodeShuffleResourceNode* OurNode = Cast<ANodeShuffleResourceNode>(resourceNode);
+        if (!OurNode || !IsValid(OurNode->RockMesh) || !OurNode->RockMesh->GetStaticMesh())
+        {
+            return; // not our node (or no rock) -> default placement (auto-forward unchanged)
+        }
+        UStaticMeshComponent* RM = OurNode->RockMesh;
+        const float TopZ = RM->Bounds.Origin.Z + RM->Bounds.BoxExtent.Z + 200.f;
+        const float BotZ = RM->Bounds.Origin.Z - RM->Bounds.BoxExtent.Z - 200.f;
+        FVector NewLoc = location;
+        FHitResult Hit;
+        FCollisionQueryParams Params(FName(TEXT("NodeShufflePortableSurface")), /*bTraceComplex=*/true);
+        if (RM->LineTraceComponent(Hit, FVector(location.X, location.Y, TopZ), FVector(location.X, location.Y, BotZ), Params))
+        {
+            NewLoc.Z = Hit.ImpactPoint.Z; // sit the miner's base on the rock surface at the aimed X/Y
+        }
+        if (GNodeShuffleDiagnosticsEnabled)
+        {
+            UE_LOG(LogNodeShuffle, Display, TEXT("PORTABLE-SURFACE node='%s' in=%s -> out=%s hit=%d"),
+                *OurNode->GetName(), *location.ToCompactString(), *NewLoc.ToCompactString(), Hit.bBlockingHit ? 1 : 0);
+        }
+        Scope(Self, NewLoc, resourceNode); // spawn the portable miner on the rock surface
     });
 #endif
 }
