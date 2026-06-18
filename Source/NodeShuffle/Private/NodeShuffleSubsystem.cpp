@@ -2220,12 +2220,27 @@ void ANodeShuffleSubsystem::DeregisterNodeFromManager(AFGResourceNodeBase* Node)
         RepMgr->RemoveRepresentationOfActor(Node);
     }
 
-    AFGResourceNode* AsNode = Cast<AFGResourceNode>(Node);
-    if (!AsNode) { return; } // Base-only (esc_) originals aren't in the mResourceNodes registry
-    AFGResourceNodeManager* Mgr = GetNodeManager();
-    if (Mgr)
+    if (AFGResourceNode* AsNode = Cast<AFGResourceNode>(Node))
     {
-        Mgr->mResourceNodes.RemoveSingleSwap(AsNode);
+        // mResourceNodes is the AFGResourceNode-only registry (the Mk1 snap list) — esc_ nodes aren't in it.
+        if (AFGResourceNodeManager* Mgr = GetNodeManager())
+        {
+            Mgr->mResourceNodes.RemoveSingleSwap(AsNode);
+        }
+
+        // scanner-3 (THE FIX: scanner still pinged a HIDDEN node). The resource scanner builds its ping
+        // clusters by iterating the WHOLE WORLD for AFGResourceNodes with GetResourceAmount()==RA_Infinite
+        // (this is ALSO why it skips deposits — they're finite). Hiding doesn't remove the actor, so our
+        // hidden original stayed RA_Infinite and kept getting clustered + pinged at its old spot. Make it
+        // look finite (like a depleted node / a deposit) so the scanner excludes it. mAmount is
+        // EditInstanceOnly + NOT SaveGame, so it resets to RA_Infinite on reload (and re-rolls run post-
+        // reload, before the re-hide), meaning no manual reversal is needed. The node is hidden + collision-
+        // off so this never affects mining; occupied nodes are never hidden so they keep RA_Infinite. Friend
+        // access (AccessTransformers AFGResourceNode->ANodeShuffleSubsystem) exposes mAmount.
+        if (AsNode->mAmount == EResourceAmount::RA_Infinite)
+        {
+            AsNode->mAmount = EResourceAmount::RA_Poor;
+        }
     }
 }
 
