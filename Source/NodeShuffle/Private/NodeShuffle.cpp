@@ -133,7 +133,7 @@ static bool NodeShuffleIsFrackingExtractor(const AFGResourceExtractorHologram* H
 void FNodeShuffleModule::StartupModule()
 {
     UE_LOG(LogNodeShuffle, Log, TEXT("NodeShuffle module loaded"));
-    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle BUILD 2026-06-20-fracking-crash-fix-2 LOADED ====="));
+    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle BUILD 2026-06-20-exclude-gas-1 LOADED ====="));
 
 #if !WITH_EDITOR
     // redesign-13 HOLOGRAM HOOK (DIAGNOSTICS). r12 proved the Mk1 build trace NEVER hits our node (0 hits on

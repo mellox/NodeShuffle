@@ -493,8 +493,8 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
             {
                 AFGResourceNode* Node = *It;
                 const EResourceForm LiveForm = Node->GetResourceForm();
-                const bool bExpForm = (LiveForm == EResourceForm::RF_LIQUID) || (LiveForm == EResourceForm::RF_GAS);
-                // Liquid/gas-only live scan: solids are already in the rebuilt pool.
+                const bool bExpForm = (LiveForm == EResourceForm::RF_LIQUID); // oil only; gas (lithium) is not shuffled
+                // Liquid-only live scan: solids are already in the rebuilt pool.
                 if (!bExpForm || !IsEligibleVanillaNode(Node, Config.IncludeModdedNodes, true))
                 {
                     continue;
@@ -540,7 +540,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                 ExperimentalAdded++;
             }
             UE_LOG(LogNodeShuffle, Display,
-                TEXT("Experimental-form augment: experimental ON -> added %d live RF_LIQUID/RF_GAS nodes not in the saved pool to the reroll pool (captured into the layout for determinism)"),
+                TEXT("Liquid-form augment: added %d live RF_LIQUID (oil) nodes not in the saved pool to the reroll pool (captured into the layout for determinism)"),
                 ExperimentalAdded);
         }
 
@@ -675,8 +675,8 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                 if (!RC) { continue; }
                 if (BaseNode->GetResourceNodeType() != EResourceNodeType::Node) { continue; }
                 const EResourceForm BF = BaseNode->GetResourceForm();
-                const bool bExp = (BF == EResourceForm::RF_LIQUID) || (BF == EResourceForm::RF_GAS);
-                if (bExp && !bIncludeLiquid) { continue; } // bIncludeLiquid==true now; kept as a defensive guard
+                if (BF == EResourceForm::RF_GAS) { continue; } // gas (lithium etc.) is not shuffled — special extractor
+                if (BF == EResourceForm::RF_LIQUID && !bIncludeLiquid) { continue; }
             }
 
             const bool bOccupied = BaseNode->IsOccupied() || (Node && PortableMinerNodes.Contains(Node));
@@ -2288,6 +2288,7 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
             else if (RC && F == EResourceForm::RF_LIQUID)
             {
                 RebuildNodeNativeVisual(*Existing);
+                if (OurNode) { OurNode->DressOilDecal(RC); } // oil-decal-1: re-dress our oil decal on adopt
             }
         }
         // redesign-6 FIX 1: a restored node may be left actor-hidden after reload — force the whole chain
@@ -2547,8 +2548,9 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
     if (SpawnForm == EResourceForm::RF_LIQUID)
     {
         RebuildNodeNativeVisual(Node);
+        Node->DressOilDecal(ResourceClass); // oil-decal-1: OUR own oil-puddle decal (engine path leaves it invisible on a runtime node)
         SpawnedRockLiquid++;
-        UE_LOG(LogNodeShuffle, Verbose, TEXT("spawned LIQUID node %s (oil decal, no mesh actor)"),
+        UE_LOG(LogNodeShuffle, Verbose, TEXT("spawned LIQUID node %s (oil decal)"),
             *ResourceClass->GetName());
     }
     else
@@ -3108,23 +3110,28 @@ bool ANodeShuffleSubsystem::IsEligibleVanillaNodeReason(const AFGResourceNode* N
         return false;
     }
 
-    // RESOURCE FORM GATE. SOLID is always allowed. Liquid/gas (oil, gas-form modded) join ONLY with the
-    // experimental flag (both need special extractors). redesign-4 BUG 2 relaxation: a MODDED node whose
-    // descriptor reports RF_INVALID/unknown (common for AllMinable's crafted-ITEM esc_ descriptors) is
-    // treated as SOLID so it still enters the pool — its mining is driven by the node, not the descriptor
-    // form. RF_INVALID on a VANILLA node stays rejected as principled junk.
+    // RESOURCE FORM GATE. SOLID is always allowed; LIQUID (oil) joins (we render its decal). GAS is NOT
+    // shuffled: RF_GAS nodes (e.g. lithium / Desc_OreLithium, mined by special "reactive ore" extractors like
+    // AlkaLib's) are mishandled by hide-and-replace — wrong placeholder visual, they wrongly accept a normal
+    // miner, and the modded extractor crashes on our spawned node. Leaving gas nodes vanilla avoids all three.
+    // redesign-4 BUG 2 relaxation: a MODDED node whose descriptor reports RF_INVALID/unknown (common for
+    // AllMinable's crafted-ITEM esc_ descriptors) is treated as SOLID so it still enters the pool — its mining
+    // is driven by the node, not the descriptor form. RF_INVALID on a VANILLA node stays rejected as junk.
     const EResourceForm Form = Node->GetResourceForm();
-    const bool bExperimentalForm = (Form == EResourceForm::RF_LIQUID) || (Form == EResourceForm::RF_GAS);
+    const bool bGasForm = (Form == EResourceForm::RF_GAS);
+    const bool bLiquidForm = (Form == EResourceForm::RF_LIQUID);
     const bool bModdedUnknownForm = (!bVanillaNode) && (Form != EResourceForm::RF_LIQUID)
-        && (Form != EResourceForm::RF_GAS); // modded solid OR modded RF_INVALID -> treat as solid
+        && (Form != EResourceForm::RF_GAS); // modded solid OR modded RF_INVALID -> treat as solid (gas excluded)
     const bool bFormAllowed = (Form == EResourceForm::RF_SOLID)
         || bModdedUnknownForm
-        || (bIncludeLiquid && bExperimentalForm);
+        || (bIncludeLiquid && bLiquidForm);
     if (!bFormAllowed)
     {
-        OutReason = bExperimentalForm
-            ? TEXT("liquid/gas node and experimental features are off")
-            : TEXT("resource form is not solid/liquid/gas");
+        OutReason = bGasForm
+            ? TEXT("gas node (e.g. lithium) — not shuffled (special extractor)")
+            : bLiquidForm
+                ? TEXT("liquid node and liquid shuffling is off")
+                : TEXT("resource form is not solid/liquid");
         return false;
     }
 

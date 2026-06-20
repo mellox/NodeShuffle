@@ -8,6 +8,8 @@ class UStaticMesh;
 class UMaterialInterface;
 class UStaticMeshComponent;
 class UBoxComponent;
+class UDecalComponent;
+class UFGResourceDescriptor;
 
 // redesign-3 (SAVED NODE IDENTITY). Our OWN concrete resource-node class for every relocated/spawned
 // NodeShuffle node. The redesign-2 nodes were identified by AActor::Tags (EntryGuid), but Tags are NOT
@@ -52,10 +54,22 @@ public:
     UPROPERTY()
     TObjectPtr<UStaticMeshComponent> RockMesh;
 
+    // oil-decal-1: crude oil / liquid nodes have NO rock mesh — their visual is a projected DECAL (the oil
+    // puddle). The engine creates its mDecalComponent lazily via a non-exported function our runtime-spawned
+    // node never reaches, so a relocated oil node was invisible. We carry our OWN decal subobject and dress it
+    // from the resource descriptor's decal material/size (mirrors the RockMesh pattern). Hidden for solids.
+    UPROPERTY()
+    TObjectPtr<UDecalComponent> OilDecal;
+
     // Dress the node's own RockMesh with the resolved visual: static mesh, per-slot materials, the
     // table scale, and a centered relative offset (lateral 0, small Z sink). Idempotent / cost-guarded.
     void DressRock(UStaticMesh* Mesh, const TArray<UMaterialInterface*>& Materials,
                    const FVector& Scale, const FVector& RelativeOffset);
+
+    // oil-decal-1: set up the oil-puddle decal for a LIQUID node from its resource descriptor's decal
+    // material + size (UFGResourceDescriptor::GetDecalMaterial / GetDecalSize). No-op if the descriptor has
+    // no decal. Idempotent. Called at spawn and on adopt-after-reload for liquid nodes.
+    void DressOilDecal(TSubclassOf<UFGResourceDescriptor> ResourceClass);
 
     // redesign-6 FIX 1 (THE BLOCKER): AFGResourceNode actors are LOGICAL — their visual normally comes
     // from a SEPARATE engine mesh actor, and the node actor itself (and/or significance management) may

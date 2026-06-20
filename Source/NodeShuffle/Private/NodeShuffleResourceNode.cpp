@@ -3,8 +3,11 @@
 #include "Components/StaticMeshComponent.h"
 #include "Components/SceneComponent.h"
 #include "Components/BoxComponent.h"
+#include "Components/DecalComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Materials/MaterialInterface.h"
+#include "Materials/Material.h"
+#include "Resources/FGResourceDescriptor.h"
 
 ANodeShuffleResourceNode::ANodeShuffleResourceNode()
 {
@@ -72,6 +75,56 @@ ANodeShuffleResourceNode::ANodeShuffleResourceNode()
         RockMesh->SetCollisionObjectType(ECC_WorldDynamic);
         RockMesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Block); // solid to the player (standable)
         RockMesh->SetGenerateOverlapEvents(false);
+    }
+
+    // oil-decal-1: the oil-puddle decal for LIQUID nodes. A CONSTRUCTOR subobject (guaranteed to register +
+    // render, like RockMesh) so a runtime-spawned node has it — the engine's own mDecalComponent is created
+    // lazily by a non-exported path our node never reaches. Child of the box-root. UDecalComponent projects
+    // along its LOCAL +X, so pitch -90 aims +X straight DOWN (-Z world) to project onto the terrain; the
+    // actor's random yaw rotates a down-pointing vector about Z and leaves it pointing down. Hidden until a
+    // LIQUID node dresses it (solids leave it off).
+    OilDecal = CreateDefaultSubobject<UDecalComponent>(TEXT("NodeShuffleOilDecal"));
+    if (OilDecal)
+    {
+        OilDecal->SetupAttachment(UseBox);
+        OilDecal->SetRelativeRotation(FRotator(-90.f, 0.f, 0.f));
+        OilDecal->SetVisibility(false);
+    }
+}
+
+void ANodeShuffleResourceNode::DressOilDecal(TSubclassOf<UFGResourceDescriptor> ResourceClass)
+{
+    if (!IsValid(OilDecal) || !ResourceClass)
+    {
+        return;
+    }
+    UMaterial* DecalMat = UFGResourceDescriptor::GetDecalMaterial(ResourceClass);
+    if (!DecalMat)
+    {
+        return; // this resource has no decal (e.g. a solid) — nothing to show
+    }
+    const float Size = UFGResourceDescriptor::GetDecalSize(ResourceClass); // on-ground half-extent (vanilla float)
+    const float Depth = FMath::Max(400.f, Size);                           // projection thickness (reach the ground)
+
+    if (OilDecal->GetDecalMaterial() != DecalMat)
+    {
+        OilDecal->SetDecalMaterial(DecalMat);
+    }
+    // DecalSize is a HALF-EXTENT in the decal's LOCAL space: X = projection depth (down, after our -90 pitch),
+    // Y/Z = the puddle's half-width/height on the ground. (If the puddle reads oversized in-game, halve Y/Z.)
+    OilDecal->DecalSize = FVector(Depth, Size, Size);
+    OilDecal->SetRelativeRotation(FRotator(-90.f, 0.f, 0.f)); // re-assert (adopt path / safety)
+    if (!OilDecal->IsRegistered())
+    {
+        OilDecal->RegisterComponent();
+    }
+    OilDecal->SetVisibility(true, true);
+    OilDecal->MarkRenderStateDirty();
+    // The whole actor must be un-hidden too (significance mgmt can leave logical nodes hidden) — same reason
+    // ForceVisible() exists for rocks.
+    if (IsHidden())
+    {
+        SetActorHiddenInGame(false);
     }
 }
 
