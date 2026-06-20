@@ -1,8 +1,8 @@
 {
 	"FileVersion": 3,
 	"Version": 1,
-	"VersionName": "1.2.0",
-	"SemVersion": "1.2.0",
+	"VersionName": "1.2.1",
+	"SemVersion": "1.2.1",
 	"GameVersion": ">=491125",
 	"FriendlyName": "Node Shuffle",
 	"Description": "Randomizes the planet's resource nodes per save — relocates nodes to new locations and shuffles which are active, their resource, and purity, for solids, oil/liquids, and modded nodes alike. Adds ~100 extra locations; balance minimums keep every playthrough completable. Re-roll the layout live anytime.",
