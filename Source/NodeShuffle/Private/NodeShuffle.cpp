@@ -3,6 +3,8 @@
 #include "Patching/NativeHookManager.h"
 #include "Hologram/FGResourceExtractorHologram.h"
 #include "Buildables/FGBuildableResourceExtractorBase.h"
+#include "Buildables/FGBuildableFrackingActivator.h"
+#include "Buildables/FGBuildableFrackingExtractor.h"
 #include "Equipment/FGResourceScanner.h"
 #include "Equipment/FGPortableMinerDispenser.h"
 #include "NodeShuffleResourceNode.h"
@@ -112,10 +114,26 @@ void FNodeShuffleModule::DbgLogAcceptance(AFGResourceExtractorHologram* Hologram
     }
 }
 
+// CRASH GUARD (fracking-crash-fix): our nodes are regular Node-type resource nodes, NOT fracking
+// core/satellite nodes. A FRACKING extractor (Resource Well Pressurizer = AFGBuildableFrackingActivator, or the
+// satellite Resource Well Extractor = AFGBuildableFrackingExtractor; modded wells derive from these) does a
+// CHECKED cast of the node to a fracking node type in OnExtractableResourceSet — placing one on our node is a
+// FATAL crash (user-reported). The force-accept hooks must NOT accept fracking extractors: without our Override
+// the base check rejects our node (invalid placement, like vanilla on a non-fracking node) instead of crashing.
+// Detected via the hologram's PUBLIC GetBuildClass() (the buildable class being constructed — catches modded
+// subclasses too). Free function (not a lambda) so the hook capture lists stay single-item — SUBSCRIBE_UOBJECT_
+// METHOD is a function-like macro and a comma in the lambda CAPTURE list `[a, b]` is read as an extra macro arg.
+static bool NodeShuffleIsFrackingExtractor(const AFGResourceExtractorHologram* H)
+{
+    const UClass* BuildClass = H ? H->GetBuildClass().Get() : nullptr;
+    return BuildClass && (BuildClass->IsChildOf(AFGBuildableFrackingActivator::StaticClass())
+                       || BuildClass->IsChildOf(AFGBuildableFrackingExtractor::StaticClass()));
+}
+
 void FNodeShuffleModule::StartupModule()
 {
     UE_LOG(LogNodeShuffle, Log, TEXT("NodeShuffle module loaded"));
-    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle BUILD 2026-06-18-live-reroll-1 LOADED ====="));
+    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle BUILD 2026-06-20-fracking-crash-fix-2 LOADED ====="));
 
 #if !WITH_EDITOR
     // redesign-13 HOLOGRAM HOOK (DIAGNOSTICS). r12 proved the Mk1 build trace NEVER hits our node (0 hits on
@@ -219,11 +237,13 @@ void FNodeShuffleModule::StartupModule()
         const UObject* Obj = Resource.GetObject();
         return Obj && Obj->GetClass()->GetName() == TEXT("NodeShuffleResourceNode");
     };
+    // Fracking extractors are rejected via the free function NodeShuffleIsFrackingExtractor() (above) — see its
+    // comment for the crash it prevents and why it is a free function, not a captured lambda.
     SUBSCRIBE_UOBJECT_METHOD(AFGResourceExtractorHologram, IsAllowedOnResource,
         [IsOurNode](auto& Scope, const AFGResourceExtractorHologram* Self,
                     const TScriptInterface<IFGExtractableResourceInterface>& resource)
     {
-        if (IsOurNode(resource))
+        if (IsOurNode(resource) && !NodeShuffleIsFrackingExtractor(Self)) // never force-accept fracking (crash)
         {
             static bool bLoggedOnce = false;
             if (GNodeShuffleDiagnosticsEnabled && !bLoggedOnce) { bLoggedOnce = true;
@@ -235,7 +255,7 @@ void FNodeShuffleModule::StartupModule()
         [IsOurNode](auto& Scope, const AFGResourceExtractorHologram* Self,
                     const TScriptInterface<IFGExtractableResourceInterface>& resource)
     {
-        if (IsOurNode(resource))
+        if (IsOurNode(resource) && !NodeShuffleIsFrackingExtractor(Self)) // never force-accept fracking (crash)
         {
             static bool bLoggedOnce = false;
             if (GNodeShuffleDiagnosticsEnabled && !bLoggedOnce) { bLoggedOnce = true;

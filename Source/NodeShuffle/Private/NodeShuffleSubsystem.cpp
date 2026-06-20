@@ -37,6 +37,9 @@
 #include "Resources/FGItemDescriptor.h"
 #include "Equipment/FGResourceScanner.h"
 #include "Buildables/FGBuildableResourceExtractorBase.h"
+#include "Buildables/FGBuildable.h"
+#include "Buildables/FGBuildableFoundation.h"
+#include "Engine/OverlapResult.h"
 #include "FGPortableMiner.h"
 #include "FGWaterVolume.h"
 #include "FGActorRepresentationManager.h"
@@ -2361,11 +2364,66 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
                     return true;
                 }
             }
+            // Also reject spots occupied by player MACHINERY — a relocated node must NOT spawn on top of the
+            // factory (user-reported: a node embedded in a machine). Foundations/ramps are EXEMPT (the user is
+            // fine with a node sitting on a foundation). Physics overlap query (spatially indexed — only nearby
+            // hits), filtered to AFGBuildable but NOT AFGBuildableFoundation (which covers foundations,
+            // lightweight foundations, and ramps); terrain/landscape, vehicles, and resource nodes are ignored.
+            {
+                constexpr float BuildingRejectRadius = 600.0f;
+                TArray<FOverlapResult> Hits;
+                FCollisionObjectQueryParams ObjParams;
+                ObjParams.AddObjectTypesToQuery(ECC_WorldStatic);
+                ObjParams.AddObjectTypesToQuery(ECC_WorldDynamic);
+                FCollisionQueryParams QParams(FName(TEXT("NodeShuffleBuildingOverlap")), false);
+                if (GetWorld()->OverlapMultiByObjectType(Hits, At, FQuat::Identity, ObjParams,
+                        FCollisionShape::MakeSphere(BuildingRejectRadius), QParams))
+                {
+                    for (const FOverlapResult& H : Hits)
+                    {
+                        AActor* HitActor = H.GetActor();
+                        if (HitActor && HitActor->IsA<AFGBuildable>() && !HitActor->IsA<AFGBuildableFoundation>())
+                        {
+                            return true; // a machine/wall/belt — reject (foundations & ramps are allowed)
+                        }
+                    }
+                }
+            }
             return false;
         };
 
-        if (OverlapsAt(Entry.Location))
+        // A spot is "enclosed" if boxed in by rock on nearly all sides at close range — e.g. the bottom of a
+        // narrow vertical slot/crevice between rock columns: open ABOVE (the down-settle trace came through a
+        // shaft) but unreachable horizontally. User-reported: a node "inside a column with no entrance". Real
+        // caves and cliff-bases are NOT flagged (they're open on multiple sides). 8 horizontal rays at ~2 m
+        // height; flag only when 7+ of 8 hit rock within 5 m (a true pocket, not a walkable cave/ravine).
+        auto IsEnclosed = [&](const FVector& At) -> bool
         {
+            const FVector Eye(At.X, At.Y, At.Z + 200.f);
+            constexpr float Reach = 500.0f;
+            constexpr int32 Dirs = 8;
+            int32 Blocked = 0;
+            for (int32 d = 0; d < Dirs; d++)
+            {
+                const float Ang = (2.0f * PI * d) / Dirs;
+                const FVector To(Eye.X + Reach * FMath::Cos(Ang), Eye.Y + Reach * FMath::Sin(Ang), Eye.Z);
+                FHitResult EncHit;
+                FCollisionQueryParams EncParams(FName(TEXT("NodeShuffleEnclosure")), false);
+                if (GetWorld()->LineTraceSingleByChannel(EncHit, Eye, To, ECC_WorldStatic, EncParams)) { ++Blocked; }
+            }
+            return Blocked >= 7;
+        };
+
+        const bool bSpotOccupied = OverlapsAt(Entry.Location);
+        const bool bSpotEnclosed = !bSpotOccupied && IsEnclosed(Entry.Location);
+        if (bSpotOccupied || bSpotEnclosed)
+        {
+            if (bSpotEnclosed && FNodeShuffleModule::AreDiagnosticsEnabled())
+            {
+                UE_LOG(LogNodeShuffle, Display,
+                    TEXT("ENCLOSURE: %s node at %s is boxed in (narrow slot/column) — nudging to an open spot"),
+                    *ResourceClass->GetName(), *Entry.Location.ToCompactString());
+            }
             // Try one nudge per visit: an expanding golden-angle spiral, re-grounded
             // and water-checked, accepting the first free LAND spot. Persist it.
             constexpr float GoldenAngleRad = 2.39996323f;
@@ -2380,7 +2438,7 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
                                     Entry.Location.Z);
                 FVector TryLoc; FRotator TryRot = Entry.Rotation; bool bTryWater = false;
                 if (RaycastGroundAt(Probe, Entry.Location.Z, nullptr, nullptr, TryLoc, TryRot, bTryWater)
-                    && !bTryWater && !OverlapsAt(TryLoc))
+                    && !bTryWater && !OverlapsAt(TryLoc) && !IsEnclosed(TryLoc))
                 {
                     Entry.Location = TryLoc;
                     Entry.Rotation = TryRot;
