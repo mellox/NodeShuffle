@@ -14,6 +14,7 @@
 #include "Serialization/JsonSerializer.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "NodeShuffleBakedData.h"
 #include "Engine/StaticMesh.h"
 #include "Materials/MaterialInterface.h"
 #include "Materials/MaterialInstance.h"
@@ -89,6 +90,19 @@ namespace
     // starts at ~-4,900. A rare legit deep-ravine spot rejected by this guard just redeals to normal
     // land — harmless; a seabed spot accepted without it is a permanently unreachable node.
     constexpr float DeepWaterFloorZ = -4500.0f;
+    // slopefix-1 -> slopefit-1 (user: hills of ANY steepness are fair game — the game is full of
+    // them; only true CLIFF FACES reject). The settle gate is a CLIFF gate: near-vertical hits redeal
+    // via the water machinery; every walkable slope settles. There was NO gate at all before this
+    // (steepfix-1's 22° version was reverted pre-deploy on the user's call).
+    constexpr float CliffSlopeDeg = 60.0f;
+    const float MinSettleNormalZ = FMath::Cos(FMath::DegreesToRadians(CliffSlopeDeg));
+    // slopefit-1: the node ACTOR (interaction box + the transform the Miner hologram inherits) tilts
+    // only up to this toward the smoothed ground normal — buildings get near-vanilla geometry. The
+    // ROCK VISUAL takes the full slope alignment and sinks into the hill so steep placements look
+    // bedded instead of skewered ("not at the slant of the hillside").
+    constexpr float NodeTiltClampDeg = 12.0f;
+    constexpr float SmoothNormalRingCm = 350.0f;    // radius of the 4-probe normal-smoothing ring
+    constexpr float RockSlopeSinkMaxCm = 60.0f;     // extra rock sink, lerped over 10°..CliffSlopeDeg
     // playtest-fixes-3 WATER-LOCKED REDEAL (unanchored): random candidates drawn from the SAME deal
     // box the roll used, filtered by the learned water grid + spacing. No land anchors — anchoring to
     // streamed originals clustered relocations around original sites and defeated the randomization.
@@ -1983,10 +1997,49 @@ void ANodeShuffleSubsystem::SpawnVisualRockForNode(AFGResourceNode* Node, UClass
     // sinking it and the user rightly rejected that). NOTE: miners place at the node origin (vanilla snap), so a
     // prominent centered rock pokes up where the miner sits — rock-vs-miner fit is still an open visual question.
     const FVector MeshLocalCenter = Mesh->GetBoundingBox().GetCenter();
+
+    // slopefit-1: the ROCK takes the FULL smoothed slope alignment as a RELATIVE rotation (the actor
+    // itself is tilt-clamped for the hologram's sake), and steep slopes sink it further so the
+    // downhill edge doesn't float. Underground entries skip this (cave floors are fill-checked flat).
+    FQuat RockRelQuat = FQuat::Identity;
+    float SlopeDeg = 0.0f;
+    bool bUndergroundEntry = false;
+    for (const FNodeShuffleEntry& E : Layout)
+    {
+        if (E.EntryGuid == EntryGuid) { bUndergroundEntry = E.bUnderground; break; }
+    }
+    if (!bUndergroundEntry)
+    {
+        FVector ProbeLoc;
+        FRotator ProbeRot = FRotator::ZeroRotator;
+        bool bProbeWater = false;
+        FVector GroundN = FVector::UpVector;
+        const FVector NodeLoc = Node->GetActorLocation();
+        if (RaycastGroundAt(NodeLoc, NodeLoc.Z, Node, nullptr, ProbeLoc, ProbeRot, bProbeWater,
+                            /*bShortTrace=*/false, /*bOutTooSteep=*/nullptr, &GroundN))
+        {
+            SlopeDeg = FMath::RadiansToDegrees(FMath::Acos(FMath::Clamp(static_cast<float>(GroundN.Z), -1.0f, 1.0f)));
+            // Cold review (BLOCKER fix): the desired WORLD rotation must keep the actor's random YAW —
+            // FullAlign alone has none, and ActorInv*FullAlign cancels the actor's yaw exactly, making
+            // every rock face identically. Compose yaw under the slope tilt (same pattern as the
+            // actor's own settle rotation in RaycastGroundAt).
+            const FQuat FullAlign = FQuat::FindBetweenNormals(FVector::UpVector, GroundN);
+            const FQuat YawQuat(FRotator(0.f, Node->GetActorRotation().Yaw, 0.f));
+            RockRelQuat = Node->GetActorQuat().Inverse() * (FullAlign * YawQuat);
+        }
+    }
+
+    // Centering counters the mesh pivot->center offset in the ROTATED frame; slope sink beds the rock.
+    // Cold review #2: counter the FULL rotated offset incl. its Z-term — a tilted lateral offset
+    // (quartz ~350 uu) otherwise raises/sinks the rock by sin(slope)*offset, dwarfing the sink budget.
+    const FVector ScaledCenter(WantScale.X * MeshLocalCenter.X, WantScale.Y * MeshLocalCenter.Y, 0.0f);
+    const FVector RotatedCenter = RockRelQuat.RotateVector(ScaledCenter);
+    const float SlopeSink = FMath::GetMappedRangeValueClamped(
+        FVector2D(10.0f, CliffSlopeDeg), FVector2D(0.0f, RockSlopeSinkMaxCm), SlopeDeg);
     const FVector RelOffset(
-        -WantScale.X * MeshLocalCenter.X,
-        -WantScale.Y * MeshLocalCenter.Y,
-        FMath::Clamp(TableZ, -120.0f, 60.0f));
+        -RotatedCenter.X,
+        -RotatedCenter.Y,
+        FMath::Clamp(TableZ, -120.0f, 60.0f) - SlopeSink - RotatedCenter.Z);
 
     // Build a plain material array for DressRock.
     TArray<UMaterialInterface*> MatPtrs;
@@ -1995,8 +2048,8 @@ void ANodeShuffleSubsystem::SpawnVisualRockForNode(AFGResourceNode* Node, UClass
         for (const TWeakObjectPtr<UMaterialInterface>& M : *Mats) { MatPtrs.Add(M.Get()); }
     }
 
-    if (Comp) { Comp->DressRock(Mesh, MatPtrs, WantScale, RelOffset); }
-    else { Legacy->DressRock(Mesh, MatPtrs, WantScale, RelOffset); }
+    if (Comp) { Comp->DressRock(Mesh, MatPtrs, WantScale, RelOffset, RockRelQuat.Rotator()); }
+    else { Legacy->DressRock(Mesh, MatPtrs, WantScale, RelOffset, RockRelQuat.Rotator()); }
 
     UStaticMeshComponent* RockMC = Comp ? Comp->RockMesh : Legacy->RockMesh;
     // DIAGNOSTIC (issue #1 snap off-center): the miner snaps to the node ORIGIN / GetPlacementLocation,
@@ -2780,6 +2833,31 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
         if (Comp) { Comp->EnsureAttachedToRoot(); }
         else if (Legacy) { Legacy->EnsureRockChildOfRoot(); }
 
+        // slopefit-1 RETRO-FIT (once per node/session): nodes settled under the old FULL-tilt rule get
+        // the new clamped-actor rotation, and the forced re-dress below gives their rock the full-slope
+        // relative alignment. Rotation only — location untouched; occupied/pinned/underground skipped.
+        bool bRotRefit = false;
+        if (!Entry.bPinned && !Entry.bUnderground && !AdoptRotRefit.Contains(Entry.EntryGuid)
+            && !IsNodeOccupiedAnyway(*Existing))
+        {
+            AdoptRotRefit.Add(Entry.EntryGuid);
+            FVector RefitLoc;
+            FRotator RefitRot = (*Existing)->GetActorRotation(); // yaw preserved through the align math
+            bool bRefitWater = false;
+            if (RaycastGroundAt(Entry.Location, Entry.Location.Z, *Existing, nullptr, RefitLoc, RefitRot,
+                                bRefitWater))
+            {
+                if (!(*Existing)->GetActorRotation().Equals(RefitRot, 1.0f))
+                {
+                    (*Existing)->SetActorRotation(RefitRot);
+                    Entry.Rotation = RefitRot;
+                    bRotRefit = true;
+                    UE_LOG(LogNodeShuffle, Verbose, TEXT("SLOPEFIT: refit rotation of %s at %s (actor tilt-clamped; rock re-dresses)"),
+                        *Entry.EntryGuid.ToString(), *Entry.Location.ToCompactString());
+                }
+            }
+        }
+
         UStaticMeshComponent* RockMC = Comp ? Comp->RockMesh : (Legacy ? Legacy->RockMesh : nullptr);
         UDecalComponent* DecalMC = Comp ? Comp->OilDecal : nullptr;
         UClass* RC = LoadClassByPath(Entry.AssignedResourceClassPath);
@@ -2797,7 +2875,8 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
         }
         else if (RC && bVanillaOrigin)
         {
-            const bool bNeedsDress = !IsValid(RockMC) || RockMC->GetStaticMesh() == nullptr;
+            // slopefit-1: a rotation refit forces a re-dress so the rock's relative alignment updates.
+            const bool bNeedsDress = bRotRefit || !IsValid(RockMC) || RockMC->GetStaticMesh() == nullptr;
             if (bNeedsDress)
             {
                 SpawnVisualRockForNode(*Existing, RC, Entry.EntryGuid); // -> DressRock -> ForceVisible
@@ -2818,7 +2897,7 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
                 // visfix-1: assigned resource's look wins — hide the native mesh (re-asserted each
                 // pass; BP component visibility resets from the CDO on reload) and dress if needed.
                 HideNativeNodeMesh(*Existing, RockMC);
-                const bool bNeedsDress = !IsValid(RockMC) || RockMC->GetStaticMesh() == nullptr;
+                const bool bNeedsDress = bRotRefit || !IsValid(RockMC) || RockMC->GetStaticMesh() == nullptr;
                 if (bNeedsDress) { SpawnVisualRockForNode(*Existing, RC, Entry.EntryGuid); }
                 if ((*Existing)->IsHidden()) { (*Existing)->SetActorHiddenInGame(false); }
             }
@@ -2828,7 +2907,7 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
             }
             else
             {
-                const bool bNeedsDress = !IsValid(RockMC) || RockMC->GetStaticMesh() == nullptr;
+                const bool bNeedsDress = bRotRefit || !IsValid(RockMC) || RockMC->GetStaticMesh() == nullptr;
                 if (bNeedsDress) { SpawnVisualRockForNode(*Existing, RC, Entry.EntryGuid); } // fallback rock
             }
         }
@@ -2864,9 +2943,9 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
     {
         bool bWaterNoLand = false;
         bool bSettled = RaycastSettle(Entry, nullptr, nullptr, &bWaterNoLand);
-        // playtest-fixes-1 (water-locked redeal): a water hit with no land within the 300 m spiral is
-        // DEFINITIVE (the ground is there, it's just underwater) — re-deal the entry near a streamed
-        // original (proven land) instead of retrying the same ocean spot every 5 s forever.
+        // playtest-fixes-1 / steepfix-1 (unplaceable redeal): a hit that is water OR too steep, with
+        // no flat land within the 300 m spiral, is DEFINITIVE (the ground is there, it just can't
+        // host a mineable node) — re-deal the entry instead of retrying the same spot every 5 s.
         if (!bSettled && bWaterNoLand)
         {
             WaterLockedThisSession.Add(Entry.EntryGuid);
@@ -3016,12 +3095,13 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
                 const FVector Probe(Entry.Location.X + Radius * FMath::Cos(Angle),
                                     Entry.Location.Y + Radius * FMath::Sin(Angle),
                                     Entry.Location.Z);
-                FVector TryLoc; FRotator TryRot = Entry.Rotation; bool bTryWater = false;
+                FVector TryLoc; FRotator TryRot = Entry.Rotation; bool bTryWater = false; bool bTrySteep = false;
                 // cave-nodes-1: underground entries nudge with the SHORT trace so the probe stays on
                 // the cavern floor instead of relocating the node onto the roof/surface above.
+                // steepfix-1: nudge targets must also be flat enough to take a Miner.
                 if (RaycastGroundAt(Probe, Entry.Location.Z, nullptr, nullptr, TryLoc, TryRot, bTryWater,
-                                    Entry.bUnderground)
-                    && !bTryWater && !OverlapsAt(TryLoc) && !IsEnclosed(TryLoc))
+                                    Entry.bUnderground, &bTrySteep)
+                    && !bTryWater && !bTrySteep && !OverlapsAt(TryLoc) && !IsEnclosed(TryLoc))
                 {
                     Entry.Location = TryLoc;
                     Entry.Rotation = TryRot;
@@ -3492,23 +3572,17 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
     }
 }
 
-void ANodeShuffleSubsystem::EnsureWaterGridLoaded() const
+int32 ANodeShuffleSubsystem::MergeWaterGridFromContent(const FString& Content, const TCHAR* SourceLabel,
+                                                       bool bKeepExisting) const
 {
-    if (bWaterGridLoaded) { return; }
-    bWaterGridLoaded = true;
-    const FString Path = FPaths::Combine(FPaths::ProjectDir(), TEXT("Configs"), TEXT("NodeShuffle_WaterGrid.json"));
-    FString Content;
-    if (!FPaths::FileExists(Path) || !FFileHelper::LoadFileToString(Content, *Path))
-    {
-        return; // fresh grid — learns from this session's probes
-    }
     TSharedPtr<FJsonObject> Root;
     const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Content);
     if (!FJsonSerializer::Deserialize(Reader, Root) || !Root.IsValid())
     {
-        UE_LOG(LogNodeShuffle, Warning, TEXT("WATERGRID: NodeShuffle_WaterGrid.json failed to parse; starting fresh."));
-        return;
+        UE_LOG(LogNodeShuffle, Warning, TEXT("WATERGRID: %s failed to parse; ignored."), SourceLabel);
+        return -1;
     }
+    int32 Added = 0;
     const auto LoadState = [&](const TCHAR* Field, uint8 State)
     {
         const TArray<TSharedPtr<FJsonValue>>* Cells = nullptr;
@@ -3519,16 +3593,50 @@ void ANodeShuffleSubsystem::EnsureWaterGridLoaded() const
             if (!V->TryGetString(S)) { continue; }
             FString XStr, YStr;
             if (!S.Split(TEXT(","), &XStr, &YStr)) { continue; }
-            const int64 CX = FCString::Atoi(*XStr);
-            const int64 CY = FCString::Atoi(*YStr);
-            WaterGrid.Add((CX << 32) | (CY & 0xffffffffLL), State);
+            const int64 Key = (static_cast<int64>(FCString::Atoi(*XStr)) << 32)
+                            | (static_cast<int64>(FCString::Atoi(*YStr)) & 0xffffffffLL);
+            if (bKeepExisting && WaterGrid.Contains(Key)) { continue; } // local knowledge wins
+            WaterGrid.Add(Key, State);
+            Added++;
         }
     };
     LoadState(TEXT("land"), 1);
     LoadState(TEXT("water"), 2);
     LoadState(TEXT("mixed"), 3);
-    UE_LOG(LogNodeShuffle, Display, TEXT("WATERGRID: loaded %d known cells (100 m) from NodeShuffle_WaterGrid.json"),
-        WaterGrid.Num());
+    return Added;
+}
+
+int32 ANodeShuffleSubsystem::MergeWaterGridFromJson(const FString& Path, bool bKeepExisting) const
+{
+    FString Content;
+    if (Path.IsEmpty() || !FPaths::FileExists(Path) || !FFileHelper::LoadFileToString(Content, *Path))
+    {
+        return -1; // absent
+    }
+    return MergeWaterGridFromContent(Content, *Path, bKeepExisting);
+}
+
+void ANodeShuffleSubsystem::EnsureWaterGridLoaded() const
+{
+    if (bWaterGridLoaded) { return; }
+    bWaterGridLoaded = true;
+    // 1. The user's LOCAL learned grid (authoritative).
+    const FString LocalPath = FPaths::Combine(FPaths::ProjectDir(), TEXT("Configs"), TEXT("NodeShuffle_WaterGrid.json"));
+    const int32 LocalCells = FMath::Max(0, MergeWaterGridFromJson(LocalPath, /*bKeepExisting=*/false));
+    // 2. bakedmaps-2: the SHIPPED snapshot — EMBEDDED in the DLL (the packaging pipeline ships only
+    //    Binaries + Paks; loose files never reach the zip, FilterPlugin.ini included — verified).
+    //    Fresh installs start with the developer's discovered map; veterans gain only cells they
+    //    lack. A merge dirties the store so the union persists into the local file once.
+    const FString Baked = NodeShuffleBakedData::Assemble(
+        NodeShuffleBakedData::WaterGridChunks, NodeShuffleBakedData::WaterGridChunkCount);
+    const int32 BakedAdded = MergeWaterGridFromContent(Baked, TEXT("embedded baked water grid"), /*bKeepExisting=*/true);
+    if (BakedAdded > 0) { bWaterGridDirty = true; }
+    if (WaterGrid.Num() > 0)
+    {
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("WATERGRID: %d cells ready (%d local + %d merged from the embedded baked map)"),
+            WaterGrid.Num(), LocalCells, FMath::Max(0, BakedAdded));
+    }
 }
 
 void ANodeShuffleSubsystem::FlushWaterGridIfDirty() const
@@ -3647,35 +3755,30 @@ void ANodeShuffleSubsystem::PreSaveGame_Implementation(int32 saveVersion, int32 
     FlushCaveStoreIfDirty();
 }
 
-void ANodeShuffleSubsystem::EnsureCaveStoreLoaded() const
+int32 ANodeShuffleSubsystem::MergeCaveStoreFromContent(const FString& Content, const TCHAR* SourceLabel,
+                                                       bool bKeepExisting, int32* OutFileSeedCount) const
 {
-    if (bCaveStoreLoaded) { return; }
-    bCaveStoreLoaded = true;
-    const FString Path = FPaths::Combine(FPaths::ProjectDir(), TEXT("Configs"), TEXT("NodeShuffle_CaveFloors.json"));
-    FString Content;
-    if (!FPaths::FileExists(Path) || !FFileHelper::LoadFileToString(Content, *Path))
-    {
-        return; // fresh store — discovery builds it as you play
-    }
+    if (OutFileSeedCount) { *OutFileSeedCount = 0; }
     TSharedPtr<FJsonObject> Root;
     const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Content);
     if (!FJsonSerializer::Deserialize(Reader, Root) || !Root.IsValid())
     {
-        UE_LOG(LogNodeShuffle, Warning, TEXT("CAVESTORE: NodeShuffle_CaveFloors.json failed to parse; starting fresh."));
-        return;
+        UE_LOG(LogNodeShuffle, Warning, TEXT("CAVESTORE: %s failed to parse; ignored."), SourceLabel);
+        return -1;
     }
     double SeedCountNum = 0.0;
     Root->TryGetNumberField(TEXT("seedCount"), SeedCountNum);
-    CaveSeedCount = FMath::Max(0, static_cast<int32>(SeedCountNum));
+    if (OutFileSeedCount) { *OutFileSeedCount = FMath::Max(0, static_cast<int32>(SeedCountNum)); }
     const TArray<TSharedPtr<FJsonValue>>* Seeds = nullptr;
     if (Root->TryGetArrayField(TEXT("seeds"), Seeds))
     {
         for (const TSharedPtr<FJsonValue>& V : *Seeds)
         {
             FString S;
-            if (V->TryGetString(S)) { CaveSeedsDone.Add(S); }
+            if (V->TryGetString(S)) { CaveSeedsDone.Add(S); } // union — spares re-classification traces
         }
     }
+    int32 Added = 0;
     const TArray<TSharedPtr<FJsonValue>>* Cells = nullptr;
     if (Root->TryGetArrayField(TEXT("cells"), Cells))
     {
@@ -3686,19 +3789,57 @@ void ANodeShuffleSubsystem::EnsureCaveStoreLoaded() const
             TArray<FString> Parts;
             S.ParseIntoArray(Parts, TEXT(","));
             if (Parts.Num() < 4) { continue; }
-            const int64 CX = FCString::Atoi(*Parts[0]);
-            const int64 CY = FCString::Atoi(*Parts[1]);
+            const int64 Key = (static_cast<int64>(FCString::Atoi(*Parts[0])) << 32)
+                            | (static_cast<int64>(FCString::Atoi(*Parts[1])) & 0xffffffffLL);
+            if (bKeepExisting && CaveFloors.Contains(Key)) { continue; } // local knowledge wins
             FNodeShuffleCaveCell Cell;
             Cell.FloorZ = FCString::Atof(*Parts[2]);
             Cell.State = static_cast<uint8>(FCString::Atoi(*Parts[3]));
             // cave-nodes-2: optional 5th field = measured ceiling; absent (legacy/manual imports) = -1.
             Cell.CeilingCm = (Parts.Num() >= 5) ? FCString::Atof(*Parts[4]) : -1.0f;
-            CaveFloors.Add((CX << 32) | (CY & 0xffffffffLL), Cell);
+            CaveFloors.Add(Key, Cell);
+            Added++;
         }
     }
-    UE_LOG(LogNodeShuffle, Display,
-        TEXT("CAVESTORE: loaded %d cave-floor cells, %d classified originals (%d underground seeds) from NodeShuffle_CaveFloors.json"),
-        CaveFloors.Num(), CaveSeedsDone.Num(), CaveSeedCount);
+    return Added;
+}
+
+int32 ANodeShuffleSubsystem::MergeCaveStoreFromJson(const FString& Path, bool bKeepExisting, int32* OutFileSeedCount) const
+{
+    if (OutFileSeedCount) { *OutFileSeedCount = 0; }
+    FString Content;
+    if (Path.IsEmpty() || !FPaths::FileExists(Path) || !FFileHelper::LoadFileToString(Content, *Path))
+    {
+        return -1; // absent
+    }
+    return MergeCaveStoreFromContent(Content, *Path, bKeepExisting, OutFileSeedCount);
+}
+
+void ANodeShuffleSubsystem::EnsureCaveStoreLoaded() const
+{
+    if (bCaveStoreLoaded) { return; }
+    bCaveStoreLoaded = true;
+    // 1. The user's LOCAL learned store (authoritative).
+    int32 LocalSeedCount = 0;
+    const FString LocalPath = FPaths::Combine(FPaths::ProjectDir(), TEXT("Configs"), TEXT("NodeShuffle_CaveFloors.json"));
+    const int32 LocalCells = FMath::Max(0, MergeCaveStoreFromJson(LocalPath, /*bKeepExisting=*/false, &LocalSeedCount));
+    CaveSeedCount = LocalSeedCount;
+    // 2. bakedmaps-2: the SHIPPED snapshot — EMBEDDED in the DLL (see EnsureWaterGridLoaded). Local
+    //    wins per-cell; seed done-set unions; seed count takes the larger of the two (the map is
+    //    static, so both counts describe the same world — max is the safe combination).
+    int32 BakedSeedCount = 0;
+    const FString Baked = NodeShuffleBakedData::Assemble(
+        NodeShuffleBakedData::CaveFloorsChunks, NodeShuffleBakedData::CaveFloorsChunkCount);
+    const int32 BakedAdded = MergeCaveStoreFromContent(Baked, TEXT("embedded baked cave atlas"),
+                                                       /*bKeepExisting=*/true, &BakedSeedCount);
+    CaveSeedCount = FMath::Max(CaveSeedCount, BakedSeedCount);
+    if (BakedAdded > 0) { bCaveStoreDirty = true; }
+    if (CaveFloors.Num() > 0 || CaveSeedsDone.Num() > 0)
+    {
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("CAVESTORE: %d cave-floor cells ready (%d local + %d merged from the embedded baked atlas); %d classified originals, %d roofed seeds"),
+            CaveFloors.Num(), LocalCells, FMath::Max(0, BakedAdded), CaveSeedsDone.Num(), CaveSeedCount);
+    }
 }
 
 void ANodeShuffleSubsystem::FlushCaveStoreIfDirty() const
@@ -4086,9 +4227,12 @@ bool ANodeShuffleSubsystem::IsPointInWater(const FVector& Point) const
 
 bool ANodeShuffleSubsystem::RaycastGroundAt(const FVector& ProbeXY, float StartZ, const AActor* IgnoreNode,
                                             const AActor* IgnoreMesh, FVector& OutLoc, FRotator& OutRot,
-                                            bool& bOutWater, bool bShortTrace) const
+                                            bool& bOutWater, bool bShortTrace, bool* bOutTooSteep,
+                                            FVector* OutGroundNormal) const
 {
     bOutWater = false;
+    if (bOutTooSteep) { *bOutTooSteep = false; }
+    if (OutGroundNormal) { *OutGroundNormal = FVector::UpVector; }
     FCollisionQueryParams Params(SCENE_QUERY_STAT(NodeShuffleSettle), true);
     if (IgnoreNode) { Params.AddIgnoredActor(IgnoreNode); }
     if (IgnoreMesh) { Params.AddIgnoredActor(IgnoreMesh); }
@@ -4104,7 +4248,45 @@ bool ANodeShuffleSubsystem::RaycastGroundAt(const FVector& ProbeXY, float StartZ
         return false; // no terrain / out of range (true void)
     }
     OutLoc = Hit.ImpactPoint;
-    const FQuat AlignQuat = FQuat::FindBetweenNormals(FVector::UpVector, Hit.ImpactNormal);
+    // slopefit-1: SMOOTH the ground normal over a small probe ring — one noisy collision triangle
+    // made rocks sit "off the slant of the hillside". Long traces only (cave floors don't tilt).
+    FVector GroundNormal = Hit.ImpactNormal;
+    if (!bShortTrace)
+    {
+        FVector Acc = Hit.ImpactNormal;
+        for (int32 i = 0; i < 4; i++)
+        {
+            const float Ang = PI * 0.5f * static_cast<float>(i);
+            const float PX = OutLoc.X + SmoothNormalRingCm * FMath::Cos(Ang);
+            const float PY = OutLoc.Y + SmoothNormalRingCm * FMath::Sin(Ang);
+            FHitResult RingHit;
+            if (GetWorld()->LineTraceSingleByChannel(RingHit,
+                    FVector(PX, PY, OutLoc.Z + 400.0f), FVector(PX, PY, OutLoc.Z - 600.0f),
+                    ECC_WorldStatic, Params))
+            {
+                Acc += RingHit.ImpactNormal;
+            }
+        }
+        GroundNormal = Acc.GetSafeNormal(SMALL_NUMBER, FVector::UpVector);
+    }
+    if (OutGroundNormal) { *OutGroundNormal = GroundNormal; }
+    // slopefit-1: CLIFF gate only (hills of any steepness settle — user call). Smoothed normal so a
+    // single steep triangle can't reject a fair hillside.
+    if (bOutTooSteep && !bShortTrace && GroundNormal.Z < MinSettleNormalZ)
+    {
+        *bOutTooSteep = true;
+    }
+    // slopefit-1: the ACTOR tilts only up to NodeTiltClampDeg toward the slope — the interaction box
+    // and the Miner hologram inherit near-vanilla geometry; the rock visual takes the full tilt.
+    FVector AlignN = GroundNormal;
+    const float TiltRad = FMath::Acos(FMath::Clamp(static_cast<float>(GroundNormal.Z), -1.0f, 1.0f));
+    if (TiltRad > FMath::DegreesToRadians(NodeTiltClampDeg))
+    {
+        const FVector Axis = FVector::CrossProduct(FVector::UpVector, GroundNormal)
+            .GetSafeNormal(SMALL_NUMBER, FVector::XAxisVector);
+        AlignN = FVector::UpVector.RotateAngleAxis(NodeTiltClampDeg, Axis);
+    }
+    const FQuat AlignQuat = FQuat::FindBetweenNormals(FVector::UpVector, AlignN);
     OutRot = (AlignQuat * FQuat(FRotator(0.f, OutRot.Yaw, 0.f))).Rotator();
     // Cliffs/steep normals are FINE (reachable by ladder/jetpack); only WATER is
     // rejected. Test the grounded impact point for water containment.
@@ -4161,27 +4343,30 @@ bool ANodeShuffleSubsystem::RaycastSettle(FNodeShuffleEntry& Entry, const AActor
     }
 
     bool bWater = false;
+    bool bSteep = false;
 
-    // 1. Primary probe at the entry's own XY.
-    if (RaycastGroundAt(Entry.Location, Entry.Location.Z, IgnoreNode, IgnoreMesh, Loc, Rot, bWater) && !bWater)
+    // 1. Primary probe at the entry's own XY. steepfix-1: a placeable spot is a hit that is neither
+    //    water NOR steeper than the Miner hologram tolerates.
+    if (RaycastGroundAt(Entry.Location, Entry.Location.Z, IgnoreNode, IgnoreMesh, Loc, Rot, bWater, false, &bSteep)
+        && !bWater && !bSteep)
     {
         Entry.Location = Loc;
         Entry.Rotation = Rot;
         return true;
     }
 
-    // Either a true void (no terrain — defer, terrain may not be streamed) or a
-    // water hit (seafloor). For the void case we defer immediately; for water we
-    // try to RELOCATE onto nearby land before giving up.
-    const bool bPrimaryWasWater = bWater; // bWater only meaningful when a hit occurred
+    // Either a true void (no terrain — defer, terrain may not be streamed) or an UNPLACEABLE hit
+    // (seafloor / too-steep hillside). Void defers immediately; unplaceable tries to RELOCATE onto
+    // nearby flat land before giving up.
+    const bool bPrimaryUnplaceable = bWater || bSteep; // only meaningful when a hit occurred
 
     // 2. FIX A relocation: nudge the candidate over an expanding spiral of offset
-    //    points and re-raycast each; the FIRST land hit wins and is persisted to
-    //    Entry.Location so the node stays put thereafter. If no land is found
-    //    within the cap, defer (leave as data) — never spawn in water.
-    if (bPrimaryWasWater)
+    //    points and re-raycast each; the FIRST placeable hit wins and is persisted to
+    //    Entry.Location so the node stays put thereafter. If none is found within
+    //    the cap, defer (leave as data) — never settle in water or on a cliffside.
+    if (bPrimaryUnplaceable)
     {
-        const FVector OriginXY = Entry.Location; // current (water) XY/Z probe base
+        const FVector OriginXY = Entry.Location; // current (unplaceable) XY/Z probe base
         // Golden-angle spiral: even areal coverage as the radius grows ring by ring.
         constexpr float GoldenAngleRad = 2.39996323f;
         for (int32 i = 1; i <= LandRelocationTries; i++)
@@ -4195,24 +4380,28 @@ bool ANodeShuffleSubsystem::RaycastSettle(FNodeShuffleEntry& Entry, const AActor
             FRotator TryRot = Entry.Rotation;
             FVector TryLoc;
             bool bTryWater = false;
-            if (RaycastGroundAt(Probe, OriginXY.Z, IgnoreNode, IgnoreMesh, TryLoc, TryRot, bTryWater)
-                && !bTryWater)
+            bool bTrySteep = false;
+            if (RaycastGroundAt(Probe, OriginXY.Z, IgnoreNode, IgnoreMesh, TryLoc, TryRot, bTryWater, false, &bTrySteep)
+                && !bTryWater && !bTrySteep)
             {
-                UE_LOG(LogNodeShuffle, Verbose, TEXT("Land-check: relocated %s off water to %s"),
-                    *Entry.EntryGuid.ToString(), *TryLoc.ToCompactString());
+                UE_LOG(LogNodeShuffle, Verbose, TEXT("Land-check: relocated %s off %s to %s"),
+                    *Entry.EntryGuid.ToString(), bWater ? TEXT("water") : TEXT("a cliff face"),
+                    *TryLoc.ToCompactString());
                 Entry.Location = TryLoc; // persist the corrected location (stable thereafter)
                 Entry.Rotation = TryRot;
                 return true;
             }
         }
-        // playtest-fixes-1: definitive water-no-land — report it so the caller can redeal instead of
-        // retrying this ocean spot forever. Detail log once per entry per session (was 22k lines).
+        // playtest-fixes-1 / steepfix-1: definitive UNPLACEABLE spot (water or cliffside with no flat
+        // land in the spiral) — report it so the caller redeals instead of retrying forever. Detail
+        // log once per entry per session (was 22k lines).
         if (bOutWaterNoLand) { *bOutWaterNoLand = true; }
         if (!WaterDeferLoggedThisSession.Contains(Entry.EntryGuid))
         {
             WaterDeferLoggedThisSession.Add(Entry.EntryGuid);
-            UE_LOG(LogNodeShuffle, Verbose, TEXT("Land-check: deferred %s (no land within %.0f m of the water hit)"),
-                *Entry.EntryGuid.ToString(), LandRelocationMaxRadiusCm / 100.0f);
+            UE_LOG(LogNodeShuffle, Verbose, TEXT("Land-check: deferred %s (no placeable ground within %.0f m of the %s hit)"),
+                *Entry.EntryGuid.ToString(), LandRelocationMaxRadiusCm / 100.0f,
+                bWater ? TEXT("water") : TEXT("cliff"));
         }
     }
 
@@ -4360,6 +4549,27 @@ void ANodeShuffleSubsystem::LogHereCensus() const
         bPlayerRoofed ? 1 : 0,
         bPlayerRoofed ? *FString::Printf(TEXT(" (%.0fm up)"), (RoofHit.ImpactPoint.Z - P.Z) / 100.0f) : TEXT(""),
         AmbientCount, AmbientCount > 0 ? *AmbientNames : TEXT("<none>"));
+
+    // slopefit-1 diagnostics: slope at the player's feet + the cliff-gate verdict — answers "would
+    // nodes settle on this hillside?" in one line (user hit this exact question on a re-rolled hill).
+    {
+        FVector SlopeLoc;
+        FRotator SlopeRot = FRotator::ZeroRotator;
+        bool bSlopeWater = false;
+        bool bSlopeCliff = false;
+        FVector SlopeN = FVector::UpVector;
+        if (RaycastGroundAt(P, P.Z, Pawn, nullptr, SlopeLoc, SlopeRot, bSlopeWater,
+                            /*bShortTrace=*/false, &bSlopeCliff, &SlopeN))
+        {
+            const float SlopeHereDeg = FMath::RadiansToDegrees(
+                FMath::Acos(FMath::Clamp(static_cast<float>(SlopeN.Z), -1.0f, 1.0f)));
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("HERE: ground slope at your feet = %.1f deg — cliff gate (%.0f deg) %s; water=%d"),
+                SlopeHereDeg, CliffSlopeDeg,
+                bSlopeCliff ? TEXT("WOULD REJECT settles here") : TEXT("accepts settles here"),
+                bSlopeWater ? 1 : 0);
+        }
+    }
 
     auto ShortName = [](const FString& Path) -> FString
     {

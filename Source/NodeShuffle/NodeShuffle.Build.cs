@@ -10,6 +10,8 @@ public class NodeShuffle : ModuleRules
             "Core", "CoreUObject", "Engine", "InputCore",
             "FactoryGame", "SML",
             "Json"
+            // bakedmaps-2: "Projects"/IPluginManager removed — baked knowledge is EMBEDDED in the DLL
+            // (NodeShuffleBakedData.h); the packaging pipeline ships no loose plugin files.
         });
     }
 }

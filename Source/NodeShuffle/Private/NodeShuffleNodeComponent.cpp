@@ -123,11 +123,17 @@ void UNodeShuffleNodeComponent::EnsureAttachedToRoot()
 }
 
 void UNodeShuffleNodeComponent::DressRock(UStaticMesh* Mesh, const TArray<UMaterialInterface*>& Materials,
-                                          const FVector& Scale, const FVector& RelativeOffset)
+                                          const FVector& Scale, const FVector& RelativeOffset,
+                                          const FRotator& RelativeRotation)
 {
     if (!IsValid(RockMesh) || !Mesh)
     {
         return;
+    }
+    // slopefit-1: full-slope visual alignment (relative — the actor is tilt-clamped separately).
+    if (!RockMesh->GetRelativeRotation().Equals(RelativeRotation, 0.5f))
+    {
+        RockMesh->SetRelativeRotation(RelativeRotation);
     }
     if (RockMesh->GetStaticMesh() != Mesh)
     {

@@ -63,8 +63,10 @@ public:
 
     // Dress the node's own RockMesh with the resolved visual: static mesh, per-slot materials, the
     // table scale, and a centered relative offset (lateral 0, small Z sink). Idempotent / cost-guarded.
+    // slopefit-1: RelativeRotation = full-slope rock alignment (actor stays tilt-clamped).
     void DressRock(UStaticMesh* Mesh, const TArray<UMaterialInterface*>& Materials,
-                   const FVector& Scale, const FVector& RelativeOffset);
+                   const FVector& Scale, const FVector& RelativeOffset,
+                   const FRotator& RelativeRotation = FRotator::ZeroRotator);
 
     // oil-decal-1: set up the oil-puddle decal for a LIQUID node from its resource descriptor's decal
     // material + size (UFGResourceDescriptor::GetDecalMaterial / GetDecalSize). No-op if the descriptor has

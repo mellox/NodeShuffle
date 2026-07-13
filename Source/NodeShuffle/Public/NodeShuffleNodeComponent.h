@@ -68,8 +68,11 @@ public:
 
     // Dress the fallback RockMesh: static mesh, per-slot materials (uncovered slots keep the mesh default —
     // no back-fill, the issue #3 flat-color fix), table scale, centered relative offset. Idempotent.
+    // slopefit-1: RelativeRotation = the rock's FULL smoothed-slope alignment (the owning actor stays
+    // tilt-clamped so the Miner hologram gets near-vanilla geometry).
     void DressRock(UStaticMesh* Mesh, const TArray<UMaterialInterface*>& Materials,
-                   const FVector& Scale, const FVector& RelativeOffset);
+                   const FVector& Scale, const FVector& RelativeOffset,
+                   const FRotator& RelativeRotation = FRotator::ZeroRotator);
 
     // Dress the oil-puddle decal for a LIQUID node from its descriptor's decal material + size. No-op if
     // the descriptor has no decal (solids). Idempotent.
