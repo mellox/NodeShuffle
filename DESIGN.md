@@ -1,269 +1,131 @@
 # NodeShuffle — Design
 
-Local-only SML mod (mod reference `NodeShuffle`) that adds ~100 new resource
-node locations to the world and randomizes, per save, which nodes (vanilla +
-new) are active and what resource/purity each active node carries — with
-balance guarantees so every playthrough stays completable.
+Server-side SML mod (mod reference `NodeShuffle`) for Satisfactory 1.1+
+(`>=491125`), SML 3.12, UE 5.6.1-CSS. It relocates the world's resource nodes to
+new, map-wide locations per save and shuffles which are active and what resource
+and purity each carries — for solids, oil/liquids, and modded nodes — with
+balance minimums that keep every playthrough completable.
 
-Game: Satisfactory 1.1+ (>=491125), SML 3.12, UE 5.6.1-CSS.
+## Model: Hide & Replace
 
-## What was learned from the reference mods
+Every **unoccupied** original node (vanilla *and* modded) is **hidden
+whole-actor** (which also removes its rock, including instanced meshes) and
+recorded persistently. Its resource lives on as one of **our own relocated
+nodes**, spawned at a new location. **Occupied** originals — any node with a
+miner, extractor, or portable miner — are left 100% untouched, at roll time and
+re-checked continuously, so the player's factory is never disturbed and the save
+stays safe. Hiding is reversible (nothing is destroyed), so disabling the mod
+restores the vanilla world.
 
-### Resource Roulette (TheRealBeef) — closest prior art
-Cloned to `C:\Claude\Projects\reference-mods\ResourceRoulette`. **No license
-file** → approach studied, no code copied verbatim.
+## Relocated nodes spawn as their original class
 
-Their architecture (built pre-1.1): scan all `AFGResourceNode` actors into
-plain SaveGame structs, **destroy every vanilla node actor** (and sweep the
-world for vanilla node *meshes*, which are separate actors), then respawn all
-nodes fresh as `RF_Transient` actors each session, with hardcoded
-mesh/material asset path tables for visuals. Because everything is respawned,
-they must **re-associate every extractor and portable miner** with the nearest
-respawned node on every load (`mExtractableResource` / `mExtractResourceNode`
-saved references die with the destroyed actors). They defer terrain alignment:
-nodes are spawned at the stored location, then **raycast-settled** (Vogel-disk
-sample + RANSAC plane fit) when the player first comes within 250 m, because
-distant terrain isn't streamed in for raycasts at load time. Purity balance is
-preserved by **dealing from the vanilla purity multiset** rather than rolling
-independently. Scanner clusters (`AFGResourceScanner::mNodeClusters`) and
-radar towers must be refreshed after changing the node set.
+A relocated node is spawned **as its own resource-node class** (resolved from the
+saved `NodeClassPath`), not a generic stand-in. This is what makes modded nodes
+behave correctly: a lithium node spawns as its Alkali class, so it keeps its
+native rules (rejects a normal Miner, accepts its intended extractor). Each
+spawned node carries a `UNodeShuffleNodeComponent` — a runtime identity marker
+that also hosts the fallback rock/oil-decal and a `bForceAccept` flag. Identity
+lives in the SaveGame layout (a `FGuid` per entry), not the actor class, so nodes
+re-adopt by GUID or by location across reloads.
 
-Key takeaways adopted: deal-from-vanilla-multiset balancing, deferred raycast
-settling, spawning the **vanilla node Blueprint class** (so look-at UI, purity
-texts, build-gun interactions all work), `RF_Transient` on spawned nodes so the
-save system doesn't create "zombie" duplicates, extractor re-association as a
-recovery pass, scanner/radar refresh.
+### Visuals
 
-Key mistake avoided: destroying and respawning *all* vanilla nodes. That makes
-every node in the save dependent on the mod forever and forces the fragile
-global mesh sweep. We leave vanilla node actors in place.
+In priority order: an **authored table** (`FNodeShuffleNodeAssets`) of the game's
+own node meshes/materials for vanilla resources; a look **captured from the
+original node's paired mesh actor** for modded resources the table doesn't cover
+(e.g. RefinedPower thorium, modded lead); a **quartz placeholder** otherwise; and
+an **oil decal** for liquids. When a modded-class node is dealt a *vanilla*
+resource, the assigned resource's look wins (the native mesh is hidden and our
+rock is dressed) so it doesn't wear the wrong appearance.
 
-### Lithium (AniViRus, MIT)
-Creates a brand-new node type *with* visible meshes, but does it as editor
-content (Blueprint/uasset nodes placed in a level). Confirms that visible new
-nodes are expected to be `AFGResourceNode` + a static mesh; not usable
-directly since our nodes are placed procedurally at runtime.
+## Placement and terrain
 
-### AllMinable (DellAquila)
-Blueprint-only (uassets, no C++ to study). Known flaw per spec: new nodes have
-**no visible meshes** — the exact failure we avoid by dressing every spawned
-node with the proper resource mesh + materials.
+New nodes use **spawn-on-discovery**: they materialize only once a player is
+within range and the terrain has streamed in, so they always settle correctly on
+the ground. Settling (`RaycastSettle`):
 
-## The discovery that shaped the design: native 1.1 node-override machinery
+- **Slope-fit** — the rock takes the full (smoothed) slope so it beds into the
+  hill; the node *actor* is tilt-clamped (~12°) so the Miner hologram gets
+  near-vanilla geometry and can place. Hills of any steepness are fair game.
+- **Cliff avoidance** — hits steeper than 60° re-deal to better ground.
+- **Water avoidance** — a learned land/water map plus a depth guard and the
+  game's water-volume test keep nodes off the seabed and out of lakes; a
+  water-locked entry re-deals randomly within the map-wide deal box.
+- **Caves** — the shuffle would otherwise empty caverns (it hides their
+  originals). Roofed originals seed a budgeted trace flood-fill that maps cavern
+  floors; nodes are then dealt onto them at their natural share, only where a
+  Miner fits.
+- Overlap/enclosure/machinery guards keep nodes off factories and out of boxed-in
+  rock pockets.
 
-Satisfactory 1.1 shipped a native "Random Nodes" game mode. Verified in the
-real headers (`Resources/FGResourceNodeBase.h`, `Resources/FGResourceNode.h`,
-`Resources/FGResourceNodeManager.h`):
+### Learned + prebuilt terrain map
 
-- `AFGResourceNodeBase::SetResourceClassOverride()` — **SaveGame, replicated**
-  resource-class override, separate from the original `mResourceClass`.
-- `AFGResourceNode::SetResourcePurityOverride()` — SaveGame purity override
-  (`GetResourcePurity()` returns the override when set).
-- Node meshes are now separate `AFGNodeMeshActor` actors (paired to nodes via
-  the public `mNodeActor` property) with a public
-  `OverrideMeshAndMaterials(node, originalDesc, overrideDesc)` that swaps mesh,
-  materials and offset from the game's own per-resource
-  `FNodeMeshOverrides` data.
-- `AFGResourceScanner` subscribes to override changes
-  (`RequestNodeClustersUpdate`) and has a lazy `mNodeClustersUpToDate` flag.
+The land/water grid (100 m cells) and cave-floor cells (8 m) are learned from
+every ground probe and persisted **globally** (`NodeShuffle_WaterGrid.json`,
+`NodeShuffle_CaveFloors.json` — the terrain is the same across saves). A snapshot
+is also **embedded in the mod** (generated into `NodeShuffleBakedData.h`) and
+merged on load with **local knowledge winning**, so a fresh install places nodes
+well from the first launch and the player's own exploration keeps refining it.
 
-So for **vanilla nodes we never destroy/respawn anything**: re-typing a node is
-`SetResourceClassOverride` + `SetResourcePurityOverride` + broadcasting the
-node's `OnResourceClassOverrideReplication` delegate + calling
-`OverrideMeshAndMaterials` on its paired mesh actor. Both overrides are
-SaveGame on the node itself, so they persist and restore natively. This is the
-same mechanism the base game uses, which makes it the lowest-risk possible
-implementation. (Note: `AFGResourceNodeManager` itself is **not**
-`FACTORYGAME_API`-exported, so we cannot link against its helpers; we only use
-exported classes.)
+## Per-save layout
 
-## Architecture
+The single source of truth is a `UPROPERTY(SaveGame)` array of `FNodeShuffleEntry`
+on the subsystem (plus seed and layout version). It is **rolled once** per save
+from a seeded `FRandomStream` and thereafter only **re-applied idempotently**
+every ~5 s (server-only). The roll preserves balance by dealing resources and
+purities from the **vanilla multiset** (so overall balance is retained) and
+enforces a per-resource active **floor** (`MinNodesPerResource`, and a separate
+floor for modded resources) — the completability guarantee. New SaveGame fields
+are additive with defaults, so older saves load unchanged.
 
-Standard scaffold (mirrors HostileScaling): runtime module + log category
-(`LogNodeShuffle`), `URootInstance_NodeShuffle` (registers config),
-`URootGameWorld_NodeShuffle` (registers subsystem), `UNodeShuffleConfig`
-(SML config built in `PostInitProperties` per the three-trap-safe pattern),
-and the brain: `ANodeShuffleSubsystem` (`AModSubsystem` + `IFGSaveInterface`).
-No function hooks at all — the mod is purely a subsystem.
+## Function hooks (SML)
 
-### Node pool and eligibility
+A small number of engine methods are hooked via `SUBSCRIBE_UOBJECT_METHOD`:
 
-Only **solid, infinite, plain nodes** participate:
-`GetResourceNodeType() == Node && GetResourceForm() == RF_SOLID &&
-GetResourceAmount() == RA_Infinite`. Oil (liquid/decal), fracking
-cores/satellites, geysers and pickup deposits are untouched — they are where
-Resource Roulette accumulated most of its complexity and bugs, and the spec's
-goals (iron→caterium etc.) are fully met with solids. The resource-type
-universe is discovered from the world scan (no hardcoded descriptor list), so
-it automatically covers iron, copper, limestone, coal, caterium, quartz,
-sulfur, bauxite, uranium, SAM.
+- **Miner hologram acceptance** — force-accept our relocated nodes so Miner
+  buildings snap to them (never fracking or gas nodes, which would crash or must
+  keep native rules).
+- **Resource scanner** — strip hidden originals from the scan clusters at the
+  source, so an emptied original doesn't leave a phantom ping or map marker.
+- **Portable miner dispenser** — lift the spawn onto the rock surface the player
+  aimed at instead of the terrain beneath it.
 
-### Per-save layout (the single source of truth)
+## Radiation
 
-`UPROPERTY(SaveGame)` on the subsystem: `SavedSeed`, `bLayoutGenerated`,
-`LayoutVersion`, `TArray<FNodeShuffleEntry>`. Each entry:
+Radiation is positional data in `AFGRadioactivitySubsystem`. Hiding an original
+**removes its emitter** (otherwise it would keep irradiating an empty spot), and
+a relocated/restored node **re-registers** radiation at its new location — so
+radiation moves with the shuffle instead of leaving invisible hot zones.
 
-| Field | Meaning |
-|---|---|
-| `EntryGuid` | stable identity, also used to find live spawned actors |
-| `bIsNewNode` | vanilla node vs. mod-spawned node |
-| `VanillaNodePath` | `GetPathName()` of the vanilla level actor (stable across loads) |
-| `Location` / `Rotation` | world placement (new nodes) |
-| `OriginalResourceClassPath` / `OriginalPurity` | vanilla state at roll time |
-| `AssignedResourceClassPath` / `AssignedPurity` | rolled state |
-| `bActive` | inactive vanilla nodes get deactivated; inactive new nodes are never spawned |
-| `bPinned` | had a miner at roll time → never changed in any way |
-| `bRayCasted` | new node has been terrain-settled |
-| `NodeClassPath` | the vanilla node *Blueprint* class to spawn new nodes from |
+## Safety rules
 
-The layout is rolled **once** per save (seeded `FRandomStream`) and then only
-re-applied. Determinism: same layout every load by construction, because it is
-data, not a re-roll.
+- A node with a miner/extractor/portable miner is **never** retyped, moved,
+  purity-changed, or deactivated — enforced at roll time and re-checked each pass.
+- Re-rolling is never implicit: only the edge-triggered `RerollNow` one-shot
+  toggle triggers it (live mid-session or on next load), and it clears itself.
+  Occupied nodes are carried and pinned through a re-roll.
+- With `Enabled=false` the subsystem does nothing; hidden originals return and no
+  new nodes spawn.
 
-### Roll algorithm (balance guarantees)
+## Console commands
 
-1. Scan vanilla pool; mark occupied nodes (`IsOccupied()` or referenced by a
-   portable miner via public `mExtractResourceNode`) as **pinned**.
-2. Generate `NewNodeCount` (default 100) candidate locations: seeded random
-   vanilla anchor node + random direction, 50–150 m offset, rejected if within
-   25 m of any other pool location. Z starts at the anchor's Z and is fixed
-   later by raycast settling. If
-   `FactoryGame/Configs/NodeShuffle_CustomNodes.json` exists, its locations
-   are used **instead** (see "Editing the location list").
-3. `TargetActive = round(PoolSize × ActivePercent%)`, clamped to at least
-   (sum of per-resource minimums, pinned count, and — if vanilla nodes may not
-   disappear — the vanilla count).
-4. Per-resource quotas `T_r`: vanilla proportions scaled to `TargetActive`,
-   then raised to `max(MinNodesPerResource, pinned_r)`, then the total is
-   trimmed/padded (never below the floor) to hit `TargetActive` exactly.
-   **This is the completability guarantee**: every resource type that exists
-   in vanilla keeps at least `MinNodesPerResource` active nodes.
-5. Active set: pinned nodes always; all vanilla nodes if
-   `AllowVanillaDisappear` is off; the rest drawn randomly from the pool.
-6. Resource deck: `T_r − pinned_r` copies of each resource, shuffled, dealt to
-   the non-pinned active nodes. Purity deck: the vanilla purity multiset
-   scaled to the deck size and dealt the same way (`RandomizePurity` on), or
-   vanilla nodes keep their own purity and only new nodes draw from the
-   vanilla purity distribution (off).
+- `NodeShuffle.Here` — logs the player's position, the ground slope at their feet
+  (and whether the cliff gate accepts it), and a 300 m census of nearby nodes and
+  originals (state, distance, radiation).
+- `NodeShuffle.SeedHere` — marks a roofed spot (cave/arch/overhang) as a
+  cave-placement seed.
 
-### Apply pass (idempotent, every 5 s, server-only)
+## Access transformers
 
-For each entry, compare desired state to live state and fix only differences:
+`Config/AccessTransformers.ini` friends `ANodeShuffleSubsystem` (and, for the
+hooks, `FNodeShuffleModule`) to the engine members the design needs:
+`AFGResourceNode`/`AFGResourceNodeBase` (overrides, radioactivity, mesh actor,
+placement flags), `AFGResourceNodeManager` (registration), `AFGResourceScanner`
+(cluster refresh + phantom-ping strip), `AFGRadioactivitySubsystem` (emitter
+verification), `AFGPortableMinerDispenser`, and the Miner extractor hologram.
 
-- **Vanilla, active, retyped** → set class/purity overrides if they differ,
-  broadcast `OnResourceClassOverrideReplication`, call
-  `OverrideMeshAndMaterials` on the paired mesh actor. All idempotent.
-- **Vanilla, inactive** → remove map representation, hide + de-collide its
-  `AFGNodeMeshActor`, destroy the node actor. Re-done each session (level
-  actors reload each launch — same proven model as Resource Roulette). If the
-  node somehow became occupied first, the entry is flipped to active+pinned
-  instead (safety rule wins).
-- **New, active** → if no live actor for `EntryGuid`, spawn the vanilla node
-  BP class (`RF_Transient`), `InitResource`, init/update radioactivity,
-  root + "Resource"-profile box collision, and dress it: spawn a paired
-  `AFGNodeMeshActor` (deferred so `mNodeActor` is set before BeginPlay,
-  mobility Movable) and use `OverrideMeshAndMaterials`; if the native path
-  yields no mesh, fall back to a static-mesh component using an internal
-  table of the game's node mesh/material asset paths.
-- **New, not yet settled** → when a player is within 250 m, raycast-settle
-  (ring sample, average-Z + best-fit normal) and persist `bRayCasted`.
-- **Extractor recovery** (load-bearing for miners on new nodes, since those are
-  respawned each session): any non-water, non-fracking extractor whose
-  extractable resource is gone is re-pointed (`SetExtractableResource`) at the
-  nearest matching active new node within 7 m; portable miners likewise within
-  15 m.
-- On any change: `mNodeClustersUpToDate = false` on all resource scanners
-  (access transformer) and radar towers rescan.
+## Config and data files
 
-### Safety rules (hard guarantees)
-
-- A node with a miner/extractor (or portable miner) is **never** retyped,
-  never purity-changed, never deactivated — at roll time *and* re-checked at
-  apply time.
-- Re-rolling never happens implicitly. Only when the user turns on the
-  `RerollNow` one-shot toggle. It is EDGE-TRIGGERED (fires on each off→on
-  transition), so it applies **live** mid-session if toggled in-game, or on the
-  next load otherwise — both reuse the same restore→roll→apply path. It re-rolls
-  once using `SeedOverride` (or a fresh random seed if 0), then clears itself.
-  During a re-roll every currently-occupied node (including occupied *new* nodes,
-  detected via live actors or orphaned extractor positions) is pinned with its
-  current resource/purity. New locations reveal via spawn-on-discovery.
-- Master `Enabled=false`: the subsystem does nothing. Note: class/purity
-  overrides already written into the save persist (they are the game's own
-  SaveGame properties); deactivated vanilla nodes come back and new nodes
-  simply don't spawn.
-
-### Access transformers
-
-```ini
-[AccessTransformers]
-Friend=(Class="AFGResourceNode",     FriendClass="ANodeShuffleSubsystem")
-Friend=(Class="AFGResourceNodeBase", FriendClass="ANodeShuffleSubsystem")
-Friend=(Class="AFGResourceScanner",  FriendClass="ANodeShuffleSubsystem")
-```
-
-(`mMeshActor`, `InitRadioactivity`/`UpdateRadioactivity`, `mResourceNodeType`,
-`mCanPlaceResourceExtractor`, `mNodeClusters`/`mNodeClustersUpToDate`.)
-
-### Config (SML, all live-editable except where noted)
-
-| Key | Default | Meaning |
-|---|---|---|
-| `Enabled` | true | master switch |
-| `SeedOverride` | 0 | 0 = roll a random seed at first generation; non-zero = use this seed |
-| `RerollNow` | false | one-shot: re-roll the whole layout once at next load (using `SeedOverride`, or random if 0), then auto-clears. The single re-roll control. |
-| `ActivePercent` | 70 | % of the total pool (vanilla + new) that is active |
-| `NewNodeCount` | 100 | candidate new locations (used at generation time only) |
-| `MinNodesPerResource` | 5 | per-resource-type active minimum (completability floor) |
-| `RandomizePurity` | true | also shuffle purities (dealt from the vanilla distribution) |
-| `AllowVanillaDisappear` | true | when off, every vanilla node stays active |
-
-Generation-time options (`SeedOverride`, `NewNodeCount`, `ActivePercent`,
-`MinNodesPerResource`, `AllowVanillaDisappear`) affect a save only at first
-roll or an explicit re-roll.
-
-### Editing the location list (data-driven new nodes)
-
-At first roll the mod writes the generated candidates to
-`<game>\FactoryGame\Configs\NodeShuffle_GeneratedNodes.json` as a report. To
-hand-tune locations: copy that file to
-`<game>\FactoryGame\Configs\NodeShuffle_CustomNodes.json`, edit it, and
-start a **new** save (or re-roll an existing one). Schema:
-
-```json
-{ "Nodes": [ { "X": -123400.0, "Y": 45600.0, "Z": 12000.0 } ] }
-```
-
-Coordinates are Unreal world units (1 m = 100 uu); Z only needs to be roughly
-right — nodes settle onto the terrain when first approached.
-
-## Known risks / deliberate trade-offs
-
-- `OverrideMeshAndMaterials` and the server-side behavior of
-  `SetResourceClassOverride` are binary-only — header evidence strongly
-  suggests they do the right thing (it is the native random-mode path), but it
-  needs the in-game check. Fallback visual path exists for new nodes.
-- New nodes floating/odd on extreme terrain until approached (raycast settle),
-  same visual quirk Resource Roulette ships with.
-- Removing the mod from a save: vanilla nodes all come back (deactivation is
-  per-session), but miners built on *new* nodes will reference nothing —
-  dismantle miners on mod-added nodes before removing the mod.
-- Multiplayer untested; all logic is server-side and overrides replicate, but
-  client-side visuals for *new* nodes rely on the spawned actors replicating.
-
-## Future work (tracked)
-
-- Proper visuals for non-vanilla node resources (AllMinable items, modded ores): extend the FNodeShuffleNodeAssets table or generate generic 'modded resource' rocks; currently such assignments keep the previous rock appearance or are invisible.
-- Retype deposits sitting on shuffled nodes to match instead of removing them (needs per-resource deposit meshes).
-
-
-## NEXT ITERATION (not yet implemented - agent died on spend limit)
-
-Rock sweep for ore-node visuals. CONFIRMED at runtime: ore node actors (iron/gold/copper/bauxite/uranium/quartz/SAM, ~280) carry NO StaticMeshComponent - their rocks are separate level actors; coal/sulfur/stone/AllMinable nodes self-mesh (donor swap already works for those, 123 confirmed). Plan: once per session, sweep actors with StaticMeshComponents whose mesh names match the node-mesh names in NodeShuffleNodeAssets.cpp; associate nearest within 15m of each pool node; capture ore donor looks from swept rocks; on retype swap the swept rock's mesh/materials (Movable first); on deactivate hide+decollide it; handle/skip-with-log instanced static mesh components. Also add: log spawned new-node coordinates so testers can find them.
-
-
-## Known issues (for the future GitHub repo)
-
-1. One specific spawn-area coal node consistently retypes with no visual (possibly buried) while other conversions including new locations render correctly — needs per-node investigation (verbose log of its donor/placement values at that spot).
-2. Oversized donor mis-captures rendered as phantom walk-through 'rock shelves' — mitigated by the 12m bounds rejection (donor skipped, node may show no visual); root-cause is auto-learn or donor capture adopting an oversized mesh; consider logging which resource captured which donor mesh at Display to identify it.
-
+See the [README](README.md) for the full in-game config table and the optional
+`Configs/*.json` data files (generated-node report, custom node list, rock-pattern
+overrides, and the learned terrain maps).

@@ -1642,7 +1642,7 @@ void ANodeShuffleSubsystem::ApplyLayout()
 
     if (SpawnedRockVanilla + SpawnedRockQuartz + SpawnedRockLiquid > 0)
     {
-        UE_LOG(LogNodeShuffle, Display,
+        UE_LOG(LogNodeShuffle, Verbose,
             TEXT("Spawned-node visuals (this pass): %d vanilla rock + %d quartz placeholder (modded) + %d oil decal"),
             SpawnedRockVanilla, SpawnedRockQuartz, SpawnedRockLiquid);
     }
@@ -1652,7 +1652,7 @@ void ANodeShuffleSubsystem::ApplyLayout()
     // still logs once per session at Verbose (DeferLoggedThisSession).
     if (DeferredThisPass != LastDeferSummary)
     {
-        UE_LOG(LogNodeShuffle, Display,
+        UE_LOG(LogNodeShuffle, Verbose,
             TEXT("Deferral summary: %d entries deferred this pass (%d distinct water-locked so far this session)"),
             DeferredThisPass, WaterLockedThisSession.Num());
         LastDeferSummary = DeferredThisPass;
@@ -2968,7 +2968,7 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
                 {
                     Entry.bUnderground = false;
                     RedealAttempts.Remove(Entry.EntryGuid);
-                    UE_LOG(LogNodeShuffle, Display,
+                    UE_LOG(LogNodeShuffle, Verbose,
                         TEXT("CAVE-DEAL: entry %s (%s) escaped a bad cave cell after 8 settle misses — returned to the surface pool"),
                         *Entry.EntryGuid.ToString(), *Entry.AssignedResourceClassPath);
                 }
@@ -3497,7 +3497,7 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
                         if (bHadEmitter)
                         {
                             RadEmittersRemoved++;
-                            UE_LOG(LogNodeShuffle, Display,
+                            UE_LOG(LogNodeShuffle, Verbose,
                                 TEXT("RADFIX: removed radiation emitter of hidden original %s at %s (running total %d)"),
                                 *Rec.VanillaNodePath, *NodeLoc.ToCompactString(), RadEmittersRemoved);
                         }
@@ -3557,7 +3557,7 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
 
     if (NodesHidden > 0 || RocksHidden > 0 || ScannerDeregisterCount > 0)
     {
-        UE_LOG(LogNodeShuffle, Display,
+        UE_LOG(LogNodeShuffle, Verbose,
             TEXT("Hide originals: hid %d original nodes and %d stray original rocks; deregistered %d from scanner, removed %d radiation emitters (running totals) (Hide & Replace)"),
             NodesHidden, RocksHidden, ScannerDeregisterCount, RadEmittersRemoved);
     }
@@ -3945,7 +3945,7 @@ void ANodeShuffleSubsystem::ClassifyOriginalUnderground(AFGResourceNodeBase* Nod
         }
         CaveFloors.Add(Key, Cell);
     }
-    UE_LOG(LogNodeShuffle, Display,
+    UE_LOG(LogNodeShuffle, Verbose,
         TEXT("CAVEDISCOVER: seed at %s (%s) — roof %.0f m up; %d underground seeds known"),
         *Loc.ToCompactString(), *Path, (Hit.ImpactPoint.Z - Loc.Z) / 100.0f, CaveSeedCount);
 }
@@ -4054,7 +4054,7 @@ void ANodeShuffleSubsystem::ExpandCaveFloorsBudgeted()
     }
     if (NewCells > 0)
     {
-        UE_LOG(LogNodeShuffle, Display,
+        UE_LOG(LogNodeShuffle, Verbose,
             TEXT("CAVEDISCOVER: mapped %d new cave-floor cells this pass (%d total, %d seeds)"),
             NewCells, CaveFloors.Num(), CaveSeedCount);
     }
@@ -4446,7 +4446,7 @@ bool ANodeShuffleSubsystem::TryRedealWaterLockedEntry(FNodeShuffleEntry& Entry)
             FVector CaveLoc;
             if (TryPickCaveCell(Rng, CaveLoc))
             {
-                UE_LOG(LogNodeShuffle, Display,
+                UE_LOG(LogNodeShuffle, Verbose,
                     TEXT("WATER-REDEAL: entry %s (%s) re-dealt off water %s -> CAVE floor %s (natural share %.1f%%)"),
                     *Entry.EntryGuid.ToString(), *Entry.AssignedResourceClassPath,
                     *Entry.Location.ToCompactString(), *CaveLoc.ToCompactString(), CaveChance * 100.0f);
@@ -4480,7 +4480,7 @@ bool ANodeShuffleSubsystem::TryRedealWaterLockedEntry(FNodeShuffleEntry& Entry)
         }
         if (bTooClose) { continue; }
 
-        UE_LOG(LogNodeShuffle, Display,
+        UE_LOG(LogNodeShuffle, Verbose,
             TEXT("WATER-REDEAL: entry %s (%s) re-dealt off water %s -> %s (random in deal box, grid-filtered; settles on discovery; attempt %d)"),
             *Entry.EntryGuid.ToString(), *Entry.AssignedResourceClassPath,
             *Entry.Location.ToCompactString(), *Candidate.ToCompactString(), Salt);
@@ -5021,7 +5021,7 @@ void ANodeShuffleSubsystem::RebuildMeshActorCache()
         }
     }
 
-    UE_LOG(LogNodeShuffle, Display,
+    UE_LOG(LogNodeShuffle, Verbose,
         TEXT("Mesh-actor cache: %d paired (%d via mesh-actor back-link, %d via node->mMeshActor forward link)"),
         MeshActorCache.Num(), FromBackLink, FromForwardLink);
 }

@@ -15,6 +15,15 @@ so every world is a fresh puzzle, while staying completable.
   reversible (disabling the mod restores the vanilla world).
 - **Adds ~100+ new node locations** — spawned across the map, settled onto the
   terrain, visible, solid, and mineable like any vanilla node.
+- **Places nodes where they belong** — relocated nodes **conform to slopes and
+  hillsides**, stay **out of water** and **off sheer cliff faces**, and can land
+  on **cavern floors** the mod maps as you explore (so caves keep resources
+  instead of being emptied by the shuffle). A node that lands somewhere a miner
+  can't go re-deals itself to better ground.
+- **Ships a prebuilt terrain map** — a snapshot of discovered water and cave
+  areas travels inside the mod, so a **fresh install places nodes well from the
+  first launch** instead of learning the map from scratch; your own exploration
+  keeps refining it, and each update folds in more.
 - **Fully buildable** — relocated and new nodes accept hand-mining, portable
   miners, **and Miner buildings (Mk.1 and up)**; placed miners keep their node
   through save/load and re-roll.
@@ -57,6 +66,7 @@ All settings are in the in-game **Mods → Node Shuffle** panel (and persist to
 | Enable Diagnostic Logging | off | Verbose placement/node logging to `FactoryGame.log` for troubleshooting. The mod's fixes work whether this is on or off. |
 | Starter Nodes Near Spawn | on | New game only: place a small starter set (2 Iron, 2 Limestone, 1 Copper, Pure) near spawn. |
 | Starter Node Radius (m) | 200 | How far from spawn the starter nodes may sit. |
+| Enable Experimental Features | off | Standard opt-in toggle for in-development features. **This version has none**, so it currently does nothing — leave it off. |
 
 Generation-time settings (seed, counts, percentages, purity) affect a save only
 at its first roll or an explicit re-roll. Toggles like Diagnostic Logging apply
@@ -71,14 +81,23 @@ live.
   (applied on a new save or re-roll).
 - `<game>/FactoryGame/Configs/NodeShuffle_RockPatterns.json` — optional override
   of rock-mesh name patterns; rarely needed (the mod auto-learns them).
+- `<game>/FactoryGame/Configs/NodeShuffle_WaterGrid.json` and
+  `NodeShuffle_CaveFloors.json` — the mod's **learned terrain map** (which
+  100 m cells are land/water and where cavern floors are). Written as you play
+  and merged with the prebuilt map shipped inside the mod; safe to delete (they
+  simply re-learn). Not per-save — the terrain is the same across saves.
 
 ## How it works (design)
 
-See [DESIGN.md](DESIGN.md) for the full architecture: the native 1.1 node
-override machinery, the donor-stamp visual system (retyped rocks copy a real
-rock of the new resource so size is always correct), the split node-visual
-architectures, statistical rock-mesh auto-learning, terrain settling, and the
-per-save persistence model.
+Relocated nodes are spawned **as their own resource-node class**, so modded
+nodes keep their native behaviour and accept the right extractors; each is
+dressed from an authored visual table, a look **captured from the original
+node** (for modded resources the table doesn't cover, e.g. thorium), or a clean
+quartz placeholder. Nodes **settle onto the terrain** — slope-fitting, avoiding
+water and cliffs, and mapping cavern floors — and the layout is **rolled once
+per save from a seed**. A **global terrain map** (water/land and cave floors) is
+learned as you play and **shipped prebuilt** inside the mod. See
+[DESIGN.md](DESIGN.md) for more detail.
 
 ## Building
 
@@ -93,6 +112,16 @@ Quiet by default (session summaries only). For troubleshooting, enable
 verbose placement / node diagnostics to `FactoryGame.log`; toggles live, off by
 default). For detailed per-node console output you can also run
 `Log LogNodeShuffle Verbose`.
+
+### Console commands
+
+Open the console (`` ` ``) and run:
+
+- `NodeShuffle.Here` — logs your exact position, the ground slope at your feet,
+  and a census of every NodeShuffle node/original within 300 m. Handy when
+  reporting a spot that looks off.
+- `NodeShuffle.SeedHere` — while standing under a natural rock roof (cave, arch,
+  overhang), marks that spot so the shuffle can place nodes in that cavern.
 
 ## License
 
