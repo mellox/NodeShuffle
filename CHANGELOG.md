@@ -19,7 +19,8 @@
   the node kept upright enough for a Miner to place. Only sheer cliff faces are
   avoided now — the game is full of steep, usable ground.
 - **Water avoidance.** Nodes no longer settle on the seabed or underwater; a
-  learned land/water map keeps rolls and re-deals on dry, reachable ground.
+  learned land/water map keeps rolls and re-deals on dry, reachable ground — so
+  far fewer nodes get stranded offshore and never appear.
 - **Modded nodes spawn as their real type.** Nodes like lithium now use their
   native class — correct visual, and correct extractor rules (they reject a
   normal Miner and accept their intended extractor). A modded node dealt a
@@ -29,8 +30,14 @@
   longer appear as generic quartz.
 
 ### Fixed
-- **Radiation follows the shuffle again.** A hidden uranium/thorium node no
-  longer keeps irradiating its old spot — relocating it moves the radiation with
-  it, so there are no more invisible hot zones.
+- **Crash placing a modded extractor.** Building a modded reactive/"exotic"
+  extractor (e.g. lithium's) on a shuffled node no longer crashes the game —
+  relocated nodes now spawn as their real node type, so the extractor binds to
+  them correctly. Modded nodes also stop accepting the wrong miner and stop
+  showing a generic quartz rock.
+- **Radiation truly follows the shuffle now.** A hidden uranium/thorium node
+  used to keep irradiating its old spot even though its rock was gone; it no
+  longer does, and relocating a radioactive node moves the radiation with it —
+  no more invisible hot zones.
 - Relocated nodes avoid steep cliffs, deep water, player buildings, and boxed-in
   rock pockets, and spread more evenly across the map.
