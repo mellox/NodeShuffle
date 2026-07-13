@@ -1,5 +1,8 @@
 #include "NodeShuffle.h"
 
+#include "NodeShuffleSubsystem.h"
+#include "EngineUtils.h"
+#include "HAL/IConsoleManager.h"
 #include "Patching/NativeHookManager.h"
 #include "Hologram/FGResourceExtractorHologram.h"
 #include "Buildables/FGBuildableResourceExtractorBase.h"
@@ -8,6 +11,7 @@
 #include "Equipment/FGResourceScanner.h"
 #include "Equipment/FGPortableMinerDispenser.h"
 #include "NodeShuffleResourceNode.h"
+#include "NodeShuffleNodeComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Resources/FGResourceNode.h"
 #include "Resources/FGResourceNodeBase.h"
@@ -18,6 +22,40 @@
 #include "GameFramework/Actor.h"
 
 DEFINE_LOG_CATEGORY(LogNodeShuffle);
+
+// playtest-fixes-1: `NodeShuffle.Here` console command (backtick console). Logs the player's exact
+// position + a census of every NodeShuffle-relevant thing within 300 m (layout entries with state,
+// streamed originals with hidden/radiation status, water/depth test). Log-only and side-effect-free,
+// so it is NOT gated behind EnableDiagnostics — it exists precisely so the user can report a location.
+static FAutoConsoleCommandWithWorldAndArgs GNodeShuffleHereCmd(
+    TEXT("NodeShuffle.Here"),
+    TEXT("Log player position + census of NodeShuffle entries/originals within 300 m (log-only)."),
+    FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+    {
+        if (!World) { return; }
+        for (TActorIterator<ANodeShuffleSubsystem> It(World); It; ++It)
+        {
+            It->LogHereCensus();
+            return;
+        }
+        UE_LOG(LogNodeShuffle, Display, TEXT("HERE: NodeShuffle subsystem not found in this world (main menu / no session loaded?)"));
+    }));
+
+// cave-nodes-1: manual cave seed at the player's position (roofed spots without a vanilla node —
+// rock bridges, shelves, side tunnels). The flood-fill then maps the space from that seed.
+static FAutoConsoleCommandWithWorldAndArgs GNodeShuffleSeedHereCmd(
+    TEXT("NodeShuffle.SeedHere"),
+    TEXT("Plant a manual cave-floor seed where you stand (must be under a natural roof)."),
+    FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+    {
+        if (!World) { return; }
+        for (TActorIterator<ANodeShuffleSubsystem> It(World); It; ++It)
+        {
+            It->SeedCaveCellAtPlayer();
+            return;
+        }
+        UE_LOG(LogNodeShuffle, Display, TEXT("SEEDHERE: NodeShuffle subsystem not found in this world"));
+    }));
 
 // Diagnostics gate. OFF by default; set from config (EnableDiagnostics) by the subsystem each
 // ApplyLayout pass. Game-thread only (placement hooks + config read both run on the game thread),
@@ -133,7 +171,7 @@ static bool NodeShuffleIsFrackingExtractor(const AFGResourceExtractorHologram* H
 void FNodeShuffleModule::StartupModule()
 {
     UE_LOG(LogNodeShuffle, Log, TEXT("NodeShuffle module loaded"));
-    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle BUILD 2026-06-20-exclude-gas-1 LOADED ====="));
+    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle BUILD 2026-07-13-visfix-1 LOADED ====="));
 
 #if !WITH_EDITOR
     // redesign-13 HOLOGRAM HOOK (DIAGNOSTICS). r12 proved the Mk1 build trace NEVER hits our node (0 hits on
@@ -189,16 +227,25 @@ void FNodeShuffleModule::StartupModule()
         const bool r = Scope(Self, hitResult);
         if (!GNodeShuffleDiagnosticsEnabled) { return; } // logging gated OFF by default (config: EnableDiagnostics)
         AActor* HitActor = hitResult.GetActor();
-        const bool bOurs = HitActor && HitActor->GetClass()->GetName() == TEXT("NodeShuffleResourceNode");
+        // real-class redesign: detect OUR node robustly — the trace hits our uniquely-named rock component
+        // (NodeShuffleRockMesh / _Rt), OR the actor carries our component, OR it's a legacy subclass. The old
+        // name-only check missed real-class nodes (BP_ResourceNode_C), so this dump never fired for them.
+        UPrimitiveComponent* HitComp = hitResult.GetComponent();
+        const bool bOursRock = HitComp && HitComp->GetName().StartsWith(TEXT("NodeShuffleRockMesh"));
+        const UNodeShuffleNodeComponent* OurComp = HitActor ? UNodeShuffleNodeComponent::Find(HitActor) : nullptr;
+        const bool bOurs = (HitActor && HitActor->GetClass()->GetName() == TEXT("NodeShuffleResourceNode"))
+            || bOursRock || (OurComp != nullptr);
         static TSet<FString> Logged;
         const FString Key = (HitActor ? HitActor->GetName() : TEXT("<null>"));
         if (!Logged.Contains(Key))
         {
             Logged.Add(Key);
-            UE_LOG(LogNodeShuffle, Display, TEXT("HOLOGRAMHOOK TrySnapToActor -> %d | hitActor='%s' class='%s'%s"),
+            UE_LOG(LogNodeShuffle, Display, TEXT("HOLOGRAMHOOK TrySnapToActor -> %d | hitActor='%s' class='%s'%s | hitComp='%s' compFound=%d bForceAccept=%d"),
                 r ? 1 : 0, HitActor ? *HitActor->GetName() : TEXT("<null>"),
                 HitActor ? *HitActor->GetClass()->GetName() : TEXT("<null>"),
-                bOurs ? TEXT("  <-- OUR NODE") : TEXT(""));
+                bOurs ? TEXT("  <-- OUR NODE") : TEXT(""),
+                HitComp ? *HitComp->GetName() : TEXT("<null>"),
+                OurComp ? 1 : 0, OurComp ? (OurComp->bForceAccept ? 1 : 0) : -1);
             // redesign-18: when the snap fails on OUR node, log its resource state so we can confirm the
             // mResourceClass-null-after-reload hypothesis (GetResourceClass() = override, valid; original
             // = mResourceClass, was null post-reload — the suspected snap gate).
@@ -232,10 +279,32 @@ void FNodeShuffleModule::StartupModule()
     // we Override only when the resource is a NodeShuffleResourceNode) and MP-correct (the hook runs identically
     // on server + clients). SML detours patch the function body, so TrySnapToActor's INTERNAL calls to these are
     // intercepted too. Friend grant (AccessTransformers) makes the protected method addresses takeable here.
+    // real-class redesign: relocated nodes are now their ORIGINAL class + a UNodeShuffleNodeComponent. We
+    // force-accept the Mk hologram based on the component's bForceAccept flag (computed at spawn from the
+    // node's native mCanPlacePortableMiner): vanilla nodes AND modded nodes that allow normal mining
+    // (AllMinable item-nodes) are force-accepted (a runtime-spawned node otherwise fails the hologram's
+    // IsA(BP_ResourceNode_C) gate); SPECIAL modded nodes that reject portable mining (lithium's Alkali
+    // reactive-ore node) are NOT force-accepted, so their native rules stand and only their own extractor
+    // binds. Legacy old-save subclass nodes are always force-accepted (they are our generic node).
     auto IsOurNode = [](const TScriptInterface<IFGExtractableResourceInterface>& Resource) -> bool
     {
         const UObject* Obj = Resource.GetObject();
-        return Obj && Obj->GetClass()->GetName() == TEXT("NodeShuffleResourceNode");
+        const AActor* Actor = Cast<AActor>(Obj);
+        const UNodeShuffleNodeComponent* Comp = Actor ? UNodeShuffleNodeComponent::Find(Actor) : nullptr;
+        const bool bLegacy = (Obj && Obj->GetClass()->GetName() == TEXT("NodeShuffleResourceNode"));
+        const bool bResult = Comp ? Comp->bForceAccept : bLegacy;
+        // ISOURNODE diag (capped): show WHY a real-class node does/doesn't get force-accepted — whether the
+        // component was found and its bForceAccept — so we can pin the real-vanilla-node rejection.
+        static int32 sIsOurNodeLog = 0;
+        if (GNodeShuffleDiagnosticsEnabled && sIsOurNodeLog < 50)
+        {
+            sIsOurNodeLog++;
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("ISOURNODE obj='%s' class='%s' compFound=%d bForceAccept=%d legacy=%d -> result=%d"),
+                Obj ? *Obj->GetName() : TEXT("<null>"), Obj ? *Obj->GetClass()->GetName() : TEXT("<null>"),
+                Comp ? 1 : 0, Comp ? (Comp->bForceAccept ? 1 : 0) : -1, bLegacy ? 1 : 0, bResult ? 1 : 0);
+        }
+        return bResult;
     };
     // Fracking extractors are rejected via the free function NodeShuffleIsFrackingExtractor() (above) — see its
     // comment for the crash it prevents and why it is a free function, not a captured lambda.
@@ -403,12 +472,22 @@ void FNodeShuffleModule::StartupModule()
     SUBSCRIBE_UOBJECT_METHOD(AFGPortableMinerDispenser, Server_SpawnPortableMiner_Implementation,
         [](auto& Scope, AFGPortableMinerDispenser* Self, const FVector& location, AFGResourceNode* resourceNode)
     {
-        ANodeShuffleResourceNode* OurNode = Cast<ANodeShuffleResourceNode>(resourceNode);
-        if (!OurNode || !IsValid(OurNode->RockMesh) || !OurNode->RockMesh->GetStaticMesh())
+        // real-class redesign: the fallback rock lives on our component (vanilla-origin nodes) or, for legacy
+        // old-save nodes, the ANodeShuffleResourceNode subobject. Modded-origin nodes have no fallback rock
+        // (native visual) and typically reject portable miners anyway -> default placement.
+        UStaticMeshComponent* RM = nullptr;
+        if (const UNodeShuffleNodeComponent* Comp = UNodeShuffleNodeComponent::Find(resourceNode))
         {
-            return; // not our node (or no rock) -> default placement (auto-forward unchanged)
+            RM = Comp->RockMesh;
         }
-        UStaticMeshComponent* RM = OurNode->RockMesh;
+        else if (ANodeShuffleResourceNode* Legacy = Cast<ANodeShuffleResourceNode>(resourceNode))
+        {
+            RM = Legacy->RockMesh;
+        }
+        if (!IsValid(RM) || !RM->GetStaticMesh())
+        {
+            return; // not our node with a fallback rock -> default placement (auto-forward unchanged)
+        }
         const float TopZ = RM->Bounds.Origin.Z + RM->Bounds.BoxExtent.Z + 200.f;
         const float BotZ = RM->Bounds.Origin.Z - RM->Bounds.BoxExtent.Z - 200.f;
         FVector NewLoc = location;
@@ -421,7 +500,7 @@ void FNodeShuffleModule::StartupModule()
         if (GNodeShuffleDiagnosticsEnabled)
         {
             UE_LOG(LogNodeShuffle, Display, TEXT("PORTABLE-SURFACE node='%s' in=%s -> out=%s hit=%d"),
-                *OurNode->GetName(), *location.ToCompactString(), *NewLoc.ToCompactString(), Hit.bBlockingHit ? 1 : 0);
+                resourceNode ? *resourceNode->GetName() : TEXT("<null>"), *location.ToCompactString(), *NewLoc.ToCompactString(), Hit.bBlockingHit ? 1 : 0);
         }
         Scope(Self, NewLoc, resourceNode); // spawn the portable miner on the rock surface
     });

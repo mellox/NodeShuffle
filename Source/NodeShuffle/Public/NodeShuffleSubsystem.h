@@ -63,6 +63,12 @@ struct FNodeShuffleEntry
     // correctly without re-deriving the form from a possibly-unloaded class.
     // 0 = unknown/legacy (treated as solid). Phase 2.
     UPROPERTY(SaveGame) uint8 ResourceForm = 0;
+
+    // cave-nodes-1/2: this entry's location is a discovered CAVERN FLOOR cell. Its settle (and any
+    // nudge probes) use a SHORT local trace instead of the 200 m top-down ray — the long ray would
+    // hit the cave ROOF and strand the node on the surface. Set when a deal draw (roll, relocation,
+    // water-locked redeal) randomly picks a cave cell at the natural share; never by a quota fill.
+    UPROPERTY(SaveGame) bool bUnderground = false;
 };
 
 // One original vanilla node location to suppress on stream-in after a wipe-on-
@@ -86,6 +92,24 @@ struct FNodeShuffleSuppressedOriginal
 // SaveGame store was part of the deleted donor-CAPTURE system. It is gone; any old
 // saved donor data is simply ignored on load (no migration needed — the property no
 // longer exists, and visuals are now reapplied from authored data every session).
+
+// playtest-fixes-1 (modded-descriptor visuals): one visual captured from an ORIGINAL node's own
+// PAIRED AFGNodeMeshActor (MeshActorCache pairing — NOT the deleted neighbor-proximity capture,
+// which mispaired). Covers mods that ship vanilla BP_ResourceNode_C nodes carrying a MODDED
+// resource descriptor (RefinedPower thorium, bamrenew lead): their look lives on the level's mesh
+// actor, so a relocated copy can only get it from a capture. Keyed by resource class SHORT name;
+// only real UFGResourceDescriptor resources are captured (esc_ ITEM nodes stay quartz by design).
+// Persisted so visuals resolve by path next session even before any original streams in.
+USTRUCT()
+struct FNodeShuffleCapturedVisual
+{
+    GENERATED_BODY()
+
+    UPROPERTY(SaveGame) FString ResourceClassName;      // short class name, e.g. Desc_RP_Thorium_C
+    UPROPERTY(SaveGame) FString MeshPath;
+    UPROPERTY(SaveGame) TArray<FString> MaterialPaths;  // per-slot, slot order
+    UPROPERTY(SaveGame) FVector MeshScale = FVector(1.0f, 1.0f, 1.0f);
+};
 
 // Server-side brain of NodeShuffle.
 //
@@ -111,11 +135,24 @@ public:
     // IFGSaveInterface
     virtual bool ShouldSave_Implementation() const override { return true; }
     virtual bool NeedTransform_Implementation() override { return false; }
-    virtual void PreSaveGame_Implementation(int32 saveVersion, int32 gameVersion) override {}
+    virtual void PreSaveGame_Implementation(int32 saveVersion, int32 gameVersion) override;
     virtual void PostSaveGame_Implementation(int32 saveVersion, int32 gameVersion) override {}
     virtual void PreLoadGame_Implementation(int32 saveVersion, int32 gameVersion) override {}
     virtual void PostLoadGame_Implementation(int32 saveVersion, int32 gameVersion) override;
     virtual void GatherDependencies_Implementation(TArray<UObject*>& out_dependentObjects) override {}
+
+    // playtest-fixes-1: `NodeShuffle.Here` console command (registered by the module). Logs the
+    // player's exact position plus a census of everything NodeShuffle-related within CensusRadius:
+    // layout entries (state + distance), streamed originals (hidden? radioactive? emitter live?),
+    // and the water/depth test at the player's feet. Log-only; safe anywhere.
+    void LogHereCensus() const;
+
+    // cave-nodes-1: `NodeShuffle.SeedHere` console command. Plants a manual cave seed at the player's
+    // feet — for roofed spots vanilla never put a node under (rock bridges, shelves, side tunnels).
+    // Same guarantees as automatic seeds: the player standing there proves reachability, the roof
+    // check keeps surface spots out (a buildable roof is rejected), and the floor is re-sampled at
+    // the cell center. Counts toward the underground placement quota.
+    void SeedCaveCellAtPlayer();
 
 protected:
     virtual void BeginPlay() override;
@@ -152,9 +189,16 @@ private:
     // VanillaLocations defines the map bounding box; AvoidLocations is the full
     // union of occupied/kept/original/pinned locations new nodes must be spaced
     // away from (FIX 2 overlap guard).
+    // playtest-fixes-3: non-const — it now stores the computed deal box (SaveGame) so the water-locked
+    // redeal can draw RANDOM map-wide candidates from the same box later, and consults/updates the
+    // learned water grid.
+    // cave-nodes-2: when OutUndergroundIndices is non-null (experimental placement on), each accepted
+    // location had a natural-share chance of being a CAVE cell instead of a surface box draw; the
+    // indices of cave picks are reported so the caller stamps Entry.bUnderground.
     void GenerateNewLocations(FRandomStream& Rng, const TArray<FVector>& VanillaLocations,
                               const TArray<FVector>& AvoidLocations,
-                              int32 Count, TArray<FVector>& OutLocations) const;
+                              int32 Count, TArray<FVector>& OutLocations,
+                              TSet<int32>* OutUndergroundIndices = nullptr);
     bool ReadCustomLocationsJson(TArray<FVector>& OutLocations) const;
     void WriteGeneratedLocationsJson(const TArray<FVector>& Locations) const;
 
@@ -164,7 +208,26 @@ private:
     // with a UPROPERTY(SaveGame) EntryGuid that survives reload (Tags do NOT). Iterate the subclass, read
     // each saved EntryGuid, repopulate SpawnedNodes[guid] so EnsureNewNodeSpawned's SpawnedNodes.Find
     // guard skips re-spawning. Also pins occupied restored nodes. Includes the VERIFY-FIRST count.
+    // real-class redesign: modded-origin nodes whose native visual we've already rebuilt this session
+    // (keyed by entry guid), so the per-node ProcessEvent rebuild fires once, not every tick (W2).
+    TSet<FGuid> ModdedVisualRebuilt;
     void AdoptRestoredSpawnedNodes();
+    // real-class redesign: shared per-node adopt finalize (resource-complete, gates, register, attach
+    // component, pin). A member function so it keeps the subsystem's Friend access to AFGResourceNode
+    // internals. Returns true when it newly pins the entry as occupied.
+    bool FinalizeAdoptedNode(class AFGResourceNode* Node, int32 EntryIdx);
+    // real-class redesign: true if the node renders its OWN visual (self-rendering mesh component or a live
+    // linked engine mesh actor), so we should keep its native look instead of dressing our fallback rock.
+    // Lithium's Alkali node -> true; AllMinable item-nodes -> false (they get the fallback rock).
+    bool NodeHasOwnVisual(class AActor* Node, class UStaticMeshComponent* ExcludeRock) const;
+    // visfix-1 (user report: "coal node with quartz visual"): the deal deck assigns resources across
+    // ALL entries, so a modded-CLASS node (AllMinable Res_*2_C, whose native mesh is a quartz
+    // look-alike) can carry a VANILLA resource. When the ASSIGNED resource has a look we can render
+    // (authored table row or captured visual), that look must win: hide the native mesh and dress our
+    // rock. Native visuals only win for resources we cannot dress (lithium, uncaptured modded ores,
+    // esc_ item resources keeping their dirty-quartz identity).
+    bool ResourceHasAuthoredLook(UClass* ResourceClass);
+    void HideNativeNodeMesh(class AFGResourceNode* Node, class UStaticMeshComponent* ExcludeRock);
     bool bAdoptedRestoredNodes = false;
     // redesign-3 BUG C: originals already deregistered from the scanner this session (path set, so we
     // call RemoveResourceNodeScan_Local/UpdateNodeRepresentation once per original, not every pass) + a
@@ -282,6 +345,24 @@ private:
     // no authored table entry (modded resources: esc_/lithium/etc.). Resolved from Desc_RawQuartz_C.
     UStaticMesh* GetQuartzPlaceholderMesh();
     const TArray<TWeakObjectPtr<UMaterialInterface>>* GetQuartzPlaceholderMaterials();
+    // playtest-fixes-1 (modded-descriptor visuals): capture the visual of a hidden ORIGINAL whose
+    // resource is a real UFGResourceDescriptor with NO authored table entry (RP thorium, bamrenew
+    // lead), from its OWN paired AFGNodeMeshActor. Called from SuppressOriginalNodes (pairing is
+    // fresh each pass). On a NEW capture, already-spawned nodes of that resource are re-dressed so
+    // they swap quartz -> the real look without waiting for a respawn.
+    void CaptureOriginalVisualIfNeeded(class AFGResourceNodeBase* Node);
+    void RedressSpawnedOfResource(const FString& ResourceClassName);
+    // Find a persisted capture for a resource short name (null when none).
+    const FNodeShuffleCapturedVisual* FindCapturedVisual(const FString& ResourceClassName) const;
+    // Resolved-capture runtime cache: mesh/materials LoadObject'd once per session per resource.
+    struct FNodeShuffleResolvedCapture
+    {
+        TWeakObjectPtr<UStaticMesh> Mesh;
+        TArray<TWeakObjectPtr<UMaterialInterface>> Materials;
+        FVector Scale = FVector(1.0f, 1.0f, 1.0f);
+    };
+    TMap<FString, FNodeShuffleResolvedCapture> ResolvedCaptureCache;
+    const FNodeShuffleResolvedCapture* ResolveCapturedVisual(const FString& ResourceClassName);
     // redesign-1: place the starter node set (config) near the captured player-start on the FIRST
     // roll of a brand-new game. Drawn from the pool when possible. Spawned as normal new entries.
     void AppendStarterNodes(TArray<FNodeShuffleEntry>& NewLayout, FRandomStream& Rng,
@@ -322,7 +403,104 @@ private:
     // redesign-6 FIX 2: the live original as AFGResourceNodeBase (covers esc_ Base-only originals too).
     AFGResourceNodeBase* FindOriginalBaseByPath(const FString& Path) const;
     static UClass* LoadClassByPath(const FString& Path);
-    bool RaycastSettle(FNodeShuffleEntry& Entry, const AActor* IgnoreNode, const AActor* IgnoreMesh) const;
+    // playtest-fixes-1: optional out-flag distinguishes the WATER-no-land-found failure (definitive —
+    // the probe HIT ground but it is underwater and the 300 m spiral found no land) from the ambiguous
+    // no-terrain-hit defer (unstreamed terrain or true void). Water-no-land triggers an immediate
+    // redeal; void keeps the old defer-and-retry behavior.
+    // cave-nodes-1: underground entries settle via a SHORT local trace (RaycastSettle reads
+    // Entry.bUnderground) so the probe stays inside the cavern instead of hitting the roof.
+    bool RaycastSettle(FNodeShuffleEntry& Entry, const AActor* IgnoreNode, const AActor* IgnoreMesh,
+                       bool* bOutWaterNoLand = nullptr) const;
+
+    // ---- cave-nodes-1..4: cavern discovery + placement (both always-on; placement = drain fix) ----
+    // The shuffle DRAINED caves: originals inside caverns are hidden and the 200 m top-down settle ray
+    // can only reach the outermost surface, so replacements never land inside. Discovery maps cavern
+    // floors from PROVEN seeds (hidden originals that sit under a roof — vanilla only put nodes where
+    // players can go) via a budgeted trace flood-fill that follows the floor through long winding
+    // passages (step <=2.5 m, headroom >=3.5 m, still-roofed, dry), stopping at cave mouths. Cells are
+    // persisted GLOBALLY (Configs/NodeShuffle_CaveFloors.json — map-static, like the water grid).
+    // PLACEMENT (always on — cave-nodes-4): the shuffle used to DRAIN caves (hid their originals,
+    // never placed anything back), a regression this fixes. Caves are ADDITIONAL RANDOM AREAS —
+    // every deal draw (roll, relocation spots, water-locked redeal) picks a cave cell with natural
+    // probability CaveSeedCount/poolSize (capped 25%). No quota, no top-up, no preference.
+    struct FNodeShuffleCaveCell
+    {
+        float FloorZ = 0.0f;
+        uint8 State = 1; // 1=frontier (expandable), 2=expanded, 4=mouth (walkable; no expansion past)
+        // cave-nodes-2: measured ceiling clearance (roof hit - floor). Placement requires enough for
+        // a Miner building; low passages stay mapped for connectivity only. -1 = unknown (legacy
+        // imports) = treated as tall (the user stood there and chose it).
+        float CeilingCm = -1.0f;
+    };
+    mutable TMap<int64, FNodeShuffleCaveCell> CaveFloors;
+    mutable TSet<FString> CaveSeedsDone; // original node paths already roof-classified (persisted)
+    mutable int32 CaveSeedCount = 0;     // seeds that WERE under a roof (the placement quota)
+    mutable bool bCaveStoreLoaded = false;
+    mutable bool bCaveStoreDirty = false;
+    mutable int32 CaveStoreNewRecords = 0;
+    void EnsureCaveStoreLoaded() const;
+    void FlushCaveStoreIfDirty() const;
+    // Roof-classify one resolved original (once per path, persisted): an up-trace that hits within
+    // 150 m means the node sits under a roof -> cave seed cell at its own floor.
+    void ClassifyOriginalUnderground(class AFGResourceNodeBase* Node, const FString& Path);
+    // Budgeted per-pass flood-fill from frontier cells near players (traces need streamed collision).
+    void ExpandCaveFloorsBudgeted();
+    // cave-nodes-2 (user call: caves are ADDITIONAL RANDOM AREAS, never a quota to fill): the forcing
+    // machinery (CaveTopUpPass + cave-first redeal priority) is GONE. Instead, every location deal —
+    // roll, relocation spots, water-locked redeal — draws a cave cell with natural probability
+    // CaveSeedCount / poolSize (what vanilla's own cave-node density encodes), capped at 25%.
+    // Pick a random placeable cave cell (fully roofed + ceiling tall enough for a Miner). Raw variant
+    // does NO spacing (the deal loop applies its own avoid/spacing checks); the Layout variant spaces
+    // MinNodeSpacing (3D) against the live layout for redeals.
+    bool TryPickRawCaveCell(FRandomStream& Rng, FVector& OutLoc);
+    bool TryPickCaveCell(FRandomStream& Rng, FVector& OutLoc);
+    int32 CountUndergroundEntries() const; // census/diagnostic only
+
+    // playtest-fixes-3 (water-locked redeal, UNANCHORED): an entry whose spot is confirmed water-locked
+    // is RE-DEALT to a fresh RANDOM location in the SAME map-wide deal box the roll used — anchoring to
+    // streamed originals (fixes-1) clustered relocations around original sites and defeated the mod's
+    // randomization (user call). The new spot is filtered by the LEARNED WATER GRID + MinNodeSpacing,
+    // then settles LAZILY like any dealt entry (spawn-on-discovery when a player nears it). A spot the
+    // grid doesn't know yet may hit water again — that settle teaches the grid one more cell and hops
+    // once more; convergence is exponential (~25% water share per blind draw) and fully random.
+    // Returns true when the entry was moved (NOT settled — bRayCasted stays false).
+    bool TryRedealWaterLockedEntry(FNodeShuffleEntry& Entry);
+    // ---- playtest-fixes-3: learned water grid (the "excluded areas" store) ----
+    // The game has NO complete pre-stream water data at runtime (AFGWorldSettings::mWaterVolumes is
+    // transient, "currently streamed in"). So we LEARN it: every RaycastGroundAt hit records land/water
+    // at a 100 m cell, persisted GLOBALLY (Configs/NodeShuffle_WaterGrid.json — the map is static, so
+    // knowledge carries across saves and re-rolls). Rolls and redeals reject known-water cells up
+    // front. Cell states: 1=land, 2=water, 3=mixed (coastline; NOT excluded — the settle probe decides).
+    void RecordWaterGridSample(const FVector& Loc, bool bWater) const;
+    bool IsKnownWaterCell(const FVector& Loc) const;
+    void EnsureWaterGridLoaded() const;
+    void FlushWaterGridIfDirty() const;
+    mutable TMap<int64, uint8> WaterGrid;
+    mutable bool bWaterGridLoaded = false;
+    mutable bool bWaterGridDirty = false;
+    mutable int32 WaterGridNewSamples = 0;
+    // Deal box captured at roll time (SaveGame) so redeals draw from the same distribution; for saves
+    // rolled before this build the box is derived lazily from the Layout's own locations (they span
+    // the map). MeanZ seeds the redealt entry's probe height.
+    FVector GetDealBoundsMin() const;
+    FVector GetDealBoundsMax() const;
+    void EnsureDealBoundsDerived() const;
+    // Transient per-entry redeal attempt counter — salts the deterministic RNG so a failed redeal
+    // tries different anchors/offsets next pass instead of repeating the same candidates forever.
+    TMap<FGuid, int32> RedealAttempts;
+    // Entries confirmed water-locked at least once this session (drives the deferral summary + census).
+    mutable TSet<FGuid> WaterLockedThisSession;
+    // playtest-fixes-1 (defer-log backoff): first-occurrence-only detail logs; repeats are silent.
+    // 153k defer lines in one session came from re-logging every retry of every stuck entry.
+    TSet<FGuid> DeferLoggedThisSession;
+    mutable TSet<FGuid> WaterDeferLoggedThisSession;
+    int32 DeferredThisPass = 0;
+    int32 LastDeferSummary = -1;
+    // playtest-fixes-1 (ghost radiation): resolve the radioactivity subsystem via the GameState's
+    // public inline getter (AFGRadioactivitySubsystem::Get is a static whose export is not trusted —
+    // same LNK2019 class of problem as AFGResourceNodeManager::Get).
+    class AFGRadioactivitySubsystem* GetRadSubsystem() const;
+    int32 RadEmittersRemoved = 0; // running total, logged in the hide summary
     // FIX A (land-only placement): true if a world point sits inside a streamed-in
     // water volume (ocean/lake/river). Used to reject settle hits on the seafloor:
     // the down-ray hits solid terrain, but if that impact point is underwater the
@@ -332,9 +510,12 @@ private:
     // FIX A: single raycast that also rejects water. Out params return the grounded
     // location/rotation/water-state. Helper that RaycastSettle's relocation loop
     // drives over offset candidates.
+    // cave-nodes-1: bShortTrace probes only +-4/8 m around StartZ (underground entries — the long ray
+    // would hit the cave roof); short traces also skip the deep-water floor reclassification (the cell
+    // was depth/water-verified at discovery) but keep the volume test.
     bool RaycastGroundAt(const FVector& ProbeXY, float StartZ, const AActor* IgnoreNode,
                          const AActor* IgnoreMesh, FVector& OutLoc, FRotator& OutRot,
-                         bool& bOutWater) const;
+                         bool& bOutWater, bool bShortTrace = false) const;
     void LogLayoutSummary() const;
     // Writes RerollNow=false back to the live config and flushes it to disk so the
     // one-shot "Re-roll Now" toggle fires exactly once per enable. Returns true on
@@ -359,6 +540,20 @@ private:
     // modded), used by SuppressOriginalNodes to hide each original whole-actor whenever it streams
     // in. Reliable across sessions; the catch-all for orphan rocks. Rebuilt from the layout each roll.
     UPROPERTY(SaveGame) TArray<FNodeShuffleSuppressedOriginal> OriginalNodeRecord;
+
+    // playtest-fixes-1: visuals captured from hidden originals' paired mesh actors (modded-descriptor
+    // resources with no authored entry). Persisted: next session resolves by asset path immediately.
+    UPROPERTY(SaveGame) TArray<FNodeShuffleCapturedVisual> CapturedVisuals;
+
+    // playtest-fixes-3: the percentile deal box + mean probe height captured at roll time, reused by
+    // the unanchored water-locked redeal. Zero when the save predates this build (derived lazily then).
+    UPROPERTY(SaveGame) FVector DealBoundsMin = FVector::ZeroVector;
+    UPROPERTY(SaveGame) FVector DealBoundsMax = FVector::ZeroVector;
+    UPROPERTY(SaveGame) float DealMeanZ = 0.0f;
+    // Lazily-derived fallback box for pre-fixes-3 saves (transient).
+    mutable FVector DerivedBoundsMin = FVector::ZeroVector;
+    mutable FVector DerivedBoundsMax = FVector::ZeroVector;
+    mutable bool bDerivedBoundsReady = false;
 
     // redesign-1: STARTER NODES. Captured player-start world location (the player pawn's position at
     // the earliest tick it exists on a brand-new game) and whether starters have already been placed.

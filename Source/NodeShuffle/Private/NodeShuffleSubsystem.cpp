@@ -3,6 +3,7 @@
 #include "NodeShuffleConfig.h"
 #include "NodeShuffleNodeAssets.h"
 #include "NodeShuffleResourceNode.h"
+#include "NodeShuffleNodeComponent.h"
 
 #include "EngineUtils.h"
 #include "TimerManager.h"
@@ -20,6 +21,7 @@
 #include "Components/BoxComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
+#include "Components/DecalComponent.h"
 #include "GameFramework/PlayerController.h"
 
 #include "Configuration/ConfigManager.h"
@@ -42,9 +44,24 @@
 #include "Engine/OverlapResult.h"
 #include "FGPortableMiner.h"
 #include "FGWaterVolume.h"
+#include "FGAmbientVolume.h"
+#include "FGRadioactivitySubsystem.h"
+#include "FGGameState.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "FGActorRepresentationManager.h"
 #include "Representation/FGResourceNodeRepresentation.h"
 #include "Buildables/FGBuildableRadarTower.h"
+
+// real-class redesign: NodeShuffle now relocates each node AS ITS ORIGINAL CLASS and attaches a
+// UNodeShuffleNodeComponent for identity + fallback visual. A node is "ours" (a relocated/spawned
+// NodeShuffle node, never an original to shuffle) if it carries that component OR is a legacy old-save
+// ANodeShuffleResourceNode (kept compiled so old saves still load; phased out by a re-roll). This
+// replaces every former IsA<ANodeShuffleResourceNode> identity test.
+static bool NodeShuffleIsOurNode(const AActor* Node)
+{
+    return IsValid(Node)
+        && (UNodeShuffleNodeComponent::Find(Node) != nullptr || Node->IsA<ANodeShuffleResourceNode>());
+}
 
 namespace
 {
@@ -64,6 +81,61 @@ namespace
     constexpr int32 LandRelocationTries = 16;           // max offset candidates per settle
     constexpr float LandRelocationStepCm = 4000.0f;     // 40 m per ring of the spiral
     constexpr float LandRelocationMaxRadiusCm = 30000.0f; // 300 m max nudge
+    // playtest-fixes-1 DEPTH GUARD: the volume test (IsPointInWater) only sees STREAMED AFGWaterVolume
+    // actors, and the deep/open ocean has none — so seabed hits passed as "dry" and ~20 nodes settled
+    // on the east ocean floor (measured flat shelf at Z ≈ -10,500; deep outliers to -30,220). Any
+    // settle hit below this Z is treated as water. Chosen from measured map data: legit node-bearing
+    // land bottoms out around -2,000 (beaches) / rare ravines to ~-3,500; the confirmed seabed band
+    // starts at ~-4,900. A rare legit deep-ravine spot rejected by this guard just redeals to normal
+    // land — harmless; a seabed spot accepted without it is a permanently unreachable node.
+    constexpr float DeepWaterFloorZ = -4500.0f;
+    // playtest-fixes-3 WATER-LOCKED REDEAL (unanchored): random candidates drawn from the SAME deal
+    // box the roll used, filtered by the learned water grid + spacing. No land anchors — anchoring to
+    // streamed originals clustered relocations around original sites and defeated the randomization.
+    constexpr int32 RedealTries = 10;
+    constexpr int32 CensusRadiusCm = 30000;        // NodeShuffle.Here census: 300 m
+    // playtest-fixes-3 LEARNED WATER GRID: 100 m cells; every ground probe teaches land/water; persisted
+    // globally (the map is static) in Configs/NodeShuffle_WaterGrid.json across saves and re-rolls.
+    constexpr float WaterGridCellCm = 10000.0f;    // 100 m
+    constexpr int32 WaterGridFlushEvery = 500;     // safety flush after N new samples (also on save/quit)
+
+    FORCEINLINE int64 NodeShuffleGridKey(const FVector& Loc, float CellCm)
+    {
+        const int64 CX = static_cast<int64>(FMath::FloorToDouble(Loc.X / CellCm));
+        const int64 CY = static_cast<int64>(FMath::FloorToDouble(Loc.Y / CellCm));
+        return (CX << 32) | (CY & 0xffffffffLL);
+    }
+    FORCEINLINE int64 NodeShuffleWaterCellKey(const FVector& Loc)
+    {
+        return NodeShuffleGridKey(Loc, WaterGridCellCm);
+    }
+    FORCEINLINE FString NodeShuffleWaterCellString(int64 Key)
+    {
+        const int32 CX = static_cast<int32>(Key >> 32);
+        const int32 CY = static_cast<int32>(Key & 0xffffffffLL);
+        return FString::Printf(TEXT("%d,%d"), CX, CY);
+    }
+
+    // cave-nodes-1: cavern discovery + placement tuning.
+    constexpr float CaveCellCm = 800.0f;          // 8 m flood-fill cells
+    constexpr float CaveHeadroomCm = 350.0f;      // min clearance above a floor cell (node + player)
+    constexpr float CaveStepMaxCm = 250.0f;       // max floor step/slope between adjacent cells
+    constexpr float CaveRoofProbeCm = 15000.0f;   // roofed = up-trace hits within 150 m
+    constexpr int32 CaveExpandTracesPerPass = 120; // trace budget per 5 s pass (~40 neighbor tests)
+    constexpr int32 CaveMaxCells = 25000;          // global cap (~1.6 km^2 of cave floor)
+    // cave-nodes-2: nodes are only PLACED where a Miner building physically fits; lower passages stay
+    // mapped for connectivity. -1 (unknown/legacy) ceilings are treated as tall.
+    constexpr float CaveMinPlaceCeilingCm = 1200.0f; // 12 m
+    // cave-nodes-2: natural cave share of any deal draw, capped so caves can never dominate a roll
+    // even if the user seeds heavily.
+    constexpr float CaveShareCap = 0.25f;
+    constexpr float CaveExpandNearPlayerCm = 30000.0f; // expand only where collision is streamed
+    FORCEINLINE FVector NodeShuffleCaveCellCenter(int64 Key, float FloorZ)
+    {
+        const int32 CX = static_cast<int32>(Key >> 32);
+        const int32 CY = static_cast<int32>(Key & 0xffffffffLL);
+        return FVector((CX + 0.5f) * CaveCellCm, (CY + 0.5f) * CaveCellCm, FloorZ);
+    }
     // EResourceForm numeric values (mirror of EResourceForm in FGItemDescriptor.h).
     constexpr uint8 FormSolid = 1;
     constexpr uint8 FormLiquid = 2;
@@ -101,6 +173,8 @@ void ANodeShuffleSubsystem::BeginPlay()
 void ANodeShuffleSubsystem::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
     GetWorldTimerManager().ClearTimer(TickTimerHandle);
+    FlushWaterGridIfDirty(); // playtest-fixes-3: persist learned water cells on session end
+    FlushCaveStoreIfDirty(); // cave-nodes-1: persist discovered cavern floors on session end
     Super::EndPlay(EndPlayReason);
 }
 
@@ -246,6 +320,16 @@ void ANodeShuffleSubsystem::RestoreOriginalsForReroll()
             Node->SetActorHiddenInGame(false);
             // Re-register its scanner rep so an un-hidden original pings again until the new roll decides.
             Node->UpdateNodeRepresentation();
+            // playtest-fixes-1 (ghost radiation, restore side): hiding removed this original's radiation
+            // emitter; un-hiding must give it back. InitRadioactivity re-reads the resource class and
+            // re-registers under a stable UID (FindOrAddEmitter), so re-running it never duplicates.
+            // Base-only esc_ originals have no InitRadioactivity — the new roll re-hides (and re-removes)
+            // them anyway, so the brief pristine window is accepted.
+            if (AFGResourceNode* AsNode = Cast<AFGResourceNode>(Node))
+            {
+                AsNode->InitRadioactivity();
+                AsNode->UpdateRadioactivity(); // cold-review parity: always paired at the other two call sites
+            }
             if (AFGNodeMeshActor* MeshActor = FindMeshActorForNode(Node))
             {
                 MeshActor->SetActorHiddenInGame(false);
@@ -318,6 +402,10 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
 {
     const FNodeShuffleConfigStruct Config = FNodeShuffleConfigStruct::GetActiveConfig(this);
     FRandomStream Rng(Seed);
+
+    // real-class redesign: a new roll (initial OR re-roll) rebuilds the layout, so clear the once-per-roll
+    // modded-visual guard — every modded node's native visual must be (re)built fresh for the new roll.
+    ModdedVisualRebuilt.Empty();
 
     // FIX 4: name exactly which modded node classes shuffle (and why the rest do
     // not). Once per class per session. This is how "lithium never shuffles" stops
@@ -493,8 +581,8 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
             {
                 AFGResourceNode* Node = *It;
                 const EResourceForm LiveForm = Node->GetResourceForm();
-                const bool bExpForm = (LiveForm == EResourceForm::RF_LIQUID); // oil only; gas (lithium) is not shuffled
-                // Liquid-only live scan: solids are already in the rebuilt pool.
+                const bool bExpForm = (LiveForm == EResourceForm::RF_LIQUID || LiveForm == EResourceForm::RF_GAS); // oil + gas (lithium)
+                // Non-solid live scan (oil + gas): solids are already in the rebuilt pool.
                 if (!bExpForm || !IsEligibleVanillaNode(Node, Config.IncludeModdedNodes, true))
                 {
                     continue;
@@ -560,7 +648,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
             {
                 AFGResourceNodeBase* BaseNode = *It;
                 if (!IsValid(BaseNode) || IsFrackingActor(BaseNode)) { continue; }
-                if (BaseNode->IsA<ANodeShuffleResourceNode>()) { continue; } // never our own spawned nodes
+                if (NodeShuffleIsOurNode(BaseNode)) { continue; } // never our own spawned nodes
                 const UClass* RC = BaseNode->GetResourceClass();
                 if (!RC) { continue; }
                 // SOLID only; plain Node type only (no geyser/fracking).
@@ -640,7 +728,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
             AFGResourceNodeBase* BaseNode = *It;
             if (!IsValid(BaseNode) || IsFrackingActor(BaseNode)) { continue; }
             // Skip our own spawned nodes (they're AFGResourceNode subclass; eligibility also excludes them).
-            if (BaseNode->IsA<ANodeShuffleResourceNode>()) { continue; }
+            if (NodeShuffleIsOurNode(BaseNode)) { continue; }
             AFGResourceNode* Node = Cast<AFGResourceNode>(BaseNode); // may be null for Base-only esc_ nodes
 
             // redesign-5/6 UPSTREAM-SCAN: log once per distinct node-class|resource-class, EVERY base node
@@ -675,8 +763,9 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                 if (!RC) { continue; }
                 if (BaseNode->GetResourceNodeType() != EResourceNodeType::Node) { continue; }
                 const EResourceForm BF = BaseNode->GetResourceForm();
-                if (BF == EResourceForm::RF_GAS) { continue; } // gas (lithium etc.) is not shuffled — special extractor
-                if (BF == EResourceForm::RF_LIQUID && !bIncludeLiquid) { continue; }
+                // oil + gas (lithium etc.) shuffle when non-solid forms are on; the real-class spawn
+                // relocates them as their own node class so their special extractor still works.
+                if ((BF == EResourceForm::RF_LIQUID || BF == EResourceForm::RF_GAS) && !bIncludeLiquid) { continue; }
             }
 
             const bool bOccupied = BaseNode->IsOccupied() || (Node && PortableMinerNodes.Contains(Node));
@@ -756,24 +845,29 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     }
 
     TArray<FVector> NewLocations;
+    TSet<int32> NewUnderground; // cave-nodes-2: indices of locations that are cave-floor picks
     if (!ReadCustomLocationsJson(NewLocations))
     {
-        GenerateNewLocations(Rng, VanillaLocations, AvoidLocations, FMath::Max(0, Config.NewNodeCount), NewLocations);
+        // cave-nodes-4: cave placement is a FIX for the cave-drain regression (the shuffle hid cave
+        // originals and could never place anything back inside) — always on, like discovery.
+        GenerateNewLocations(Rng, VanillaLocations, AvoidLocations, FMath::Max(0, Config.NewNodeCount), NewLocations,
+                             &NewUnderground);
         WriteGeneratedLocationsJson(NewLocations);
     }
 
     // The vanilla entries are already in NewLayout (built above); append new-node
     // location entries to complete the pool.
     NewLayout.Reserve(NewLayout.Num() + NewLocations.Num() + CarriedEntries.Num());
-    for (const FVector& Loc : NewLocations)
+    for (int32 LocIdx = 0; LocIdx < NewLocations.Num(); LocIdx++)
     {
         FNodeShuffleEntry E;
         E.EntryGuid = FGuid::NewGuid();
         E.bIsNewNode = true;
-        E.Location = Loc;
+        E.Location = NewLocations[LocIdx];
         E.Rotation = FRotator(0.f, Rng.FRandRange(0.f, 360.f), 0.f);
         E.bActive = false;
         E.NodeClassPath = SpawnableNodeClassPath;
+        E.bUnderground = NewUnderground.Contains(LocIdx); // settles via the short in-cave trace
         NewLayout.Add(E);
     }
 
@@ -896,10 +990,22 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
         return F != 0 ? F : FormSolid;
     };
 
+    // real-class redesign: GAS resources (e.g. lithium) are RELOCATE-ONLY — never retyped and never dealt
+    // onto other slots — because their special modded extractor (AlkaLib's reactive ore extractor) is bound
+    // to that one resource and outputs it regardless. A gas node relocates carrying its own resource + its
+    // own modded node class. Identify gas by the descriptor's ACTUAL form so it holds across all capture
+    // paths (initial roll, re-roll augment, carried entries).
+    const auto IsGasResourcePath = [&](const FString& Path) -> bool
+    {
+        UClass* RC = LoadClassByPath(Path);
+        return RC && UFGItemDescriptor::GetForm(TSubclassOf<UFGItemDescriptor>(RC)) == EResourceForm::RF_GAS;
+    };
+
     TArray<FString> SolidDeck;
     TArray<FString> LiquidDeck;
     for (const FString& Kind : ResourceKinds)
     {
+        if (IsGasResourcePath(Kind)) { continue; } // gas: relocate-only, never enters a deal deck
         const int32 DeckCount = Quota[Kind] - PinnedPerResource.FindRef(Kind);
         TArray<FString>& Pile = (CardFormOf(Kind) == FormLiquid) ? LiquidDeck : SolidDeck;
         for (int32 i = 0; i < DeckCount; i++) { Pile.Add(Kind); }
@@ -936,6 +1042,9 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
         {
             continue;
         }
+        // GAS slots are relocate-only: keep their original (gas) resource + class, never retype. (New nodes
+        // never carry gas — they only draw vanilla /Game/ cards below — so this only guards existing slots.)
+        if (!E.bIsNewNode && IsGasResourcePath(E.AssignedResourceClassPath)) { continue; }
 
         // Determine the SLOT's required form.
         //   existing vanilla node -> fixed by the node we are retyping (E.ResourceForm)
@@ -1071,6 +1180,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
         }
         // Generate that many additional grounded, non-overlapping relocated locations.
         TArray<FVector> RelocSpots;
+        TSet<int32> RelocUnderground; // cave-nodes-2: which relocation spots are cave floors
         if (NeedRelocation > 0)
         {
             // Avoid everything already placed: the map pool, occupied/kept, original-record (none yet),
@@ -1080,7 +1190,8 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
             {
                 if (E.bIsNewNode) { RelocAvoid.Add(E.Location); }
             }
-            GenerateNewLocations(Rng, VanillaLocations, RelocAvoid, NeedRelocation, RelocSpots);
+            GenerateNewLocations(Rng, VanillaLocations, RelocAvoid, NeedRelocation, RelocSpots,
+                                 &RelocUnderground); // cave-nodes-4: always on (cave-drain fix)
         }
 
         int32 RelocCursor = 0;
@@ -1112,7 +1223,9 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                 // re-roll (which collapsed the reroll pool). A bIsNewNode entry never uses the path for
                 // spawning (it keys on EntryGuid), so keeping it is harmless and preserves the pool.
                 E.bIsNewNode = true;
-                E.Location = RelocSpots[RelocCursor++];
+                E.Location = RelocSpots[RelocCursor];
+                E.bUnderground = RelocUnderground.Contains(RelocCursor); // cave-floor pick -> short-trace settle
+                RelocCursor++;
                 E.Rotation = FRotator(0.f, Rng.FRandRange(0.f, 360.f), 0.f);
                 E.bRayCasted = false; // re-settle onto terrain at the new spot
                 E.OverlapNudges = 0;
@@ -1181,7 +1294,8 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
 
 void ANodeShuffleSubsystem::GenerateNewLocations(FRandomStream& Rng, const TArray<FVector>& VanillaLocations,
                                                  const TArray<FVector>& AvoidLocations,
-                                                 int32 Count, TArray<FVector>& OutLocations) const
+                                                 int32 Count, TArray<FVector>& OutLocations,
+                                                 TSet<int32>* OutUndergroundIndices)
 {
     if (VanillaLocations.Num() == 0 || Count <= 0)
     {
@@ -1196,16 +1310,41 @@ void ANodeShuffleSubsystem::GenerateNewLocations(FRandomStream& Rng, const TArra
     // entries that cover the map). Distribute candidates uniformly across the
     // bounding box of that full known-node set instead — true map-wide spread,
     // independent of what happens to be streamed in.
-    FBox Bounds(ForceInit);
+    // playtest-fixes-1 PERCENTILE BOUNDS: the raw min/max bounding box of the known-node set includes
+    // the ocean bands along the map edges (and, post-re-roll, any stray previously-relocated offshore
+    // location that leaked into the pool) — measured cost: 261 of 927 entries dealt over water/void,
+    // permanently stuck retrying. Use the 2nd..98th percentile per axis instead: robust to outliers,
+    // still spans the whole island, cuts the box's open-sea corners where most water rolls landed.
+    TArray<float> Xs, Ys;
+    Xs.Reserve(VanillaLocations.Num());
+    Ys.Reserve(VanillaLocations.Num());
     for (const FVector& V : VanillaLocations)
     {
-        Bounds += V;
+        Xs.Add(V.X);
+        Ys.Add(V.Y);
     }
-    // Inset slightly from the extreme node positions so we don't push new nodes
-    // past the edge of the explorable terrain (vanilla nodes already sit inside it).
-    const float Inset = MinNodeSpacing; // 25 m
-    const FVector Min = Bounds.Min + FVector(Inset, Inset, 0.f);
-    const FVector Max = Bounds.Max - FVector(Inset, Inset, 0.f);
+    Xs.Sort();
+    Ys.Sort();
+    const auto Percentile = [](const TArray<float>& Sorted, float P) -> float
+    {
+        const int32 Idx = FMath::Clamp(FMath::RoundToInt(P * (Sorted.Num() - 1)), 0, Sorted.Num() - 1);
+        return Sorted[Idx];
+    };
+    FVector Min, Max;
+    if (VanillaLocations.Num() >= 20)
+    {
+        Min = FVector(Percentile(Xs, 0.02f), Percentile(Ys, 0.02f), 0.f);
+        Max = FVector(Percentile(Xs, 0.98f), Percentile(Ys, 0.98f), 0.f);
+    }
+    else
+    {
+        // Tiny pools (custom JSON lists): percentile is meaningless — keep the old min/max + inset.
+        FBox Bounds(ForceInit);
+        for (const FVector& V : VanillaLocations) { Bounds += V; }
+        const float Inset = MinNodeSpacing; // 25 m
+        Min = Bounds.Min + FVector(Inset, Inset, 0.f);
+        Max = Bounds.Max - FVector(Inset, Inset, 0.f);
+    }
     // Z is irrelevant for placement (RaycastSettle drops each node onto terrain at
     // spawn time); use the mean vanilla Z as a sane starting height for the ray.
     double ZSum = 0.0;
@@ -1218,36 +1357,91 @@ void ANodeShuffleSubsystem::GenerateNewLocations(FRandomStream& Rng, const TArra
         return;
     }
 
+    // playtest-fixes-3: persist the deal box + probe height so the water-locked redeal draws RANDOM
+    // candidates from the same distribution later (no land-anchoring — randomization is the product).
+    DealBoundsMin = Min;
+    DealBoundsMax = Max;
+    DealMeanZ = MeanZ;
+
+    // cave-nodes-2: caves join the candidate space at their NATURAL share — the probability that
+    // encodes vanilla's own cave-node density (seeds per pool slot), never a quota or a preference.
+    float CaveChance = 0.0f;
+    if (OutUndergroundIndices)
+    {
+        EnsureCaveStoreLoaded();
+        CaveChance = FMath::Min(CaveShareCap,
+            static_cast<float>(CaveSeedCount) / FMath::Max(1, VanillaLocations.Num() + Count));
+    }
+
+    int32 GridRejected = 0; // candidates dropped because the learned grid knows their cell is water
+    int32 CavePicks = 0;
     int32 Attempts = Count * 60;
     while (OutLocations.Num() < Count && Attempts-- > 0)
     {
-        FVector Candidate(Rng.FRandRange(Min.X, Max.X), Rng.FRandRange(Min.Y, Max.Y), MeanZ);
+        bool bCavePick = false;
+        FVector Candidate;
+        if (CaveChance > 0.0f && Rng.FRand() < CaveChance && TryPickRawCaveCell(Rng, Candidate))
+        {
+            bCavePick = true; // spacing checked below like any candidate; the water grid is a
+                              // surface concept and does not apply to a verified cave floor
+        }
+        else
+        {
+            Candidate = FVector(Rng.FRandRange(Min.X, Max.X), Rng.FRandRange(Min.Y, Max.Y), MeanZ);
+            // playtest-fixes-3: excluded areas — skip cells the persistent water grid has already
+            // proven to be water. Unknown/mixed cells still pass (the settle probe is ground truth).
+            if (IsKnownWaterCell(Candidate))
+            {
+                GridRejected++;
+                continue;
+            }
+        }
 
         // FIX 2: reject candidates within min-spacing of ANY occupied/kept/
         // original location (AvoidLocations = vanilla pool + carried/pinned +
         // original-node record + live occupied nodes), not just the vanilla pool.
+        // cave-nodes-2: cave picks space in 3D — a surface location 2D-above a cavern (25 m+ higher)
+        // must not veto the cell; nodes inside the same cavern still space out.
+        const float SpacingSq = FMath::Square(MinNodeSpacing);
+        const auto TooCloseTo = [&](const FVector& Existing) -> bool
+        {
+            return bCavePick
+                ? FVector::DistSquared(Existing, Candidate) < SpacingSq
+                : FVector::DistSquared2D(Existing, Candidate) < SpacingSq;
+        };
         bool bTooClose = false;
         for (const FVector& Existing : AvoidLocations)
         {
-            if (FVector::DistSquared2D(Existing, Candidate) < FMath::Square(MinNodeSpacing)) { bTooClose = true; break; }
+            if (TooCloseTo(Existing)) { bTooClose = true; break; }
         }
         if (!bTooClose)
         {
             for (const FVector& Existing : OutLocations)
             {
-                if (FVector::DistSquared2D(Existing, Candidate) < FMath::Square(MinNodeSpacing)) { bTooClose = true; break; }
+                if (TooCloseTo(Existing)) { bTooClose = true; break; }
             }
         }
         if (!bTooClose)
         {
+            if (bCavePick)
+            {
+                OutUndergroundIndices->Add(OutLocations.Num());
+                CavePicks++;
+            }
             OutLocations.Add(Candidate);
         }
     }
+    if (CavePicks > 0)
+    {
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("Map-wide spread: %d of the locations are CAVE floors (natural share %.1f%%)"),
+            CavePicks, CaveChance * 100.0f);
+    }
 
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("Map-wide spread: distributed %d/%d new locations across bounds X[%.0f..%.0f] Y[%.0f..%.0f] (%.1f x %.1f km)"),
+        TEXT("Map-wide spread: distributed %d/%d new locations across bounds X[%.0f..%.0f] Y[%.0f..%.0f] (%.1f x %.1f km); water-grid excluded %d candidates"),
         OutLocations.Num(), Count, Min.X, Max.X, Min.Y, Max.Y,
-        (Max.X - Min.X) / 100000.0f, (Max.Y - Min.Y) / 100000.0f);
+        (Max.X - Min.X) / 100000.0f, (Max.Y - Min.Y) / 100000.0f, GridRejected);
 }
 
 bool ANodeShuffleSubsystem::ReadCustomLocationsJson(TArray<FVector>& OutLocations) const
@@ -1333,7 +1527,7 @@ void ANodeShuffleSubsystem::ApplyLayout()
     int32 CacheAdded = 0;
     for (TActorIterator<AFGResourceNodeBase> It(GetWorld()); It; ++It)
     {
-        if (It->IsA<ANodeShuffleResourceNode>()) { continue; } // our own spawned (relocated) nodes, not originals
+        if (NodeShuffleIsOurNode(*It)) { continue; } // our own spawned (relocated) nodes, not originals
         TWeakObjectPtr<AFGResourceNodeBase>& Slot = VanillaNodeCache.FindOrAdd(It->GetPathName());
         if (!Slot.IsValid()) { Slot = *It; CacheAdded++; }
     }
@@ -1359,6 +1553,7 @@ void ANodeShuffleSubsystem::ApplyLayout()
     SpawnedRockVanilla = 0;
     SpawnedRockQuartz = 0;
     SpawnedRockLiquid = 0;
+    DeferredThisPass = 0; // playtest-fixes-1: per-pass deferral tally (summary logged at pass end)
 
     // redesign-1 (Hide & Replace) APPLY MODEL. The layout now has exactly two kinds of entry:
     //   - bIsNewNode == true  : one of OUR relocated/spawned nodes (the resource pool, re-homed).
@@ -1386,8 +1581,11 @@ void ANodeShuffleSubsystem::ApplyLayout()
                     {
                         Ours->bNodeShuffleOccupiedPinned = true;
                     }
-                    UE_LOG(LogNodeShuffle, Verbose, TEXT("Pinned occupied spawned node %s (miner built — never relocate)"),
-                        *Entry.EntryGuid.ToString());
+                    // visfix-1: include location + resource so miner placements are analyzable from
+                    // the log alone (was GUID-only — untraceable without a HERE census nearby).
+                    UE_LOG(LogNodeShuffle, Display, TEXT("Pinned occupied spawned node %s (%s) at %s (miner built — never relocate)"),
+                        *Entry.EntryGuid.ToString(), *Entry.AssignedResourceClassPath,
+                        *(*Live)->GetActorLocation().ToCompactString());
                 }
             }
             // SPAWN-ON-DISCOVERY: materialize an active relocated node once a player is within
@@ -1406,6 +1604,10 @@ void ANodeShuffleSubsystem::ApplyLayout()
 
     SettleNewNodesNearPlayers();
     ReassociateOrphanedExtractors();
+
+    // cave-nodes-1/2: always-on cavern discovery (budgeted traces near players). Placement happens
+    // only where locations are DEALT (roll/redeal draws) — never by actively re-homing entries.
+    ExpandCaveFloorsBudgeted();
 
     // redesign-9 SNAPDIAG: one-shot collision/component comparison of a spawned node vs a vanilla node,
     // so the log names the exact delta the extractor hologram detects (Mk1 works on vanilla, not ours).
@@ -1429,6 +1631,17 @@ void ANodeShuffleSubsystem::ApplyLayout()
         UE_LOG(LogNodeShuffle, Display,
             TEXT("Spawned-node visuals (this pass): %d vanilla rock + %d quartz placeholder (modded) + %d oil decal"),
             SpawnedRockVanilla, SpawnedRockQuartz, SpawnedRockLiquid);
+    }
+
+    // playtest-fixes-1 (defer-log backoff): ONE summary line when the deferral count changes, instead
+    // of re-logging every stuck entry every 5 s (153k lines / 35 MB in one session). Per-entry detail
+    // still logs once per session at Verbose (DeferLoggedThisSession).
+    if (DeferredThisPass != LastDeferSummary)
+    {
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("Deferral summary: %d entries deferred this pass (%d distinct water-locked so far this session)"),
+            DeferredThisPass, WaterLockedThisSession.Num());
+        LastDeferSummary = DeferredThisPass;
     }
 
     if (bChangedWorld)
@@ -1579,6 +1792,121 @@ const TArray<TWeakObjectPtr<UMaterialInterface>>* ANodeShuffleSubsystem::GetQuar
     return &NodeMaterialCache.Add(QuartzKey.ToString(), MoveTemp(Mats));
 }
 
+AFGRadioactivitySubsystem* ANodeShuffleSubsystem::GetRadSubsystem() const
+{
+    // Via the GameState's public inline getter — AFGRadioactivitySubsystem::Get is a static whose
+    // dll-export is not trusted (AFGResourceNodeManager::Get LNK2019'd exactly this way).
+    const AFGGameState* GS = GetWorld() ? GetWorld()->GetGameState<AFGGameState>() : nullptr;
+    return GS ? GS->GetRadioactivitySubsystem() : nullptr;
+}
+
+const FNodeShuffleCapturedVisual* ANodeShuffleSubsystem::FindCapturedVisual(const FString& ResourceClassName) const
+{
+    for (const FNodeShuffleCapturedVisual& Cap : CapturedVisuals)
+    {
+        if (Cap.ResourceClassName == ResourceClassName) { return &Cap; }
+    }
+    return nullptr;
+}
+
+const ANodeShuffleSubsystem::FNodeShuffleResolvedCapture* ANodeShuffleSubsystem::ResolveCapturedVisual(const FString& ResourceClassName)
+{
+    if (const FNodeShuffleResolvedCapture* Cached = ResolvedCaptureCache.Find(ResourceClassName))
+    {
+        return Cached;
+    }
+    const FNodeShuffleCapturedVisual* Cap = FindCapturedVisual(ResourceClassName);
+    if (!Cap)
+    {
+        return nullptr; // no persisted capture — do NOT negative-cache (a capture may land later this session)
+    }
+    FNodeShuffleResolvedCapture Resolved;
+    Resolved.Mesh = LoadObject<UStaticMesh>(nullptr, *Cap->MeshPath);
+    for (const FString& MatPath : Cap->MaterialPaths)
+    {
+        Resolved.Materials.Add(LoadObject<UMaterialInterface>(nullptr, *MatPath)); // slot order; null-safe downstream
+    }
+    Resolved.Scale = Cap->MeshScale;
+    if (!Resolved.Mesh.IsValid())
+    {
+        UE_LOG(LogNodeShuffle, Warning,
+            TEXT("CAPTURE: persisted mesh path for %s failed to load ('%s') — falling back to quartz"),
+            *ResourceClassName, *Cap->MeshPath);
+    }
+    return &ResolvedCaptureCache.Add(ResourceClassName, MoveTemp(Resolved));
+}
+
+void ANodeShuffleSubsystem::CaptureOriginalVisualIfNeeded(AFGResourceNodeBase* Node)
+{
+    // playtest-fixes-1 (modded-descriptor visuals). Capture gates, all cheap, most-selective first:
+    // a real AFGResourceNode with a REAL resource descriptor (UFGResourceDescriptor — esc_ ITEM nodes
+    // stay quartz by design), NO authored table entry, not already captured, and a PAIRED mesh actor
+    // (MeshActorCache pairing — the node's own rock, never a neighbor's).
+    AFGResourceNode* AsNode = Cast<AFGResourceNode>(Node);
+    if (!AsNode) { return; }
+    UClass* ResClass = AsNode->GetResourceClass().Get();
+    if (!ResClass || !ResClass->IsChildOf(UFGResourceDescriptor::StaticClass())) { return; }
+    const FString ShortName = ResClass->GetName();
+    if (FNodeShuffleNodeAssets::FindVisual(FName(*ShortName)) != nullptr) { return; } // authored covers it
+    if (FindCapturedVisual(ShortName) != nullptr) { return; }                          // already captured
+    AFGNodeMeshActor* MeshActor = FindMeshActorForNode(Node);
+    if (!MeshActor) { return; }
+    UStaticMeshComponent* Smc = MeshActor->FindComponentByClass<UStaticMeshComponent>();
+    if (!Smc || !Smc->GetStaticMesh()) { return; }
+
+    FNodeShuffleCapturedVisual Cap;
+    Cap.ResourceClassName = ShortName;
+    Cap.MeshPath = Smc->GetStaticMesh()->GetPathName();
+    for (int32 i = 0; i < Smc->GetNumMaterials(); i++)
+    {
+        UMaterialInterface* Mat = Smc->GetMaterial(i);
+        // A dynamic instance's path is transient — persist its PARENT asset path instead.
+        if (const UMaterialInstanceDynamic* Mid = Cast<UMaterialInstanceDynamic>(Mat))
+        {
+            Mat = Mid->Parent;
+        }
+        Cap.MaterialPaths.Add(Mat ? Mat->GetPathName() : FString());
+    }
+    Cap.MeshScale = Smc->GetComponentScale();
+    CapturedVisuals.Add(Cap);
+    ResolvedCaptureCache.Remove(ShortName); // drop any stale (pre-capture) resolution
+    UE_LOG(LogNodeShuffle, Display,
+        TEXT("CAPTURE: %s visual from its own paired mesh actor — mesh '%s', %d mat(s), scale=(%.2f,%.2f,%.2f) (persisted)"),
+        *ShortName, *Cap.MeshPath, Cap.MaterialPaths.Num(),
+        Cap.MeshScale.X, Cap.MeshScale.Y, Cap.MeshScale.Z);
+    RedressSpawnedOfResource(ShortName);
+}
+
+void ANodeShuffleSubsystem::RedressSpawnedOfResource(const FString& ResourceClassName)
+{
+    // A capture landed mid-session: swap every already-spawned node of that resource from the quartz
+    // placeholder to the captured look now (DressRock is idempotent), instead of waiting for a reload.
+    const FString Suffix = TEXT(".") + ResourceClassName;
+    int32 Redressed = 0;
+    for (const FNodeShuffleEntry& Entry : Layout)
+    {
+        if (!Entry.bIsNewNode || !Entry.AssignedResourceClassPath.EndsWith(Suffix)) { continue; }
+        AFGResourceNode* const* Live = SpawnedNodes.Find(Entry.EntryGuid);
+        if (!Live || !IsValid(*Live)) { continue; }
+        if (UClass* ResClass = LoadClassByPath(Entry.AssignedResourceClassPath))
+        {
+            // visfix-1: a node that was showing its NATIVE mesh pre-capture must hide it now that the
+            // captured look exists — otherwise the new rock double-renders against it. Legacy-aware
+            // rock exclusion (cold review: a legacy node's own RockMesh must not be swept as "native").
+            UNodeShuffleNodeComponent* LiveComp = UNodeShuffleNodeComponent::Find(*Live);
+            ANodeShuffleResourceNode* LiveLegacy = LiveComp ? nullptr : Cast<ANodeShuffleResourceNode>(*Live);
+            HideNativeNodeMesh(*Live, LiveComp ? LiveComp->RockMesh : (LiveLegacy ? LiveLegacy->RockMesh : nullptr));
+            SpawnVisualRockForNode(*Live, ResClass, Entry.EntryGuid);
+            Redressed++;
+        }
+    }
+    if (Redressed > 0)
+    {
+        UE_LOG(LogNodeShuffle, Display, TEXT("CAPTURE: re-dressed %d live %s node(s) quartz -> captured visual"),
+            Redressed, *ResourceClassName);
+    }
+}
+
 void ANodeShuffleSubsystem::SpawnVisualRockForNode(AFGResourceNode* Node, UClass* ResourceClass, const FGuid& EntryGuid)
 {
     // redesign-5 PRIMARY: dress the node's OWN RockMesh (a CONSTRUCTOR default subobject on
@@ -1590,20 +1918,43 @@ void ANodeShuffleSubsystem::SpawnVisualRockForNode(AFGResourceNode* Node, UClass
     {
         return;
     }
-    ANodeShuffleResourceNode* OurNode = Cast<ANodeShuffleResourceNode>(Node);
-    if (!OurNode)
+    // real-class redesign: the fallback rock lives on our companion component now (new real-class nodes);
+    // legacy old-save nodes still carry it as an ANodeShuffleResourceNode subobject. Route to whichever
+    // this node has. (Modded-origin real nodes never reach here — the spawn path uses their native visual.)
+    UNodeShuffleNodeComponent* Comp = UNodeShuffleNodeComponent::Find(Node);
+    ANodeShuffleResourceNode* Legacy = Comp ? nullptr : Cast<ANodeShuffleResourceNode>(Node);
+    if (!Comp && !Legacy)
     {
-        return; // only our own nodes carry the RockMesh subobject
+        return; // only our own spawned nodes carry the fallback rock
     }
 
     UStaticMesh* Mesh = ResolveNodeMesh(ResourceClass);
     const TArray<TWeakObjectPtr<UMaterialInterface>>* Mats = ResolveNodeMaterials(ResourceClass);
     bool bQuartz = false;
+    bool bCaptured = false;
     // The authored table row carries the correct per-mesh scale (ore ~2.0, coal/sulfur ~0.917, stone ~2.4)
     // and a vertical offset. redesign-5 restores per-mesh scale + Z offset (redesign-4 collapsed to a uniform
     // (0,0,-40)). We derive the LATERAL offset from the mesh's own bounds (below) — the table's authored X was
     // wrong — and keep only the table's Z (clamped to a small sink) so each rock sits centered + grounded.
     const FNodeShuffleVisual* Visual = FNodeShuffleNodeAssets::FindVisual(FName(*ResourceClass->GetName()));
+    FVector CapturedScale = FVector::ZeroVector; // non-zero when a captured visual supplies the scale
+    if (!Mesh)
+    {
+        // playtest-fixes-1: no authored entry — try a visual CAPTURED from this resource's own hidden
+        // original (RP thorium / bamrenew lead ship vanilla-class nodes + modded descriptor, so their
+        // real look only exists on the original's paired mesh actor). Falls through to quartz when
+        // no capture exists (yet) — a later capture re-dresses via RedressSpawnedOfResource.
+        if (const FNodeShuffleResolvedCapture* Cap = ResolveCapturedVisual(ResourceClass->GetName()))
+        {
+            if (UStaticMesh* CapMesh = Cap->Mesh.Get())
+            {
+                Mesh = CapMesh;
+                Mats = &Cap->Materials;
+                CapturedScale = Cap->Scale;
+                bCaptured = true;
+            }
+        }
+    }
     if (!Mesh)
     {
         // Modded resource with no authored entry -> quartz placeholder (clean, fully controlled).
@@ -1618,8 +1969,10 @@ void ANodeShuffleSubsystem::SpawnVisualRockForNode(AFGResourceNode* Node, UClass
             *ResourceClass->GetName());
         return;
     }
-    // Per-mesh scale from the table; empirical 2.0 only if a mesh resolved with no table row.
-    const FVector WantScale = Visual ? Visual->MeshScale : FVector(2.0f, 2.0f, 2.0f);
+    // Per-mesh scale: captured world scale for a captured visual (the original's authored scale);
+    // else the table row; empirical 2.0 only if a mesh resolved with no table row.
+    const FVector WantScale = bCaptured && !CapturedScale.IsNearlyZero() ? CapturedScale
+                            : Visual ? Visual->MeshScale : FVector(2.0f, 2.0f, 2.0f);
     // Centered laterally; keep the table's Z (a vertical sink), clamped so we never sink the rock absurdly.
     const float TableZ = Visual ? Visual->MeshOffset.Z : -40.0f;
     // issue #1 (snap off-center): the donor mesh's geometric center is offset from its pivot (ROCK-CENTER showed
@@ -1642,18 +1995,20 @@ void ANodeShuffleSubsystem::SpawnVisualRockForNode(AFGResourceNode* Node, UClass
         for (const TWeakObjectPtr<UMaterialInterface>& M : *Mats) { MatPtrs.Add(M.Get()); }
     }
 
-    OurNode->DressRock(Mesh, MatPtrs, WantScale, RelOffset);
+    if (Comp) { Comp->DressRock(Mesh, MatPtrs, WantScale, RelOffset); }
+    else { Legacy->DressRock(Mesh, MatPtrs, WantScale, RelOffset); }
 
+    UStaticMeshComponent* RockMC = Comp ? Comp->RockMesh : Legacy->RockMesh;
     // DIAGNOSTIC (issue #1 snap off-center): the miner snaps to the node ORIGIN / GetPlacementLocation,
     // but the rock renders at its mesh bounds center. Log both so we can measure the lateral offset (the
     // rock's pivot is not its visual center). Gated behind EnableDiagnostics.
-    if (FNodeShuffleModule::AreDiagnosticsEnabled() && IsValid(OurNode->RockMesh))
+    if (FNodeShuffleModule::AreDiagnosticsEnabled() && IsValid(RockMC))
     {
-        const FVector NodeOrigin = OurNode->GetActorLocation();
-        const FVector RockCenter = OurNode->RockMesh->Bounds.Origin;
+        const FVector NodeOrigin = Node->GetActorLocation();
+        const FVector RockCenter = RockMC->Bounds.Origin;
         UE_LOG(LogNodeShuffle, Display,
             TEXT("ROCK-CENTER node='%s' resource='%s' nodeOrigin=%s rockBoundsCenter=%s offset(center-origin)=%s"),
-            *OurNode->GetName(), *ResourceClass->GetName(),
+            *Node->GetName(), *ResourceClass->GetName(),
             *NodeOrigin.ToCompactString(), *RockCenter.ToCompactString(),
             *(RockCenter - NodeOrigin).ToCompactString());
     }
@@ -1661,7 +2016,7 @@ void ANodeShuffleSubsystem::SpawnVisualRockForNode(AFGResourceNode* Node, UClass
     if (bQuartz) { SpawnedRockQuartz++; } else { SpawnedRockVanilla++; }
     UE_LOG(LogNodeShuffle, Verbose,
         TEXT("dressed %s rock (node subobject) for %s: mesh '%s' scale=(%.2f,%.2f,%.2f) relZ=%.0f %d mat(s)"),
-        bQuartz ? TEXT("QUARTZ-placeholder") : TEXT("vanilla"),
+        bQuartz ? TEXT("QUARTZ-placeholder") : bCaptured ? TEXT("CAPTURED") : TEXT("vanilla"),
         *ResourceClass->GetName(), *Mesh->GetName(),
         WantScale.X, WantScale.Y, WantScale.Z, RelOffset.Z, MatPtrs.Num());
 }
@@ -1750,6 +2105,7 @@ void ANodeShuffleSubsystem::AppendStarterNodes(TArray<FNodeShuffleEntry>& NewLay
                 Reuse->Rotation = FRotator(0.f, Rng.FRandRange(0.f, 360.f), 0.f);
                 Reuse->AssignedPurity = RP_Pure;
                 Reuse->bRayCasted = false;
+                Reuse->bUnderground = false; // cave-nodes-2: starter re-home is a surface spot near spawn
                 Reuse->OverlapNudges = 0;
                 Reused++;
             }
@@ -1780,103 +2136,213 @@ void ANodeShuffleSubsystem::AppendStarterNodes(TArray<FNodeShuffleEntry>& NewLay
 
 void ANodeShuffleSubsystem::AdoptRestoredSpawnedNodes()
 {
-    // redesign-3 BUG B: spawned nodes are ANodeShuffleResourceNode with a UPROPERTY(SaveGame) EntryGuid
-    // that survives reload (AActor::Tags do NOT — that was the redesign-2 root cause: adopt matched 0 of
-    // 732, so every node re-spawned and occupied nodes moved off their miners). Iterate the subclass,
-    // read each one's saved EntryGuid, repopulate SpawnedNodes[guid] so EnsureNewNodeSpawned's
-    // SpawnedNodes.Find guard short-circuits and we never re-spawn. ONE iteration, once per session.
+    // real-class redesign: relocated nodes are now spawned AS THEIR ORIGINAL class, so identity no longer
+    // lives on the actor — it lives in the SaveGame Layout. On reload FG restores our runtime-spawned node
+    // actors at their saved transforms; we match each back to its layout entry and repopulate SpawnedNodes
+    // so EnsureNewNodeSpawned never re-spawns (which would move occupied nodes off their miners). Two passes:
+    //   1. LEGACY old-save nodes: ANodeShuffleResourceNode carries a SaveGame EntryGuid — adopt by guid.
+    //   2. REAL-class nodes: no on-actor identity — match restored RUNTIME nodes (!IsNetStartupActor, which
+    //      excludes level-placed originals) to active new-node entries by LOCATION (+ resource as a guard).
+    // Runs once per session.
 
-    // VERIFY-FIRST (the make-or-break for redesign-3): count how many of OUR subclass nodes actually
-    // exist in the world post-reload. ~N (the expected spawned count) => they persist (adopt them).
-    // ~0/1 => a raw subclass still isn't save-collected and we must wrap as a buildable (report it).
-    int32 SubclassInWorld = 0;
-    int32 Adopted = 0;
-    int32 PinnedOnLoad = 0;
+    int32 Adopted = 0, LegacyByGuid = 0, RealByLocation = 0, PinnedOnLoad = 0, RuntimeNodesSeen = 0;
     const int32 ExpectedSpawned = static_cast<int32>(Algo::CountIf(Layout,
         [](const FNodeShuffleEntry& E){ return E.bIsNewNode; }));
 
-    // Map EntryGuid -> layout index so adoption can flip a saved pin / occupancy onto the entry.
+    // Map EntryGuid -> layout index.
     TMap<FGuid, int32> EntryByGuid;
     for (int32 i = 0; i < Layout.Num(); i++)
     {
         if (Layout[i].bIsNewNode) { EntryByGuid.Add(Layout[i].EntryGuid, i); }
     }
 
+    // Per-node finalize is FinalizeAdoptedNode() (a member function, so it has the subsystem's Friend access
+    // to AFGResourceNode internals) — it resource-completes, re-asserts gates, re-registers, attaches our
+    // component, and pins occupied entries; it returns true when it newly pinned an entry.
+
+    // PASS 1: legacy old-save subclass nodes — adopt by SaveGame guid.
     for (TActorIterator<ANodeShuffleResourceNode> It(GetWorld()); It; ++It)
     {
         ANodeShuffleResourceNode* Node = *It;
-        if (!IsValid(Node)) { continue; }
-        SubclassInWorld++;
-        if (!Node->EntryGuid.IsValid()) { continue; }
-
+        if (!IsValid(Node) || !Node->EntryGuid.IsValid()) { continue; }
+        int32* Idx = EntryByGuid.Find(Node->EntryGuid);
+        if (!Idx) { continue; }
         AFGResourceNode* const* Existing = SpawnedNodes.Find(Node->EntryGuid);
         if (!Existing || !IsValid(*Existing))
         {
             SpawnedNodes.Add(Node->EntryGuid, Node);
-            Adopted++;
+            Adopted++; LegacyByGuid++;
         }
+        if (FinalizeAdoptedNode(Node, *Idx)) { PinnedOnLoad++; }
+    }
 
-        // redesign-3b BLOCKER FIX: every adopted/restored node lost its (unserialized) "Resource" UseBox
-        // on reload. Recreate it HERE so even far nodes (never reached by EnsureNewNodeSpawned this pass)
-        // are interactable. Idempotent — no-op if the box is already present.
-        EnsureNodeUseBox(Node);
+    // PASS 2: real-class restored nodes — match by location to an active new-node entry not already adopted.
+    constexpr float AdoptMatchRadius = 300.0f; // 3 m: restored transforms are exact; this just disambiguates
+    const float MatchSq = FMath::Square(AdoptMatchRadius);
+    for (TActorIterator<AFGResourceNode> It(GetWorld()); It; ++It)
+    {
+        AFGResourceNode* Node = *It;
+        if (!IsValid(Node)) { continue; }
+        if (Node->IsA<ANodeShuffleResourceNode>()) { continue; }  // handled in pass 1
+        if (Node->IsNetStartupActor()) { continue; }              // level-placed original, not ours
+        if (UNodeShuffleNodeComponent::Find(Node)) { continue; }  // already ours this session
+        RuntimeNodesSeen++;
 
-        // redesign-21 (THE ACTUAL MK1 SNAP FIX): re-assert both placement gates on every adopted node. The CDO
-        // ctor default now carries mCanPlaceResourceExtractor=true, but set it here too so an old save (written by
-        // a pre-r21 class version) is corrected on load. This is the flag the Mk1 extractor hologram checks; the
-        // r20 InitResource block below was chasing the wrong gate (resource-completeness, not the placement bool).
-        Node->mCanPlaceResourceExtractor = true;
-        Node->mCanPlacePortableMiner = true;
+        const FVector NodeLoc = Node->GetActorLocation();
+        const FString NodeRes = Node->GetResourceClass() ? Node->GetResourceClass()->GetPathName() : FString();
 
-        // redesign-20 (THE MK1 SNAP FIX): on reload an adopted node is NOT resource-complete. mResourceClass
-        // (EditAnywhere) AND mAmount (EditInstanceOnly) are NOT SaveGame, so after reload the node can report
-        // HasAnyResources()=false / a stale class / 0 extraction-speed. r19 proved the gate: the Mk1 extractor's
-        // CanOccupyResource=0 AND IsAllowedOnResource=0 reject our node even though the resource class+form look
-        // valid — because those checks read the FULL extractable state (amount/has-resources), which a half-
-        // restored adopted node lacks. A real level node always has it. FIX: fully re-run InitResource on adopt
-        // (it sets mResourceClass + mAmount=Infinite + mResourcesLeft + radioactivity) from the persisted
-        // override class, so an adopted node is byte-for-byte resource-complete like a fresh spawn. Then re-seat
-        // the SaveGame override == the (now-restored) original and refresh the rep.
-        if (Node->mResourceClassOverride && (!Node->GetResourceClassOriginal().Get() || !Node->HasAnyResources()))
+        int32 BestIdx = INDEX_NONE;
+        float BestSq = MatchSq;
+        for (const TPair<FGuid, int32>& Pair : EntryByGuid)
         {
-            const EResourcePurity Pur = Node->GetResourcePurity();
-            const TSubclassOf<UFGResourceDescriptor> Cls = Node->mResourceClassOverride;
-            Node->InitResource(Cls, EResourceAmount::RA_Infinite, Pur);
-            Node->mResourceClassOverride = Cls;
-            Node->InitRadioactivity();
-            Node->UpdateRadioactivity();
-            Node->OnRep_ResourceClassOverride();
+            const FNodeShuffleEntry& E = Layout[Pair.Value];
+            if (!E.bActive) { continue; }
+            if (SpawnedNodes.Contains(E.EntryGuid)) { continue; } // entry already has a live node
+            const float DSq = FVector::DistSquared(NodeLoc, E.Location);
+            if (DSq >= BestSq) { continue; }
+            // Resource match (when both known) guards against adopting some OTHER mod's runtime node.
+            if (!NodeRes.IsEmpty() && !E.AssignedResourceClassPath.IsEmpty()
+                && NodeRes != E.AssignedResourceClassPath) { continue; }
+            BestSq = DSq; BestIdx = Pair.Value;
         }
-
-        // Occupancy pin: a restored spawned node that has a miner/extractor on it (or carries the saved
-        // pin) must NEVER be relocated again. Mark its entry pinned so settle/re-roll skip it, and stamp
-        // the node's saved pin so the state survives further reloads.
-        if (int32* Idx = EntryByGuid.Find(Node->EntryGuid))
+        if (BestIdx != INDEX_NONE)
         {
-            const bool bOccupied = IsNodeOccupiedAnyway(Node) || Node->bNodeShuffleOccupiedPinned;
-            if (bOccupied)
-            {
-                Node->bNodeShuffleOccupiedPinned = true;
-                Layout[*Idx].bPinned = true;
-                Layout[*Idx].bRayCasted = true; // already settled where the miner expects it
-                Layout[*Idx].Location = Node->GetActorLocation(); // lock the entry to the live node
-                PinnedOnLoad++;
-            }
+            SpawnedNodes.Add(Layout[BestIdx].EntryGuid, Node);
+            Adopted++; RealByLocation++;
+            if (FinalizeAdoptedNode(Node, BestIdx)) { PinnedOnLoad++; }
         }
     }
 
-    // FOLD-IN 2: the PASS signal is `adopted N` ≈ `live subclass count` (the actors that actually exist
-    // post-reload), NOT ≈ ExpectedSpawned. ExpectedSpawned counts ALL bIsNewNode entries (~732), but only
-    // streamed-in/active nodes ever spawned this/last session — so "60 vs expected 732" is NORMAL, not a
-    // failure. The real failure mode is SubclassInWorld <= 1 (a raw subclass not save-collected at all).
-    const TCHAR* Verdict = (SubclassInWorld <= 1 && ExpectedSpawned > 1)
-        ? TEXT("<-- WARNING: ANodeShuffleResourceNode NOT save-collected (count <=1) — must wrap as buildable")
-        : TEXT("(OK: subclass nodes persist & adopted)");
+    const bool bFail = (Adopted <= 1 && ExpectedSpawned > 1 && RuntimeNodesSeen <= 1);
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("Adopt-on-load (redesign-3): adopted %d of %d live ANodeShuffleResourceNode actors in world (these persisted across reload); pinned %d occupied. [%d of %d total layout spawn-entries have streamed in so far — far/undiscovered entries spawn later, so a count below the total is normal.] %s"),
-        Adopted, SubclassInWorld, PinnedOnLoad,
-        SubclassInWorld, ExpectedSpawned,
-        Verdict);
+        TEXT("Adopt-on-load (real-class): adopted %d (%d legacy-by-guid, %d real-by-location); pinned %d occupied; %d candidate runtime nodes seen. [%d of %d layout spawn-entries streamed in — a count below total is normal.]%s"),
+        Adopted, LegacyByGuid, RealByLocation, PinnedOnLoad, RuntimeNodesSeen,
+        Adopted, ExpectedSpawned,
+        bFail ? TEXT(" <-- WARNING: almost nothing adopted — spawned nodes may not be save-collected") : TEXT(" (OK)"));
+}
+
+bool ANodeShuffleSubsystem::FinalizeAdoptedNode(AFGResourceNode* Node, int32 EntryIdx)
+{
+    // Shared adopt finalize. A member function (not a lambda) so it has the subsystem's AccessTransformers
+    // Friend access to AFGResourceNode internals. Resource-completes the node, re-asserts placement gates for
+    // vanilla-origin nodes (modded keep native rules), re-registers it with the node manager, attaches our
+    // runtime component (real nodes only — legacy carries its own subobjects), and pins occupied entries.
+    // Returns true when it NEWLY pinned this entry as occupied (so the caller can count it).
+    if (!IsValid(Node) || !Layout.IsValidIndex(EntryIdx))
+    {
+        return false;
+    }
+    FNodeShuffleEntry& E = Layout[EntryIdx];
+    const bool bVanillaOrigin = E.NodeClassPath.StartsWith(TEXT("/Game/"));
+    ANodeShuffleResourceNode* Legacy = Cast<ANodeShuffleResourceNode>(Node);
+
+    // Restored nodes lost the (unserialized) interaction box — re-assert it (no-op for real native boxes).
+    EnsureNodeUseBox(Node);
+
+    // Vanilla-origin: re-assert placement gates so the Mk1 hologram snaps. Modded: keep native rules
+    // (e.g. the Alkali node's mCanPlacePortableMiner=false that rejects normal miners).
+    if (bVanillaOrigin)
+    {
+        Node->mCanPlaceResourceExtractor = true;
+        Node->mCanPlacePortableMiner = true;
+    }
+
+    // Resource-complete on adopt: mAmount (not SaveGame) is missing after reload, so acceptance checks can
+    // read HasAnyResources()=false. Re-run InitResource from the SaveGame override (mResourceClassOverride is
+    // restored before BeginPlay) so the node is byte-for-byte complete like a fresh spawn.
+    if (Node->mResourceClassOverride && (!Node->GetResourceClassOriginal().Get() || !Node->HasAnyResources()))
+    {
+        const EResourcePurity Pur = Node->GetResourcePurity();
+        const TSubclassOf<UFGResourceDescriptor> Cls = Node->mResourceClassOverride;
+        Node->InitResource(Cls, EResourceAmount::RA_Infinite, Pur);
+        Node->mResourceClassOverride = Cls;
+        Node->InitRadioactivity();
+        Node->UpdateRadioactivity();
+        Node->OnRep_ResourceClassOverride();
+    }
+
+    // redesign-11: the manager's mResourceNodes list is runtime — re-register so Mk1 can snap again.
+    RegisterNodeWithManager(Node);
+
+    // Re-attach our runtime component (lost on reload) so the node is recognised as ours and can host the
+    // fallback visual. Legacy subclass nodes keep their own subobjects — no component needed.
+    if (!Legacy)
+    {
+        const bool bForceAccept = (Node->GetResourceForm() != EResourceForm::RF_GAS);
+        UNodeShuffleNodeComponent::Attach(Node, E.EntryGuid, bVanillaOrigin, bForceAccept);
+    }
+
+    // Occupancy pin: a node with a miner/extractor must never be relocated again. The durable pin is
+    // E.bPinned (SaveGame Layout); legacy nodes also stamp their own saved bNodeShuffleOccupiedPinned.
+    const bool bOccupied = IsNodeOccupiedAnyway(Node) || E.bPinned
+        || (Legacy && Legacy->bNodeShuffleOccupiedPinned);
+    bool bNewlyPinned = false;
+    if (bOccupied)
+    {
+        if (Legacy) { Legacy->bNodeShuffleOccupiedPinned = true; }
+        if (!E.bPinned)
+        {
+            E.bPinned = true;
+            E.bRayCasted = true;
+            E.Location = Node->GetActorLocation(); // lock the entry to the live node
+            bNewlyPinned = true;
+        }
+    }
+    return bNewlyPinned;
+}
+
+bool ANodeShuffleSubsystem::NodeHasOwnVisual(AActor* Node, UStaticMeshComponent* ExcludeRock) const
+{
+    // real-class redesign: does the relocated node render its OWN visual, so we should NOT add our fallback
+    // rock? VISDIAG confirmed the user's modded nodes all self-render (AllMinable item-nodes carry their own
+    // 'StaticMesh' with ResourceNode_quartz; the lithium Alkali node has its own mesh) -> true -> keep native,
+    // no double visual. The fallback rock remains a safety net for any (hypothetical) modded node that has no
+    // mesh of its own and no live linked mesh actor.
+    if (!IsValid(Node))
+    {
+        return false;
+    }
+    TInlineComponentArray<UStaticMeshComponent*> Meshes(Node);
+    for (UStaticMeshComponent* MC : Meshes)
+    {
+        if (!IsValid(MC) || MC == ExcludeRock) { continue; }
+        if (MC->GetStaticMesh() != nullptr) { return true; } // a real self-rendering mesh of the node's own
+    }
+    if (AFGResourceNodeBase* Base = Cast<AFGResourceNodeBase>(Node))
+    {
+        if (AActor* MA = Base->mMeshActor.Get())
+        {
+            if (IsValid(MA) && !MA->IsHidden()) { return true; }
+        }
+    }
+    return false;
+}
+
+bool ANodeShuffleSubsystem::ResourceHasAuthoredLook(UClass* ResourceClass)
+{
+    if (!ResourceClass) { return false; }
+    const FString Short = ResourceClass->GetName();
+    return FNodeShuffleNodeAssets::FindVisual(FName(*Short)) != nullptr
+        || FindCapturedVisual(Short) != nullptr;
+}
+
+void ANodeShuffleSubsystem::HideNativeNodeMesh(AFGResourceNode* Node, UStaticMeshComponent* ExcludeRock)
+{
+    // visfix-1: hide the node's own self-rendered mesh(es) so the authored/captured rock we dress is
+    // not double-rendered against them (mirrors NodeHasOwnVisual's search; our RockMesh excluded).
+    // Idempotent; re-asserted on adopt each session (BP component visibility resets from the CDO).
+    if (!IsValid(Node)) { return; }
+    TInlineComponentArray<UStaticMeshComponent*> Meshes(Node);
+    for (UStaticMeshComponent* MC : Meshes)
+    {
+        if (!IsValid(MC) || MC == ExcludeRock || MC->GetStaticMesh() == nullptr) { continue; }
+        if (MC->IsVisible())
+        {
+            MC->SetVisibility(false, true);
+            UE_LOG(LogNodeShuffle, Verbose, TEXT("visfix: hid native mesh '%s' on %s (assigned resource has an authored look)"),
+                *MC->GetName(), *Node->GetName());
+        }
+    }
 }
 
 void ANodeShuffleSubsystem::EnsureNodeUseBox(AFGResourceNode* Node)
@@ -1891,8 +2357,41 @@ void ANodeShuffleSubsystem::EnsureNodeUseBox(AFGResourceNode* Node)
     {
         return;
     }
+    // real-class redesign (THE MK-SNAP FIX for real nodes): a relocated node is now its ORIGINAL class, which
+    // does NOT have the big "Resource" UseBox-root our legacy subclass carries. SNAPDIAG proved the symptom:
+    // acceptance ALL passes (CanOccupy=1, IsAllowed=1, nodeIsA=1, hasAnyResources=1) yet TrySnapToActor->0 —
+    // because the build-gun trace lands on our laterally-offset rock (NodeShuffleRockMesh_Rt) and the game's
+    // snap can't resolve that off-center hit to the node without a large "Resource" collider (mBoxComponent)
+    // covering it. The legacy node's 650cm UseBox does exactly that (and legacy snaps fine). So create/assert
+    // OUR OWN 650cm "Resource" box at the node root and wire it as mBoxComponent — replicate the legacy
+    // structure the snap resolves against. Friend access to mBoxComponent. Idempotent.
     ANodeShuffleResourceNode* OurNode = Cast<ANodeShuffleResourceNode>(Node);
-    UBoxComponent* UseBox = OurNode ? OurNode->UseBox : nullptr;
+    if (!OurNode)
+    {
+        AFGResourceNodeBase* Base = Cast<AFGResourceNodeBase>(Node);
+        if (!Base) { return; }
+        UBoxComponent* RtBox = nullptr;
+        TInlineComponentArray<UBoxComponent*> Boxes(Node);
+        for (UBoxComponent* B : Boxes)
+        {
+            if (IsValid(B) && B->GetFName() == FName(TEXT("NodeShuffleUseBox_Rt"))) { RtBox = B; break; }
+        }
+        if (!RtBox)
+        {
+            RtBox = NewObject<UBoxComponent>(Node, TEXT("NodeShuffleUseBox_Rt"));
+            if (USceneComponent* Root = Node->GetRootComponent()) { RtBox->SetupAttachment(Root); }
+            RtBox->RegisterComponent();
+            if (USceneComponent* Root = Node->GetRootComponent())
+            {
+                RtBox->AttachToComponent(Root, FAttachmentTransformRules::KeepRelativeTransform);
+            }
+        }
+        if (RtBox->GetCollisionProfileName() != FName(TEXT("Resource"))) { RtBox->SetCollisionProfileName(TEXT("Resource")); }
+        if (!RtBox->GetUnscaledBoxExtent().Equals(FVector(650.f, 650.f, 180.f), 1.0f)) { RtBox->SetBoxExtent(FVector(650.f, 650.f, 180.f)); }
+        Base->mBoxComponent = RtBox; // the resource collider the snap resolves against
+        return;
+    }
+    UBoxComponent* UseBox = OurNode->UseBox;
 
     // Defensive fallback: if the ctor subobject is somehow missing, find/create a named box (legacy path).
     if (!IsValid(UseBox))
@@ -2023,13 +2522,10 @@ void ANodeShuffleSubsystem::DiagnoseSnapState()
     if (bSnapDiagLogged) { return; }
 
     // Find one live spawned node (ours).
-    ANodeShuffleResourceNode* OurNode = nullptr;
+    AFGResourceNode* OurNode = nullptr;
     for (const auto& Pair : SpawnedNodes)
     {
-        if (ANodeShuffleResourceNode* N = Cast<ANodeShuffleResourceNode>(Pair.Value))
-        {
-            if (IsValid(N)) { OurNode = N; break; }
-        }
+        if (IsValid(Pair.Value)) { OurNode = Pair.Value; break; } // any class — our spawned nodes are real classes now
     }
     if (!OurNode) { return; } // wait until at least one of ours is materialized
 
@@ -2038,7 +2534,7 @@ void ANodeShuffleSubsystem::DiagnoseSnapState()
     for (TActorIterator<AFGResourceNode> It(GetWorld()); It; ++It)
     {
         AFGResourceNode* N = *It;
-        if (!IsValid(N) || N->IsA<ANodeShuffleResourceNode>()) { continue; }
+        if (!IsValid(N) || NodeShuffleIsOurNode(N)) { continue; }
         if (N->GetResourceNodeType() != EResourceNodeType::Node) { continue; }
         if (!N->GetClass()->GetPathName().StartsWith(TEXT("/Game/"))) { continue; }
         Vanilla = N;
@@ -2095,12 +2591,12 @@ void ANodeShuffleSubsystem::RegisterNodeWithManager(AFGResourceNode* Node)
         int32 OursInList = 0;
         for (AFGResourceNode* N : Mgr->mResourceNodes)
         {
-            if (IsValid(N) && N->IsA<ANodeShuffleResourceNode>()) { OursInList++; }
+            if (IsValid(N) && NodeShuffleIsOurNode(N)) { OursInList++; }
         }
         int32 OursSpawned = 0;
         for (const auto& Pair : SpawnedNodes)
         {
-            if (Pair.Value && Pair.Value->IsA<ANodeShuffleResourceNode>()) { OursSpawned++; }
+            if (Pair.Value && NodeShuffleIsOurNode(Pair.Value)) { OursSpawned++; }
         }
         UE_LOG(LogNodeShuffle, Display,
             TEXT("REGDIAG full-set: mResourceNodes was %d -> now %d; OUR nodes in list = %d (of %d spawned this session); last add: %s '%s' Contains=%d"),
@@ -2172,13 +2668,10 @@ void ANodeShuffleSubsystem::DiagnoseValidationGate()
     // next test names the exact differing gate. One-shot (like SNAPDIAG).
     if (bValidDiagLogged) { return; }
 
-    ANodeShuffleResourceNode* OurNode = nullptr;
+    AFGResourceNode* OurNode = nullptr;
     for (const auto& Pair : SpawnedNodes)
     {
-        if (ANodeShuffleResourceNode* N = Cast<ANodeShuffleResourceNode>(Pair.Value))
-        {
-            if (IsValid(N)) { OurNode = N; break; }
-        }
+        if (IsValid(Pair.Value)) { OurNode = Pair.Value; break; } // any class — our spawned nodes are real classes now
     }
     if (!OurNode) { return; } // wait until at least one of ours is materialized
 
@@ -2186,7 +2679,7 @@ void ANodeShuffleSubsystem::DiagnoseValidationGate()
     for (TActorIterator<AFGResourceNode> It(GetWorld()); It; ++It)
     {
         AFGResourceNode* N = *It;
-        if (!IsValid(N) || N->IsA<ANodeShuffleResourceNode>()) { continue; }
+        if (!IsValid(N) || NodeShuffleIsOurNode(N)) { continue; }
         if (N->GetResourceNodeType() != EResourceNodeType::Node) { continue; }
         if (!N->GetClass()->GetPathName().StartsWith(TEXT("/Game/"))) { continue; }
         Vanilla = N;
@@ -2216,7 +2709,7 @@ void ANodeShuffleSubsystem::DeregisterNodeFromManager(AFGResourceNodeBase* Node)
     // originals we hide (SuppressOriginalNodes) — never our own spawned nodes. mResourceNodes is
     // TArray<AFGResourceNode*>, so only the AFGResourceNode-typed entries are removable here.
     if (!IsValid(Node)) { return; }
-    if (Node->IsA<ANodeShuffleResourceNode>()) { return; } // never deregister OUR spawned nodes
+    if (NodeShuffleIsOurNode(Node)) { return; } // never deregister OUR spawned nodes
 
     // scanner-2 (compass/map FIX): remove the node's ACTOR REPRESENTATION — the discovered-node icon on the
     // compass and map. Hiding the actor + clearing the scan + removing it from mResourceNodes does NOT remove
@@ -2270,35 +2763,84 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
         // redesign-5: the node is already live (spawned this session OR a save-restored node adopted on
         // load). The NODE persists, but RockMesh's static mesh/materials are NOT SaveGame, so after a
         // reload the RockMesh subobject is EMPTY — re-dress it. Cost-guarded (DressRock no-ops when set).
-        ANodeShuffleResourceNode* OurNode = Cast<ANodeShuffleResourceNode>(*Existing);
-        // redesign-7 FIX 2 (THE LOCATION BUG): guarantee RockMesh is a CHILD of the restored root (never
-        // the root) BEFORE re-dressing, so the re-dress relative offset can't teleport the node to origin.
-        if (OurNode) { OurNode->EnsureRockChildOfRoot(); }
-        const bool bNeedsDress = OurNode && (!IsValid(OurNode->RockMesh) || OurNode->RockMesh->GetStaticMesh() == nullptr);
-        if (bNeedsDress)
+        // real-class redesign: a restored node lost its runtime component — re-attach it. RockMesh's
+        // mesh/materials are not SaveGame, so a vanilla node's FALLBACK rock is EMPTY after reload; re-dress
+        // it once. Modded-origin nodes use their own native visual (re-trigger only if restored hidden).
+        const bool bVanillaOrigin = Entry.NodeClassPath.StartsWith(TEXT("/Game/"));
+        // Legacy old-save nodes (ANodeShuffleResourceNode) carry their OWN rock/decal subobjects — never
+        // attach a component to them (it would add a SECOND, duplicate rock). Only real-class nodes get a
+        // component (re-attached after reload).
+        ANodeShuffleResourceNode* Legacy = Cast<ANodeShuffleResourceNode>(*Existing);
+        UNodeShuffleNodeComponent* Comp = Legacy ? nullptr : UNodeShuffleNodeComponent::Find(*Existing);
+        if (!Legacy && !Comp)
         {
-            UClass* RC = LoadClassByPath(Entry.AssignedResourceClassPath);
-            const EResourceForm F = RC
-                ? UFGItemDescriptor::GetForm(TSubclassOf<UFGItemDescriptor>(RC))
-                : EResourceForm::RF_SOLID;
-            if (RC && F != EResourceForm::RF_LIQUID)
+            const bool bForceAccept = ((*Existing)->GetResourceForm() != EResourceForm::RF_GAS);
+            Comp = UNodeShuffleNodeComponent::Attach(*Existing, Entry.EntryGuid, bVanillaOrigin, bForceAccept);
+        }
+        if (Comp) { Comp->EnsureAttachedToRoot(); }
+        else if (Legacy) { Legacy->EnsureRockChildOfRoot(); }
+
+        UStaticMeshComponent* RockMC = Comp ? Comp->RockMesh : (Legacy ? Legacy->RockMesh : nullptr);
+        UDecalComponent* DecalMC = Comp ? Comp->OilDecal : nullptr;
+        UClass* RC = LoadClassByPath(Entry.AssignedResourceClassPath);
+        const EResourceForm F = RC
+            ? UFGItemDescriptor::GetForm(TSubclassOf<UFGItemDescriptor>(RC))
+            : EResourceForm::RF_SOLID;
+        if (RC && F == EResourceForm::RF_LIQUID)
+        {
+            const bool bNeedsDecal = !IsValid(DecalMC) || DecalMC->GetDecalMaterial() == nullptr;
+            if (bNeedsDecal)
+            {
+                RebuildNodeNativeVisual(*Existing);
+                if (Comp) { Comp->DressOilDecal(RC); } // re-dress our oil decal on adopt
+            }
+        }
+        else if (RC && bVanillaOrigin)
+        {
+            const bool bNeedsDress = !IsValid(RockMC) || RockMC->GetStaticMesh() == nullptr;
+            if (bNeedsDress)
             {
                 SpawnVisualRockForNode(*Existing, RC, Entry.EntryGuid); // -> DressRock -> ForceVisible
             }
-            else if (RC && F == EResourceForm::RF_LIQUID)
+        }
+        else if (RC)
+        {
+            // Modded-origin solid/gas: use the real class's native visual if it self-renders; otherwise dress
+            // our fallback rock (AllMinable item-nodes have no node mesh). Rebuild native ONCE per node/session
+            // (ProcessEvent is non-trivial — W2).
+            if (!ModdedVisualRebuilt.Contains(Entry.EntryGuid))
             {
                 RebuildNodeNativeVisual(*Existing);
-                if (OurNode) { OurNode->DressOilDecal(RC); } // oil-decal-1: re-dress our oil decal on adopt
+                ModdedVisualRebuilt.Add(Entry.EntryGuid);
+            }
+            if (ResourceHasAuthoredLook(RC))
+            {
+                // visfix-1: assigned resource's look wins — hide the native mesh (re-asserted each
+                // pass; BP component visibility resets from the CDO on reload) and dress if needed.
+                HideNativeNodeMesh(*Existing, RockMC);
+                const bool bNeedsDress = !IsValid(RockMC) || RockMC->GetStaticMesh() == nullptr;
+                if (bNeedsDress) { SpawnVisualRockForNode(*Existing, RC, Entry.EntryGuid); }
+                if ((*Existing)->IsHidden()) { (*Existing)->SetActorHiddenInGame(false); }
+            }
+            else if (NodeHasOwnVisual(*Existing, RockMC))
+            {
+                if ((*Existing)->IsHidden()) { (*Existing)->SetActorHiddenInGame(false); }
+            }
+            else
+            {
+                const bool bNeedsDress = !IsValid(RockMC) || RockMC->GetStaticMesh() == nullptr;
+                if (bNeedsDress) { SpawnVisualRockForNode(*Existing, RC, Entry.EntryGuid); } // fallback rock
             }
         }
-        // redesign-6 FIX 1: a restored node may be left actor-hidden after reload — force the whole chain
-        // visible every pass (idempotent), and log the runtime state for the first N adopted nodes.
-        if (OurNode)
+        // redesign-6 FIX 1: a restored node may be left actor-hidden after reload — force visible every pass
+        // (idempotent), and log the runtime state for the first N adopted nodes. For modded-origin nodes the
+        // owner un-hide already happened above; ForceVisible on the component is a cheap idempotent re-assert.
+        if (Comp)
         {
-            OurNode->ForceVisible();
+            Comp->ForceVisible();
             if (RenderDiagAdoptLogged < RenderDiagMax)
             {
-                OurNode->LogRenderState(TEXT("adopt"));
+                Comp->LogRenderState(TEXT("adopt"));
                 RenderDiagAdoptLogged++;
             }
         }
@@ -2320,11 +2862,48 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
     // (as the player nears / terrain streams) retries. This is the core guarantee.
     if (!Entry.bRayCasted)
     {
-        if (!RaycastSettle(Entry, nullptr, nullptr))
+        bool bWaterNoLand = false;
+        bool bSettled = RaycastSettle(Entry, nullptr, nullptr, &bWaterNoLand);
+        // playtest-fixes-1 (water-locked redeal): a water hit with no land within the 300 m spiral is
+        // DEFINITIVE (the ground is there, it's just underwater) — re-deal the entry near a streamed
+        // original (proven land) instead of retrying the same ocean spot every 5 s forever.
+        if (!bSettled && bWaterNoLand)
         {
-            UE_LOG(LogNodeShuffle, Verbose,
-                TEXT("Spawn-on-discovery: deferred %s node at %s (no terrain / out of range)"),
-                *ResourceClass->GetName(), *Entry.Location.ToCompactString());
+            WaterLockedThisSession.Add(Entry.EntryGuid);
+            // fixes-3: the redeal MOVES the entry to a random deal-box spot (grid-filtered) but does
+            // NOT settle it — it materializes via normal spawn-on-discovery at the new location.
+            TryRedealWaterLockedEntry(Entry);
+        }
+        if (!bSettled)
+        {
+            // Cold review #1 safety net: an underground entry that keeps VOID-deferring (bad cell Z,
+            // changed geometry) has no water signal to trigger a redeal and would retry silently
+            // forever — a lost node. Count misses only while a player is CLOSE (cave collision
+            // streamed, so a miss is meaningful); after 8, hand the entry back to the surface pool.
+            if (Entry.bUnderground && !bWaterNoLand
+                && IsLocationNearAnyPlayer(Entry.Location, CaveExpandNearPlayerCm))
+            {
+                int32& Misses = RedealAttempts.FindOrAdd(Entry.EntryGuid);
+                Misses++;
+                if (Misses >= 8)
+                {
+                    Entry.bUnderground = false;
+                    RedealAttempts.Remove(Entry.EntryGuid);
+                    UE_LOG(LogNodeShuffle, Display,
+                        TEXT("CAVE-DEAL: entry %s (%s) escaped a bad cave cell after 8 settle misses — returned to the surface pool"),
+                        *Entry.EntryGuid.ToString(), *Entry.AssignedResourceClassPath);
+                }
+            }
+            DeferredThisPass++;
+            // Defer-log backoff: full detail once per entry per session; repeats are silent (the
+            // per-pass Deferral summary in ApplyLayout carries the ongoing count).
+            if (!DeferLoggedThisSession.Contains(Entry.EntryGuid))
+            {
+                DeferLoggedThisSession.Add(Entry.EntryGuid);
+                UE_LOG(LogNodeShuffle, Verbose,
+                    TEXT("Spawn-on-discovery: deferred %s node at %s (no terrain / out of range; further retries silent)"),
+                    *ResourceClass->GetName(), *Entry.Location.ToCompactString());
+            }
             return;
         }
         Entry.bRayCasted = true; // grounded: safe to spawn with solid collision now
@@ -2438,7 +3017,10 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
                                     Entry.Location.Y + Radius * FMath::Sin(Angle),
                                     Entry.Location.Z);
                 FVector TryLoc; FRotator TryRot = Entry.Rotation; bool bTryWater = false;
-                if (RaycastGroundAt(Probe, Entry.Location.Z, nullptr, nullptr, TryLoc, TryRot, bTryWater)
+                // cave-nodes-1: underground entries nudge with the SHORT trace so the probe stays on
+                // the cavern floor instead of relocating the node onto the roof/surface above.
+                if (RaycastGroundAt(Probe, Entry.Location.Z, nullptr, nullptr, TryLoc, TryRot, bTryWater,
+                                    Entry.bUnderground)
                     && !bTryWater && !OverlapsAt(TryLoc) && !IsEnclosed(TryLoc))
                 {
                     Entry.Location = TryLoc;
@@ -2476,94 +3058,127 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
     // the SaveGame field mResourceClassOverride so GetResourceClass() is valid the instant the node
     // is restored, BEFORE any miner BeginPlay runs. (The visual AFGNodeMeshActor stays RF_Transient —
     // only the NODE must persist; the rock is re-dressed from the layout each session.)
-    // redesign-3 BUG B (SAVED NODE IDENTITY): spawn OUR OWN ANodeShuffleResourceNode subclass, not the
-    // raw BP NodeClass. The subclass carries UPROPERTY(SaveGame) EntryGuid, which (unlike AActor::Tags)
-    // round-trips a save/reload — so AdoptRestoredSpawnedNodes can match restored nodes and we never
-    // re-spawn (which moved occupied nodes off their miners). It inherits the base constructor defaults
-    // (mCanPlaceResourceExtractor=true etc.), so mining/placement is identical to a vanilla node.
+    // real-class redesign (SPAWN THE ORIGINAL CLASS). Relocate the node AS ITS ORIGINAL class — the vanilla
+    // BP_ResourceNode*, or a modded node class like the Lithium/Alkali reactive-ore node — resolved from
+    // Entry.NodeClassPath (loaded into NodeClass above), NOT a generic ANodeShuffleResourceNode. A modded
+    // extractor casts/binds the node to its OWN class, so only the real class makes those succeed (the
+    // exclude-gas-1 crash) and preserves the node's native accept rules + native visual. We still keep the
+    // redesign-2 crash fix: the node is non-transient (save-collectable) and carries the SaveGame
+    // mResourceClassOverride so GetResourceClass() is valid the instant a built miner's BeginPlay runs after
+    // reload. Identity lives in the SaveGame Layout (FNodeShuffleEntry) + a runtime UNodeShuffleNodeComponent
+    // attached below — never on the actor's class — so ANY node class can be one of ours. ANodeShuffleResource
+    // Node remains only as a defensive fallback if the original class fails to resolve (and so old saves load).
+    const bool bVanillaOrigin = Entry.NodeClassPath.StartsWith(TEXT("/Game/"));
+    UClass* SpawnClass = NodeClass ? NodeClass : ANodeShuffleResourceNode::StaticClass();
+
     FActorSpawnParameters Params;
     Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
     // NOTE: intentionally NO RF_Transient — the node must be collected by the save system.
-    ANodeShuffleResourceNode* Node = GetWorld()->SpawnActor<ANodeShuffleResourceNode>(
-        ANodeShuffleResourceNode::StaticClass(), Entry.Location, Entry.Rotation, Params);
+    AFGResourceNode* Node = GetWorld()->SpawnActor<AFGResourceNode>(
+        SpawnClass, Entry.Location, Entry.Rotation, Params);
     if (!Node)
     {
-        UE_LOG(LogNodeShuffle, Warning, TEXT("Failed to spawn new node at %s"), *Entry.Location.ToCompactString());
+        UE_LOG(LogNodeShuffle, Warning, TEXT("Failed to spawn new node (%s) at %s"),
+            *SpawnClass->GetName(), *Entry.Location.ToCompactString());
         return;
     }
-    Node->EntryGuid = Entry.EntryGuid; // SaveGame identity — survives reload (Tags do not)
-    Node->InitResource(ResourceClass, RA_Infinite, Entry.AssignedPurity.GetValue());
-    // PERSIST the resource class in the only SaveGame class field (mResourceClass is EditAnywhere,
-    // NOT saved). mResourceClassOverride is UPROPERTY(SaveGame, ReplicatedUsing=OnRep_...). Friend
-    // access (AccessTransformers grants a class-wide friend on AFGResourceNodeBase). After reload the
-    // engine restores this BEFORE BeginPlay, so GetResourceClass() returns it -> no assert.
+    // Resource + purity via the subsystem's Friend access to AFGResourceNode(Base) — works on ANY concrete
+    // node class. mResourceClassOverride/mPurityOverride are the SaveGame fields the engine restores BEFORE
+    // BeginPlay, so GetResourceClass()/rate are valid the instant a built miner restores -> no assert.
+    Node->InitResource(ResourceClass, EResourceAmount::RA_Infinite, Entry.AssignedPurity.GetValue());
     Node->mResourceClassOverride = ResourceClass;
-    // redesign-3 FOLD-IN (reviewer note 1): persist purity too. mPurity is EditInstanceOnly (NOT saved);
-    // only mPurityOverride is UPROPERTY(SaveGame), so set it so a built miner's rate survives reload.
     Node->mPurityOverride = Entry.AssignedPurity;
     Node->OnRep_ResourceClassOverride(); // singleplayer-safe: refresh the live representation/visual
-    // redesign-21: set BOTH placement flags at the instance level (in addition to the CDO ctor default).
-    // mCanPlaceResourceExtractor (EditDefaultsOnly, BP-sourced — NOT the C++ ctor as previously assumed) is the
-    // gate the Mk1 extractor hologram checks; without it the Mk1 snap was rejected while portable miners worked.
-    // mCanPlacePortableMiner is the separate handheld-miner gate. Set both so every snap path accepts the node.
-    Node->mCanPlaceResourceExtractor = true;
-    Node->mCanPlacePortableMiner = true;
-    // Radiation is computed separately from the resource class: without this,
-    // spawned uranium nodes look right but never irradiate. (Friend access.)
+    // Placement gates: force-enable ONLY for vanilla-origin nodes, so the Mk1 hologram snaps to our runtime
+    // node (a runtime vanilla node mirrors a level one). MODDED nodes keep their NATIVE flags — e.g. the
+    // Alkali node sets mCanPlacePortableMiner=false to reject normal miners; overriding that was exactly the
+    // exclude-gas-1 "lets me use a normal miner" bug, so we leave modded nodes' own rules intact.
+    if (bVanillaOrigin)
+    {
+        Node->mCanPlaceResourceExtractor = true;
+        Node->mCanPlacePortableMiner = true;
+    }
+    // Radiation is computed separately from the resource class (uranium etc.). Friend access.
     Node->InitRadioactivity();
     Node->UpdateRadioactivity();
-    // redesign-3 BUG C: register this relocated node's scanner/map representation at the NEW spot so
-    // it pings the resource scanner there. Logged so we can SEE it run (redesign-2's call was silent).
+    // Register this relocated node's scanner/map representation at the NEW spot so it pings the scanner there.
     Node->UpdateNodeRepresentation();
     UE_LOG(LogNodeShuffle, Verbose, TEXT("scanner: registered spawned node representation at %s (%s)"),
         *Entry.Location.ToCompactString(), *ResourceClass->GetName());
 
-    // Spawned nodes need usable collision: the look-at prompt, build gun and miner placement all trace
-    // against the Resource profile. Level-placed nodes get this from per-instance level data; ours need
-    // a UseBox created in code. Factored into EnsureNodeUseBox so the adopt/early-return path can also
-    // (re)create it after reload (the box is not serialized).
+    // Legacy fallback nodes (pure-C++ subclass) need their "Resource" UseBox re-asserted; real node classes
+    // have a native box (EnsureNodeUseBox is a no-op for them).
     EnsureNodeUseBox(Node);
 
-    // redesign-11 (THE MK1 SNAP FIX): register the node into the resource-node MANAGER's mResourceNodes
-    // list — the registry the Miner Mk1 hologram queries (collision is a confirmed byte-match; registration
-    // was the real gap). Re-asserted on adopt too (the list is runtime, not save-persisted).
+    // redesign-11 (THE MK1 SNAP FIX): register the node into the resource-node MANAGER's mResourceNodes list
+    // — the registry the Mk1 hologram queries. Runtime list (not save-persisted), re-asserted on adopt too.
     RegisterNodeWithManager(Node);
 
     SpawnedNodes.Add(Entry.EntryGuid, Node);
 
-    // redesign-6 FIX 1 (THE BLOCKER): AFGResourceNode actors are LOGICAL and may be left actor-hidden
-    // (they normally render via a separate engine mesh actor / significance management). Un-hide the
-    // node actor so our child RockMesh can render. (DressRock -> ForceVisible below also re-asserts this
-    // AFTER OnRep_ResourceClassOverride, which may toggle the engine's own visual.)
+    // AFGResourceNode actors are LOGICAL and may be left actor-hidden (significance mgmt) — un-hide it.
     Node->SetActorHiddenInGame(false);
 
-    // redesign-7 FIX 2 (THE LOCATION BUG): now the actor exists and has its real root — GUARANTEE RockMesh
-    // is a CHILD of the root (never the root itself) BEFORE dressing. If RockMesh were the root, DressRock's
-    // SetRelativeLocation((0,0,-40)) would teleport the whole node to the world origin (the redesign-6 bug).
-    Node->EnsureRockChildOfRoot();
+    // Attach our identity + fallback-visual component (idempotent). The durable identity is the SaveGame
+    // Layout entry; this component is the runtime handle, re-stamped each session and re-attached on adopt.
+    // Force-accept the Mk hologram for every relocated node EXCEPT special GAS nodes (lithium), which have
+    // their own reactive extractor and must keep native accept rules so a normal miner is rejected. This
+    // restores the old (unconditional) force-accept that made vanilla + AllMinable mineable; the earlier
+    // mCanPlacePortableMiner discriminator wrongly excluded AllMinable (its nodes report false yet are meant
+    // to be normal-mined — portable miners reach them via the dispenser path, not this flag).
+    const bool bForceAccept = (Node->GetResourceForm() != EResourceForm::RF_GAS);
+    UNodeShuffleNodeComponent* Comp = UNodeShuffleNodeComponent::Attach(Node, Entry.EntryGuid, bVanillaOrigin, bForceAccept);
+    if (Comp) { Comp->EnsureAttachedToRoot(); }
 
-    // VISUAL (redesign-5/6): dress the node's OWN RockMesh subobject + force the whole chain visible.
+    // VISUAL. Liquids (oil): native rebuild + OUR own decal (the engine leaves a runtime node's decal
+    // invisible). Vanilla-origin solids: OUR fallback rock (a runtime vanilla node gets no engine mesh actor).
+    // Modded-origin (solid OR gas): the REAL node class supplies its own visual — use it, NO quartz
+    // placeholder. This is what finally gives lithium its real look instead of the quartz stand-in.
     const EResourceForm SpawnForm =
         UFGItemDescriptor::GetForm(TSubclassOf<UFGItemDescriptor>(ResourceClass));
     if (SpawnForm == EResourceForm::RF_LIQUID)
     {
         RebuildNodeNativeVisual(Node);
-        Node->DressOilDecal(ResourceClass); // oil-decal-1: OUR own oil-puddle decal (engine path leaves it invisible on a runtime node)
+        if (Comp) { Comp->DressOilDecal(ResourceClass); }
         SpawnedRockLiquid++;
-        UE_LOG(LogNodeShuffle, Verbose, TEXT("spawned LIQUID node %s (oil decal)"),
-            *ResourceClass->GetName());
+        UE_LOG(LogNodeShuffle, Verbose, TEXT("spawned LIQUID node %s (oil decal)"), *ResourceClass->GetName());
+    }
+    else if (bVanillaOrigin)
+    {
+        SpawnVisualRockForNode(Node, ResourceClass, Entry.EntryGuid); // our fallback rock (-> DressRock -> ForceVisible)
     }
     else
     {
-        SpawnVisualRockForNode(Node, ResourceClass, Entry.EntryGuid); // -> DressRock -> ForceVisible
+        // Modded-origin solid/gas. visfix-1: the ASSIGNED resource's look wins when we can render it
+        // (authored table / captured) — a modded-class node dealt COAL must look like coal, not like
+        // AllMinable's native quartz look-alike. Native visuals win only for resources we cannot
+        // dress (lithium's Alkali node, uncaptured modded ores, esc_ item resources = dirty quartz).
+        RebuildNodeNativeVisual(Node);
+        if (ResourceHasAuthoredLook(ResourceClass))
+        {
+            HideNativeNodeMesh(Node, Comp ? Comp->RockMesh : nullptr);
+            SpawnVisualRockForNode(Node, ResourceClass, Entry.EntryGuid);
+            UE_LOG(LogNodeShuffle, Verbose, TEXT("spawned MODDED-CLASS node %s as real class %s (authored/captured look; native mesh hidden)"),
+                *ResourceClass->GetName(), *SpawnClass->GetName());
+        }
+        else if (NodeHasOwnVisual(Node, Comp ? Comp->RockMesh : nullptr))
+        {
+            if (Comp) { Comp->ForceVisible(); }
+            UE_LOG(LogNodeShuffle, Verbose, TEXT("spawned MODDED node %s as real class %s (native visual)"),
+                *ResourceClass->GetName(), *SpawnClass->GetName());
+        }
+        else
+        {
+            SpawnVisualRockForNode(Node, ResourceClass, Entry.EntryGuid); // fallback rock (captured/quartz) -> visible
+            UE_LOG(LogNodeShuffle, Verbose, TEXT("spawned MODDED node %s as real class %s (fallback rock — no native visual)"),
+                *ResourceClass->GetName(), *SpawnClass->GetName());
+        }
     }
 
-    // redesign-6 FIX 1 RUNTIME-STATE DIAGNOSTIC (mandatory): log the actual render-state truth for the
-    // first N spawned nodes right after dressing, so we KNOW whether the rock is registered+visible at
-    // the right location (code review said "should render" 3x while it didn't).
+    // RUNTIME-STATE DIAGNOSTIC: log the render-state for the first N spawned nodes.
     if (RenderDiagSpawnLogged < RenderDiagMax)
     {
-        Node->LogRenderState(TEXT("spawn"));
+        if (Comp) { Comp->LogRenderState(TEXT("spawn")); }
         RenderDiagSpawnLogged++;
     }
 
@@ -2610,11 +3225,27 @@ void ANodeShuffleSubsystem::SettleNewNodesNearPlayers()
             continue;
         }
         AFGResourceNode* const* Node = SpawnedNodes.Find(Entry.EntryGuid);
-        if (Node && IsValid(*Node) && RaycastSettle(Entry, *Node, nullptr))
+        bool bWaterNoLand = false;
+        bool bSettled = Node && IsValid(*Node) && RaycastSettle(Entry, *Node, nullptr, &bWaterNoLand);
+        if (!bSettled && bWaterNoLand)
+        {
+            // fixes-3: same unanchored redeal on the legacy settle-near-players path — the moved
+            // entry settles (and its live actor relocates) when a player nears the NEW spot.
+            WaterLockedThisSession.Add(Entry.EntryGuid);
+            TryRedealWaterLockedEntry(Entry);
+        }
+        if (bSettled && Node && IsValid(*Node))
         {
             // redesign-5: the rock is a subobject of the node, so moving the node moves the rock too.
             (*Node)->SetActorLocationAndRotation(Entry.Location, Entry.Rotation);
             Entry.bRayCasted = true;
+        }
+        else if (Node && IsValid(*Node))
+        {
+            // cold-review nit: live-but-unsettled nodes on this legacy path were invisible to the
+            // Deferral summary. Entries WITHOUT a live actor are counted by EnsureNewNodeSpawned
+            // (which early-returns before its counter only when a live actor exists) — no double count.
+            DeferredThisPass++;
         }
     }
 }
@@ -2731,6 +3362,15 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
         NearOriginalLocs.Add(NodeLoc); // hidden-original locations for the stray-rock backstop below
         if (bDiagHide) { DbgNear++; }
 
+        // playtest-fixes-1 (modded-descriptor visuals): every resolved original — occupied ones too —
+        // may donate its paired-mesh-actor visual for resources our table doesn't cover (RP thorium,
+        // bamrenew lead). One-time per resource; all gates inside are cheap.
+        CaptureOriginalVisualIfNeeded(Node);
+
+        // cave-nodes-1: roof-classify each original once (persisted) — under-a-roof originals are the
+        // proven-reachable seeds the cavern flood-fill grows from.
+        ClassifyOriginalUnderground(Node, Rec.VanillaNodePath);
+
         // Hide the original node actor whole (this removes its rock, INCLUDING an instanced one). Never
         // touch an occupied node (a built miner). Occupancy checked on the Base + the Node-only portable check.
         {
@@ -2763,6 +3403,25 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
                     // mResourceNodes so a Mk1 can't snap to an invisible ghost original (the registry the
                     // hologram queries). Only ever removes an original we just hid — never our spawned nodes.
                     DeregisterNodeFromManager(Node);
+                    // playtest-fixes-1 GHOST-RADIATION FIX: SetActorHiddenInGame does NOT unregister the
+                    // node's radiation emitter (registered at BeginPlay with AFGRadioactivitySubsystem,
+                    // keyed by owner object) — so every hidden thorium/uranium/pellet original kept
+                    // radiating invisibly (user hit by radiation at an empty spot in the Dunes). Remove
+                    // the hidden original's emitters; the re-roll restore re-runs InitRadioactivity.
+                    // bHadEmitter (friend read of mSources) verifies in-log that the owner really is the
+                    // node actor — if a radioactive original ever logs hadEmitter=0, that assumption broke.
+                    if (AFGRadioactivitySubsystem* RadSub = GetRadSubsystem())
+                    {
+                        const bool bHadEmitter = RadSub->mSources.Contains(Node);
+                        RadSub->RemoveEmitters(Node);
+                        if (bHadEmitter)
+                        {
+                            RadEmittersRemoved++;
+                            UE_LOG(LogNodeShuffle, Display,
+                                TEXT("RADFIX: removed radiation emitter of hidden original %s at %s (running total %d)"),
+                                *Rec.VanillaNodePath, *NodeLoc.ToCompactString(), RadEmittersRemoved);
+                        }
+                    }
                     ScannerDeregistered.Add(Rec.VanillaNodePath);
                     ScannerDeregisterCount++;
                     UE_LOG(LogNodeShuffle, Verbose,
@@ -2788,7 +3447,7 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
         }
         AActor* RockOwner = Smc->GetOwner();
         if (Cast<AFGResourceDeposit>(RockOwner) || IsFrackingActor(RockOwner)
-            || (RockOwner && RockOwner->IsA<ANodeShuffleResourceNode>()))
+            || (RockOwner && NodeShuffleIsOurNode(RockOwner)))
         {
             continue; // deposit / fracking / our own spawned rock (RockMesh subobject) — never hide
         }
@@ -2819,8 +3478,8 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
     if (NodesHidden > 0 || RocksHidden > 0 || ScannerDeregisterCount > 0)
     {
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("Hide originals: hid %d original nodes and %d stray original rocks; deregistered %d from scanner (running total) (Hide & Replace)"),
-            NodesHidden, RocksHidden, ScannerDeregisterCount);
+            TEXT("Hide originals: hid %d original nodes and %d stray original rocks; deregistered %d from scanner, removed %d radiation emitters (running totals) (Hide & Replace)"),
+            NodesHidden, RocksHidden, ScannerDeregisterCount, RadEmittersRemoved);
     }
     if (bDiagHide && (DbgNear > 0 || DbgMissedPath > 0))
     {
@@ -2832,6 +3491,573 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
             OriginalNodeRecord.Num(), DbgNear, DbgFoundPath, DbgAlreadyHidden, DbgOcc, DbgMissedPath);
     }
 }
+
+void ANodeShuffleSubsystem::EnsureWaterGridLoaded() const
+{
+    if (bWaterGridLoaded) { return; }
+    bWaterGridLoaded = true;
+    const FString Path = FPaths::Combine(FPaths::ProjectDir(), TEXT("Configs"), TEXT("NodeShuffle_WaterGrid.json"));
+    FString Content;
+    if (!FPaths::FileExists(Path) || !FFileHelper::LoadFileToString(Content, *Path))
+    {
+        return; // fresh grid — learns from this session's probes
+    }
+    TSharedPtr<FJsonObject> Root;
+    const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Content);
+    if (!FJsonSerializer::Deserialize(Reader, Root) || !Root.IsValid())
+    {
+        UE_LOG(LogNodeShuffle, Warning, TEXT("WATERGRID: NodeShuffle_WaterGrid.json failed to parse; starting fresh."));
+        return;
+    }
+    const auto LoadState = [&](const TCHAR* Field, uint8 State)
+    {
+        const TArray<TSharedPtr<FJsonValue>>* Cells = nullptr;
+        if (!Root->TryGetArrayField(Field, Cells)) { return; }
+        for (const TSharedPtr<FJsonValue>& V : *Cells)
+        {
+            FString S;
+            if (!V->TryGetString(S)) { continue; }
+            FString XStr, YStr;
+            if (!S.Split(TEXT(","), &XStr, &YStr)) { continue; }
+            const int64 CX = FCString::Atoi(*XStr);
+            const int64 CY = FCString::Atoi(*YStr);
+            WaterGrid.Add((CX << 32) | (CY & 0xffffffffLL), State);
+        }
+    };
+    LoadState(TEXT("land"), 1);
+    LoadState(TEXT("water"), 2);
+    LoadState(TEXT("mixed"), 3);
+    UE_LOG(LogNodeShuffle, Display, TEXT("WATERGRID: loaded %d known cells (100 m) from NodeShuffle_WaterGrid.json"),
+        WaterGrid.Num());
+}
+
+void ANodeShuffleSubsystem::FlushWaterGridIfDirty() const
+{
+    if (!bWaterGridDirty) { return; }
+    TArray<TSharedPtr<FJsonValue>> Land, Water, Mixed;
+    for (const auto& Pair : WaterGrid)
+    {
+        const FString Cell = NodeShuffleWaterCellString(Pair.Key);
+        switch (Pair.Value)
+        {
+        case 1: Land.Add(MakeShared<FJsonValueString>(Cell)); break;
+        case 2: Water.Add(MakeShared<FJsonValueString>(Cell)); break;
+        default: Mixed.Add(MakeShared<FJsonValueString>(Cell)); break;
+        }
+    }
+    TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
+    Root->SetNumberField(TEXT("cellCm"), WaterGridCellCm);
+    Root->SetArrayField(TEXT("land"), Land);
+    Root->SetArrayField(TEXT("water"), Water);
+    Root->SetArrayField(TEXT("mixed"), Mixed);
+    FString Out;
+    const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Out);
+    if (FJsonSerializer::Serialize(Root, Writer))
+    {
+        const FString Path = FPaths::Combine(FPaths::ProjectDir(), TEXT("Configs"), TEXT("NodeShuffle_WaterGrid.json"));
+        if (FFileHelper::SaveStringToFile(Out, *Path))
+        {
+            UE_LOG(LogNodeShuffle, Verbose, TEXT("WATERGRID: flushed %d cells to disk"), WaterGrid.Num());
+            bWaterGridDirty = false; // success path ONLY (cold review: a failed write must keep the
+            WaterGridNewSamples = 0; // batch dirty so the next trigger — save/quit/500 — retries it)
+            return;
+        }
+    }
+    UE_LOG(LogNodeShuffle, Warning,
+        TEXT("WATERGRID: flush FAILED (Configs/ locked or unwritable?) — %d cells kept in memory, retrying on next trigger"),
+        WaterGrid.Num());
+    WaterGridNewSamples = 0; // back off the every-sample retry; dirty flag keeps save/quit retries armed
+}
+
+void ANodeShuffleSubsystem::RecordWaterGridSample(const FVector& Loc, bool bWater) const
+{
+    EnsureWaterGridLoaded();
+    const int64 Key = NodeShuffleWaterCellKey(Loc);
+    uint8& State = WaterGrid.FindOrAdd(Key, 0);
+    const uint8 Sample = bWater ? 2 : 1;
+    if (State == 0)
+    {
+        State = Sample;
+        bWaterGridDirty = true;
+        WaterGridNewSamples++;
+    }
+    else if (State != Sample && State != 3)
+    {
+        State = 3; // coastline cell — both land and water seen; never excluded
+        bWaterGridDirty = true;
+        WaterGridNewSamples++;
+    }
+    if (bWaterGridDirty && WaterGridNewSamples >= WaterGridFlushEvery)
+    {
+        FlushWaterGridIfDirty(); // safety flush; also flushed on save + EndPlay
+    }
+}
+
+bool ANodeShuffleSubsystem::IsKnownWaterCell(const FVector& Loc) const
+{
+    EnsureWaterGridLoaded();
+    const uint8* State = WaterGrid.Find(NodeShuffleWaterCellKey(Loc));
+    return State && *State == 2;
+}
+
+void ANodeShuffleSubsystem::EnsureDealBoundsDerived() const
+{
+    // Pre-fixes-3 saves have no stored deal box: derive one from the Layout's own locations (they span
+    // the map), same 2..98 percentile rule. Water-stuck outliers are exactly what the percentile trims.
+    if (bDerivedBoundsReady) { return; }
+    bDerivedBoundsReady = true;
+    TArray<float> Xs, Ys;
+    Xs.Reserve(Layout.Num());
+    Ys.Reserve(Layout.Num());
+    for (const FNodeShuffleEntry& E : Layout)
+    {
+        if (!E.bIsNewNode) { continue; }
+        Xs.Add(E.Location.X);
+        Ys.Add(E.Location.Y);
+    }
+    if (Xs.Num() < 20) { return; } // degenerate layout — leave zero (redeal stays inert)
+    Xs.Sort();
+    Ys.Sort();
+    const auto Percentile = [](const TArray<float>& Sorted, float P) -> float
+    {
+        const int32 Idx = FMath::Clamp(FMath::RoundToInt(P * (Sorted.Num() - 1)), 0, Sorted.Num() - 1);
+        return Sorted[Idx];
+    };
+    DerivedBoundsMin = FVector(Percentile(Xs, 0.02f), Percentile(Ys, 0.02f), 0.f);
+    DerivedBoundsMax = FVector(Percentile(Xs, 0.98f), Percentile(Ys, 0.98f), 0.f);
+}
+
+FVector ANodeShuffleSubsystem::GetDealBoundsMin() const
+{
+    if (!DealBoundsMin.IsNearlyZero() || !DealBoundsMax.IsNearlyZero()) { return DealBoundsMin; }
+    EnsureDealBoundsDerived();
+    return DerivedBoundsMin;
+}
+
+FVector ANodeShuffleSubsystem::GetDealBoundsMax() const
+{
+    if (!DealBoundsMin.IsNearlyZero() || !DealBoundsMax.IsNearlyZero()) { return DealBoundsMax; }
+    EnsureDealBoundsDerived();
+    return DerivedBoundsMax;
+}
+
+void ANodeShuffleSubsystem::PreSaveGame_Implementation(int32 saveVersion, int32 gameVersion)
+{
+    FlushWaterGridIfDirty(); // persist learned cells alongside every save
+    FlushCaveStoreIfDirty();
+}
+
+void ANodeShuffleSubsystem::EnsureCaveStoreLoaded() const
+{
+    if (bCaveStoreLoaded) { return; }
+    bCaveStoreLoaded = true;
+    const FString Path = FPaths::Combine(FPaths::ProjectDir(), TEXT("Configs"), TEXT("NodeShuffle_CaveFloors.json"));
+    FString Content;
+    if (!FPaths::FileExists(Path) || !FFileHelper::LoadFileToString(Content, *Path))
+    {
+        return; // fresh store — discovery builds it as you play
+    }
+    TSharedPtr<FJsonObject> Root;
+    const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Content);
+    if (!FJsonSerializer::Deserialize(Reader, Root) || !Root.IsValid())
+    {
+        UE_LOG(LogNodeShuffle, Warning, TEXT("CAVESTORE: NodeShuffle_CaveFloors.json failed to parse; starting fresh."));
+        return;
+    }
+    double SeedCountNum = 0.0;
+    Root->TryGetNumberField(TEXT("seedCount"), SeedCountNum);
+    CaveSeedCount = FMath::Max(0, static_cast<int32>(SeedCountNum));
+    const TArray<TSharedPtr<FJsonValue>>* Seeds = nullptr;
+    if (Root->TryGetArrayField(TEXT("seeds"), Seeds))
+    {
+        for (const TSharedPtr<FJsonValue>& V : *Seeds)
+        {
+            FString S;
+            if (V->TryGetString(S)) { CaveSeedsDone.Add(S); }
+        }
+    }
+    const TArray<TSharedPtr<FJsonValue>>* Cells = nullptr;
+    if (Root->TryGetArrayField(TEXT("cells"), Cells))
+    {
+        for (const TSharedPtr<FJsonValue>& V : *Cells)
+        {
+            FString S;
+            if (!V->TryGetString(S)) { continue; }
+            TArray<FString> Parts;
+            S.ParseIntoArray(Parts, TEXT(","));
+            if (Parts.Num() < 4) { continue; }
+            const int64 CX = FCString::Atoi(*Parts[0]);
+            const int64 CY = FCString::Atoi(*Parts[1]);
+            FNodeShuffleCaveCell Cell;
+            Cell.FloorZ = FCString::Atof(*Parts[2]);
+            Cell.State = static_cast<uint8>(FCString::Atoi(*Parts[3]));
+            // cave-nodes-2: optional 5th field = measured ceiling; absent (legacy/manual imports) = -1.
+            Cell.CeilingCm = (Parts.Num() >= 5) ? FCString::Atof(*Parts[4]) : -1.0f;
+            CaveFloors.Add((CX << 32) | (CY & 0xffffffffLL), Cell);
+        }
+    }
+    UE_LOG(LogNodeShuffle, Display,
+        TEXT("CAVESTORE: loaded %d cave-floor cells, %d classified originals (%d underground seeds) from NodeShuffle_CaveFloors.json"),
+        CaveFloors.Num(), CaveSeedsDone.Num(), CaveSeedCount);
+}
+
+void ANodeShuffleSubsystem::FlushCaveStoreIfDirty() const
+{
+    if (!bCaveStoreDirty) { return; }
+    TArray<TSharedPtr<FJsonValue>> Seeds, Cells;
+    for (const FString& S : CaveSeedsDone) { Seeds.Add(MakeShared<FJsonValueString>(S)); }
+    for (const auto& Pair : CaveFloors)
+    {
+        const int32 CX = static_cast<int32>(Pair.Key >> 32);
+        const int32 CY = static_cast<int32>(Pair.Key & 0xffffffffLL);
+        Cells.Add(MakeShared<FJsonValueString>(FString::Printf(TEXT("%d,%d,%.0f,%d,%.0f"),
+            CX, CY, Pair.Value.FloorZ, static_cast<int32>(Pair.Value.State), Pair.Value.CeilingCm)));
+    }
+    TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
+    Root->SetNumberField(TEXT("cellCm"), CaveCellCm);
+    Root->SetNumberField(TEXT("seedCount"), CaveSeedCount);
+    Root->SetArrayField(TEXT("seeds"), Seeds);
+    Root->SetArrayField(TEXT("cells"), Cells);
+    FString Out;
+    const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Out);
+    if (FJsonSerializer::Serialize(Root, Writer))
+    {
+        const FString Path = FPaths::Combine(FPaths::ProjectDir(), TEXT("Configs"), TEXT("NodeShuffle_CaveFloors.json"));
+        if (FFileHelper::SaveStringToFile(Out, *Path))
+        {
+            UE_LOG(LogNodeShuffle, Verbose, TEXT("CAVESTORE: flushed %d cells / %d classified originals (%d roofed seeds) to disk"),
+                CaveFloors.Num(), CaveSeedsDone.Num(), CaveSeedCount);
+            bCaveStoreDirty = false;
+            CaveStoreNewRecords = 0;
+            return;
+        }
+    }
+    UE_LOG(LogNodeShuffle, Warning,
+        TEXT("CAVESTORE: flush FAILED (Configs/ locked or unwritable?) — kept in memory, retrying on next trigger"));
+    CaveStoreNewRecords = 0; // back off the every-record retry; dirty flag keeps save/quit retries armed
+}
+
+void ANodeShuffleSubsystem::ClassifyOriginalUnderground(AFGResourceNodeBase* Node, const FString& Path)
+{
+    // cave-nodes-1: once per original (persisted done-set). An up-trace that hits within 150 m means
+    // the node sits under a roof — a PROVEN-reachable cave spot (vanilla placed a node there), so it
+    // seeds the flood-fill. The trace starts above headroom height so the node's own boulder or a low
+    // outcrop doesn't count as a roof; its paired mesh actor is explicitly ignored. A natural-arch
+    // false positive is acceptable — under an arch IS reachable.
+    EnsureCaveStoreLoaded();
+    if (CaveSeedsDone.Contains(Path)) { return; }
+    CaveSeedsDone.Add(Path);
+    bCaveStoreDirty = true;
+    CaveStoreNewRecords++;
+    if (!IsValid(Node) || !GetWorld()) { return; }
+    const FVector Loc = Node->GetActorLocation();
+    FCollisionQueryParams Params(FName(TEXT("NodeShuffleCaveRoof")), true);
+    Params.AddIgnoredActor(Node);
+    if (const AFGNodeMeshActor* MeshActor = FindMeshActorForNode(Node)) { Params.AddIgnoredActor(MeshActor); }
+    FHitResult Hit;
+    const FVector Up0(Loc.X, Loc.Y, Loc.Z + CaveHeadroomCm);
+    const FVector Up1(Loc.X, Loc.Y, Loc.Z + CaveRoofProbeCm);
+    if (!GetWorld()->LineTraceSingleByChannel(Hit, Up0, Up1, ECC_WorldStatic, Params))
+    {
+        return; // open sky — a surface node
+    }
+    // Cold review #2: a player FOUNDATION/factory floor above the node is not a cave roof. Treat a
+    // buildable hit as open sky (mirrors the water-grid teaching exclusion).
+    if (const AActor* RoofActor = Hit.GetActor())
+    {
+        if (RoofActor->IsA<AFGBuildable>()) { return; }
+    }
+    CaveSeedCount++;
+    const int64 Key = NodeShuffleGridKey(Loc, CaveCellCm);
+    if (!CaveFloors.Contains(Key) && CaveFloors.Num() < CaveMaxCells)
+    {
+        // Cold review #1 (HIGH): the node sits ANYWHERE in its 8 m cell, but placement probes the
+        // cell's geometric CENTER — a FloorZ sampled off-center can miss the settle window there and
+        // soft-lock a cave-dealt entry. Re-sample the floor AT the center (same window the flood-fill
+        // uses). Center hit -> self-consistent, placeable frontier cell. Center miss (ledge/boulder
+        // between node and center) -> record as state 4: never placed on, never expanded past — the
+        // seed still counts toward the quota and neighboring caves reach it from other seeds.
+        FNodeShuffleCaveCell Cell;
+        Cell.State = 4;
+        Cell.FloorZ = static_cast<float>(Loc.Z);
+        Cell.CeilingCm = static_cast<float>(Hit.ImpactPoint.Z - Loc.Z); // roof height at the node
+        const float CenterX = (static_cast<int32>(Key >> 32) + 0.5f) * CaveCellCm;
+        const float CenterY = (static_cast<int32>(Key & 0xffffffffLL) + 0.5f) * CaveCellCm;
+        FHitResult CenterHit;
+        if (GetWorld()->LineTraceSingleByChannel(CenterHit,
+                FVector(CenterX, CenterY, Loc.Z + CaveHeadroomCm + CaveStepMaxCm),
+                FVector(CenterX, CenterY, Loc.Z - 2.0f * CaveStepMaxCm),
+                ECC_WorldStatic, Params))
+        {
+            Cell.FloorZ = static_cast<float>(CenterHit.ImpactPoint.Z);
+            Cell.State = 1; // frontier — expansion walks the cavern from here
+            // Cold review cave-nodes-2 #1: the ceiling gate must be measured where placement actually
+            // happens — the cell CENTER — not at the node (a node-side boulder or open pocket up to
+            // ~5.7 m away could otherwise mis-gate the Miner-fits check).
+            FHitResult CenterRoof;
+            Cell.CeilingCm = GetWorld()->LineTraceSingleByChannel(CenterRoof,
+                    FVector(CenterX, CenterY, Cell.FloorZ + 50.0f),
+                    FVector(CenterX, CenterY, Cell.FloorZ + CaveRoofProbeCm),
+                    ECC_WorldStatic, Params)
+                ? static_cast<float>(CenterRoof.ImpactPoint.Z) - Cell.FloorZ
+                : CaveRoofProbeCm; // no roof straight up from the center = unbounded headroom
+        }
+        CaveFloors.Add(Key, Cell);
+    }
+    UE_LOG(LogNodeShuffle, Display,
+        TEXT("CAVEDISCOVER: seed at %s (%s) — roof %.0f m up; %d underground seeds known"),
+        *Loc.ToCompactString(), *Path, (Hit.ImpactPoint.Z - Loc.Z) / 100.0f, CaveSeedCount);
+}
+
+void ANodeShuffleSubsystem::ExpandCaveFloorsBudgeted()
+{
+    // cave-nodes-1: budgeted per-pass flood-fill. Frontier cells near a player (streamed collision)
+    // test their 4 neighbors with 3 traces each: connected floor (step <= 2.5 m), headroom (>= 3.5 m),
+    // and roof (hit within 150 m => still inside; no hit => cave MOUTH — recorded walkable, never
+    // expanded past, so the fill cannot leak onto the open surface). Wet cells are skipped.
+    EnsureCaveStoreLoaded();
+    if (CaveFloors.Num() == 0 || CaveFloors.Num() >= CaveMaxCells || !GetWorld()) { return; }
+    TArray<FVector> Players;
+    for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+    {
+        if (const APlayerController* Pc = It->Get())
+        {
+            if (const APawn* Pawn = Pc->GetPawn()) { Players.Add(Pawn->GetActorLocation()); }
+        }
+    }
+    if (Players.Num() == 0) { return; }
+
+    TArray<int64> Frontier;
+    for (const auto& Pair : CaveFloors)
+    {
+        if (Pair.Value.State != 1) { continue; }
+        const FVector Center = NodeShuffleCaveCellCenter(Pair.Key, Pair.Value.FloorZ);
+        for (const FVector& P : Players)
+        {
+            if (FVector::DistSquared2D(P, Center) < FMath::Square(CaveExpandNearPlayerCm))
+            {
+                Frontier.Add(Pair.Key);
+                break;
+            }
+        }
+    }
+    if (Frontier.Num() == 0) { return; }
+
+    int32 TracesUsed = 0;
+    int32 NewCells = 0;
+    for (const int64 Key : Frontier)
+    {
+        if (TracesUsed >= CaveExpandTracesPerPass || CaveFloors.Num() >= CaveMaxCells) { break; }
+        const FNodeShuffleCaveCell Cell = CaveFloors[Key];
+        const int32 CX = static_cast<int32>(Key >> 32);
+        const int32 CY = static_cast<int32>(Key & 0xffffffffLL);
+        bool bAllNeighborsDone = true;
+        static const int32 NX[4] = { 1, -1, 0, 0 };
+        static const int32 NY[4] = { 0, 0, 1, -1 };
+        for (int32 i = 0; i < 4; i++)
+        {
+            const int64 NKey = (static_cast<int64>(CX + NX[i]) << 32)
+                             | (static_cast<int64>(CY + NY[i]) & 0xffffffffLL);
+            if (CaveFloors.Contains(NKey)) { continue; }
+            if (TracesUsed + 3 > CaveExpandTracesPerPass) { bAllNeighborsDone = false; break; }
+            if (CaveFloors.Num() >= CaveMaxCells) { break; }
+            const float NXc = (CX + NX[i] + 0.5f) * CaveCellCm;
+            const float NYc = (CY + NY[i] + 0.5f) * CaveCellCm;
+            FCollisionQueryParams QP(FName(TEXT("NodeShuffleCaveExpand")), true);
+            // 1. connected floor
+            FHitResult FloorHit;
+            TracesUsed++;
+            if (!GetWorld()->LineTraceSingleByChannel(FloorHit,
+                    FVector(NXc, NYc, Cell.FloorZ + CaveHeadroomCm + CaveStepMaxCm),
+                    FVector(NXc, NYc, Cell.FloorZ - 2.0f * CaveStepMaxCm),
+                    ECC_WorldStatic, QP))
+            {
+                continue; // gap / ledge / unstreamed
+            }
+            const float FZ = static_cast<float>(FloorHit.ImpactPoint.Z);
+            if (FMath::Abs(FZ - Cell.FloorZ) > CaveStepMaxCm) { continue; } // too steep to walk
+            // 2. headroom
+            FHitResult HeadHit;
+            TracesUsed++;
+            if (GetWorld()->LineTraceSingleByChannel(HeadHit,
+                    FVector(NXc, NYc, FZ + 50.0f),
+                    FVector(NXc, NYc, FZ + 50.0f + CaveHeadroomCm),
+                    ECC_WorldStatic, QP))
+            {
+                continue; // ceiling too low here
+            }
+            // 3. dry
+            if (IsPointInWater(FVector(NXc, NYc, FZ + 30.0f))) { continue; }
+            // 4. roof (inside) vs sky (mouth)
+            FHitResult RoofHit;
+            TracesUsed++;
+            const bool bRoofed = GetWorld()->LineTraceSingleByChannel(RoofHit,
+                FVector(NXc, NYc, FZ + 50.0f + CaveHeadroomCm),
+                FVector(NXc, NYc, FZ + CaveRoofProbeCm),
+                ECC_WorldStatic, QP);
+            FNodeShuffleCaveCell NewCell;
+            NewCell.FloorZ = FZ;
+            NewCell.State = bRoofed ? 1 : 4;
+            // cave-nodes-2: ceiling clearance gates PLACEMENT (a Miner must fit); mouths count as tall.
+            NewCell.CeilingCm = bRoofed ? static_cast<float>(RoofHit.ImpactPoint.Z) - FZ : CaveRoofProbeCm;
+            CaveFloors.Add(NKey, NewCell);
+            NewCells++;
+            bCaveStoreDirty = true;
+            CaveStoreNewRecords++;
+        }
+        if (bAllNeighborsDone)
+        {
+            CaveFloors[Key].State = 2; // fully expanded
+            bCaveStoreDirty = true;
+        }
+    }
+    if (NewCells > 0)
+    {
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("CAVEDISCOVER: mapped %d new cave-floor cells this pass (%d total, %d seeds)"),
+            NewCells, CaveFloors.Num(), CaveSeedCount);
+    }
+    if (bCaveStoreDirty && CaveStoreNewRecords >= WaterGridFlushEvery)
+    {
+        FlushCaveStoreIfDirty();
+    }
+}
+
+bool ANodeShuffleSubsystem::TryPickRawCaveCell(FRandomStream& Rng, FVector& OutLoc)
+{
+    // cave-nodes-2: a random PLACEABLE cell — fully roofed (state 1/2, never mouths) AND tall enough
+    // for a Miner building (ceiling >= 12 m; -1 = legacy/manual seed, trusted as tall). NO spacing
+    // here: the caller's own deal loop applies its avoid/spacing rules like for any candidate.
+    EnsureCaveStoreLoaded();
+    TArray<int64> Keys;
+    Keys.Reserve(CaveFloors.Num());
+    for (const auto& Pair : CaveFloors)
+    {
+        if ((Pair.Value.State == 1 || Pair.Value.State == 2)
+            && (Pair.Value.CeilingCm < 0.0f || Pair.Value.CeilingCm >= CaveMinPlaceCeilingCm))
+        {
+            Keys.Add(Pair.Key);
+        }
+    }
+    if (Keys.Num() == 0) { return false; }
+    const int64 Key = Keys[Rng.RandRange(0, Keys.Num() - 1)];
+    OutLoc = NodeShuffleCaveCellCenter(Key, CaveFloors[Key].FloorZ);
+    return true;
+}
+
+bool ANodeShuffleSubsystem::TryPickCaveCell(FRandomStream& Rng, FVector& OutLoc)
+{
+    // Redeal variant: raw pick + MinNodeSpacing against the LIVE layout.
+    for (int32 i = 0; i < 12; i++)
+    {
+        FVector Loc;
+        if (!TryPickRawCaveCell(Rng, Loc)) { return false; }
+        // 3D spacing on purpose: a cave cell sits UNDER the surface, so a surface node directly above
+        // (2D-close but 25 m+ higher) must not veto it. Nodes inside the same cavern still space out.
+        bool bTooClose = false;
+        for (const FNodeShuffleEntry& Other : Layout)
+        {
+            if (FVector::DistSquared(Other.Location, Loc) < FMath::Square(MinNodeSpacing))
+            {
+                bTooClose = true;
+                break;
+            }
+        }
+        if (!bTooClose)
+        {
+            OutLoc = Loc;
+            return true;
+        }
+    }
+    return false;
+}
+
+void ANodeShuffleSubsystem::SeedCaveCellAtPlayer()
+{
+    // cave-nodes-1: manual seeding — the user tours roofed spots (bridges/shelves/tunnels) that have
+    // no vanilla node to auto-seed them. Standing there IS the reachability proof.
+    const UWorld* World = GetWorld();
+    const APlayerController* Pc = World ? World->GetFirstPlayerController() : nullptr;
+    const APawn* Pawn = Pc ? Pc->GetPawn() : nullptr;
+    if (!Pawn)
+    {
+        UE_LOG(LogNodeShuffle, Display, TEXT("SEEDHERE: no player pawn"));
+        return;
+    }
+    EnsureCaveStoreLoaded();
+    const FVector P = Pawn->GetActorLocation();
+    FCollisionQueryParams Params(FName(TEXT("NodeShuffleSeedHere")), true);
+    Params.AddIgnoredActor(Pawn);
+    FHitResult RoofHit;
+    if (!GetWorld()->LineTraceSingleByChannel(RoofHit,
+            P + FVector(0, 0, 250.0f), P + FVector(0, 0, CaveRoofProbeCm), ECC_WorldStatic, Params))
+    {
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("SEEDHERE: open sky above you — stand under the cave/bridge roof and re-run"));
+        return;
+    }
+    if (const AActor* RoofActor = RoofHit.GetActor())
+    {
+        if (RoofActor->IsA<AFGBuildable>())
+        {
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("SEEDHERE: the roof above you is a player buildable (%s) — not a cave; no seed planted"),
+                *RoofActor->GetClass()->GetName());
+            return;
+        }
+    }
+    const int64 Key = NodeShuffleGridKey(P, CaveCellCm);
+    if (CaveFloors.Contains(Key))
+    {
+        UE_LOG(LogNodeShuffle, Display, TEXT("SEEDHERE: this cell is already mapped (state %d) — nothing to do"),
+            static_cast<int32>(CaveFloors[Key].State));
+        return;
+    }
+    if (CaveFloors.Num() >= CaveMaxCells)
+    {
+        UE_LOG(LogNodeShuffle, Display, TEXT("SEEDHERE: cave store is at its %d-cell cap"), CaveMaxCells);
+        return;
+    }
+    // Floor re-sampled at the CELL CENTER (same soft-lock guard as automatic seeds).
+    FNodeShuffleCaveCell Cell;
+    Cell.State = 4;
+    Cell.FloorZ = static_cast<float>(P.Z);
+    Cell.CeilingCm = static_cast<float>(RoofHit.ImpactPoint.Z - P.Z);
+    const float CenterX = (static_cast<int32>(Key >> 32) + 0.5f) * CaveCellCm;
+    const float CenterY = (static_cast<int32>(Key & 0xffffffffLL) + 0.5f) * CaveCellCm;
+    FHitResult CenterHit;
+    if (GetWorld()->LineTraceSingleByChannel(CenterHit,
+            FVector(CenterX, CenterY, P.Z + CaveHeadroomCm + CaveStepMaxCm),
+            FVector(CenterX, CenterY, P.Z - 2.0f * CaveStepMaxCm),
+            ECC_WorldStatic, Params))
+    {
+        Cell.FloorZ = static_cast<float>(CenterHit.ImpactPoint.Z);
+        Cell.State = 1; // frontier — the flood-fill walks the space from here
+    }
+    CaveFloors.Add(Key, Cell);
+    CaveSeedCount++;
+    bCaveStoreDirty = true;
+    CaveStoreNewRecords++;
+    UE_LOG(LogNodeShuffle, Display,
+        TEXT("CAVEDISCOVER: MANUAL seed at %s — roof %.0f m up, cell state %d; %d cave seeds known"),
+        *P.ToCompactString(), (RoofHit.ImpactPoint.Z - P.Z) / 100.0f,
+        static_cast<int32>(CaveFloors[Key].State), CaveSeedCount);
+}
+
+int32 ANodeShuffleSubsystem::CountUndergroundEntries() const
+{
+    int32 N = 0;
+    for (const FNodeShuffleEntry& E : Layout)
+    {
+        if (E.bIsNewNode && E.bActive && E.bUnderground) { N++; }
+    }
+    return N;
+}
+
+// cave-nodes-2: CaveTopUpPass DELETED (user call — caves are additional random areas, not a quota to
+// actively fill). Cave cells now enter the candidate space of every deal draw instead: see
+// GenerateNewLocations (roll + relocation spots) and TryRedealWaterLockedEntry, each drawing a cave
+// cell with natural probability CaveSeedCount/poolSize (capped CaveShareCap).
 
 bool ANodeShuffleSubsystem::IsPointInWater(const FVector& Point) const
 {
@@ -2860,15 +4086,18 @@ bool ANodeShuffleSubsystem::IsPointInWater(const FVector& Point) const
 
 bool ANodeShuffleSubsystem::RaycastGroundAt(const FVector& ProbeXY, float StartZ, const AActor* IgnoreNode,
                                             const AActor* IgnoreMesh, FVector& OutLoc, FRotator& OutRot,
-                                            bool& bOutWater) const
+                                            bool& bOutWater, bool bShortTrace) const
 {
     bOutWater = false;
     FCollisionQueryParams Params(SCENE_QUERY_STAT(NodeShuffleSettle), true);
     if (IgnoreNode) { Params.AddIgnoredActor(IgnoreNode); }
     if (IgnoreMesh) { Params.AddIgnoredActor(IgnoreMesh); }
 
-    const FVector Start(ProbeXY.X, ProbeXY.Y, StartZ + 20000.f);
-    const FVector End(ProbeXY.X, ProbeXY.Y, StartZ - 40000.f);
+    // cave-nodes-1: SHORT trace for underground entries — probe only a small window around the
+    // recorded cave-floor Z. The standard 200 m top-down ray would hit the cave ROOF and settle the
+    // node on the surface above the cavern.
+    const FVector Start(ProbeXY.X, ProbeXY.Y, bShortTrace ? StartZ + 400.f : StartZ + 20000.f);
+    const FVector End(ProbeXY.X, ProbeXY.Y, bShortTrace ? StartZ - 800.f : StartZ - 40000.f);
     FHitResult Hit;
     if (!GetWorld()->LineTraceSingleByChannel(Hit, Start, End, ECC_WorldStatic, Params))
     {
@@ -2879,14 +4108,58 @@ bool ANodeShuffleSubsystem::RaycastGroundAt(const FVector& ProbeXY, float StartZ
     OutRot = (AlignQuat * FQuat(FRotator(0.f, OutRot.Yaw, 0.f))).Rotator();
     // Cliffs/steep normals are FINE (reachable by ladder/jetpack); only WATER is
     // rejected. Test the grounded impact point for water containment.
-    bOutWater = IsPointInWater(OutLoc);
+    // playtest-fixes-1 DEPTH GUARD: the volume test only sees STREAMED water volumes and the deep
+    // ocean has none — seabed hits (measured shelf at Z≈-10,500) passed as dry. Any hit below the
+    // floor counts as water regardless of volumes; legit land never sits that deep (see constant).
+    // cave-nodes-1: short traces skip the deep-water floor reclassification — the cave cell was
+    // depth/water-verified at discovery, and deep caves may legitimately sit below the ocean floor
+    // constant. The volume containment test still applies (cave puddles/pools are real water).
+    // Cold review #3: short traces also do NOT teach the surface water grid (a cave floor says
+    // nothing about the surface column above it) — see the recording condition below.
+    const bool bBelowDepthFloor = !bShortTrace && OutLoc.Z < DeepWaterFloorZ;
+    bOutWater = bBelowDepthFloor || IsPointInWater(OutLoc);
+    if (bBelowDepthFloor && FNodeShuffleModule::AreDiagnosticsEnabled())
+    {
+        UE_LOG(LogNodeShuffle, Verbose, TEXT("DEPTHGUARD: hit at %s is below the deep-water floor (%.0f) — treated as water"),
+            *OutLoc.ToCompactString(), DeepWaterFloorZ);
+    }
+    // playtest-fixes-3: every ground probe teaches the persistent water grid one cell — this is how
+    // the roll/redeal "excluded areas" build themselves up across sessions. Cold review: skip hits on
+    // player BUILDABLES (a foundation over open ocean would persist a bogus "land" cell into the
+    // global cross-save grid) — only genuine terrain verdicts teach the grid. The settle itself still
+    // accepts buildable hits (nodes on foundations are allowed by design); this gates learning only.
+    const AActor* GridHitActor = Hit.GetActor();
+    if (!bShortTrace && (!GridHitActor || !GridHitActor->IsA<AFGBuildable>()))
+    {
+        RecordWaterGridSample(OutLoc, bOutWater);
+    }
     return true;
 }
 
-bool ANodeShuffleSubsystem::RaycastSettle(FNodeShuffleEntry& Entry, const AActor* IgnoreNode, const AActor* IgnoreMesh) const
+bool ANodeShuffleSubsystem::RaycastSettle(FNodeShuffleEntry& Entry, const AActor* IgnoreNode, const AActor* IgnoreMesh,
+                                          bool* bOutWaterNoLand) const
 {
+    if (bOutWaterNoLand) { *bOutWaterNoLand = false; }
     FVector Loc;
     FRotator Rot = Entry.Rotation; // preserve yaw through the align math
+
+    // cave-nodes-1: underground entries settle with the SHORT local trace only — no water spiral (a
+    // cave pool has no "nearby land" in the surface sense). A water/void result reports water-no-land
+    // so the caller's redeal machinery re-homes the entry (back to the surface pool).
+    if (Entry.bUnderground)
+    {
+        bool bCaveWater = false;
+        if (RaycastGroundAt(Entry.Location, Entry.Location.Z, IgnoreNode, IgnoreMesh, Loc, Rot, bCaveWater,
+                            /*bShortTrace=*/true) && !bCaveWater)
+        {
+            Entry.Location = Loc;
+            Entry.Rotation = Rot;
+            return true;
+        }
+        if (bCaveWater && bOutWaterNoLand) { *bOutWaterNoLand = true; }
+        return false; // void (unstreamed cave) -> normal defer; water -> caller redeals
+    }
+
     bool bWater = false;
 
     // 1. Primary probe at the entry's own XY.
@@ -2932,12 +4205,216 @@ bool ANodeShuffleSubsystem::RaycastSettle(FNodeShuffleEntry& Entry, const AActor
                 return true;
             }
         }
-        UE_LOG(LogNodeShuffle, Verbose, TEXT("Land-check: deferred %s (no land found nearby)"),
-            *Entry.EntryGuid.ToString());
+        // playtest-fixes-1: definitive water-no-land — report it so the caller can redeal instead of
+        // retrying this ocean spot forever. Detail log once per entry per session (was 22k lines).
+        if (bOutWaterNoLand) { *bOutWaterNoLand = true; }
+        if (!WaterDeferLoggedThisSession.Contains(Entry.EntryGuid))
+        {
+            WaterDeferLoggedThisSession.Add(Entry.EntryGuid);
+            UE_LOG(LogNodeShuffle, Verbose, TEXT("Land-check: deferred %s (no land within %.0f m of the water hit)"),
+                *Entry.EntryGuid.ToString(), LandRelocationMaxRadiusCm / 100.0f);
+        }
     }
 
     // Void hit, or water with no nearby land: defer (leave entry as data, retry later).
     return false;
+}
+
+bool ANodeShuffleSubsystem::TryRedealWaterLockedEntry(FNodeShuffleEntry& Entry)
+{
+    // playtest-fixes-3 (UNANCHORED redeal): draw fresh RANDOM candidates from the SAME map-wide deal
+    // box the roll used — the fixes-1 version anchored to streamed originals, which clustered
+    // relocations around original node sites and defeated the mod's randomization (user call).
+    // Candidates are filtered by the learned water grid + MinNodeSpacing only; the new spot settles
+    // LAZILY via normal spawn-on-discovery (bRayCasted stays false). A grid-unknown spot may hit
+    // water again — that settle teaches the grid one more cell and the entry hops once more; each
+    // blind draw has the map's land share (~75%+) of succeeding, and the grid only improves.
+    const FVector BoxMin = GetDealBoundsMin();
+    const FVector BoxMax = GetDealBoundsMax();
+    if (BoxMax.X <= BoxMin.X || BoxMax.Y <= BoxMin.Y)
+    {
+        return false; // no usable deal box (degenerate layout) — stay deferred
+    }
+
+    // Deterministic per-entry RNG, salted by attempt so each redeal draws different candidates.
+    int32& Salt = RedealAttempts.FindOrAdd(Entry.EntryGuid);
+    Salt++;
+    FRandomStream Rng(static_cast<int32>(GetTypeHash(Entry.EntryGuid)) ^ (SavedSeed * 31) ^ (Salt * 7919));
+    const float ProbeZ = (DealMeanZ != 0.0f) ? DealMeanZ : static_cast<float>(Entry.Location.Z);
+
+    // cave-nodes-2: a cave-dealt entry whose cell turned out WET goes back to the surface pool. A
+    // surface entry being re-homed rolls the same NATURAL cave share as any deal draw — caves are
+    // additional random areas, never a quota (no priority, no fill target).
+    const bool bWasUnderground = Entry.bUnderground;
+    Entry.bUnderground = false;
+    if (!bWasUnderground && Entry.ResourceForm != 2 /* liquid */) // cave-nodes-4: always on (drain fix)
+    {
+        EnsureCaveStoreLoaded();
+        const float CaveChance = FMath::Min(CaveShareCap,
+            static_cast<float>(CaveSeedCount) / FMath::Max(1, Layout.Num()));
+        if (CaveChance > 0.0f && Rng.FRand() < CaveChance)
+        {
+            FVector CaveLoc;
+            if (TryPickCaveCell(Rng, CaveLoc))
+            {
+                UE_LOG(LogNodeShuffle, Display,
+                    TEXT("WATER-REDEAL: entry %s (%s) re-dealt off water %s -> CAVE floor %s (natural share %.1f%%)"),
+                    *Entry.EntryGuid.ToString(), *Entry.AssignedResourceClassPath,
+                    *Entry.Location.ToCompactString(), *CaveLoc.ToCompactString(), CaveChance * 100.0f);
+                Entry.Location = CaveLoc;
+                Entry.Rotation = FRotator(0.f, Rng.FRandRange(0.f, 360.f), 0.f);
+                Entry.bUnderground = true;
+                Entry.bRayCasted = false;
+                return true;
+            }
+        }
+    }
+
+    for (int32 i = 0; i < RedealTries; i++)
+    {
+        const FVector Candidate(Rng.FRandRange(BoxMin.X, BoxMax.X),
+                                Rng.FRandRange(BoxMin.Y, BoxMax.Y),
+                                ProbeZ);
+        // Excluded areas: cells the persistent grid has proven to be water.
+        if (IsKnownWaterCell(Candidate)) { continue; }
+        // Same spacing rule the roll enforces: MinNodeSpacing 2D from every other layout entry.
+        // (Ground truth, overlap and enclosure are all handled by the normal settle at spawn time.)
+        bool bTooClose = false;
+        for (const FNodeShuffleEntry& Other : Layout)
+        {
+            if (&Other == &Entry) { continue; }
+            if (FVector::DistSquared2D(Other.Location, Candidate) < FMath::Square(MinNodeSpacing))
+            {
+                bTooClose = true;
+                break;
+            }
+        }
+        if (bTooClose) { continue; }
+
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("WATER-REDEAL: entry %s (%s) re-dealt off water %s -> %s (random in deal box, grid-filtered; settles on discovery; attempt %d)"),
+            *Entry.EntryGuid.ToString(), *Entry.AssignedResourceClassPath,
+            *Entry.Location.ToCompactString(), *Candidate.ToCompactString(), Salt);
+        Entry.Location = Candidate; // persisted (SaveGame)
+        Entry.Rotation = FRotator(0.f, Rng.FRandRange(0.f, 360.f), 0.f);
+        Entry.bRayCasted = false;   // explicit: lazy settle at the new spot, like any dealt entry
+        return true; // moved (NOT settled) — caller must still defer this tick
+    }
+    return false; // all candidates grid-water or too close — retry with fresh salt next pass
+}
+
+void ANodeShuffleSubsystem::LogHereCensus() const
+{
+    // playtest-fixes-1: `NodeShuffle.Here` — one command turns "something is odd at this spot" into a
+    // log the whole team can act on: exact player position + every NodeShuffle-relevant thing nearby.
+    const UWorld* World = GetWorld();
+    const APlayerController* Pc = World ? World->GetFirstPlayerController() : nullptr;
+    const APawn* Pawn = Pc ? Pc->GetPawn() : nullptr;
+    if (!Pawn)
+    {
+        UE_LOG(LogNodeShuffle, Display, TEXT("HERE: no player pawn — census unavailable"));
+        return;
+    }
+    const FVector P = Pawn->GetActorLocation();
+    UE_LOG(LogNodeShuffle, Display,
+        TEXT("HERE: player at X=%.0f Y=%.0f Z=%.0f | inWaterVolume=%d belowDepthFloor=%d | layout=%d spawn-entries, %d live spawned, %d water-locked this session"),
+        P.X, P.Y, P.Z,
+        IsPointInWater(P) ? 1 : 0, (P.Z < DeepWaterFloorZ) ? 1 : 0,
+        Layout.Num(), SpawnedNodes.Num(), WaterLockedThisSession.Num());
+    // playtest-fixes-3: learned water-grid knowledge (the roll/redeal excluded-areas store).
+    EnsureWaterGridLoaded();
+    int32 GridLand = 0, GridWater = 0, GridMixed = 0;
+    for (const auto& Cell : WaterGrid)
+    {
+        switch (Cell.Value) { case 1: GridLand++; break; case 2: GridWater++; break; default: GridMixed++; break; }
+    }
+    UE_LOG(LogNodeShuffle, Display,
+        TEXT("HERE: water-grid knows %d cells (100 m): %d land / %d water / %d mixed (Configs/NodeShuffle_WaterGrid.json)"),
+        WaterGrid.Num(), GridLand, GridWater, GridMixed);
+    // cave-nodes-1: cavern knowledge + is-the-player-under-a-roof + ambient volumes here (the ambient
+    // list evaluates whether the game's audio volumes could ever serve as an authored cave dataset).
+    EnsureCaveStoreLoaded();
+    int32 CaveFrontier = 0, CaveMouth = 0;
+    for (const auto& Cell : CaveFloors)
+    {
+        if (Cell.Value.State == 1) { CaveFrontier++; }
+        else if (Cell.Value.State == 4) { CaveMouth++; }
+    }
+    FHitResult RoofHit;
+    FCollisionQueryParams RoofParams(FName(TEXT("NodeShuffleHereRoof")), true);
+    const bool bPlayerRoofed = GetWorld()->LineTraceSingleByChannel(RoofHit,
+        P + FVector(0, 0, 250.0f), P + FVector(0, 0, CaveRoofProbeCm), ECC_WorldStatic, RoofParams);
+    FString AmbientNames;
+    int32 AmbientCount = 0;
+    for (TActorIterator<AFGAmbientVolume> It(GetWorld()); It; ++It)
+    {
+        if (IsValid(*It) && It->EncompassesPoint(P))
+        {
+            AmbientCount++;
+            if (AmbientCount <= 3) { AmbientNames += It->GetName() + TEXT(" "); }
+        }
+    }
+    UE_LOG(LogNodeShuffle, Display,
+        TEXT("HERE: cave-store %d cells (%d frontier, %d mouth), %d underground seeds, %d underground entries | roofAbovePlayer=%d%s | ambientVolumes(%d): %s"),
+        CaveFloors.Num(), CaveFrontier, CaveMouth, CaveSeedCount, CountUndergroundEntries(),
+        bPlayerRoofed ? 1 : 0,
+        bPlayerRoofed ? *FString::Printf(TEXT(" (%.0fm up)"), (RoofHit.ImpactPoint.Z - P.Z) / 100.0f) : TEXT(""),
+        AmbientCount, AmbientCount > 0 ? *AmbientNames : TEXT("<none>"));
+
+    auto ShortName = [](const FString& Path) -> FString
+    {
+        int32 Dot = INDEX_NONE;
+        return Path.FindLastChar(TEXT('.'), Dot) ? Path.Mid(Dot + 1) : Path;
+    };
+
+    const float R2 = FMath::Square(static_cast<float>(CensusRadiusCm));
+    int32 Shown = 0;
+    for (const FNodeShuffleEntry& E : Layout)
+    {
+        if (!E.bIsNewNode) { continue; }
+        const float D2 = FVector::DistSquared2D(E.Location, P);
+        if (D2 > R2) { continue; }
+        AFGResourceNode* const* Live = SpawnedNodes.Find(E.EntryGuid);
+        const bool bLive = Live && IsValid(*Live);
+        FString Flags;
+        if (!E.bActive) { Flags += TEXT("inactive|"); }
+        if (E.bPinned) { Flags += TEXT("pinned|"); }
+        Flags += E.bRayCasted ? TEXT("settled|") : TEXT("unsettled|");
+        Flags += bLive ? TEXT("LIVE") : TEXT("no-actor");
+        if (WaterLockedThisSession.Contains(E.EntryGuid)) { Flags += TEXT("|WATER-LOCKED"); }
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("HERE: entry %s dist=%.0fm dz=%+.0fm [%s] at %s"),
+            *ShortName(E.AssignedResourceClassPath), FMath::Sqrt(D2) / 100.0f,
+            (E.Location.Z - P.Z) / 100.0f, *Flags, *E.Location.ToCompactString());
+        Shown++;
+    }
+
+    int32 OrigShown = 0;
+    AFGRadioactivitySubsystem* RadSub = GetRadSubsystem();
+    for (const auto& Pair : VanillaNodeCache)
+    {
+        AFGResourceNodeBase* Orig = Pair.Value.Get();
+        if (!IsValid(Orig)) { continue; }
+        // visfix-1: deposits (small one-off pickups) are never shuffled and flooded the census with
+        // noise (40 lines, mostly deposits, in one report) — skip them.
+        if (Cast<AFGResourceDeposit>(Orig)) { continue; }
+        const FVector Loc = Orig->GetActorLocation();
+        const float D2 = FVector::DistSquared2D(Loc, P);
+        if (D2 > R2) { continue; }
+        const AFGResourceNode* AsNode = Cast<AFGResourceNode>(Orig);
+        const TSubclassOf<UFGResourceDescriptor> ResCls = AsNode ? AsNode->GetResourceClass() : nullptr;
+        const float Decay = ResCls ? UFGItemDescriptor::GetRadioactiveDecay(ResCls) : 0.0f;
+        // Friend read of mSources: is a radiation emitter still registered for this original?
+        const bool bEmitter = RadSub && RadSub->mSources.Contains(Orig);
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("HERE: original %s dist=%.0fm dz=%+.0fm hidden=%d res=%s radioactiveDecay=%.3f emitterLive=%d"),
+            *ShortName(Pair.Key), FMath::Sqrt(D2) / 100.0f, (Loc.Z - P.Z) / 100.0f,
+            Orig->IsHidden() ? 1 : 0,
+            ResCls ? *ResCls->GetName() : TEXT("<base-only>"), Decay, bEmitter ? 1 : 0);
+        OrigShown++;
+    }
+    UE_LOG(LogNodeShuffle, Display, TEXT("HERE: census done — %d layout entries + %d streamed originals within %dm"),
+        Shown, OrigShown, CensusRadiusCm / 100);
 }
 
 void ANodeShuffleSubsystem::ReassociateOrphanedExtractors()
@@ -3043,7 +4520,7 @@ bool ANodeShuffleSubsystem::IsEligibleVanillaNodeReason(const AFGResourceNode* N
     // redesign-3: our OWN spawned relocated nodes now PERSIST (non-transient) and are our own subclass.
     // Identify them by TYPE (Tags don't survive reload). A re-roll must never treat a restored spawned
     // node as an original to shuffle again (it would compound relocations every roll).
-    if (Node->IsA<ANodeShuffleResourceNode>())
+    if (NodeShuffleIsOurNode(Node))
     {
         OutReason = TEXT("ANodeShuffleResourceNode (our spawned node, not an original)");
         return false;
@@ -3110,10 +4587,12 @@ bool ANodeShuffleSubsystem::IsEligibleVanillaNodeReason(const AFGResourceNode* N
         return false;
     }
 
-    // RESOURCE FORM GATE. SOLID is always allowed; LIQUID (oil) joins (we render its decal). GAS is NOT
-    // shuffled: RF_GAS nodes (e.g. lithium / Desc_OreLithium, mined by special "reactive ore" extractors like
-    // AlkaLib's) are mishandled by hide-and-replace — wrong placeholder visual, they wrongly accept a normal
-    // miner, and the modded extractor crashes on our spawned node. Leaving gas nodes vanilla avoids all three.
+    // RESOURCE FORM GATE. SOLID is always allowed; LIQUID (oil) AND GAS (lithium / Desc_OreLithium) join when
+    // non-solid shuffling is on. The real-class redesign relocates each node AS ITS ORIGINAL CLASS, so a gas
+    // node comes back as its own modded node class (e.g. the Alkali reactive-ore node) — its special extractor
+    // casts/binds succeed, it keeps its native accept rules (rejects a normal miner) and its real visual. That
+    // is what makes gas safe to shuffle now (the three exclude-gas-1 breakages all came from spawning a generic
+    // node in place of the modded class).
     // redesign-4 BUG 2 relaxation: a MODDED node whose descriptor reports RF_INVALID/unknown (common for
     // AllMinable's crafted-ITEM esc_ descriptors) is treated as SOLID so it still enters the pool — its mining
     // is driven by the node, not the descriptor form. RF_INVALID on a VANILLA node stays rejected as junk.
@@ -3121,17 +4600,15 @@ bool ANodeShuffleSubsystem::IsEligibleVanillaNodeReason(const AFGResourceNode* N
     const bool bGasForm = (Form == EResourceForm::RF_GAS);
     const bool bLiquidForm = (Form == EResourceForm::RF_LIQUID);
     const bool bModdedUnknownForm = (!bVanillaNode) && (Form != EResourceForm::RF_LIQUID)
-        && (Form != EResourceForm::RF_GAS); // modded solid OR modded RF_INVALID -> treat as solid (gas excluded)
+        && (Form != EResourceForm::RF_GAS); // modded solid OR modded RF_INVALID -> treat as solid
     const bool bFormAllowed = (Form == EResourceForm::RF_SOLID)
         || bModdedUnknownForm
-        || (bIncludeLiquid && bLiquidForm);
+        || (bIncludeLiquid && (bLiquidForm || bGasForm));
     if (!bFormAllowed)
     {
-        OutReason = bGasForm
-            ? TEXT("gas node (e.g. lithium) — not shuffled (special extractor)")
-            : bLiquidForm
-                ? TEXT("liquid node and liquid shuffling is off")
-                : TEXT("resource form is not solid/liquid");
+        OutReason = (bLiquidForm || bGasForm)
+            ? TEXT("non-solid form (oil/gas) and non-solid shuffling is off")
+            : TEXT("resource form is not solid/liquid/gas");
         return false;
     }
 
@@ -3516,7 +4993,7 @@ void ANodeShuffleSubsystem::OrphanRockCleanup()
         }
         // redesign-5: never hide OUR OWN spawned node rock (now a RockMesh subobject OF our node, which
         // wears an authored ResourceNode_* mesh, so it would otherwise name-match and get hidden as orphan).
-        if (Smc->GetOwner() && Smc->GetOwner()->IsA<ANodeShuffleResourceNode>())
+        if (Smc->GetOwner() && NodeShuffleIsOurNode(Smc->GetOwner()))
         {
             continue;
         }
@@ -3622,7 +5099,11 @@ void ANodeShuffleSubsystem::DiagnoseRocksNearPlayers()
     TSet<UStaticMeshComponent*> Claimed;
     for (const auto& Pair : SpawnedNodes)
     {
-        if (ANodeShuffleResourceNode* OurNode = Cast<ANodeShuffleResourceNode>(Pair.Value))
+        if (UNodeShuffleNodeComponent* Comp = UNodeShuffleNodeComponent::Find(Pair.Value))
+        {
+            if (IsValid(Comp->RockMesh)) { Claimed.Add(Comp->RockMesh); }
+        }
+        else if (ANodeShuffleResourceNode* OurNode = Cast<ANodeShuffleResourceNode>(Pair.Value))
         {
             if (IsValid(OurNode->RockMesh)) { Claimed.Add(OurNode->RockMesh); }
         }

@@ -151,5 +151,9 @@ void UNodeShuffleConfig::PostInitProperties()
         TEXT("Starter Node Radius (m)"),
         TEXT("How far from your spawn point the starter nodes may be placed. Smaller keeps them right at your feet; larger spreads them out. Only used on a brand-new game's first roll."));
 
+    AddBool(TEXT("EnableExperimentalFeatures"), false,
+        TEXT("Enable Experimental Features"),
+        TEXT("THIS VERSION HAS NO EXPERIMENTAL FEATURES, so this option currently does nothing — leave it off. (Cave node placement graduated to always-on: it fixes a real issue where the shuffle emptied caves and never put nodes back in them.)"));
+
     RootSection = Root;
 }
