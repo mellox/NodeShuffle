@@ -299,6 +299,9 @@ private:
     // knowledge-1 item 2: extractors whose resource binding this session already healed/refreshed
     // (bounded once-per-extractor logging + no re-heal churn). Weak keys — dead actors drop out.
     TSet<TWeakObjectPtr<const AActor>> ExtractorsHealed;
+    // knowledge-2 item 3: extractors already truth-dumped this session (diag-gated once-per-extractor
+    // ground-truth line: bound object validity, resolved resource, node-at-location match).
+    TSet<TWeakObjectPtr<const AActor>> ExtractorsDumped;
     // knowledge-1 item 1: on authority, once per load after the layout is applied, register the
     // DISTINCT modded resources the shuffle actively manages with the game's scanner-unlock list
     // (AFGUnlockSubsystem::UnlockScannableResource — SaveGame + Replicated, so it persists). This is
@@ -307,8 +310,32 @@ private:
     // shuffled modded resources whose own unlock schematics never ran in this save. Vanilla
     // resources are NEVER touched (their scanner unlocks are progression). Config-gated
     // (UnlockModdedKnowledge, default ON); idempotent per load (Contains gate).
-    void UnlockModdedScannerKnowledge();
+    // knowledge-2 item 2 (CRASH-PROOF ORDERING): scanner knowledge now IMPLIES KAPI MinerInfo. When
+    // KAPI is present, ProvideKAPIMinerInfo runs FIRST and only ores with an mMinerMapping entry
+    // (pre-existing or freshly provided) are unlocked — KLib's AKLMMBuildableMiner::BeginPlay
+    // fgcheckf's a valid description for any placeable ore, so unlocking without one ARMS a crash
+    // (live: esc_CateriumIngot_C). Returns false only when the pass must be RETRIED next tick
+    // (KAPI present but its scan hasn't populated yet); the caller latches bKnowledgeUnlockDone
+    // only on true.
+    bool UnlockModdedScannerKnowledge();
     bool bKnowledgeUnlockDone = false;
+    // knowledge-2 item 1: runtime MinerInfo provisioning — PURE REFLECTION against KAPI's
+    // UKAPIDataAssetSubsystem (a UGameInstanceSubsystem; no KAPI include/link/stub anywhere). For
+    // each managed modded ore MISSING from mMinerMapping, DuplicateObject a template description
+    // (preferring the Desc_Stone_C entry), rewire its key (mResourceClass) and every
+    // FKAPIModuleItems.mProductionItem to the ore (the resource descriptor IS the item class —
+    // UFGResourceDescriptor : UFGItemDescriptor), insert into mMinerMapping and
+    // mAllowedScannableResources exactly as KAPI's own ScanForMinerAssets does. Returns false when
+    // KAPI is present but not yet scanned (defer). When KAPI is absent: returns true with
+    // bOutFilterUnlocks=false (no filtering — no Modular Miner exists to crash). Every reflection
+    // lookup is null-checked; any failure skips that ore entirely (never partially-wired).
+    bool ProvideKAPIMinerInfo(const TArray<UClass*>& ManagedModded, TSet<UClass*>& OutWithMinerInfo,
+                              bool& bOutFilterUnlocks);
+    // knowledge-2: bounded defer while KAPI's game-instance-init scan hasn't populated mMinerMapping
+    // yet (in practice it has, ~70 s before our first pass; an installation with KAPI but zero miner
+    // description assets would otherwise defer forever). After the cap: terminal withhold-all.
+    int32 KnowledgeDeferPasses = 0;
+    static constexpr int32 KnowledgeDeferMaxPasses = 24; // ~2 min at the 5 s tick
     void RefreshScannersAndRadarTowers();
     // Removes one-off resource deposits sitting on shuffled nodes when their
     // resource contradicts the node's assigned one (runs once per session).

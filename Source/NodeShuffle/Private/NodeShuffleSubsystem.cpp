@@ -49,6 +49,7 @@
 #include "FGRadioactivitySubsystem.h"
 #include "FGGameState.h"
 #include "FGUnlockSubsystem.h" // knowledge-1: UnlockScannableResource + FScannableResourcePair (+ geyser descriptor transitively)
+#include "UObject/UnrealType.h" // knowledge-2: FMapProperty/FSetProperty + script helpers (KAPI reflection)
 #include "Materials/MaterialInstanceDynamic.h"
 #include "FGActorRepresentationManager.h"
 #include "Representation/FGResourceNodeRepresentation.h"
@@ -286,11 +287,11 @@ void ANodeShuffleSubsystem::RefreshTick()
         // knowledge-1 item 1: once per load (and once more after a re-roll — RollLayout re-arms the
         // flag), after the layout is applied and resource classes resolve: register managed MODDED
         // resources with the game's scanner-unlock list. Post-apply so a re-roll's fresh deal is
-        // what gets registered.
-        if (!bKnowledgeUnlockDone)
+        // what gets registered. knowledge-2: the pass latches only when it COMPLETED — it returns
+        // false when KAPI is present but its data-asset scan hasn't populated yet (retry next tick).
+        if (!bKnowledgeUnlockDone && UnlockModdedScannerKnowledge())
         {
             bKnowledgeUnlockDone = true;
-            UnlockModdedScannerKnowledge();
         }
         DiagnoseRocksNearPlayers();
     }
@@ -440,6 +441,20 @@ void ANodeShuffleSubsystem::PostLoadGame_Implementation(int32 /*saveVersion*/, i
         // FUTURE: per-version migration steps go here, e.g.
         //   if (LayoutVersion < 3) { /* convert v2 entries -> v3 */ }
         LayoutVersion = CurrentLayoutVersion;
+    }
+
+    // knowledge-2 EARLY PASS (crash-window closer): a SAVED Modular Miner on a provided ore
+    // BeginPlays during world init — ~70 s BEFORE the first RefreshTick — and KLib's fgcheckf needs
+    // its mMinerMapping entry to exist by then. PostLoadGame runs in the load flow with the Layout
+    // already deserialized and KAPI's game-launch scan long done, so provisioning here lands before
+    // gameplay BeginPlay ordering can bite. The function self-defers (returns false) when the
+    // unlock subsystem or KAPI's map isn't ready yet — the RefreshTick pass retries and completes
+    // the scanner-unlock half; provisioning itself is idempotent either way. Residual (stated
+    // honestly): if an engine change ever BeginPlays restored buildables before save-interface
+    // PostLoadGame, the window reopens — nothing mod-side can order around that.
+    if (bLayoutGenerated && UnlockModdedScannerKnowledge())
+    {
+        bKnowledgeUnlockDone = true;
     }
 }
 
@@ -1363,6 +1378,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     // knowledge-1 item 1: a re-roll can deal modded resources that weren't active before — let the
     // post-apply knowledge pass run again for this new population.
     bKnowledgeUnlockDone = false;
+    KnowledgeDeferPasses = 0; // knowledge-2: fresh defer budget for the re-armed pass
 
     UE_LOG(LogNodeShuffle, Display,
         TEXT("Rolled layout: seed %d, pool %d (vanilla %d, new %d), active %d, pinned %d"),
@@ -5251,47 +5267,125 @@ void ANodeShuffleSubsystem::ReassociateOrphanedExtractors()
         return;
     }
 
+    // knowledge-2 item 3: the truth dump needs player positions (150 m gate). Gathered only when
+    // diagnostics are on — the heal logic itself needs none.
+    const bool bExtractorDiag = FNodeShuffleModule::AreDiagnosticsEnabled();
+    TArray<FVector> DiagPlayers;
+    if (bExtractorDiag)
+    {
+        for (FConstPlayerControllerIterator PIt = GetWorld()->GetPlayerControllerIterator(); PIt; ++PIt)
+        {
+            if (const APlayerController* Pc = PIt->Get())
+            {
+                if (const APawn* Pawn = Pc->GetPawn()) { DiagPlayers.Add(Pawn->GetActorLocation()); }
+            }
+        }
+    }
+
     for (TActorIterator<AFGBuildableResourceExtractorBase> It(GetWorld()); It; ++It)
     {
         AFGBuildableResourceExtractorBase* Extractor = *It;
+        const FVector Loc = Extractor->GetActorLocation();
+
+        // The live spawned node AT this extractor's location (the reassociation proximity rule).
+        // Resolved lazily — healthy bound extractors never pay the SpawnedNodes scan.
+        bool bLocationNodeResolved = false;
+        AFGResourceNode* LocationNode = nullptr;
+        auto ResolveLocationNode = [&]() -> AFGResourceNode*
+        {
+            if (!bLocationNodeResolved)
+            {
+                bLocationNodeResolved = true;
+                for (auto& Pair : SpawnedNodes)
+                {
+                    AFGResourceNode* Node = Pair.Value;
+                    if (IsValid(Node)
+                        && FVector::DistSquared(Node->GetActorLocation(), Loc) < FMath::Square(ExtractorSnapDistance))
+                    {
+                        LocationNode = Node;
+                        break;
+                    }
+                }
+            }
+            return LocationNode;
+        };
+
         UObject* BoundObj = Extractor->GetExtractableResource().GetObject();
+        IFGExtractableResourceInterface* BoundRes = Cast<IFGExtractableResourceInterface>(BoundObj);
+        AFGResourceNode* BoundNode = Cast<AFGResourceNode>(BoundObj);
+        // knowledge-2 item 3 (WIDENED detection — the res==null criterion alone missed the live
+        // "Invalid"-output miner): broken states are (1) STALE — an object is bound but IsValid
+        // fails on it (destroyed/pending-kill actor behind the interface); (2) RES-NULL — bound and
+        // valid but the extract resource resolves null; (3) WRONG-NODE — bound to a valid node that
+        // is nowhere near this extractor while OUR live spawned node sits under it (mid-war save
+        // wrote a binding to a node instance that no longer stands here). A healthy extractor on an
+        // untouched vanilla node hits none of these: its bound node is valid, resolves a resource,
+        // and stands within snap range — we never steal a legitimate binding.
+        const bool bStale = BoundObj != nullptr && !IsValid(BoundObj);
+        const bool bResNull = BoundObj != nullptr && !bStale && BoundRes && BoundRes->GetResourceClass() == nullptr;
+        const bool bBoundFar = !bStale && BoundNode != nullptr
+            && FVector::DistSquared(BoundNode->GetActorLocation(), Loc) > FMath::Square(ExtractorSnapDistance);
+        const bool bWrongNode = bBoundFar && ResolveLocationNode() != nullptr && BoundNode != LocationNode;
+
+        // Truth dump: diag-gated, once per extractor per session, within 150 m of a player — ground
+        // truth for the NEXT session even if the heal criteria still miss the real broken state.
+        if (bExtractorDiag && !ExtractorsDumped.Contains(Extractor))
+        {
+            bool bNear = false;
+            for (const FVector& P : DiagPlayers)
+            {
+                if (FVector::DistSquared(P, Loc) < FMath::Square(15000.0f)) { bNear = true; break; }
+            }
+            if (bNear)
+            {
+                ExtractorsDumped.Add(Extractor);
+                UClass* DumpRes = (BoundRes && !bStale) ? BoundRes->GetResourceClass().Get() : nullptr;
+                ResolveLocationNode();
+                UE_LOG(LogNodeShuffle, Display, TEXT("extractor %s: bound=%s res=%s node-at-location=%s"),
+                    *Extractor->GetName(),
+                    BoundObj == nullptr ? TEXT("none") : bStale ? TEXT("INVALID") : *BoundObj->GetName(),
+                    DumpRes ? *DumpRes->GetName() : TEXT("null"),
+                    LocationNode == nullptr ? TEXT("none")
+                        : LocationNode == BoundNode ? TEXT("match") : *FString::Printf(TEXT("mismatch(%s)"), *LocationNode->GetName()));
+            }
+        }
+
         if (BoundObj != nullptr)
         {
-            // knowledge-1 item 2b (the "Invalid"-output heal): a grandfathered extractor can restore
-            // BOUND to a valid node yet with its extract resource resolving null (its save was
-            // written mid-destroyer-war; live case: a Mk.1 on the pinned dirty-caterium node showing
-            // output "Invalid" while mining). Re-derive the binding exactly like the construct path
-            // (SetResourceNode — the hologram-era setter that binds AND claims, re-running the
-            // OnExtractableResourceSet derivation). Critical without a rebuild: SF+ removed vanilla
-            // miners from the build menu, so existing ones are irreplaceable. Once per extractor per
-            // session (weak-key set) so a genuinely unhealable binding can't churn or spam.
-            IFGExtractableResourceInterface* BoundRes = Cast<IFGExtractableResourceInterface>(BoundObj);
-            AFGResourceNode* BoundNode = Cast<AFGResourceNode>(BoundObj);
-            if (BoundNode && BoundRes && BoundRes->GetResourceClass() == nullptr
-                && !ExtractorsHealed.Contains(Extractor))
+            // knowledge-1 item 2b + knowledge-2 widening: heal via the construct path's setter
+            // (SetResourceNode — binds AND claims, re-running the OnExtractableResourceSet
+            // derivation). Critical without a rebuild: SF+ removed vanilla miners from the build
+            // menu, so existing ones are irreplaceable. Once per extractor per session.
+            if ((bStale || bResNull || bWrongNode) && !ExtractorsHealed.Contains(Extractor))
             {
-                ExtractorsHealed.Add(Extractor);
-                Extractor->SetResourceNode(BoundNode);
-                UClass* HealedClass = BoundRes->GetResourceClass().Get();
-                UE_LOG(LogNodeShuffle, Display, TEXT("relink: refreshed resource binding on %s -> %s"),
-                    *Extractor->GetName(), HealedClass ? *HealedClass->GetName() : TEXT("<still null>"));
+                // Prefer the live node at the extractor's location; a res-null binding with no
+                // location node re-derives on its own bound node (the original knowledge-1 action).
+                AFGResourceNode* HealTarget = ResolveLocationNode();
+                if (!HealTarget && bResNull) { HealTarget = BoundNode; }
+                if (HealTarget)
+                {
+                    ExtractorsHealed.Add(Extractor);
+                    Extractor->SetResourceNode(HealTarget);
+                    UClass* HealedClass = nullptr;
+                    if (IFGExtractableResourceInterface* HealedRes = Cast<IFGExtractableResourceInterface>(HealTarget))
+                    {
+                        HealedClass = HealedRes->GetResourceClass().Get();
+                    }
+                    UE_LOG(LogNodeShuffle, Display, TEXT("relink: refreshed resource binding on %s -> %s (%s)"),
+                        *Extractor->GetName(), HealedClass ? *HealedClass->GetName() : TEXT("<still null>"),
+                        bStale ? TEXT("stale binding") : bResNull ? TEXT("null resource") : TEXT("wrong node"));
+                }
             }
             continue;
         }
-        const FVector Loc = Extractor->GetActorLocation();
-        for (auto& Pair : SpawnedNodes)
+        if (AFGResourceNode* Orphan = ResolveLocationNode())
         {
-            AFGResourceNode* Node = Pair.Value;
-            if (IsValid(Node) && FVector::DistSquared(Node->GetActorLocation(), Loc) < FMath::Square(ExtractorSnapDistance))
-            {
-                // knowledge-1 item 2a: re-link via SetResourceNode — the construct path's setter
-                // ("set as our current, also claiming it"), which re-derives the extract-resource
-                // binding the same way a freshly-built extractor does. The old bare
-                // SetExtractableResource bound the interface but skipped the node-claim half.
-                Extractor->SetResourceNode(Node);
-                UE_LOG(LogNodeShuffle, Verbose, TEXT("Re-associated extractor %s with new node"), *Extractor->GetName());
-                break;
-            }
+            // knowledge-1 item 2a: re-link via SetResourceNode — the construct path's setter
+            // ("set as our current, also claiming it"), which re-derives the extract-resource
+            // binding the same way a freshly-built extractor does. The old bare
+            // SetExtractableResource bound the interface but skipped the node-claim half.
+            Extractor->SetResourceNode(Orphan);
+            UE_LOG(LogNodeShuffle, Verbose, TEXT("Re-associated extractor %s with new node"), *Extractor->GetName());
         }
     }
 
@@ -5345,7 +5439,7 @@ void ANodeShuffleSubsystem::RefreshScannersAndRadarTowers()
     }
 }
 
-void ANodeShuffleSubsystem::UnlockModdedScannerKnowledge()
+bool ANodeShuffleSubsystem::UnlockModdedScannerKnowledge()
 {
     // knowledge-1 item 1 (THE headline fix). SF+'s Modular Miner hologram (KLib) gates placement on
     // AKLUnlockSubsystem::HasInformationAboutOre == AFGUnlockSubsystem::GetScannableResources()
@@ -5355,25 +5449,29 @@ void ANodeShuffleSubsystem::UnlockModdedScannerKnowledge()
     // resource the shuffle actively manages; the backing list is UPROPERTY(SaveGame, Replicated) so
     // the unlock persists and replicates. Vanilla resources are NEVER touched — their scanner
     // unlocks are progression. Idempotent (Contains gate); config-gated, default ON.
-    if (!HasAuthority()) { return; }
+    //
+    // knowledge-2 item 2 (CRASH-PROOF ORDERING — live crash: fgcheckf in AKLMMBuildableMiner::
+    // BeginPlay, "No MinerInfo (DataAsset) found for esc_CateriumIngot_C"). KLib resolves a second
+    // registry beyond scanner knowledge: KAPI's per-ore UKAPIModularMinerDescription in
+    // UKAPIDataAssetSubsystem::mMinerMapping, and its BeginPlay hard-asserts on a miss. So when
+    // KAPI is present, MinerInfo provisioning runs FIRST and only ores that now HAVE a map entry
+    // (pre-existing or freshly provided) get the scanner unlock: knowledge implies MinerInfo, and
+    // the assert is unreachable through us. Ores unlocked by knowledge-1 in existing saves are
+    // covered the same way: their scanner-known state persists (SaveGame), and provisioning at
+    // every load puts their map entry in place long before any placement can BeginPlay a miner.
+    if (!HasAuthority()) { return true; }
     const FNodeShuffleConfigStruct Config = FNodeShuffleConfigStruct::GetActiveConfig(this);
-    if (!Config.UnlockModdedKnowledge) { return; }
-    const AFGGameState* GS = GetWorld() ? GetWorld()->GetGameState<AFGGameState>() : nullptr;
-    AFGUnlockSubsystem* Unlocks = GS ? GS->GetUnlockSubsystem() : nullptr;
-    if (!Unlocks)
-    {
-        UE_LOG(LogNodeShuffle, Warning, TEXT("knowledge: unlock subsystem unavailable — scanner-knowledge pass skipped this load"));
-        return;
-    }
+    if (!Config.UnlockModdedKnowledge) { return true; }
 
     const bool bDiag = FNodeShuffleModule::AreDiagnosticsEnabled();
-    const TArray<TSubclassOf<UFGResourceDescriptor>> Known = Unlocks->GetScannableResources();
+
+    // Collect ALL distinct managed modded descriptor classes first (active entries incl. pinned) —
+    // including already-scanner-known ores: knowledge-2 provisioning must cover those too (the
+    // user's save already knows esc_CateriumIngot_C from knowledge-1; only the map entry saves it).
     TSet<FString> SeenPaths;
-    int32 Unlocked = 0;
-    FString UnlockedNames;
+    TArray<UClass*> Managed;
     for (const FNodeShuffleEntry& E : Layout)
     {
-        // Active entries incl. pinned occupied originals — exactly the resources the shuffle deals.
         if (!E.bActive) { continue; }
         const FString& Path = E.AssignedResourceClassPath;
         if (Path.IsEmpty() || Path.StartsWith(TEXT("/Game/"))) { continue; } // vanilla: never touched
@@ -5381,7 +5479,50 @@ void ANodeShuffleSubsystem::UnlockModdedScannerKnowledge()
         SeenPaths.Add(Path, &bSeen);
         if (bSeen) { continue; }
         UClass* ResClass = LoadClassByPath(Path);
-        if (!ResClass || !ResClass->IsChildOf(UFGResourceDescriptor::StaticClass())) { continue; }
+        if (ResClass && ResClass->IsChildOf(UFGResourceDescriptor::StaticClass())) { Managed.Add(ResClass); }
+    }
+    if (Managed.Num() == 0) { return true; }
+
+    // knowledge-2 item 1: MinerInfo provisioning BEFORE any unlock — and BEFORE the unlock-subsystem
+    // gate below, so the crash-critical map entries land even on the EARLY PostLoadGame pass where
+    // the unlock subsystem may not exist yet. Defers the whole pass (return false -> caller retries)
+    // while KAPI's data-asset scan hasn't populated yet. Idempotent on retries.
+    TSet<UClass*> WithMinerInfo;
+    bool bFilterUnlocks = false;
+    if (!ProvideKAPIMinerInfo(Managed, WithMinerInfo, bFilterUnlocks))
+    {
+        return false;
+    }
+
+    const AFGGameState* GS = GetWorld() ? GetWorld()->GetGameState<AFGGameState>() : nullptr;
+    AFGUnlockSubsystem* Unlocks = GS ? GS->GetUnlockSubsystem() : nullptr;
+    if (!Unlocks)
+    {
+        // Normal on the early PostLoadGame pass (the unlock subsystem restores in the same load
+        // flow) — NOT latched: the RefreshTick pass completes the scanner-unlock half in ~70 s.
+        if (bDiag)
+        {
+            UE_LOG(LogNodeShuffle, Verbose, TEXT("knowledge: unlock subsystem not ready — provisioning done, unlocks retry next pass"));
+        }
+        return false;
+    }
+
+    const TArray<TSubclassOf<UFGResourceDescriptor>> Known = Unlocks->GetScannableResources();
+    int32 Unlocked = 0;
+    FString UnlockedNames;
+    for (UClass* ResClass : Managed)
+    {
+        if (bFilterUnlocks && !WithMinerInfo.Contains(ResClass))
+        {
+            // No KAPI MinerInfo could be provided for this ore -> unlocking it would arm the KLib
+            // BeginPlay assert on first placement. Withheld (retries next load).
+            if (bDiag)
+            {
+                UE_LOG(LogNodeShuffle, Verbose, TEXT("knowledge: %s withheld — no KAPI MinerInfo available/providable"),
+                    *ResClass->GetName());
+            }
+            continue;
+        }
         if (Known.Contains(ResClass))
         {
             if (bDiag)
@@ -5413,6 +5554,189 @@ void ANodeShuffleSubsystem::UnlockModdedScannerKnowledge()
         UE_LOG(LogNodeShuffle, Display, TEXT("knowledge: scanner-unlocked %d modded resource(s): %s"),
             Unlocked, *UnlockedNames);
     }
+    return true;
+}
+
+bool ANodeShuffleSubsystem::ProvideKAPIMinerInfo(const TArray<UClass*>& ManagedModded,
+                                                 TSet<UClass*>& OutWithMinerInfo, bool& bOutFilterUnlocks)
+{
+    // knowledge-2 item 1: runtime MinerInfo provisioning, PURE REFLECTION — the main module keeps
+    // ZERO KAPI includes/links/stubs. Ground truth (KMods public source, verified 2026-07-21):
+    //   - UKAPIDataAssetSubsystem is a UGameInstanceSubsystem; Initialize() runs
+    //     StartScanForDataAssets once per game instance (deferred to AssetRegistry OnFilesLoaded),
+    //     so by our first pass (~70 s into a world) the scan has run — an EMPTY map means either
+    //     "not yet" (early) or "no description assets installed at all"; we defer a bounded number
+    //     of passes then treat it as terminal.
+    //   - ScanForMinerAssets keys mMinerMapping by each description's mResourceClass and also adds
+    //     that class to mAllowedScannableResources — we mirror BOTH for provided ores.
+    //   - AKLMMBuildableMiner::BeginPlay -> Miner_GetForKey (plain Contains+Find) -> fgcheckf.
+    // The clone: DuplicateObject of a TEMPLATE description (prefer the Desc_Stone_C entry, else
+    // Desc_OreIron_C, else the first solid-resource entry), then rewire mResourceClass and EVERY
+    // FKAPIModuleItems.mProductionItem in mModuleInformation to the ore (the resource descriptor IS
+    // the item class: UFGResourceDescriptor : UFGItemDescriptor). mTrashItem/tier/UI fields stay
+    // template (there is no per-ore name field on the description; the screenshot/rarity text are
+    // cosmetic flavor). Outer = the KAPI subsystem (its UPROPERTY map strong-refs the clone and its
+    // lifetime matches the game instance) + AddToRoot as a belt against a mid-session
+    // StartScanForDataAssets re-run emptying the map (our entries would drop until next load; the
+    // rooted clone just leaks one small object per rescan, bounded).
+    bOutFilterUnlocks = false;
+    UClass* SubsysClass = FindObject<UClass>(nullptr, TEXT("/Script/KAPI.KAPIDataAssetSubsystem"));
+    if (!SubsysClass)
+    {
+        return true; // KAPI absent: no Modular Miner exists to assert — no filtering, unlock freely
+    }
+    bOutFilterUnlocks = true; // KAPI present: from here on, knowledge must imply MinerInfo
+
+    const bool bDiag = FNodeShuffleModule::AreDiagnosticsEnabled();
+    UGameInstance* GI = GetWorld() ? GetWorld()->GetGameInstance() : nullptr;
+    UGameInstanceSubsystem* Subsys = GI ? GI->GetSubsystemBase(SubsysClass) : nullptr;
+    FMapProperty* MinerMapProp = Subsys ? FindFProperty<FMapProperty>(SubsysClass, TEXT("mMinerMapping")) : nullptr;
+    FSetProperty* AllowedSetProp = Subsys ? FindFProperty<FSetProperty>(SubsysClass, TEXT("mAllowedScannableResources")) : nullptr;
+    FObjectPropertyBase* MapKeyProp = MinerMapProp ? CastField<FObjectPropertyBase>(MinerMapProp->KeyProp) : nullptr;
+    FObjectPropertyBase* MapValProp = MinerMapProp ? CastField<FObjectPropertyBase>(MinerMapProp->ValueProp) : nullptr;
+    FObjectPropertyBase* SetElemProp = AllowedSetProp ? CastField<FObjectPropertyBase>(AllowedSetProp->ElementProp) : nullptr;
+    if (!Subsys || !MapKeyProp || !MapValProp || !SetElemProp)
+    {
+        // KAPI is installed but its reflection surface moved (version drift) or the subsystem is
+        // unreachable — provisioning is impossible, so item 2 withholds ALL modded unlocks
+        // (crash-proof beats feature-complete). Terminal: no retry spin.
+        UE_LOG(LogNodeShuffle, Warning,
+            TEXT("minerinfo: KAPI present but mMinerMapping/mAllowedScannableResources not reachable via reflection — withholding modded scanner unlocks this session"));
+        OutWithMinerInfo.Reset();
+        return true;
+    }
+
+    FScriptMapHelper MapHelper(MinerMapProp, MinerMapProp->ContainerPtrToValuePtr<void>(Subsys));
+    if (MapHelper.Num() == 0)
+    {
+        // Scan not run yet (or no description assets exist at all). Defer a bounded number of
+        // passes, then terminal-withhold: unlocking without MinerInfo would arm the KLib assert.
+        if (++KnowledgeDeferPasses <= KnowledgeDeferMaxPasses)
+        {
+            if (bDiag)
+            {
+                UE_LOG(LogNodeShuffle, Verbose, TEXT("minerinfo: KAPI mMinerMapping empty — deferring knowledge pass (%d/%d)"),
+                    KnowledgeDeferPasses, KnowledgeDeferMaxPasses);
+            }
+            return false;
+        }
+        UE_LOG(LogNodeShuffle, Warning,
+            TEXT("minerinfo: KAPI mMinerMapping stayed empty after %d passes (no miner description assets?) — withholding modded scanner unlocks this session"),
+            KnowledgeDeferMaxPasses);
+        OutWithMinerInfo.Reset();
+        return true;
+    }
+
+    // ---- template pick: Desc_Stone_C > Desc_OreIron_C > first SOLID-resource entry. ----
+    UObject* Template = nullptr;
+    FString TemplateKey;
+    UObject* IronPick = nullptr;
+    UObject* SolidPick = nullptr;
+    FString IronKey, SolidKey;
+    for (int32 i = 0; i < MapHelper.GetMaxIndex(); ++i)
+    {
+        if (!MapHelper.IsValidIndex(i)) { continue; }
+        UClass* Key = Cast<UClass>(MapKeyProp->GetObjectPropertyValue(MapHelper.GetKeyPtr(i)));
+        UObject* Val = MapValProp->GetObjectPropertyValue(MapHelper.GetValuePtr(i));
+        if (!Key || !IsValid(Val)) { continue; }
+        const FString KeyName = Key->GetName();
+        if (KeyName == TEXT("Desc_Stone_C")) { Template = Val; TemplateKey = KeyName; break; }
+        if (!IronPick && KeyName == TEXT("Desc_OreIron_C")) { IronPick = Val; IronKey = KeyName; }
+        if (!SolidPick && Key->IsChildOf(UFGResourceDescriptor::StaticClass())
+            && UFGItemDescriptor::GetForm(TSubclassOf<UFGItemDescriptor>(Key)) == EResourceForm::RF_SOLID)
+        {
+            SolidPick = Val;
+            SolidKey = KeyName;
+        }
+    }
+    if (!Template) { Template = IronPick; TemplateKey = IronKey; }
+    if (!Template) { Template = SolidPick; TemplateKey = SolidKey; }
+    if (!Template)
+    {
+        UE_LOG(LogNodeShuffle, Warning,
+            TEXT("minerinfo: no usable template entry in KAPI mMinerMapping (%d entries, none solid/valid) — withholding modded scanner unlocks this session"),
+            MapHelper.Num());
+        OutWithMinerInfo.Reset();
+        return true;
+    }
+
+    // ---- clone-wiring properties, resolved ONCE on the template's class; any miss = withhold all
+    // (a description with a wrong/unwired production item is worse than none). ----
+    UClass* DescClass = Template->GetClass();
+    FObjectPropertyBase* ResClassProp = CastField<FObjectPropertyBase>(DescClass->FindPropertyByName(TEXT("mResourceClass")));
+    FMapProperty* ModulesProp = CastField<FMapProperty>(DescClass->FindPropertyByName(TEXT("mModuleInformation")));
+    FStructProperty* ModulesValStruct = ModulesProp ? CastField<FStructProperty>(ModulesProp->ValueProp) : nullptr;
+    FObjectPropertyBase* ProdItemProp = ModulesValStruct
+        ? CastField<FObjectPropertyBase>(ModulesValStruct->Struct->FindPropertyByName(TEXT("mProductionItem"))) : nullptr;
+    if (!ResClassProp || !ProdItemProp)
+    {
+        UE_LOG(LogNodeShuffle, Warning,
+            TEXT("minerinfo: KAPI description reflection surface changed (mResourceClass/mModuleInformation.mProductionItem) — withholding modded scanner unlocks this session"));
+        OutWithMinerInfo.Reset();
+        return true;
+    }
+
+    FScriptSetHelper SetHelper(AllowedSetProp, AllowedSetProp->ContainerPtrToValuePtr<void>(Subsys));
+    int32 Provided = 0;
+    FString ProvidedNames;
+    for (UClass* Ore : ManagedModded)
+    {
+        UClass* KeyVal = Ore; // object-property storage: a plain UClass* location (shipping layout)
+        if (MapHelper.FindValueFromHash(&KeyVal) != nullptr)
+        {
+            OutWithMinerInfo.Add(Ore); // real (or previously provided) description exists — safe
+            if (bDiag)
+            {
+                UE_LOG(LogNodeShuffle, Verbose, TEXT("minerinfo: %s already has a KAPI miner description"), *Ore->GetName());
+            }
+            continue;
+        }
+        if (!Ore->IsChildOf(UFGItemDescriptor::StaticClass()))
+        {
+            // Cannot wire a production item for this ore — leave it without MinerInfo (and therefore
+            // without a scanner unlock) rather than produce a wrong item.
+            UE_LOG(LogNodeShuffle, Warning, TEXT("minerinfo: %s is not an item descriptor — skipped (stays scanner-locked)"),
+                *Ore->GetName());
+            continue;
+        }
+        UObject* Clone = DuplicateObject<UObject>(Template, Subsys, NAME_None);
+        if (!Clone)
+        {
+            UE_LOG(LogNodeShuffle, Warning, TEXT("minerinfo: DuplicateObject failed for %s — skipped"), *Ore->GetName());
+            continue;
+        }
+        Clone->AddToRoot();
+        ResClassProp->SetObjectPropertyValue(ResClassProp->ContainerPtrToValuePtr<void>(Clone), Ore);
+        if (ModulesProp) // rewire every module's production item to the ore (trash item stays template)
+        {
+            FScriptMapHelper ModHelper(ModulesProp, ModulesProp->ContainerPtrToValuePtr<void>(Clone));
+            for (int32 mi = 0; mi < ModHelper.GetMaxIndex(); ++mi)
+            {
+                if (!ModHelper.IsValidIndex(mi)) { continue; }
+                void* ModuleItemsPtr = ModHelper.GetValuePtr(mi);
+                ProdItemProp->SetObjectPropertyValue(ProdItemProp->ContainerPtrToValuePtr<void>(ModuleItemsPtr), Ore);
+            }
+        }
+        UObject* ValVal = Clone;
+        MapHelper.AddPair(&KeyVal, &ValVal);     // mirrors ScanForMinerAssets: mMinerMapping.Add(...)
+        SetHelper.AddElement(&KeyVal);           // ...and mAllowedScannableResources.Add(...)
+        OutWithMinerInfo.Add(Ore);
+        Provided++;
+        ProvidedNames += (ProvidedNames.IsEmpty() ? TEXT("") : TEXT(", "));
+        ProvidedNames += Ore->GetName();
+        if (bDiag)
+        {
+            UE_LOG(LogNodeShuffle, Verbose, TEXT("minerinfo: provided description for %s (clone of %s entry)"),
+                *Ore->GetName(), *TemplateKey);
+        }
+    }
+    if (Provided > 0)
+    {
+        // Ungated one-shot: the shipping-log evidence the second registry was satisfied.
+        UE_LOG(LogNodeShuffle, Display, TEXT("minerinfo: provided %d KAPI miner description(s) (template=%s): %s"),
+            Provided, *TemplateKey, *ProvidedNames);
+    }
+    return true;
 }
 
 // -------------------------------------------------------------- helpers ----
