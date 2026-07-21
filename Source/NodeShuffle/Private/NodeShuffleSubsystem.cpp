@@ -166,6 +166,10 @@ namespace
     {
         return (P == RP_Inpure || P == RP_Normal || P == RP_Pure) ? P : RP_Normal;
     }
+    // coexist-veto-1 FIX A: restored-node identity match radius, SHARED by AdoptRestoredSpawnedNodes
+    // (pass 2) and the BeginPlay veto pre-registration pass so the two can never drift apart.
+    // Restored transforms are exact; 3 m just disambiguates.
+    constexpr float AdoptMatchRadiusCm = 300.0f;
 }
 
 ANodeShuffleSubsystem::ANodeShuffleSubsystem()
@@ -180,6 +184,17 @@ void ANodeShuffleSubsystem::BeginPlay()
     {
         return;
     }
+    // coexist-veto-1: fresh world, fresh managed-node registry (it is module-static, so it outlives
+    // worlds; stale FObjectKeys from a previous world can never match a new actor, but clearing keeps
+    // it tight). Then arm the optional KBFL destroyer veto for THIS world. Timing matters: actor
+    // BeginPlay runs inside GameMode->StartPlay() (World.cpp:5931), which precedes the
+    // OnWorldBeginPlay.Broadcast() (World.cpp:5938) where KBFL's world CDO subsystem (re)builds each
+    // overwrite asset's requirement-instance list from mRequirements — so a class we prepend here is
+    // picked up naturally for this world's destroy passes. Authority-only, like all subsystem logic:
+    // the registry only fills on the authority side, so a client-side arm would veto nothing anyway.
+    FNodeShuffleModule::ResetManagedNodes();
+    PreRegisterRestoredNodesForVeto(); // FIX A: fill the registry BEFORE arming (first-load sweep gap)
+    FNodeShuffleModule::ArmDestroyerVetoIfEnabled(GetWorld());
     GetWorldTimerManager().SetTimer(TickTimerHandle, this, &ANodeShuffleSubsystem::RefreshTick,
         TickIntervalSeconds, true, TickIntervalSeconds);
 }
@@ -321,6 +336,12 @@ void ANodeShuffleSubsystem::RestoreOriginalsForReroll()
     // its scanner representation under the new roll (the new layout may keep this spot active). Harmless
     // now (a spot the new roll hides again is simply re-deregistered), but correct for re-roll cleanliness.
     ScannerDeregistered.Reset();
+    // coexist-1: the steady-hidden markers describe the OLD roll's hide state — drop them so the new
+    // roll's funnel re-processes every record from scratch (same lifecycle as ScannerDeregistered).
+    SteadyHiddenOriginals.Empty();
+    // dirtdress-1 (cold review): same lifecycle for the capture-chain diag dedupe — the re-rolled
+    // population re-runs capture from scratch, so it should re-emit its CAPTURE-CHAIN breadcrumbs.
+    CaptureChainLogged.Empty();
 
     int32 Unhidden = 0;
     for (const FNodeShuffleSuppressedOriginal& Rec : OriginalNodeRecord)
@@ -446,7 +467,12 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                 continue;
             }
             AFGResourceNode* const* Live = SpawnedNodes.Find(Old.EntryGuid);
-            if (Live && IsValid(*Live) && IsNodeOccupiedAnyway(*Live))
+            // coexist-veto-1 FIX 1 (narrowed, review #2): trust bPinned ONLY when there is no live actor
+            // to consult — a destroyed/tombstoned pinned entry is carried so a re-roll never orphans the
+            // player's miner; with a live actor, LIVE occupancy decides — bPinned is never cleared, so a
+            // pinned node whose miner was dismantled must free back into the pool as players expect.
+            const bool bLiveValid = Live && IsValid(*Live);
+            if ((Old.bPinned && !bLiveValid) || (bLiveValid && IsNodeOccupiedAnyway(*Live)))
             {
                 FNodeShuffleEntry Kept = Old;
                 Kept.bPinned = true;
@@ -1295,11 +1321,32 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
             if (KeptGuids.Contains(It->Key)) { continue; } // keep the occupied node alive
             // redesign-5: the visual rock is a subobject OF the node now, so destroying the node destroys
             // its rock — no separate rock actor to clean up.
+            // coexist-1 INVARIANT: this is NodeShuffle's ONLY self-destroy of a spawned node, and it
+            // removes the SpawnedNodes slot in the same synchronous block — the external-destroy
+            // detection in EnsureNewNodeSpawned relies on exactly that (a lingering invalid slot can
+            // only mean an OUTSIDE destroyer). Keep destroy + RemoveCurrent together.
+            // coexist-veto-1: unregister AFTER Destroy() — the OnActorDestroyed delegates fire inside
+            // Destroy(), so a KBFL destroyed-event listener still sees the node as MANAGED (vetoed)
+            // for our own intentional wipe; the FObjectKey stays computable (index/serial unchanged).
             if (IsValid(It->Value)) { It->Value->Destroy(); }
+            FNodeShuffleModule::UnregisterManagedNode(It->Value);
             It.RemoveCurrent();
         }
         MeshActorCache.Reset();
     }
+
+    // coexist-1: a fresh roll is a fresh start for the session-only backoff/steady state — new entries
+    // (new guids) get their attempts, and carried pinned entries get a clean slate too. All transient.
+    // LastDormantSummaryNum tracks the cleared set so the next pass doesn't emit a "0 dormant" line.
+    ExternalDestroyCounts.Empty();
+    DormantThisSession.Empty();
+    SteadyAliveNodes.Empty();
+    LastDormantSummaryNum = 0;
+    // dirtdress-1 (cold review): the capture retry budget is per-roll-population too — a new roll may
+    // admit resources/originals the old budget never saw, so terminal marks and counters start over.
+    CapturePendingThisPass.Reset();
+    CapturePendingPasses.Empty();
+    CaptureTerminalThisSession.Empty();
 
     UE_LOG(LogNodeShuffle, Display,
         TEXT("Rolled layout: seed %d, pool %d (vanilla %d, new %d), active %d, pinned %d"),
@@ -1541,6 +1588,15 @@ void ANodeShuffleSubsystem::ApplyLayout()
     int32 CacheAdded = 0;
     for (TActorIterator<AFGResourceNodeBase> It(GetWorld()); It; ++It)
     {
+        // Our own spawned (relocated) nodes are never cached as originals. dirtdress-1 (cold review)
+        // NOTE: this exclusion is one layer of the capture poison-guard, but the safety ultimately
+        // rests on OriginalNodeRecord being built SOLELY from !bIsNewNode entries at roll time (the
+        // Hide & Replace conversion in RollLayout; CaptureOriginalNodeRecord) — so SuppressOriginalNodes
+        // can only ever hand true originals to CaptureOriginalVisualIfNeeded. Any future refactor that
+        // widens SuppressOriginalNodes' caller population must re-verify our-node exclusion end to end.
+        // The transient first-pass cache gap (restored-not-yet-adopted spawned nodes, before
+        // AdoptRestoredSpawnedNodes runs) is unreachable today for exactly that reason: their paths
+        // are never in OriginalNodeRecord.
         if (NodeShuffleIsOurNode(*It)) { continue; } // our own spawned (relocated) nodes, not originals
         TWeakObjectPtr<AFGResourceNodeBase>& Slot = VanillaNodeCache.FindOrAdd(It->GetPathName());
         if (!Slot.IsValid()) { Slot = *It; CacheAdded++; }
@@ -1581,6 +1637,13 @@ void ANodeShuffleSubsystem::ApplyLayout()
     {
         if (Entry.bIsNewNode)
         {
+            // coexist-1 §1: a DORMANT entry (its actor was externally destroyed
+            // ExternalDestroyTombstoneAt times this session) does nothing at all until the next world
+            // load. Num()>0 keeps the no-destroyer common case at a single int compare.
+            if (DormantThisSession.Num() > 0 && DormantThisSession.Contains(Entry.EntryGuid))
+            {
+                continue;
+            }
             // redesign-3 BUG B (occupancy pin): if a player built a miner/extractor on this spawned
             // node, pin it so it is NEVER relocated again (settle/re-roll skip it). Persist the pin on
             // the node itself (bNodeShuffleOccupiedPinned) so it survives further reloads.
@@ -1656,6 +1719,27 @@ void ANodeShuffleSubsystem::ApplyLayout()
             TEXT("Deferral summary: %d entries deferred this pass (%d distinct water-locked so far this session)"),
             DeferredThisPass, WaterLockedThisSession.Num());
         LastDeferSummary = DeferredThisPass;
+    }
+
+    // coexist-1 §1: THE ungated coexistence summary — one Display line per pass, only when the dormant
+    // count changed (never repeated on a stable world; a bulk destroyer's mass-tombstone pass = 1 line).
+    if (DormantThisSession.Num() != LastDormantSummaryNum)
+    {
+        LastDormantSummaryNum = DormantThisSession.Num();
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("coexistence: %d shuffled nodes dormant this session (externally removed %d times each); they retry next load."),
+            LastDormantSummaryNum, ExternalDestroyTombstoneAt);
+    }
+
+    // coexist-1 §2: on a stable world the delta-driven pass should have touched nothing — say so
+    // (gated) instead of re-logging identical funnel/dress/cache lines every 5 s.
+    if (FNodeShuffleModule::AreDiagnosticsEnabled()
+        && !bChangedWorld && SuppressChangesLastPass == 0
+        && SpawnedRockVanilla + SpawnedRockQuartz + SpawnedRockLiquid == 0)
+    {
+        UE_LOG(LogNodeShuffle, Verbose,
+            TEXT("pass: 0 changes (steady: %d live spawned, %d hidden originals, %d dormant, %d deferred)"),
+            SteadyAliveNodes.Num(), SteadyHiddenOriginals.Num(), DormantThisSession.Num(), DeferredThisPass);
     }
 
     if (bChangedWorld)
@@ -1850,23 +1934,172 @@ const ANodeShuffleSubsystem::FNodeShuffleResolvedCapture* ANodeShuffleSubsystem:
     return &ResolvedCaptureCache.Add(ResourceClassName, MoveTemp(Resolved));
 }
 
-void ANodeShuffleSubsystem::CaptureOriginalVisualIfNeeded(AFGResourceNodeBase* Node)
+bool ANodeShuffleSubsystem::CaptureOriginalVisualIfNeeded(AFGResourceNodeBase* Node)
 {
     // playtest-fixes-1 (modded-descriptor visuals). Capture gates, all cheap, most-selective first:
-    // a real AFGResourceNode with a REAL resource descriptor (UFGResourceDescriptor — esc_ ITEM nodes
-    // stay quartz by design), NO authored table entry, not already captured, and a PAIRED mesh actor
-    // (MeshActorCache pairing — the node's own rock, never a neighbor's).
+    // a real AFGResourceNode with a REAL resource descriptor (UFGResourceDescriptor), NO authored
+    // table entry, not already captured. Returns true only when capture is still PENDING (eligible
+    // resource, nothing capturable on this node yet) so the caller keeps retrying next pass.
+    //
+    // dirtdress-1 (user report: 98 relocated FicsitFarming dirt nodes wearing the quartz
+    // placeholder). The old single source — a PAIRED AFGNodeMeshActor (engine mNodeActor/mMeshActor
+    // links) — is a lottery for KBFL-runtime-spawned originals: one session captured Dirt+Wet 200 ms
+    // after the roll, the previous session went 0-for-98 across all three dirt variants, and
+    // Fertilized never captured at all (log-verified 2026-07-21). Two fixes:
+    //   1. NEW SOURCES: after the paired mesh actor, trust a static-mesh component OWNED BY the
+    //      node actor itself, then one on an ATTACHED child actor — an original's own mesh IS its
+    //      look by definition (no rock-name patterns, no proximity guessing, never a neighbor's).
+    //   2. RETRY: report "eligible but empty-handed" to the caller, which then defers the
+    //      steady-hidden mark so the original re-attempts every pass instead of losing its single
+    //      per-session shot (the mesh-actor pairing can appear later in the session).
     AFGResourceNode* AsNode = Cast<AFGResourceNode>(Node);
-    if (!AsNode) { return; }
+    if (!AsNode) { return false; }
+    // Poisoning guard (belt-and-braces — the record/cache paths already exclude our nodes): NEVER
+    // capture from one of OUR spawned nodes; a quartz-dressed RockMesh captured as a resource's
+    // "real look" would permanently wedge that resource on quartz.
+    if (NodeShuffleIsOurNode(Node)) { return false; }
     UClass* ResClass = AsNode->GetResourceClass().Get();
-    if (!ResClass || !ResClass->IsChildOf(UFGResourceDescriptor::StaticClass())) { return; }
+    if (!ResClass || !ResClass->IsChildOf(UFGResourceDescriptor::StaticClass())) { return false; }
     const FString ShortName = ResClass->GetName();
-    if (FNodeShuffleNodeAssets::FindVisual(FName(*ShortName)) != nullptr) { return; } // authored covers it
-    if (FindCapturedVisual(ShortName) != nullptr) { return; }                          // already captured
+    if (FNodeShuffleNodeAssets::FindVisual(FName(*ShortName)) != nullptr) { return false; } // authored covers it
+    if (FindCapturedVisual(ShortName) != nullptr) { return false; }                          // already captured
+    // dirtdress-1 (cold review): this resource burned its CaptureGiveUpPasses retry budget this
+    // session with nothing capturable — terminal, not pending, so its originals steady-mark normally.
+    if (CaptureTerminalThisSession.Contains(ShortName)) { return false; }
+
+    const bool bDiagChain = FNodeShuffleModule::AreDiagnosticsEnabled()
+        && !CaptureChainLogged.Contains(ShortName); // decision chain once per resource per session
+    if (bDiagChain) { CaptureChainLogged.Add(ShortName); }
+
+    // ---- Source 1 (existing, unchanged for thorium/lead): the node's paired AFGNodeMeshActor. ----
+    UStaticMeshComponent* Smc = nullptr;
+    const TCHAR* Source = TEXT("paired-mesh-actor");
     AFGNodeMeshActor* MeshActor = FindMeshActorForNode(Node);
-    if (!MeshActor) { return; }
-    UStaticMeshComponent* Smc = MeshActor->FindComponentByClass<UStaticMeshComponent>();
-    if (!Smc || !Smc->GetStaticMesh()) { return; }
+    if (MeshActor)
+    {
+        UStaticMeshComponent* MaSmc = MeshActor->FindComponentByClass<UStaticMeshComponent>();
+        if (MaSmc && MaSmc->GetStaticMesh()) { Smc = MaSmc; }
+        else if (bDiagChain)
+        {
+            UE_LOG(LogNodeShuffle, Verbose, TEXT("CAPTURE-CHAIN %s: paired mesh actor '%s' rejected (%s)"),
+                *ShortName, *MeshActor->GetName(), MaSmc ? TEXT("no static mesh set") : TEXT("no mesh component"));
+        }
+    }
+    else if (bDiagChain)
+    {
+        UE_LOG(LogNodeShuffle, Verbose, TEXT("CAPTURE-CHAIN %s: node '%s' has NO paired mesh actor (engine links unset)"),
+            *ShortName, *Node->GetName());
+    }
+
+    // ---- Source 2/3 (dirtdress-1): the node's OWN mesh components, then attached child actors. ----
+    // SOLID resources only: gas keeps its native special node (lithium's Alkali look must stay the
+    // native visual, never a reconstructed copy) and liquids draw a decal (a rock capture is dead
+    // weight) — for those the paired-mesh-actor source above remains the only, ONE-SHOT capture
+    // path exactly as before dirtdress-1 (they never report pending, so they never retry).
+    const EResourceForm ResForm = UFGItemDescriptor::GetForm(TSubclassOf<UFGItemDescriptor>(ResClass));
+    bool bSawPlaceholderOnly = false; // saw candidates, but all identical to the quartz placeholder
+    if (!Smc && ResForm == EResourceForm::RF_SOLID)
+    {
+        UStaticMesh* PlaceholderMesh = GetQuartzPlaceholderMesh();
+        UStaticMeshComponent* Fallback = nullptr; // first valid but invisible candidate
+        bool bSawAnyCandidate = false, bSawNonPlaceholder = false;
+
+        // One flat candidate list: the node's own components first (most intrinsic), then components
+        // of actors attached to the node (the "spawn mesh actor, attach, never set links" pattern).
+        TArray<UStaticMeshComponent*, TInlineAllocator<16>> Candidates;
+        TInlineComponentArray<UStaticMeshComponent*> OwnMeshes(AsNode);
+        for (UStaticMeshComponent* MC : OwnMeshes) { Candidates.Add(MC); }
+        const int32 NumOwn = Candidates.Num();
+        TArray<AActor*> Attached;
+        AsNode->GetAttachedActors(Attached);
+        for (const AActor* Child : Attached)
+        {
+            if (!IsValid(Child) || NodeShuffleIsOurNode(Child)) { continue; }
+            TInlineComponentArray<UStaticMeshComponent*> ChildMeshes(Child);
+            for (UStaticMeshComponent* MC : ChildMeshes) { Candidates.Add(MC); }
+        }
+
+        for (int32 i = 0; i < Candidates.Num(); i++)
+        {
+            UStaticMeshComponent* MC = Candidates[i];
+            const TCHAR* CandSource = i < NumOwn ? TEXT("own") : TEXT("attached");
+            const TCHAR* Reject = nullptr;
+            if (!IsValid(MC)) { continue; }
+            else if (Cast<UInstancedStaticMeshComponent>(MC)) { Reject = TEXT("instanced (world-shared)"); }
+            else if (MC->GetFName() == FName(TEXT("NodeShuffleRockMesh_Rt"))
+                     || MC->GetFName() == FName(TEXT("RockMesh"))) { Reject = TEXT("our own rock subobject"); }
+            else if (MC->GetStaticMesh() == nullptr) { Reject = TEXT("no static mesh set"); }
+            else if (PlaceholderMesh && MC->GetStaticMesh() == PlaceholderMesh)
+            {
+                // Identical to the quartz placeholder: capturing it changes nothing visually and
+                // would flip ResourceHasAuthoredLook for esc_/AllMinable nodes whose native mesh IS
+                // the quartz look-alike — their dirty-quartz identity is by design. Terminal, not
+                // pending (nothing better exists on this node).
+                Reject = TEXT("identical to quartz placeholder (kept by design)");
+            }
+            if (bDiagChain)
+            {
+                UE_LOG(LogNodeShuffle, Verbose, TEXT("CAPTURE-CHAIN %s: candidate [%s] '%s' mesh='%s' visible=%d -> %s"),
+                    *ShortName, CandSource, *MC->GetName(),
+                    MC->GetStaticMesh() ? *MC->GetStaticMesh()->GetName() : TEXT("<none>"),
+                    MC->IsVisible() ? 1 : 0, Reject ? Reject : TEXT("ACCEPT"));
+            }
+            if (Reject)
+            {
+                bSawAnyCandidate = bSawAnyCandidate || MC->GetStaticMesh() != nullptr;
+                if (MC->GetStaticMesh() != nullptr && MC->GetStaticMesh() != PlaceholderMesh) { bSawNonPlaceholder = true; }
+                continue;
+            }
+            bSawAnyCandidate = true;
+            bSawNonPlaceholder = true;
+            // Prefer a VISIBLE component (the rendered look); remember the first hidden one as a
+            // fallback (a just-hidden original's components stay data-valid — hiding never nulls
+            // the mesh — but a visible one is the stronger signal when both exist).
+            if (MC->IsVisible()) { Smc = MC; Source = CandSource; break; }
+            if (!Fallback) { Fallback = MC; Source = CandSource; }
+        }
+        if (!Smc && Fallback) { Smc = Fallback; }
+        bSawPlaceholderOnly = bSawAnyCandidate && !bSawNonPlaceholder;
+    }
+
+    if (!Smc)
+    {
+        // Eligible but empty-handed. Non-solid resources and placeholder-identical-only nodes are
+        // TERMINAL (not pending — steady proceeds, keeping lithium/esc_ retry cost exactly as
+        // before); any other solid stays PENDING so the caller retries next pass (KBFL pairing or
+        // late-set meshes can appear at any time during the session).
+        if (bDiagChain)
+        {
+            // Name-the-culprit probe: is there an UNPAIRED mesh actor sitting right on this node
+            // (engine links unset, so FindMeshActorForNode can't see it)? Diagnostic ONLY — we never
+            // capture by proximity (neighbor capture mispairs; that rule stands). If dirt-likes
+            // still fall through, this line names the follow-up fix in one diagnostics session.
+            const FVector NodeLoc = Node->GetActorLocation();
+            const AFGNodeMeshActor* NearMa = nullptr;
+            double NearDistSq = FMath::Square(1000.0); // 10 m (FVector::DistSquared returns double)
+            for (TActorIterator<AFGNodeMeshActor> It(GetWorld()); It; ++It)
+            {
+                const double DistSq = FVector::DistSquared(It->GetActorLocation(), NodeLoc);
+                if (DistSq < NearDistSq) { NearDistSq = DistSq; NearMa = *It; }
+            }
+            const UStaticMeshComponent* NearSmc = NearMa ? NearMa->FindComponentByClass<UStaticMeshComponent>() : nullptr;
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("CAPTURE-CHAIN %s: no capturable source on '%s' -> %s. Nearest mesh actor within 10m: %s"),
+                *ShortName, *Node->GetName(),
+                ResForm != EResourceForm::RF_SOLID ? TEXT("terminal (non-solid: mesh-actor source only)")
+                    : bSawPlaceholderOnly ? TEXT("terminal (placeholder-identical only)")
+                    : TEXT("PENDING (retry next pass)"),
+                NearMa ? *FString::Printf(TEXT("'%s' mesh='%s' dist=%.1fm (UNPAIRED — engine links unset)"),
+                    *NearMa->GetName(),
+                    NearSmc && NearSmc->GetStaticMesh() ? *NearSmc->GetStaticMesh()->GetName() : TEXT("<none>"),
+                    FMath::Sqrt(NearDistSq) / 100.0f) : TEXT("none"));
+        }
+        const bool bPending = ResForm == EResourceForm::RF_SOLID && !bSawPlaceholderOnly;
+        // dirtdress-1 (cold review): feed the per-pass retry-budget scratch — SuppressOriginalNodes
+        // turns it into one consecutive-attempt count per RESOURCE at the end of the pass.
+        if (bPending) { CapturePendingThisPass.Add(ShortName); }
+        return bPending;
+    }
 
     FNodeShuffleCapturedVisual Cap;
     Cap.ResourceClassName = ShortName;
@@ -1881,14 +2114,21 @@ void ANodeShuffleSubsystem::CaptureOriginalVisualIfNeeded(AFGResourceNodeBase* N
         }
         Cap.MaterialPaths.Add(Mat ? Mat->GetPathName() : FString());
     }
-    Cap.MeshScale = Smc->GetComponentScale();
+    Cap.MeshScale = Smc->GetComponentScale(); // WORLD scale — what the mesh visually renders at
     CapturedVisuals.Add(Cap);
     ResolvedCaptureCache.Remove(ShortName); // drop any stale (pre-capture) resolution
+    // Ungated by design: one line per resource per SAVE (the capture persists), the evidence that a
+    // new resource's look was learned — e.g. dirt on first encounter of a dirt original.
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("CAPTURE: %s visual from its own paired mesh actor — mesh '%s', %d mat(s), scale=(%.2f,%.2f,%.2f) (persisted)"),
-        *ShortName, *Cap.MeshPath, Cap.MaterialPaths.Num(),
+        TEXT("CAPTURE: stored visual for %s from '%s' (source=%s) — mesh '%s', %d mat(s), scale=(%.2f,%.2f,%.2f) (persisted)"),
+        *ShortName, *Node->GetName(), Source, *Cap.MeshPath, Cap.MaterialPaths.Num(),
         Cap.MeshScale.X, Cap.MeshScale.Y, Cap.MeshScale.Z);
+    // dirtdress-1 (cold review): success wipes the retry budget — including a pending report an
+    // earlier original of this resource filed THIS pass (a later original delivered the mesh).
+    CapturePendingPasses.Remove(ShortName);
+    CapturePendingThisPass.Remove(ShortName);
     RedressSpawnedOfResource(ShortName);
+    return false;
 }
 
 void ANodeShuffleSubsystem::RedressSpawnedOfResource(const FString& ResourceClassName)
@@ -2067,11 +2307,16 @@ void ANodeShuffleSubsystem::SpawnVisualRockForNode(AFGResourceNode* Node, UClass
     }
 
     if (bQuartz) { SpawnedRockQuartz++; } else { SpawnedRockVanilla++; }
-    UE_LOG(LogNodeShuffle, Verbose,
-        TEXT("dressed %s rock (node subobject) for %s: mesh '%s' scale=(%.2f,%.2f,%.2f) relZ=%.0f %d mat(s)"),
-        bQuartz ? TEXT("QUARTZ-placeholder") : bCaptured ? TEXT("CAPTURED") : TEXT("vanilla"),
-        *ResourceClass->GetName(), *Mesh->GetName(),
-        WantScale.X, WantScale.Y, WantScale.Z, RelOffset.Z, MatPtrs.Num());
+    // coexist-1 §3: per-rock detail is diagnostics-only; the ungated evidence is the per-pass
+    // "Spawned-node visuals" summary in ApplyLayout (change-driven).
+    if (FNodeShuffleModule::AreDiagnosticsEnabled())
+    {
+        UE_LOG(LogNodeShuffle, Verbose,
+            TEXT("dressed %s rock (node subobject) for %s: mesh '%s' scale=(%.2f,%.2f,%.2f) relZ=%.0f %d mat(s)"),
+            bQuartz ? TEXT("QUARTZ-placeholder") : bCaptured ? TEXT("CAPTURED") : TEXT("vanilla"),
+            *ResourceClass->GetName(), *Mesh->GetName(),
+            WantScale.X, WantScale.Y, WantScale.Z, RelOffset.Z, MatPtrs.Num());
+    }
 }
 
 void ANodeShuffleSubsystem::AppendStarterNodes(TArray<FNodeShuffleEntry>& NewLayout, FRandomStream& Rng,
@@ -2187,6 +2432,76 @@ void ANodeShuffleSubsystem::AppendStarterNodes(TArray<FNodeShuffleEntry>& NewLay
         *PlayerStartLocation.ToCompactString(), RadiusCm / 100.f, Reused, Added);
 }
 
+void ANodeShuffleSubsystem::PreRegisterRestoredNodesForVeto()
+{
+    // coexist-veto-1 FIX A (first-load registry gap). Timing facts this pass exists for: on a loaded
+    // save our restored spawned-node actors ALREADY exist at BeginPlay (SaveGame data — Layout
+    // included — deserializes during world load, before BeginPlay; the same invariant
+    // FinalizeAdoptedNode relies on for mResourceClassOverride), and an armed KBFL destroyer runs its
+    // initial existing-actors sweep synchronously at OnWorldBeginPlay — the SAME frame — while the
+    // first RefreshTick (which runs AdoptRestoredSpawnedNodes, the normal registration point) is
+    // ~5 s away. Without this pre-pass the veto registry is empty exactly when that sweep queries
+    // it, and every restored node (miner-occupied ones included) eats one destroy/respawn round per
+    // load. REGISTRY-ONLY by design: no SpawnedNodes writes, no adopt logic, no entry state changes —
+    // AdoptRestoredSpawnedNodes formalizes adoption later exactly as today (RegisterManagedNode is a
+    // set-add, so double registration is a no-op).
+    // Identity = the SAME predicate family as the adopt pass: legacy nodes by SaveGame guid; real-
+    // class nodes = runtime (!IsNetStartupActor) + within AdoptMatchRadiusCm of a bIsNewNode entry +
+    // resource agreement when both sides are known. Over-registration of a coincidentally-located
+    // foreign runtime node is acceptable: worst case we shield one extra node for one session —
+    // vanilla originals at their own original locations are level actors (IsNetStartupActor) and can
+    // never match. New game: Layout is empty -> the whole pass is a no-op.
+    int32 PreRegistered = 0;
+    if (Layout.Num() > 0)
+    {
+        TSet<FGuid> NewNodeGuids;                       // all spawned-entry guids (legacy match)
+        TArray<const FNodeShuffleEntry*> ActiveEntries; // active spawned entries (location match)
+        for (const FNodeShuffleEntry& E : Layout)
+        {
+            if (!E.bIsNewNode) { continue; }
+            NewNodeGuids.Add(E.EntryGuid);
+            if (E.bActive) { ActiveEntries.Add(&E); }
+        }
+        const float MatchSq = FMath::Square(AdoptMatchRadiusCm);
+        for (TActorIterator<AFGResourceNode> It(GetWorld()); It; ++It)
+        {
+            AFGResourceNode* Node = *It;
+            if (!IsValid(Node)) { continue; }
+            if (const ANodeShuffleResourceNode* Legacy = Cast<ANodeShuffleResourceNode>(Node))
+            {
+                if (Legacy->EntryGuid.IsValid() && NewNodeGuids.Contains(Legacy->EntryGuid))
+                {
+                    FNodeShuffleModule::RegisterManagedNode(Node);
+                    PreRegistered++;
+                }
+                continue;
+            }
+            if (Node->IsNetStartupActor()) { continue; } // level-placed original — never ours
+            const FVector NodeLoc = Node->GetActorLocation();
+            const FString NodeRes =
+                Node->GetResourceClass() ? Node->GetResourceClass()->GetPathName() : FString();
+            for (const FNodeShuffleEntry* E : ActiveEntries)
+            {
+                if (FVector::DistSquared(NodeLoc, E->Location) >= MatchSq) { continue; }
+                if (!NodeRes.IsEmpty() && !E->AssignedResourceClassPath.IsEmpty()
+                    && NodeRes != E->AssignedResourceClassPath) { continue; }
+                FNodeShuffleModule::RegisterManagedNode(Node);
+                PreRegistered++;
+                break;
+            }
+        }
+    }
+    if (PreRegistered > 0)
+    {
+        UE_LOG(LogNodeShuffle, Display, TEXT("veto: pre-registered %d restored nodes before arm"), PreRegistered);
+    }
+    else
+    {
+        UE_LOG(LogNodeShuffle, Verbose,
+            TEXT("veto: pre-registered 0 restored nodes before arm (new game or nothing restored yet)"));
+    }
+}
+
 void ANodeShuffleSubsystem::AdoptRestoredSpawnedNodes()
 {
     // real-class redesign: relocated nodes are now spawned AS THEIR ORIGINAL class, so identity no longer
@@ -2197,6 +2512,9 @@ void ANodeShuffleSubsystem::AdoptRestoredSpawnedNodes()
     //   2. REAL-class nodes: no on-actor identity — match restored RUNTIME nodes (!IsNetStartupActor, which
     //      excludes level-placed originals) to active new-node entries by LOCATION (+ resource as a guard).
     // Runs once per session.
+    // coexist-veto-1 FIX 4b: this pass is safe against tombstone interaction ONLY because it runs exactly
+    // once at first load (gated by bAdoptedRestoredNodes) — before any external destroy can have been
+    // counted, so it can never re-adopt (and thereby resurrect) an entry the backoff later tombstones.
 
     int32 Adopted = 0, LegacyByGuid = 0, RealByLocation = 0, PinnedOnLoad = 0, RuntimeNodesSeen = 0;
     const int32 ExpectedSpawned = static_cast<int32>(Algo::CountIf(Layout,
@@ -2224,14 +2542,15 @@ void ANodeShuffleSubsystem::AdoptRestoredSpawnedNodes()
         if (!Existing || !IsValid(*Existing))
         {
             SpawnedNodes.Add(Node->EntryGuid, Node);
+            FNodeShuffleModule::RegisterManagedNode(Node); // coexist-veto-1: adopted = managed (veto registry)
             Adopted++; LegacyByGuid++;
         }
         if (FinalizeAdoptedNode(Node, *Idx)) { PinnedOnLoad++; }
     }
 
-    // PASS 2: real-class restored nodes — match by location to an active new-node entry not already adopted.
-    constexpr float AdoptMatchRadius = 300.0f; // 3 m: restored transforms are exact; this just disambiguates
-    const float MatchSq = FMath::Square(AdoptMatchRadius);
+    // PASS 2: real-class restored nodes — match by location to an active new-node entry not already
+    // adopted. (Radius = AdoptMatchRadiusCm, shared with the FIX A veto pre-registration pass.)
+    const float MatchSq = FMath::Square(AdoptMatchRadiusCm);
     for (TActorIterator<AFGResourceNode> It(GetWorld()); It; ++It)
     {
         AFGResourceNode* Node = *It;
@@ -2261,6 +2580,7 @@ void ANodeShuffleSubsystem::AdoptRestoredSpawnedNodes()
         if (BestIdx != INDEX_NONE)
         {
             SpawnedNodes.Add(Layout[BestIdx].EntryGuid, Node);
+            FNodeShuffleModule::RegisterManagedNode(Node); // coexist-veto-1: adopted = managed (veto registry)
             Adopted++; RealByLocation++;
             if (FinalizeAdoptedNode(Node, BestIdx)) { PinnedOnLoad++; }
         }
@@ -2392,8 +2712,11 @@ void ANodeShuffleSubsystem::HideNativeNodeMesh(AFGResourceNode* Node, UStaticMes
         if (MC->IsVisible())
         {
             MC->SetVisibility(false, true);
-            UE_LOG(LogNodeShuffle, Verbose, TEXT("visfix: hid native mesh '%s' on %s (assigned resource has an authored look)"),
-                *MC->GetName(), *Node->GetName());
+            if (FNodeShuffleModule::AreDiagnosticsEnabled())
+            {
+                UE_LOG(LogNodeShuffle, Verbose, TEXT("visfix: hid native mesh '%s' on %s (assigned resource has an authored look)"),
+                    *MC->GetName(), *Node->GetName());
+            }
         }
     }
 }
@@ -2801,9 +3124,103 @@ void ANodeShuffleSubsystem::DeregisterNodeFromManager(AFGResourceNodeBase* Node)
 
 void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool& bOutChangedWorld)
 {
+    // coexist-1 §1: dormant entries sleep until the next world load (belt to the ApplyLayout skip —
+    // this is the only spawn path, so the guard here makes the invariant local too).
+    if (DormantThisSession.Num() > 0 && DormantThisSession.Contains(Entry.EntryGuid))
+    {
+        return;
+    }
+
     AFGResourceNode* const* Existing = SpawnedNodes.Find(Entry.EntryGuid);
+
+    // coexist-1 §1 (EXTERNAL-DESTROY BACKOFF): the slot holds a dead actor. NodeShuffle's only
+    // self-destroy (the re-roll wipe in RollLayout) removes the slot in the same synchronous block, so
+    // a lingering invalid slot is proof some OTHER mod destroyed our node (e.g. a KBFL actor-listener
+    // removing FGResourceNodeBase actors). Count it; re-materialize below until the per-session cap,
+    // then go dormant instead of fighting a destroy/respawn war. Session-only — never saved; the next
+    // load retries once per node, so records survive and a relented destroyer sees the node stick.
+    if (Existing && !IsValid(*Existing))
+    {
+        // coexist-veto-1: drop the dead actor from the veto registry BEFORE the slot goes away (the
+        // UPROPERTY hard ref in SpawnedNodes is what keeps the destroyed object's memory addressable
+        // for the key computation).
+        FNodeShuffleModule::UnregisterManagedNode(*Existing);
+        SpawnedNodes.Remove(Entry.EntryGuid);
+        SteadyAliveNodes.Remove(Entry.EntryGuid);
+        Existing = nullptr; // Remove() invalidated the slot pointer
+        const int32 Count = ++ExternalDestroyCounts.FindOrAdd(Entry.EntryGuid);
+        if (Entry.bPinned)
+        {
+            // coexist-veto-1 FIX 3 (policy A1): PINNED entries — a player's miner/extractor stands on
+            // this node — are EXEMPT from tombstoning. The README promises an occupied node is never
+            // changed ("checked continuously"); a session-long dormant occupied node would break that
+            // promise and orphan the miner, so we keep respawning it every pass. The cost is a bounded
+            // destroy/respawn residual on the (few) pinned nodes when a destroyer mod is active — the
+            // lesser evil. Still counted in ExternalDestroyCounts for the log evidence. First destroy
+            // per entry is an ungated Display so the user can see their occupied node is contested;
+            // repeats are Verbose, diagnostics-gated.
+            if (Count == 1)
+            {
+                UE_LOG(LogNodeShuffle, Display,
+                    TEXT("coexistence: occupied node %s (%s) externally destroyed — keeping it respawned (pinned)"),
+                    *Entry.EntryGuid.ToString(), *Entry.AssignedResourceClassPath);
+            }
+            else if (FNodeShuffleModule::AreDiagnosticsEnabled())
+            {
+                UE_LOG(LogNodeShuffle, Verbose,
+                    TEXT("coexistence: occupied node %s (%s) externally destroyed again (#%d this session) — keeping it respawned (pinned)"),
+                    *Entry.EntryGuid.ToString(), *Entry.AssignedResourceClassPath, Count);
+            }
+            // fall through to the normal respawn below — a pinned entry NEVER goes dormant
+        }
+        else
+        {
+            if (FNodeShuffleModule::AreDiagnosticsEnabled())
+            {
+                UE_LOG(LogNodeShuffle, Verbose,
+                    TEXT("coexistence: spawned node %s (%s) at %s destroyed by another mod (#%d this session)"),
+                    *Entry.EntryGuid.ToString(), *Entry.AssignedResourceClassPath,
+                    *Entry.Location.ToCompactString(), Count);
+            }
+            if (Count >= ExternalDestroyTombstoneAt)
+            {
+                DormantThisSession.Add(Entry.EntryGuid);
+                // coexist-veto-1 FIX 2: the tombstone transition means this node is now PERMANENTLY
+                // gone for the session — a world change. Without this flag the early return below
+                // skips the pass-tail RefreshScannersAndRadarTowers() gate, and the handheld
+                // scanner's cached mNodeClusters keeps a cluster for the vanished node → phantom
+                // ping on empty ground (this mod's historical scanner-5/6/7 bug class).
+                bOutChangedWorld = true;
+                // Per-record detail is gated; the ONE ungated coexistence summary is emitted from
+                // ApplyLayout's tail, once per pass, only when the dormant count changed (a bulk
+                // destroyer tombstones many entries in the same pass — one line covers them all).
+                if (FNodeShuffleModule::AreDiagnosticsEnabled())
+                {
+                    UE_LOG(LogNodeShuffle, Verbose,
+                        TEXT("coexistence: entry %s (%s) tombstoned for this session (dormant; retries next load)"),
+                        *Entry.EntryGuid.ToString(), *Entry.AssignedResourceClassPath);
+                }
+                return;
+            }
+        }
+    }
+
     if (Existing && IsValid(*Existing))
     {
+        // coexist-1 §2 (IDEMPOTENT PASS): everything in this alive branch is an idempotent re-assert
+        // that only matters ONCE PER LIVE INSTANCE — reload/adopt/respawn produce a NEW instance and
+        // naturally fall through again (weak-ptr identity mismatch). While the SAME instance stays
+        // valid and un-hidden, skip the whole chain: no LoadClass, no component scans, no re-dress.
+        // The IsHidden re-check preserves the old every-pass un-hide guarantee with one flag read: if
+        // anything external hides the actor, the next pass re-runs the full re-assert chain.
+        if (const TWeakObjectPtr<AFGResourceNode>* Steady = SteadyAliveNodes.Find(Entry.EntryGuid))
+        {
+            if (Steady->Get() == *Existing && !(*Existing)->IsHidden())
+            {
+                return;
+            }
+        }
+
         // redesign-3b BLOCKER FIX: a restored/adopted node lost its (unserialized) "Resource" UseBox on
         // reload -> non-interactable. Recreate it (idempotent — no-op if already present). This is the
         // path adopted nodes flow through every pass, so it covers them generally, not just first sight.
@@ -2852,8 +3269,11 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
                     (*Existing)->SetActorRotation(RefitRot);
                     Entry.Rotation = RefitRot;
                     bRotRefit = true;
-                    UE_LOG(LogNodeShuffle, Verbose, TEXT("SLOPEFIT: refit rotation of %s at %s (actor tilt-clamped; rock re-dresses)"),
-                        *Entry.EntryGuid.ToString(), *Entry.Location.ToCompactString());
+                    if (FNodeShuffleModule::AreDiagnosticsEnabled())
+                    {
+                        UE_LOG(LogNodeShuffle, Verbose, TEXT("SLOPEFIT: refit rotation of %s at %s (actor tilt-clamped; rock re-dresses)"),
+                            *Entry.EntryGuid.ToString(), *Entry.Location.ToCompactString());
+                    }
                 }
             }
         }
@@ -2923,6 +3343,9 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
                 RenderDiagAdoptLogged++;
             }
         }
+        // coexist-1 §2: the full re-assert chain ran for THIS instance — steady until it dies, hides,
+        // or is replaced (weak-ptr identity check at the top of this branch).
+        SteadyAliveNodes.Add(Entry.EntryGuid, *Existing);
         return;
     }
 
@@ -2979,9 +3402,12 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
             if (!DeferLoggedThisSession.Contains(Entry.EntryGuid))
             {
                 DeferLoggedThisSession.Add(Entry.EntryGuid);
-                UE_LOG(LogNodeShuffle, Verbose,
-                    TEXT("Spawn-on-discovery: deferred %s node at %s (no terrain / out of range; further retries silent)"),
-                    *ResourceClass->GetName(), *Entry.Location.ToCompactString());
+                if (FNodeShuffleModule::AreDiagnosticsEnabled())
+                {
+                    UE_LOG(LogNodeShuffle, Verbose,
+                        TEXT("Spawn-on-discovery: deferred %s node at %s (no terrain / out of range; further retries silent)"),
+                        *ResourceClass->GetName(), *Entry.Location.ToCompactString());
+                }
             }
             return;
         }
@@ -3183,8 +3609,11 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
     Node->UpdateRadioactivity();
     // Register this relocated node's scanner/map representation at the NEW spot so it pings the scanner there.
     Node->UpdateNodeRepresentation();
-    UE_LOG(LogNodeShuffle, Verbose, TEXT("scanner: registered spawned node representation at %s (%s)"),
-        *Entry.Location.ToCompactString(), *ResourceClass->GetName());
+    if (FNodeShuffleModule::AreDiagnosticsEnabled())
+    {
+        UE_LOG(LogNodeShuffle, Verbose, TEXT("scanner: registered spawned node representation at %s (%s)"),
+            *Entry.Location.ToCompactString(), *ResourceClass->GetName());
+    }
 
     // Legacy fallback nodes (pure-C++ subclass) need their "Resource" UseBox re-asserted; real node classes
     // have a native box (EnsureNodeUseBox is a no-op for them).
@@ -3195,6 +3624,7 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
     RegisterNodeWithManager(Node);
 
     SpawnedNodes.Add(Entry.EntryGuid, Node);
+    FNodeShuffleModule::RegisterManagedNode(Node); // coexist-veto-1: spawned = managed (veto registry)
 
     // AFGResourceNode actors are LOGICAL and may be left actor-hidden (significance mgmt) — un-hide it.
     Node->SetActorHiddenInGame(false);
@@ -3221,7 +3651,10 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
         RebuildNodeNativeVisual(Node);
         if (Comp) { Comp->DressOilDecal(ResourceClass); }
         SpawnedRockLiquid++;
-        UE_LOG(LogNodeShuffle, Verbose, TEXT("spawned LIQUID node %s (oil decal)"), *ResourceClass->GetName());
+        if (FNodeShuffleModule::AreDiagnosticsEnabled())
+        {
+            UE_LOG(LogNodeShuffle, Verbose, TEXT("spawned LIQUID node %s (oil decal)"), *ResourceClass->GetName());
+        }
     }
     else if (bVanillaOrigin)
     {
@@ -3234,24 +3667,34 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
         // AllMinable's native quartz look-alike. Native visuals win only for resources we cannot
         // dress (lithium's Alkali node, uncaptured modded ores, esc_ item resources = dirty quartz).
         RebuildNodeNativeVisual(Node);
+        const bool bSpawnDiag = FNodeShuffleModule::AreDiagnosticsEnabled();
         if (ResourceHasAuthoredLook(ResourceClass))
         {
             HideNativeNodeMesh(Node, Comp ? Comp->RockMesh : nullptr);
             SpawnVisualRockForNode(Node, ResourceClass, Entry.EntryGuid);
-            UE_LOG(LogNodeShuffle, Verbose, TEXT("spawned MODDED-CLASS node %s as real class %s (authored/captured look; native mesh hidden)"),
-                *ResourceClass->GetName(), *SpawnClass->GetName());
+            if (bSpawnDiag)
+            {
+                UE_LOG(LogNodeShuffle, Verbose, TEXT("spawned MODDED-CLASS node %s as real class %s (authored/captured look; native mesh hidden)"),
+                    *ResourceClass->GetName(), *SpawnClass->GetName());
+            }
         }
         else if (NodeHasOwnVisual(Node, Comp ? Comp->RockMesh : nullptr))
         {
             if (Comp) { Comp->ForceVisible(); }
-            UE_LOG(LogNodeShuffle, Verbose, TEXT("spawned MODDED node %s as real class %s (native visual)"),
-                *ResourceClass->GetName(), *SpawnClass->GetName());
+            if (bSpawnDiag)
+            {
+                UE_LOG(LogNodeShuffle, Verbose, TEXT("spawned MODDED node %s as real class %s (native visual)"),
+                    *ResourceClass->GetName(), *SpawnClass->GetName());
+            }
         }
         else
         {
             SpawnVisualRockForNode(Node, ResourceClass, Entry.EntryGuid); // fallback rock (captured/quartz) -> visible
-            UE_LOG(LogNodeShuffle, Verbose, TEXT("spawned MODDED node %s as real class %s (fallback rock — no native visual)"),
-                *ResourceClass->GetName(), *SpawnClass->GetName());
+            if (bSpawnDiag)
+            {
+                UE_LOG(LogNodeShuffle, Verbose, TEXT("spawned MODDED node %s as real class %s (fallback rock — no native visual)"),
+                    *ResourceClass->GetName(), *SpawnClass->GetName());
+            }
         }
     }
 
@@ -3265,8 +3708,14 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
     // The node was already settled onto terrain BEFORE the spawn (Entry.bRayCasted
     // was set true above), so it is grounded from birth — no floating, no deferred
     // settle pass needed, and solid collision is safe.
-    UE_LOG(LogNodeShuffle, Verbose, TEXT("Spawn-on-discovery: materialized %s node at %s"),
-        *ResourceClass->GetName(), *Entry.Location.ToCompactString());
+    if (FNodeShuffleModule::AreDiagnosticsEnabled())
+    {
+        UE_LOG(LogNodeShuffle, Verbose, TEXT("Spawn-on-discovery: materialized %s node at %s"),
+            *ResourceClass->GetName(), *Entry.Location.ToCompactString());
+    }
+    // coexist-1 §2: a fresh spawn already ran the full dress/register/use-box chain — steady from birth
+    // (the ungated per-pass visuals summary in ApplyLayout still evidences the spawn).
+    SteadyAliveNodes.Add(Entry.EntryGuid, Node);
     bOutChangedWorld = true;
 }
 
@@ -3292,6 +3741,11 @@ void ANodeShuffleSubsystem::SettleNewNodesNearPlayers()
     for (FNodeShuffleEntry& Entry : Layout)
     {
         if (!Entry.bIsNewNode || !Entry.bActive || Entry.bRayCasted)
+        {
+            continue;
+        }
+        // coexist-1 §1: dormant entries do no work (no settles, no redeals, no defer counts).
+        if (DormantThisSession.Num() > 0 && DormantThisSession.Contains(Entry.EntryGuid))
         {
             continue;
         }
@@ -3381,10 +3835,14 @@ void ANodeShuffleSubsystem::CaptureOriginalNodeRecord()
 
 void ANodeShuffleSubsystem::SuppressOriginalNodes()
 {
+    SuppressChangesLastPass = 0; // coexist-1 §2: per-pass change tally (feeds "pass: 0 changes")
     if (OriginalNodeRecord.Num() == 0)
     {
         return;
     }
+    // coexist-1 §2: deregistrations THIS pass = delta of the running counter (the old summary keyed on
+    // the running TOTAL, so it re-fired "hid 0 ..." every pass forever once anything had deregistered).
+    const int32 DeregBefore = ScannerDeregisterCount;
 
     // The Players array is used ONLY by the stray-rock backstop below (rocks near a player) and the
     // no-player early-out — the main hide loop now acts on EVERY loaded original regardless of distance
@@ -3409,9 +3867,12 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
     // DIAGNOSTIC FUNNEL (issue: originals not hiding on reload). Counts WHY each near record does/doesn't
     // hide, and — crucially — for path-lookup MISSES, whether a live node exists AT the record's LOCATION
     // (proximity-resolvable). If MissedByPath is high AND ProxResolvable ≈ MissedByPath, the bug is path
-    // instability across save/reload (fix = match by location, not path). Gated behind EnableDiagnostics.
+    // instability across save/reload (fix = match by location, not path). coexist-1: the counters are now
+    // ALWAYS tallied (pure int increments — the once-per-load ungated funnel summary needs them); only
+    // the per-pass LOGGING stays gated behind EnableDiagnostics, and delta-only at that.
     const bool bDiagHide = FNodeShuffleModule::AreDiagnosticsEnabled();
     int32 DbgNear = 0, DbgFoundPath = 0, DbgAlreadyHidden = 0, DbgOcc = 0, DbgMissedPath = 0;
+    int32 DbgCapturePending = 0; // dirtdress-1: originals held out of steady, awaiting a capture source
 
     int32 NodesHidden = 0;
     // Real locations of the originals we processed near the player this pass (resolved by path). The stray-
@@ -3430,7 +3891,21 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
         // is an O(1)-ish cache hit, so resolving every record each pass is cheap. esc_ (Base-only) originals
         // resolve via the BASE finder too.
         AFGResourceNodeBase* Node = FindOriginalBaseByPath(Rec.VanillaNodePath);
-        if (!Node) { if (bDiagHide) { DbgMissedPath++; } continue; } // not streamed in (or genuinely gone)
+        if (!Node) { DbgMissedPath++; continue; } // not streamed in (or genuinely gone)
+        // coexist-1 §2 (IDEMPOTENT PASS): the SAME resolved instance was fully processed (captured,
+        // roof-classified, deregistered, hidden) on an earlier pass and is still hidden — nothing can
+        // have changed (a hidden, collision-less node cannot become occupied), so skip the funnel work.
+        // Its location still feeds the stray-rock backstop. An original that unstreams and re-streams
+        // is a NEW instance at the same path -> weak-ptr mismatch -> full funnel runs again (re-hide).
+        if (const TWeakObjectPtr<AFGResourceNodeBase>* Steady = SteadyHiddenOriginals.Find(Rec.VanillaNodePath))
+        {
+            if (Steady->Get() == Node && Node->IsHidden())
+            {
+                NearOriginalLocs.Add(Node->GetActorLocation());
+                DbgNear++; DbgFoundPath++; DbgAlreadyHidden++;
+                continue;
+            }
+        }
         // SCANNER FIX: hide EVERY loaded original, not just those within 300 m of a player. World partition
         // streams a region LARGER than the old 300 m hide gate, so a relocated original that was loaded but
         // >300 m away stayed visible AND registered with the resource scanner — the scanner pinged it, the
@@ -3440,12 +3915,16 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
         // runs once per node (ScannerDeregistered), and only loaded actors ever reach this point.
         const FVector NodeLoc = Node->GetActorLocation();
         NearOriginalLocs.Add(NodeLoc); // hidden-original locations for the stray-rock backstop below
-        if (bDiagHide) { DbgNear++; }
+        DbgNear++;
 
         // playtest-fixes-1 (modded-descriptor visuals): every resolved original — occupied ones too —
-        // may donate its paired-mesh-actor visual for resources our table doesn't cover (RP thorium,
-        // bamrenew lead). One-time per resource; all gates inside are cheap.
-        CaptureOriginalVisualIfNeeded(Node);
+        // may donate its visual (paired mesh actor, or dirtdress-1: its own/attached meshes) for
+        // resources our table doesn't cover (RP thorium, bamrenew lead, FF dirt). One-time per
+        // resource; all gates inside are cheap. Runs BEFORE the hide below by design, and a pending
+        // capture defers the steady mark (further down) so this original retries every pass until
+        // its resource captures — hiding never invalidates the mesh data, so retries stay correct.
+        const bool bCapturePending = CaptureOriginalVisualIfNeeded(Node);
+        if (bCapturePending) { DbgCapturePending++; }
 
         // cave-nodes-1: roof-classify each original once (persisted) — under-a-roof originals are the
         // proven-reachable seeds the cavern flood-fill grows from.
@@ -3454,10 +3933,10 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
         // Hide the original node actor whole (this removes its rock, INCLUDING an instanced one). Never
         // touch an occupied node (a built miner). Occupancy checked on the Base + the Node-only portable check.
         {
-            if (bDiagHide) { DbgFoundPath++; if (Node->IsHidden()) { DbgAlreadyHidden++; } }
+            DbgFoundPath++; if (Node->IsHidden()) { DbgAlreadyHidden++; }
             AFGResourceNode* AsNode = Cast<AFGResourceNode>(Node);
             const bool bOcc = Node->IsOccupied() || (AsNode && IsNodeOccupiedAnyway(AsNode));
-            if (bDiagHide && bOcc) { DbgOcc++; }
+            if (bOcc) { DbgOcc++; }
             if (!bOcc)
             {
                 bool bChanged = false;
@@ -3497,26 +3976,71 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
                         if (bHadEmitter)
                         {
                             RadEmittersRemoved++;
-                            UE_LOG(LogNodeShuffle, Verbose,
-                                TEXT("RADFIX: removed radiation emitter of hidden original %s at %s (running total %d)"),
-                                *Rec.VanillaNodePath, *NodeLoc.ToCompactString(), RadEmittersRemoved);
+                            if (bDiagHide)
+                            {
+                                UE_LOG(LogNodeShuffle, Verbose,
+                                    TEXT("RADFIX: removed radiation emitter of hidden original %s at %s (running total %d)"),
+                                    *Rec.VanillaNodePath, *NodeLoc.ToCompactString(), RadEmittersRemoved);
+                            }
                         }
                     }
                     ScannerDeregistered.Add(Rec.VanillaNodePath);
                     ScannerDeregisterCount++;
-                    UE_LOG(LogNodeShuffle, Verbose,
-                        TEXT("scanner: DEREGISTERED hidden original %s (scan + representation + manager mResourceNodes)"),
-                        *Rec.VanillaNodePath);
+                    if (bDiagHide)
+                    {
+                        UE_LOG(LogNodeShuffle, Verbose,
+                            TEXT("scanner: DEREGISTERED hidden original %s (scan + representation + manager mResourceNodes)"),
+                            *Rec.VanillaNodePath);
+                    }
                 }
                 if (bChanged) { NodesHidden++; }
+                // coexist-1 §2: fully processed AND hidden — steady for as long as this instance lives
+                // hidden (skip checked at the top of the loop). Occupied originals are NEVER marked
+                // steady: they stay live and must keep being re-tested (a removed miner frees them).
+                // dirtdress-1: a capture-PENDING original is not steady either — it re-runs the funnel
+                // (cheap: every step above is idempotent/set-gated) so its resource's capture retries
+                // each pass instead of losing its one shot per session. It goes steady the pass its
+                // resource captures (or proves terminal).
+                if (!bCapturePending) { SteadyHiddenOriginals.Add(Rec.VanillaNodePath, Node); }
             }
         }
     }
 
+    // dirtdress-1 (cold review): capture retry-budget bookkeeping. Each resource that reported
+    // PENDING anywhere this pass consumes one attempt-pass; at CaptureGiveUpPasses (~3 min of real
+    // attempts) it goes terminal for the session — its originals steady-mark from the next pass and
+    // the placeholder stays. Same count-then-tombstone idiom as ExternalDestroyCounts/Dormant.
+    for (const FString& Res : CapturePendingThisPass)
+    {
+        int32& Passes = CapturePendingPasses.FindOrAdd(Res);
+        if (++Passes >= CaptureGiveUpPasses)
+        {
+            CaptureTerminalThisSession.Add(Res);
+            CapturePendingPasses.Remove(Res);
+            // Ungated by design: once per resource per session, the shipping-log evidence that the
+            // capture ladder exhausted its sources (pair with CAPTURE-CHAIN under diagnostics).
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("CAPTURE: giving up on %s for this session after %d attempts (no capturable mesh found — placeholder stays)"),
+                *Res, CaptureGiveUpPasses);
+        }
+    }
+    CapturePendingThisPass.Reset();
+
     // BACKSTOP: hide any separate node-rock mesh sitting at a suppressed original's location with no
     // node actor behind it (a rare actor-independent rock). Never touch deposits, fracking, our own
     // spawned rocks, or instanced components (world-shared).
+    // coexist-1 §2: the sweep walks EVERY static-mesh component in the world, which is real per-pass
+    // cost on a stable world for a catch that near-always finds nothing. Run it whenever a node NEWLY
+    // hid this pass (its rock may linger), else on a 30 s cooldown (catches a stray rock that streams
+    // in long after its original was hidden — bounded latency instead of every 5 s).
+    constexpr float RockBackstopCooldownSeconds = 30.0f;
+    const float NowSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
+    const bool bRunBackstop = NodesHidden > 0
+        || (NowSeconds - LastRockBackstopSeconds >= RockBackstopCooldownSeconds);
     int32 RocksHidden = 0;
+    if (bRunBackstop)
+    {
+    LastRockBackstopSeconds = NowSeconds;
     for (TObjectIterator<UStaticMeshComponent> It; It; ++It)
     {
         UStaticMeshComponent* Smc = *It;
@@ -3554,21 +4078,46 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
             RocksHidden++;
         }
     }
+    } // if (bRunBackstop)
 
-    if (NodesHidden > 0 || RocksHidden > 0 || ScannerDeregisterCount > 0)
+    // coexist-1 §2: the summary is CHANGE-driven now. The old condition keyed on the RUNNING
+    // ScannerDeregisterCount total, so once anything had ever deregistered it re-logged
+    // "hid 0 ... (running totals)" every 5 s forever. Fire only when THIS pass changed something.
+    const int32 DeregThisPass = ScannerDeregisterCount - DeregBefore;
+    SuppressChangesLastPass = NodesHidden + RocksHidden + DeregThisPass;
+    if (SuppressChangesLastPass > 0)
     {
         UE_LOG(LogNodeShuffle, Verbose,
             TEXT("Hide originals: hid %d original nodes and %d stray original rocks; deregistered %d from scanner, removed %d radiation emitters (running totals) (Hide & Replace)"),
             NodesHidden, RocksHidden, ScannerDeregisterCount, RadEmittersRemoved);
+    }
+    // coexist-1 §3: ONE ungated funnel-totals line per LOAD (the first pass that processed records),
+    // so a shipping log still proves the hide pipeline ran without any per-pass repetition.
+    if (!bLoadFunnelLogged && (DbgNear > 0 || DbgMissedPath > 0))
+    {
+        bLoadFunnelLogged = true;
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("Hide-originals funnel (first pass this load): records=%d loaded=%d newlyHidden=%d alreadyHidden=%d occupied=%d notStreamed=%d capturePending=%d"),
+            OriginalNodeRecord.Num(), DbgNear, NodesHidden, DbgAlreadyHidden, DbgOcc, DbgMissedPath,
+            DbgCapturePending);
     }
     if (bDiagHide && (DbgNear > 0 || DbgMissedPath > 0))
     {
         // Hide funnel: of all records — how many resolved to a LOADED actor (scanner-1: every loaded original
         // hides, any distance), of those how many were already hidden / occupied (skipped), and how many were
         // path-missed (record whose node isn't streamed in this pass). (See docs/DIAGNOSTICS.md.)
-        UE_LOG(LogNodeShuffle, Display,
-            TEXT("HIDEDIAG funnel: recordsTotal=%d loaded=%d foundByPath=%d alreadyHidden=%d occupied=%d pathMissed=%d"),
-            OriginalNodeRecord.Num(), DbgNear, DbgFoundPath, DbgAlreadyHidden, DbgOcc, DbgMissedPath);
+        // coexist-1 §2: DELTA-ONLY — identical numbers are not re-logged every pass.
+        // dirtdress-1: capturePending = originals deferred from steady awaiting a capture source; a stuck
+        // non-zero value across passes names the resource-capture gap (pair with the CAPTURE-CHAIN lines).
+        const int32 Funnel[7] = { OriginalNodeRecord.Num(), DbgNear, DbgFoundPath, DbgAlreadyHidden, DbgOcc, DbgMissedPath, DbgCapturePending };
+        bool bFunnelChanged = false;
+        for (int32 i = 0; i < 7; i++) { if (Funnel[i] != LastHideFunnel[i]) { bFunnelChanged = true; LastHideFunnel[i] = Funnel[i]; } }
+        if (bFunnelChanged)
+        {
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("HIDEDIAG funnel: recordsTotal=%d loaded=%d foundByPath=%d alreadyHidden=%d occupied=%d pathMissed=%d capturePending=%d"),
+                Funnel[0], Funnel[1], Funnel[2], Funnel[3], Funnel[4], Funnel[5], Funnel[6]);
+        }
     }
 }
 
@@ -4592,6 +5141,9 @@ void ANodeShuffleSubsystem::LogHereCensus() const
         Flags += E.bRayCasted ? TEXT("settled|") : TEXT("unsettled|");
         Flags += bLive ? TEXT("LIVE") : TEXT("no-actor");
         if (WaterLockedThisSession.Contains(E.EntryGuid)) { Flags += TEXT("|WATER-LOCKED"); }
+        // coexist-veto-1 FIX 4a: a tombstoned (externally destroyed, dormant-this-session) entry
+        // would otherwise read as a plain "no-actor" — indistinguishable from not-yet-streamed.
+        if (DormantThisSession.Contains(E.EntryGuid)) { Flags += TEXT("|DORMANT"); }
         UE_LOG(LogNodeShuffle, Display,
             TEXT("HERE: entry %s dist=%.0fm dz=%+.0fm [%s] at %s"),
             *ShortName(E.AssignedResourceClassPath), FMath::Sqrt(D2) / 100.0f,
@@ -5021,9 +5573,12 @@ void ANodeShuffleSubsystem::RebuildMeshActorCache()
         }
     }
 
-    UE_LOG(LogNodeShuffle, Verbose,
-        TEXT("Mesh-actor cache: %d paired (%d via mesh-actor back-link, %d via node->mMeshActor forward link)"),
-        MeshActorCache.Num(), FromBackLink, FromForwardLink);
+    if (FNodeShuffleModule::AreDiagnosticsEnabled())
+    {
+        UE_LOG(LogNodeShuffle, Verbose,
+            TEXT("Mesh-actor cache: %d paired (%d via mesh-actor back-link, %d via node->mMeshActor forward link)"),
+            MeshActorCache.Num(), FromBackLink, FromForwardLink);
+    }
 }
 
 AFGNodeMeshActor* ANodeShuffleSubsystem::FindMeshActorForNode(AFGResourceNodeBase* Node) const
@@ -5226,7 +5781,9 @@ void ANodeShuffleSubsystem::OrphanRockCleanup()
         // Per-rock reason logging (FIX 2): for every rock-like mesh near a player,
         // state once exactly why it was hidden or left alone, so the next log
         // pinpoints any remaining ghost's blocking gate.
-        const bool bReport = !OrphanReasonLogged.Contains(Smc);
+        // coexist-1 §3: diagnostics-gated. With the gate off the once-set stays empty, so enabling
+        // diagnostics later still reports every rock once from that point on.
+        const bool bReport = FNodeShuffleModule::AreDiagnosticsEnabled() && !OrphanReasonLogged.Contains(Smc);
         const FString MeshName = Smc->GetStaticMesh()->GetName();
 
         if (!Smc->IsVisible())
@@ -5289,6 +5846,11 @@ void ANodeShuffleSubsystem::DiagnoseRocksNearPlayers()
     // layout entry's distance/state/pairing. Walk onto a ghost and the line
     // tells us exactly why it wasn't hidden (too far to pair? claimed? active?).
     // Each component is reported once per session.
+    // coexist-1 §2+§3: log-only world sweep — skip it entirely unless diagnostics are on.
+    if (!FNodeShuffleModule::AreDiagnosticsEnabled())
+    {
+        return;
+    }
     TArray<FVector> Players;
     for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
     {

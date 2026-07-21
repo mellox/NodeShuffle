@@ -1,0 +1,29 @@
+{
+  "FileVersion": 3,
+  "Version": 9999,
+  "VersionName": "9999.9.9",
+  "SemVersion": "9999.9.9",
+  "GameVersion": ">=491125",
+  "FriendlyName": "KBFL (build stub)",
+  "Description": "BUILD-TIME HEADER STUB ONLY. Provides the verbatim UKBFLCDOCallRequirement header + an import library so NodeShuffle's optional NodeShuffleVetoKBFL module can compile against KBFL without vendoring its source. At runtime the player's installed KBFL supplies the real DLL. NEVER Alpakit/package/deploy this plugin — see README-STUB.md.",
+  "Category": "Modding",
+  "CreatedBy": "Kyri123/Kyrium (header stubbed locally for the NodeShuffle build)",
+  "CanContainContent": false,
+  "IsBetaVersion": false,
+  "IsExperimentalVersion": false,
+  "Installed": true,
+  "Modules": [
+    {
+      "Name": "KBFL",
+      "Type": "Runtime",
+      "LoadingPhase": "Default"
+    }
+  ],
+  "Plugins": [
+    {
+      "Name": "SML",
+      "SemVersion": "^3.12.0",
+      "Enabled": true
+    }
+  ]
+}

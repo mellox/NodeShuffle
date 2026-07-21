@@ -6,6 +6,13 @@ locations** across the map and shuffles which are active, what resource each
 carries, and their purity — for **solids, oil/liquids, and modded nodes** alike —
 so every world is a fresh puzzle, while staying completable.
 
+## Compatibility note — Satisfactory Plus
+
+There is a known interaction between NodeShuffle and some Satisfactory Plus ecosystem versions
+that can cause occasional stuttering and some modded nodes not appearing. **Confirmed compatible
+with NodeShuffle:** KBFL 2026.2.267, MkPlusSFPlus 1.3.0-alpha, KPatchwork 2026.3.26, and earlier.
+This note will be updated as newer versions are confirmed.
+
 ## What it does
 
 - **Relocates & shuffles nodes** — nodes move to new map-wide locations and may
@@ -104,6 +111,14 @@ learned as you play and **shipped prebuilt** inside the mod. See
 C++ source for the SML starter project (SatisfactoryModLoader). Drop this folder
 into `<SatisfactoryModLoader>/Mods/NodeShuffle`, then build the `FactoryEditor`
 target and package with Alpakit, or via UAT `PackagePlugin -DLCName=NodeShuffle`.
+
+**Build prerequisites:** the optional `NodeShuffleVetoKBFL` module compiles
+against a build-time KBFL header stub that must exist at
+`<SatisfactoryModLoader>/Mods/KBFL`. If that folder is missing, copy this repo's
+`ThirdParty/KBFL-stub/` there before building (it is the tracked source of
+truth; the `Mods/KBFL` copy is deployed-only and gitignored by the engine
+repo — see `ThirdParty/KBFL-stub/README-STUB.md`). The stub is never packaged
+or shipped.
 
 ## Logging
 

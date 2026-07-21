@@ -3,6 +3,7 @@
 #include "NodeShuffleSubsystem.h"
 #include "EngineUtils.h"
 #include "HAL/IConsoleManager.h"
+#include "UObject/ObjectKey.h" // coexist-veto-1: FObjectKey for the managed-node registry
 #include "Patching/NativeHookManager.h"
 #include "Hologram/FGResourceExtractorHologram.h"
 #include "Buildables/FGBuildableResourceExtractorBase.h"
@@ -64,6 +65,91 @@ static FAutoConsoleCommandWithWorldAndArgs GNodeShuffleSeedHereCmd(
 static bool GNodeShuffleDiagnosticsEnabled = false;
 void FNodeShuffleModule::SetDiagnosticsEnabled(bool bEnabled) { GNodeShuffleDiagnosticsEnabled = bEnabled; }
 bool FNodeShuffleModule::AreDiagnosticsEnabled() { return GNodeShuffleDiagnosticsEnabled; }
+
+// ---------------------------------------------------------------------------------------------
+// coexist-veto-1: KBFL destroyer veto — CVar, managed-node registry, and the veto-module bridge.
+// This module stays 100% KBFL-free: presence is a module-NAME string check, the veto module is
+// loaded by name on demand, and its arm entry point arrives via a plain function pointer that the
+// veto module registers in its own StartupModule. When the veto never arms (CVar off, KBFL absent,
+// module load failure, ABI guard trip) the coexist-1 tombstone backoff remains the coexistence path.
+// ---------------------------------------------------------------------------------------------
+
+// Experimental veto gate. Default OFF; read once per world init (subsystem BeginPlay), so toggling
+// mid-session takes effect at the next world load. Users set it via console or Engine.ini
+// [ConsoleVariables] / [SystemSettings].
+static int32 GNodeShuffleDestroyerVeto = 0;
+static FAutoConsoleVariableRef CVarNodeShuffleDestroyerVeto(
+    TEXT("NodeShuffle.DestroyerVeto"),
+    GNodeShuffleDestroyerVeto,
+    TEXT("EXPERIMENTAL. 1 = when KBFL is installed, veto KBFL-based actor destroyers/listeners for the ")
+    TEXT("nodes NodeShuffle spawned (instead of letting them be destroyed and tombstoned per session). ")
+    TEXT("0 = off (default). Takes effect at world load."),
+    ECVF_Default);
+
+// Managed-node registry. FObjectKey (object index + serial) is stable across GC, cheap to hash, and
+// never matches a different (later) actor even if the memory slot is reused — safe against stale
+// entries. Game-thread only by contract (see NodeShuffle.h).
+static TSet<FObjectKey> GNodeShuffleManagedNodes;
+
+// The veto module's per-world arm entry point (null until/unless NodeShuffleVetoKBFL loads).
+static void (*GNodeShuffleKBFLVetoArmFn)(UWorld* World) = nullptr;
+
+void FNodeShuffleModule::RegisterManagedNode(const AActor* Node)
+{
+    if (Node) { GNodeShuffleManagedNodes.Add(FObjectKey(Node)); }
+}
+
+void FNodeShuffleModule::UnregisterManagedNode(const AActor* Node)
+{
+    if (Node) { GNodeShuffleManagedNodes.Remove(FObjectKey(Node)); }
+}
+
+void FNodeShuffleModule::ResetManagedNodes()
+{
+    GNodeShuffleManagedNodes.Empty();
+}
+
+bool FNodeShuffleModule::IsManagedSpawnedNode(const AActor* Node)
+{
+    return Node != nullptr && GNodeShuffleManagedNodes.Contains(FObjectKey(Node));
+}
+
+void FNodeShuffleModule::SetKBFLVetoArmFunction(void (*ArmFn)(UWorld* World))
+{
+    GNodeShuffleKBFLVetoArmFn = ArmFn;
+}
+
+void FNodeShuffleModule::ArmDestroyerVetoIfEnabled(UWorld* World)
+{
+    if (GNodeShuffleDestroyerVeto == 0)
+    {
+        UE_LOG(LogNodeShuffle, Verbose,
+            TEXT("veto: NodeShuffle.DestroyerVeto=0 (off) — coexist-1 tombstone backoff is the coexistence path this session"));
+        return;
+    }
+    UE_LOG(LogNodeShuffle, Display, TEXT("veto: NodeShuffle.DestroyerVeto=1 at world init — arming"));
+    if (!FModuleManager::Get().IsModuleLoaded(TEXT("KBFL")))
+    {
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("veto: enabled but KBFL is not installed — inactive (nothing to veto)"));
+        return;
+    }
+    UE_LOG(LogNodeShuffle, Display, TEXT("veto: KBFL module present"));
+    if (!GNodeShuffleKBFLVetoArmFn)
+    {
+        // On-demand load; StartupModule of the veto module registers the arm pointer synchronously
+        // inside this call. A null result (or a still-null pointer) means the DLL failed to load —
+        // most plausibly a version-incompatible KBFL whose exports no longer satisfy our imports.
+        FModuleManager::Get().LoadModulePtr<IModuleInterface>(FName(TEXT("NodeShuffleVetoKBFL")));
+        if (!GNodeShuffleKBFLVetoArmFn)
+        {
+            UE_LOG(LogNodeShuffle, Warning,
+                TEXT("veto: NodeShuffleVetoKBFL module failed to load (version-incompatible KBFL?) — veto off, tombstone backoff covers"));
+            return;
+        }
+    }
+    GNodeShuffleKBFLVetoArmFn(World);
+}
 
 namespace
 {
@@ -171,7 +257,7 @@ static bool NodeShuffleIsFrackingExtractor(const AFGResourceExtractorHologram* H
 void FNodeShuffleModule::StartupModule()
 {
     UE_LOG(LogNodeShuffle, Log, TEXT("NodeShuffle module loaded"));
-    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle 1.3.0 LOADED ====="));
+    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle 1.3.0 LOADED (2026-07-21-dirtdress-1) ====="));
 
 #if !WITH_EDITOR
     // redesign-13 HOLOGRAM HOOK (DIAGNOSTICS). r12 proved the Mk1 build trace NEVER hits our node (0 hits on

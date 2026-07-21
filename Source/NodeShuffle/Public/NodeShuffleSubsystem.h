@@ -94,12 +94,18 @@ struct FNodeShuffleSuppressedOriginal
 // longer exists, and visuals are now reapplied from authored data every session).
 
 // playtest-fixes-1 (modded-descriptor visuals): one visual captured from an ORIGINAL node's own
-// PAIRED AFGNodeMeshActor (MeshActorCache pairing — NOT the deleted neighbor-proximity capture,
-// which mispaired). Covers mods that ship vanilla BP_ResourceNode_C nodes carrying a MODDED
-// resource descriptor (RefinedPower thorium, bamrenew lead): their look lives on the level's mesh
-// actor, so a relocated copy can only get it from a capture. Keyed by resource class SHORT name;
-// only real UFGResourceDescriptor resources are captured (esc_ ITEM nodes stay quartz by design).
-// Persisted so visuals resolve by path next session even before any original streams in.
+// look — NOT from neighbors (the deleted neighbor-proximity capture mispaired). Sources, in order:
+//   1. the node's PAIRED AFGNodeMeshActor (MeshActorCache engine-link pairing) — vanilla-class
+//      modded-resource nodes (RefinedPower thorium, bamrenew lead) whose look lives on the level's
+//      mesh actor;
+//   2. dirtdress-1: a static-mesh component OWNED BY (or attached to) the node actor itself —
+//      self-rendering modded node BPs (FicsitFarming dirt mounds, KLib crystals) that have no
+//      engine mesh-actor links, so source 1 never fires for them (the 98-quartz-dirt-nodes bug).
+//      An original's own mesh IS its look by definition, so no rock-name pattern gate applies.
+// Keyed by resource class SHORT name; only real UFGResourceDescriptor resources are captured, and
+// an own-mesh candidate identical to the quartz placeholder is never stored (esc_ item nodes keep
+// their dirty-quartz identity by design). Persisted so visuals resolve by path next session even
+// before any original streams in.
 USTRUCT()
 struct FNodeShuffleCapturedVisual
 {
@@ -212,6 +218,13 @@ private:
     // (keyed by entry guid), so the per-node ProcessEvent rebuild fires once, not every tick (W2).
     TSet<FGuid> ModdedVisualRebuilt;
     void AdoptRestoredSpawnedNodes();
+    // coexist-veto-1 FIX A: REGISTRY-ONLY pre-pass run in BeginPlay, before the veto arms. Registers
+    // restored spawned-node actors into the module's managed-node registry using the SAME identity
+    // predicates as AdoptRestoredSpawnedNodes (legacy guid / runtime+location+resource), so an armed
+    // KBFL destroyer's initial sweep — which runs at OnWorldBeginPlay, ~5 s before the first
+    // RefreshTick adopts — cannot destroy restored nodes through an empty registry. Touches NOTHING
+    // but the registry (no SpawnedNodes writes, no adopt logic, no entry mutations).
+    void PreRegisterRestoredNodesForVeto();
     // real-class redesign: shared per-node adopt finalize (resource-complete, gates, register, attach
     // component, pin). A member function so it keeps the subsystem's Friend access to AFGResourceNode
     // internals. Returns true when it newly pins the entry as occupied.
@@ -347,10 +360,30 @@ private:
     const TArray<TWeakObjectPtr<UMaterialInterface>>* GetQuartzPlaceholderMaterials();
     // playtest-fixes-1 (modded-descriptor visuals): capture the visual of a hidden ORIGINAL whose
     // resource is a real UFGResourceDescriptor with NO authored table entry (RP thorium, bamrenew
-    // lead), from its OWN paired AFGNodeMeshActor. Called from SuppressOriginalNodes (pairing is
-    // fresh each pass). On a NEW capture, already-spawned nodes of that resource are re-dressed so
-    // they swap quartz -> the real look without waiting for a respawn.
-    void CaptureOriginalVisualIfNeeded(class AFGResourceNodeBase* Node);
+    // lead, FF dirt). Sources in order: its OWN paired AFGNodeMeshActor (engine links), then
+    // dirtdress-1: its OWN static-mesh components / attached mesh actors (self-rendering node BPs
+    // that have no engine links — FF dirt was 0-for-98 on the pairing lottery). Called from
+    // SuppressOriginalNodes (pairing is fresh each pass). On a NEW capture, already-spawned nodes
+    // of that resource are re-dressed so they swap quartz -> the real look without a respawn.
+    // Returns TRUE when the resource is capture-ELIGIBLE but nothing could be captured YET (no
+    // pairing, no own mesh) — the caller then defers the steady-hidden mark so the original is
+    // re-attempted next pass instead of losing its one shot per session (Fertilized-dirt bug).
+    bool CaptureOriginalVisualIfNeeded(class AFGResourceNodeBase* Node);
+    // dirtdress-1: resources whose full capture-decision chain was already logged this session
+    // (diagnostics are once per resource per session, so retries can't spam the log).
+    TSet<FString> CaptureChainLogged;
+    // dirtdress-1 (cold review): terminal cap for the capture retry loop — same count-then-tombstone
+    // idiom as ExternalDestroyCounts/DormantThisSession. A resource that reports capture-PENDING for
+    // CaptureGiveUpPasses consecutive attempt-passes (~3 min at the 5 s tick) goes terminal for the
+    // session: its originals steady-mark as normal and the placeholder stays (e.g. a modded node
+    // whose only visual is an instanced-mesh component). All session-only; a successful capture
+    // clears its resource's counter, and RollLayout's clear block resets all three with the sibling
+    // sets. PendingThisPass is the per-pass scratch that turns per-ORIGINAL pending reports into one
+    // per-RESOURCE count (processed + cleared at the end of each SuppressOriginalNodes pass).
+    TSet<FString> CapturePendingThisPass;
+    TMap<FString, int32> CapturePendingPasses;
+    TSet<FString> CaptureTerminalThisSession;
+    static constexpr int32 CaptureGiveUpPasses = 36;
     void RedressSpawnedOfResource(const FString& ResourceClassName);
     // Find a persisted capture for a resource short name (null when none).
     const FNodeShuffleCapturedVisual* FindCapturedVisual(const FString& ResourceClassName) const;
@@ -507,6 +540,34 @@ private:
     mutable TSet<FGuid> WaterDeferLoggedThisSession;
     int32 DeferredThisPass = 0;
     int32 LastDeferSummary = -1;
+
+    // ---- coexist-1: external-destroy backoff + idempotent maintenance pass (ALL transient) ----
+    // Another installed mod can DESTROY resource-node actors outright (observed: a KBFL actor-listener
+    // targeting FGResourceNodeBase). Re-materializing every pass against such a destroyer is a
+    // destroy/respawn war: log firehose, scanner/radar refresh churn, multi-second stutters. Backoff:
+    // count destroys of OUR spawned actors that NodeShuffle did NOT perform itself; after
+    // ExternalDestroyTombstoneAt of them in one session the entry goes DORMANT (skipped entirely) until
+    // the next world load. NOTHING here is SaveGame — every load resets the tombstones, so each session
+    // makes one cheap attempt per node and records are never lost if the destroyer relents.
+    // Self-vs-external discrimination: NodeShuffle's ONLY self-destroy of spawned nodes (the re-roll
+    // wipe in RollLayout) removes the SpawnedNodes slot synchronously in the same block — so a slot
+    // holding an invalid/null actor when the pass looks is proof of an EXTERNAL destroyer. Any future
+    // self-destroy site MUST keep that invariant (destroy + remove the slot together).
+    static constexpr int32 ExternalDestroyTombstoneAt = 2;
+    TMap<FGuid, int32> ExternalDestroyCounts; // per-entry external destroys this session
+    TSet<FGuid> DormantThisSession;           // tombstoned entries: no re-materialize until next load
+    int32 LastDormantSummaryNum = 0;          // ungated coexistence summary fires only on count change
+    // Idempotent-pass markers: work that only matters ONCE PER LIVE INSTANCE (dress, use-box, manager
+    // registration, hide funnel) is skipped while the SAME instance stays valid — keyed by weak ptr so
+    // a reload/respawn/re-stream (new instance) naturally falls through to the full path again.
+    TMap<FGuid, TWeakObjectPtr<AFGResourceNode>> SteadyAliveNodes;          // spawned nodes fully asserted
+    TMap<FString, TWeakObjectPtr<AFGResourceNodeBase>> SteadyHiddenOriginals; // originals fully hidden
+    // One ungated hide-funnel totals line per LOAD (the per-pass HIDEDIAG stays diagnostics-gated and
+    // now only logs when its numbers CHANGE); per-pass change tally feeds the gated "pass: 0 changes".
+    bool bLoadFunnelLogged = false;
+    int32 LastHideFunnel[7] = { -1, -1, -1, -1, -1, -1, -1 }; // dirtdress-1: +capturePending slot
+    int32 SuppressChangesLastPass = 0;
+    float LastRockBackstopSeconds = 0.f; // stray-rock backstop cooldown (forced when a node newly hides)
     // playtest-fixes-1 (ghost radiation): resolve the radioactivity subsystem via the GameState's
     // public inline getter (AFGRadioactivitySubsystem::Get is a static whose export is not trusted —
     // same LNK2019 class of problem as AFGResourceNodeManager::Get).

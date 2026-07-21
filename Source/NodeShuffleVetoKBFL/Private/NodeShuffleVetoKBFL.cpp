@@ -1,0 +1,301 @@
+#include "NodeShuffleVetoKBFL.h"
+
+#include "NodeShuffle.h"
+#include "NodeShuffleDestroyerVetoRequirement.h"
+#include "Subsystems/HelperClasses/KBFLCDOCallRequirement.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "AssetRegistry/IAssetRegistry.h"
+#include "Engine/World.h"
+#include "UObject/TopLevelAssetPath.h"
+#include "UObject/UObjectHash.h"
+#include "UObject/UnrealType.h"
+
+// coexist-veto-1 ARM PASS. Re-run at EVERY world init (idempotent): KBFL's world CDO subsystem
+// re-instantiates each asset's transient requirement list from mRequirements at every world's
+// Start() (KBFLCDOOverwriteBase::LoadRequirements, driven by OnWorldBeginPlay -> OnWorldPostInit ->
+// ApplyAllWorldCDOOverwrites), so a class prepended into mRequirements BEFORE that broadcast — our
+// caller runs during actor BeginPlay, which precedes it — is live for the whole world, including the
+// initial existing-actors destroy sweep. mRequirements edits are in-memory only (assets are never
+// re-saved), so re-arming per world also covers any asset GC'd + reloaded between worlds.
+
+namespace
+{
+    UClass* ResolveClassByPath(const TCHAR* Path)
+    {
+        UClass* Cls = FindObject<UClass>(nullptr, Path);
+        if (!Cls)
+        {
+            Cls = LoadObject<UClass>(nullptr, Path);
+        }
+        return Cls;
+    }
+
+    // Reads a TArray<TSubclassOf<AActor>> UPROPERTY via reflection. Reflection (not a header stub) is
+    // deliberate ABI minimization: the ONLY KBFL class we compile against is the requirement base;
+    // the listener/destroyer classes and their target arrays are touched purely by name.
+    bool ReadTargetClasses(UObject* Asset, const TCHAR* PropName, TArray<UClass*>& OutClasses)
+    {
+        FArrayProperty* Prop = FindFProperty<FArrayProperty>(Asset->GetClass(), PropName);
+        FObjectPropertyBase* Inner = Prop ? CastField<FObjectPropertyBase>(Prop->Inner) : nullptr;
+        if (!Inner)
+        {
+            return false;
+        }
+        FScriptArrayHelper Helper(Prop, Prop->ContainerPtrToValuePtr<void>(Asset));
+        for (int32 i = 0; i < Helper.Num(); ++i)
+        {
+            OutClasses.Add(Cast<UClass>(Inner->GetObjectPropertyValue(Helper.GetRawPtr(i))));
+        }
+        return true;
+    }
+
+    // The per-world arm entry point, registered with the main module by StartupModule below.
+    void NodeShuffleVetoArmForWorld(UWorld* World)
+    {
+        // Fresh world session: "this session" veto counters restart.
+        UNodeShuffleDestroyerVetoRequirement::ResetSessionCounters();
+
+        // ---- (a) ABI guard. StaticClass() here resolves through our import table into the REAL
+        // installed KBFL DLL, so GetPropertiesSize() is the RUNTIME layout size of the base class;
+        // sizeof() is the layout we compiled against (the verbatim header stub). A mismatch means the
+        // installed KBFL's class layout drifted from the version NodeShuffle was built against —
+        // instantiating our subclass would be undefined behavior, so arming aborts. (Residual risk a
+        // size check cannot see: pure virtual-table reordering with identical property size.)
+        const int32 RuntimeSize = UKBFLCDOCallRequirement::StaticClass()->GetPropertiesSize();
+        const int32 CompiledSize = static_cast<int32>(sizeof(UKBFLCDOCallRequirement));
+        if (RuntimeSize != CompiledSize)
+        {
+            UE_LOG(LogNodeShuffle, Warning,
+                TEXT("veto: KBFL class layout differs from the version NodeShuffle was built against ")
+                TEXT("(runtime %d bytes vs compiled %d) — veto disabled, tombstone fallback remains active"),
+                RuntimeSize, CompiledSize);
+            return;
+        }
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("veto: ABI guard passed (UKBFLCDOCallRequirement = %d bytes); arming for world '%s'"),
+            CompiledSize, *GetNameSafe(World));
+
+        // ---- (b) resolve the destroyer/listener asset base classes + FGResourceNodeBase by path.
+        // (FGResourceNodeBase by path too — this module intentionally has no FactoryGame dependency.)
+        UClass* ListenerClass = ResolveClassByPath(TEXT("/Script/KBFL.KBFLWorldCDOActorListener"));
+        UClass* DestroyerClass = ResolveClassByPath(TEXT("/Script/KBFL.KBFLWorldCDOActorDestroyer"));
+        UClass* NodeBaseClass = ResolveClassByPath(TEXT("/Script/FactoryGame.FGResourceNodeBase"));
+        if (!NodeBaseClass)
+        {
+            UE_LOG(LogNodeShuffle, Warning,
+                TEXT("veto: FGResourceNodeBase class not resolvable — veto disabled this session"));
+            return;
+        }
+        if (!ListenerClass && !DestroyerClass)
+        {
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("veto: KBFL is loaded but has no actor listener/destroyer classes (unexpected version?) — idle"));
+            return;
+        }
+
+        // Collect candidate assets: already-loaded instances of either class (or subclasses)...
+        TArray<UObject*> Candidates;
+        if (ListenerClass)
+        {
+            GetObjectsOfClass(ListenerClass, Candidates, /*bIncludeDerivedClasses=*/true);
+        }
+        if (DestroyerClass)
+        {
+            TArray<UObject*> DestroyerObjects;
+            GetObjectsOfClass(DestroyerClass, DestroyerObjects, /*bIncludeDerivedClasses=*/true);
+            Candidates.Append(DestroyerObjects);
+        }
+        // ...plus not-yet-loaded assets via the asset registry (LoadObject'd here). In practice KBFL's
+        // own game-instance subsystem loads and hard-references every CDO-overwrite asset at startup,
+        // so this pass usually finds nothing new — belt and braces for lazy-mounted content.
+        IAssetRegistry& AssetRegistry =
+            FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
+        TArray<FAssetData> AssetDataList;
+        if (ListenerClass)
+        {
+            AssetRegistry.GetAssetsByClass(
+                FTopLevelAssetPath(TEXT("/Script/KBFL"), TEXT("KBFLWorldCDOActorListener")),
+                AssetDataList, /*bSearchSubClasses=*/true);
+        }
+        if (DestroyerClass)
+        {
+            AssetRegistry.GetAssetsByClass(
+                FTopLevelAssetPath(TEXT("/Script/KBFL"), TEXT("KBFLWorldCDOActorDestroyer")),
+                AssetDataList, /*bSearchSubClasses=*/true);
+        }
+        for (const FAssetData& AssetData : AssetDataList)
+        {
+            if (UObject* Loaded = AssetData.GetAsset())
+            {
+                Candidates.Add(Loaded);
+            }
+        }
+
+        TSet<UObject*> Seen;
+        int32 ArmedCount = 0;
+        for (UObject* Asset : Candidates)
+        {
+            if (!IsValid(Asset) || Seen.Contains(Asset))
+            {
+                continue;
+            }
+            Seen.Add(Asset);
+            UClass* AssetClass = Asset->GetClass();
+
+            // ---- (c) node-relevance filter: read the asset's target-class array by name and keep the
+            // asset only when a target overlaps FGResourceNodeBase (its sub- OR superclass — a
+            // destroyer targeting a node subclass, the base itself, or something as broad as AActor).
+            const bool bIsDestroyer = DestroyerClass && AssetClass->IsChildOf(DestroyerClass);
+            const TCHAR* TargetsPropName =
+                bIsDestroyer ? TEXT("mActorClassesToDestroy") : TEXT("mActorClassesToListenFor");
+            TArray<UClass*> TargetClasses;
+            if (!ReadTargetClasses(Asset, TargetsPropName, TargetClasses))
+            {
+                UE_LOG(LogNodeShuffle, Display,
+                    TEXT("veto: asset '%s' class=%s has no readable %s — skipped"),
+                    *Asset->GetPathName(), *AssetClass->GetName(), TargetsPropName);
+                continue;
+            }
+            FString TargetList;
+            bool bNodeRelevant = false;
+            for (UClass* TargetClass : TargetClasses)
+            {
+                TargetList += (TargetClass ? TargetClass->GetName() : FString(TEXT("<null>"))) + TEXT(" ");
+                if (TargetClass
+                    && (TargetClass->IsChildOf(NodeBaseClass) || NodeBaseClass->IsChildOf(TargetClass)))
+                {
+                    bNodeRelevant = true;
+                }
+            }
+            TargetList.TrimEndInline();
+            if (!bNodeRelevant)
+            {
+                UE_LOG(LogNodeShuffle, Display,
+                    TEXT("veto: asset '%s' class=%s targets=[%s] — not node-relevant, untouched"),
+                    *Asset->GetPathName(), *AssetClass->GetName(), *TargetList);
+                continue;
+            }
+
+            // ---- (d) PREPEND our requirement class at index 0 of the PUBLIC mRequirements array
+            // (reflection). Index 0 (not append) so KBFL's short-circuiting Requirements_IsMet never
+            // reaches the asset's own — side-effectful — requirement code for a vetoed node. Nothing
+            // else on the asset is touched: not bEnabled, not the target arrays (rule (e)).
+            FArrayProperty* ReqProp = FindFProperty<FArrayProperty>(AssetClass, TEXT("mRequirements"));
+            FObjectPropertyBase* ReqInner = ReqProp ? CastField<FObjectPropertyBase>(ReqProp->Inner) : nullptr;
+            if (!ReqInner)
+            {
+                UE_LOG(LogNodeShuffle, Display,
+                    TEXT("veto: asset '%s' has no readable mRequirements array — skipped"), *Asset->GetPathName());
+                continue;
+            }
+            UClass* OurClass = UNodeShuffleDestroyerVetoRequirement::StaticClass();
+            FScriptArrayHelper Requirements(ReqProp, ReqProp->ContainerPtrToValuePtr<void>(Asset));
+            const int32 CountBefore = Requirements.Num();
+            bool bAlreadyPresent = false;
+            for (int32 i = 0; i < Requirements.Num(); ++i)
+            {
+                if (ReqInner->GetObjectPropertyValue(Requirements.GetRawPtr(i)) == OurClass)
+                {
+                    bAlreadyPresent = true;
+                    break;
+                }
+            }
+            if (!bAlreadyPresent)
+            {
+                Requirements.InsertValues(0, 1);
+                ReqInner->SetObjectPropertyValue(Requirements.GetRawPtr(0), OurClass);
+            }
+            const int32 CountAfter = Requirements.Num();
+
+            // Late-arm safety net: if this asset's TRANSIENT instance cache (mCachedRequirements) was
+            // already built for this world — i.e. KBFL's LoadRequirements ran before our arm, a
+            // non-standard ordering — the class prepend alone would only take effect NEXT world. Inject
+            // a live instance at the cache's front too (mirroring LoadRequirements' outer/flags; our
+            // instance never reads mSubsystem, so leaving it unset is safe: the base GetWorld() just
+            // returns null and DispatchDeferedCall no-ops).
+            if (FArrayProperty* CachedProp = FindFProperty<FArrayProperty>(AssetClass, TEXT("mCachedRequirements")))
+            {
+                if (FObjectPropertyBase* CachedInner = CastField<FObjectPropertyBase>(CachedProp->Inner))
+                {
+                    FScriptArrayHelper Cached(CachedProp, CachedProp->ContainerPtrToValuePtr<void>(Asset));
+                    if (Cached.Num() > 0)
+                    {
+                        bool bInstancePresent = false;
+                        for (int32 i = 0; i < Cached.Num(); ++i)
+                        {
+                            UObject* Instance = CachedInner->GetObjectPropertyValue(Cached.GetRawPtr(i));
+                            if (Instance && Instance->IsA(OurClass))
+                            {
+                                bInstancePresent = true;
+                                break;
+                            }
+                        }
+                        if (!bInstancePresent)
+                        {
+                            UObject* NewInstance =
+                                NewObject<UObject>(Asset, OurClass, NAME_None, RF_Public | RF_Transactional);
+                            // Mirror KBFL's own LoadRequirements construction, which stamps each
+                            // instance's mSubsystem from the asset's mSubsystem. Both reads/writes go
+                            // through reflection: UKBFLCDOOverwriteBase is declaration-only here (the
+                            // deliberate one-class stub surface), and the instance's
+                            // TObjectPtr<UKBFLContentCDOHelperSubsystem> member cannot be assigned in
+                            // C++ without the pointee's complete type — the runtime FProperty (with
+                            // the REAL KBFL's offset) sidesteps both while staying exact.
+                            if (FObjectPropertyBase* AssetSubsystemProp =
+                                    FindFProperty<FObjectPropertyBase>(AssetClass, TEXT("mSubsystem")))
+                            {
+                                UObject* SubsystemObj = AssetSubsystemProp->GetObjectPropertyValue(
+                                    AssetSubsystemProp->ContainerPtrToValuePtr<void>(Asset));
+                                if (FObjectPropertyBase* InstanceSubsystemProp =
+                                        FindFProperty<FObjectPropertyBase>(OurClass, TEXT("mSubsystem")))
+                                {
+                                    InstanceSubsystemProp->SetObjectPropertyValue(
+                                        InstanceSubsystemProp->ContainerPtrToValuePtr<void>(NewInstance),
+                                        SubsystemObj);
+                                }
+                            }
+                            Cached.InsertValues(0, 1);
+                            CachedInner->SetObjectPropertyValue(Cached.GetRawPtr(0), NewInstance);
+                            UE_LOG(LogNodeShuffle, Display,
+                                TEXT("veto: late-arm — live requirement instance injected into already-built cache of '%s'"),
+                                *Asset->GetPathName());
+                        }
+                    }
+                }
+            }
+
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("veto: asset '%s' class=%s targets=[%s] requirements %d -> %d (%s)"),
+                *Asset->GetPathName(), *AssetClass->GetName(), *TargetList,
+                CountBefore, CountAfter, bAlreadyPresent ? TEXT("already present") : TEXT("prepended"));
+            ArmedCount++;
+        }
+
+        if (ArmedCount > 0)
+        {
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("veto: armed on %d asset(s) — destroys of NodeShuffle-managed nodes will be vetoed"),
+                ArmedCount);
+        }
+        else
+        {
+            UE_LOG(LogNodeShuffle, Display, TEXT("veto: armed, 0 node-destroyer assets found — idle"));
+        }
+    }
+}
+
+void FNodeShuffleVetoKBFLModule::StartupModule()
+{
+    // Hand the main module our per-world arm entry point. This runs synchronously inside the main
+    // module's LoadModulePtr call, so the pointer is set before ArmDestroyerVetoIfEnabled proceeds.
+    FNodeShuffleModule::SetKBFLVetoArmFunction(&NodeShuffleVetoArmForWorld);
+    UE_LOG(LogNodeShuffle, Display,
+        TEXT("veto: NodeShuffleVetoKBFL module loaded (KBFL present) — arm hook registered"));
+}
+
+void FNodeShuffleVetoKBFLModule::ShutdownModule()
+{
+    FNodeShuffleModule::SetKBFLVetoArmFunction(nullptr);
+}
+
+IMPLEMENT_GAME_MODULE(FNodeShuffleVetoKBFLModule, NodeShuffleVetoKBFL);

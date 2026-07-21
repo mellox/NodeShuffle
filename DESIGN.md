@@ -32,8 +32,10 @@ re-adopt by GUID or by location across reloads.
 
 In priority order: an **authored table** (`FNodeShuffleNodeAssets`) of the game's
 own node meshes/materials for vanilla resources; a look **captured from the
-original node's paired mesh actor** for modded resources the table doesn't cover
-(e.g. RefinedPower thorium, modded lead); a **quartz placeholder** otherwise; and
+original node** for modded resources the table doesn't cover — from its paired
+mesh actor (e.g. RefinedPower thorium, modded lead) or, for self-rendering node
+BPs with no engine mesh-actor links, from the node's own/attached mesh
+components (e.g. FicsitFarming dirt); a **quartz placeholder** otherwise; and
 an **oil decal** for liquids. When a modded-class node is dealt a *vanilla*
 resource, the assigned resource's look wins (the native mesh is hidden and our
 rock is dressed) so it doesn't wear the wrong appearance.
