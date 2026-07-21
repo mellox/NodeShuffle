@@ -114,6 +114,19 @@ bool FNodeShuffleModule::IsManagedSpawnedNode(const AActor* Node)
     return Node != nullptr && GNodeShuffleManagedNodes.Contains(FObjectKey(Node));
 }
 
+// spawnrace-1: spawn-window depth counter. Game-thread only (our SpawnActor calls and KBFL's
+// OnActorSpawned delegate both run there) — plain int32, no atomics. A counter rather than a bool
+// so a wrapped spawn that re-enters another wrapped spawn can never clear the window early.
+static int32 GNodeShuffleSpawningDepth = 0;
+
+FNodeShuffleSpawningScope::FNodeShuffleSpawningScope() { GNodeShuffleSpawningDepth++; }
+FNodeShuffleSpawningScope::~FNodeShuffleSpawningScope() { GNodeShuffleSpawningDepth--; }
+
+bool FNodeShuffleModule::IsSpawningManagedNode()
+{
+    return GNodeShuffleSpawningDepth > 0;
+}
+
 void FNodeShuffleModule::SetKBFLVetoArmFunction(void (*ArmFn)(UWorld* World))
 {
     GNodeShuffleKBFLVetoArmFn = ArmFn;
@@ -257,7 +270,7 @@ static bool NodeShuffleIsFrackingExtractor(const AFGResourceExtractorHologram* H
 void FNodeShuffleModule::StartupModule()
 {
     UE_LOG(LogNodeShuffle, Log, TEXT("NodeShuffle module loaded"));
-    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle 1.3.0 LOADED (2026-07-21-dirtdress-1) ====="));
+    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle 1.3.0 LOADED (2026-07-21-spawnrace-1) ====="));
 
 #if !WITH_EDITOR
     // redesign-13 HOLOGRAM HOOK (DIAGNOSTICS). r12 proved the Mk1 build trace NEVER hits our node (0 hits on

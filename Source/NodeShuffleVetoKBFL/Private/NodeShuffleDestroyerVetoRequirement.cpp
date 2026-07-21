@@ -23,7 +23,14 @@ bool UNodeShuffleDestroyerVetoRequirement::IsRequirementMet_Implementation(
     UKBFLContentCDOHelperSubsystem* /*Subsystem*/, UKBFLCDOOverwriteBase* From, UObject* Target)
 {
     AActor* TargetActor = Cast<AActor>(Target);
-    const bool bManaged = TargetActor && FNodeShuffleModule::IsManagedSpawnedNode(TargetActor);
+    const bool bRegistered = TargetActor && FNodeShuffleModule::IsManagedSpawnedNode(TargetActor);
+    // spawnrace-1: registry alone loses the newborn race — KBFL's OnActorSpawned listener judges an
+    // actor INSIDE UWorld::SpawnActor, before NodeShuffle's post-spawn RegisterManagedNode runs. If
+    // we are synchronously inside one of our own node spawns right now, the actor being judged IS
+    // that newborn (game thread, one spawn at a time) — honor the spawn window as managed. The
+    // registry remains the durable signal for every later judgment.
+    const bool bSpawnWindow = !bRegistered && TargetActor && FNodeShuffleModule::IsSpawningManagedNode();
+    const bool bManaged = bRegistered || bSpawnWindow;
 
     // Per-decision trace (diagnostics-gated, Verbose): names the actor/class and which way we ruled.
     // Ungated this would firehose — the initial KBFL sweep runs every matching actor in the world.
@@ -31,7 +38,8 @@ bool UNodeShuffleDestroyerVetoRequirement::IsRequirementMet_Implementation(
     {
         UE_LOG(LogNodeShuffle, Verbose, TEXT("veto: IsRequirementMet target='%s' class='%s' -> %s"),
             *GetNameSafe(Target), Target ? *Target->GetClass()->GetName() : TEXT("<null>"),
-            bManaged ? TEXT("VETO (managed node)") : TEXT("allow (not ours)"));
+            bSpawnWindow ? TEXT("VETO (spawn-window)")
+                : bManaged ? TEXT("VETO (managed node)") : TEXT("allow (not ours)"));
     }
 
     if (!bManaged)

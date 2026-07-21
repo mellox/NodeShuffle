@@ -31,7 +31,8 @@ class UNodeShuffleDestroyerVetoRequirement : public UKBFLCDOCallRequirement
 
 public:
     // BlueprintNativeEvent override (no UFUNCTION re-declaration). Runs for EVERY actor event that
-    // matches an armed asset's target classes while armed — kept to one set lookup, game-thread only.
+    // matches an armed asset's target classes while armed — kept to one set lookup plus a
+    // spawn-window flag read (spawnrace-1), game-thread only.
     virtual bool IsRequirementMet_Implementation(UKBFLContentCDOHelperSubsystem* Subsystem,
                                                  UKBFLCDOOverwriteBase* From, UObject* Target) override;
 

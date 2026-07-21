@@ -3580,8 +3580,17 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
     FActorSpawnParameters Params;
     Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
     // NOTE: intentionally NO RF_Transient — the node must be collected by the save system.
-    AFGResourceNode* Node = GetWorld()->SpawnActor<AFGResourceNode>(
-        SpawnClass, Entry.Location, Entry.Rotation, Params);
+    // spawnrace-1: KBFL's OnActorSpawned delegate fires INSIDE this SpawnActor call — before it
+    // returns, so before RegisterManagedNode below can run. The scope flags the spawn window so the
+    // veto recognizes the newborn as ours at gate time (live evidence: 429 destroys/session of
+    // respawned nodes that lost exactly this race). Kept TIGHT — just the SpawnActor call — so
+    // nothing else (InitResource, registration, dressing) runs shielded.
+    AFGResourceNode* Node = nullptr;
+    {
+        FNodeShuffleSpawningScope SpawnScope;
+        Node = GetWorld()->SpawnActor<AFGResourceNode>(
+            SpawnClass, Entry.Location, Entry.Rotation, Params);
+    }
     if (!Node)
     {
         UE_LOG(LogNodeShuffle, Warning, TEXT("Failed to spawn new node (%s) at %s"),

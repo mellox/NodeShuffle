@@ -39,6 +39,15 @@ public:
     static void UnregisterManagedNode(const class AActor* Node);
     static void ResetManagedNodes(); // world init: the registry is module-static and outlives worlds
     static bool IsManagedSpawnedNode(const class AActor* Node);
+    // spawnrace-1: TRUE while NodeShuffle is synchronously inside SpawnActor for one of its own
+    // resource-node actors (see FNodeShuffleSpawningScope below). WHY THIS EXISTS: KBFL's listener
+    // binds World->AddOnActorSpawnedHandler, and that delegate fires INSIDE UWorld::SpawnActor —
+    // before our spawn call returns and therefore before the post-spawn RegisterManagedNode above
+    // can run. Registry-only checks lose that race for every node born mid-session (live evidence:
+    // 429 destroys/session of respawned nodes while load-time nodes stayed fully protected).
+    // During our synchronous game-thread SpawnActor the only actor reaching that delegate is ours,
+    // so a scoped flag is a sound identity signal for the veto to honor alongside the registry.
+    static bool IsSpawningManagedNode();
 
     // The optional NodeShuffleVetoKBFL module registers its per-world arm entry point here from its
     // StartupModule. Function-pointer indirection keeps the dependency arrow one-way (veto -> main):
@@ -48,4 +57,19 @@ public:
     // NodeShuffle.DestroyerVeto CVar, checks KBFL presence by module NAME, loads the veto module on
     // demand, and invokes its registered arm function for this world.
     static void ArmDestroyerVetoIfEnabled(class UWorld* World);
+};
+
+// spawnrace-1: RAII spawn-window guard for FNodeShuffleModule::IsSpawningManagedNode(). Construct
+// one in a block IMMEDIATELY around a SpawnActor call for a NodeShuffle-owned resource-node actor
+// (and only node actors — the KBFL listeners the veto arms target FGResourceNodeBase). Backed by a
+// game-thread depth COUNTER, not a bool, so nested/reentrant spawn scopes stay correct; the
+// ctor/dtor are a plain inc/dec pair (exception-agnostic — no cleanup beyond the decrement).
+// Keep scopes tight: anything a wrapped spawn re-enters that itself spawns an unrelated
+// FGResourceNodeBase actor would be shielded from KBFL for that one judgment too.
+struct NODESHUFFLE_API FNodeShuffleSpawningScope
+{
+    FNodeShuffleSpawningScope();
+    ~FNodeShuffleSpawningScope();
+    FNodeShuffleSpawningScope(const FNodeShuffleSpawningScope&) = delete;
+    FNodeShuffleSpawningScope& operator=(const FNodeShuffleSpawningScope&) = delete;
 };
