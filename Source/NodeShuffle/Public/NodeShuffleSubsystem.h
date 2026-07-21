@@ -321,14 +321,19 @@ private:
     bool bKnowledgeUnlockDone = false;
     // knowledge-2 item 1: runtime MinerInfo provisioning — PURE REFLECTION against KAPI's
     // UKAPIDataAssetSubsystem (a UGameInstanceSubsystem; no KAPI include/link/stub anywhere). For
-    // each managed modded ore MISSING from mMinerMapping, DuplicateObject a template description
+    // each managed modded ore MISSING from mMinerMapping, template-clone an existing description
     // (preferring the Desc_Stone_C entry), rewire its key (mResourceClass) and every
     // FKAPIModuleItems.mProductionItem to the ore (the resource descriptor IS the item class —
     // UFGResourceDescriptor : UFGItemDescriptor), insert into mMinerMapping and
-    // mAllowedScannableResources exactly as KAPI's own ScanForMinerAssets does. Returns false when
-    // KAPI is present but not yet scanned (defer). When KAPI is absent: returns true with
-    // bOutFilterUnlocks=false (no filtering — no Modular Miner exists to crash). Every reflection
-    // lookup is null-checked; any failure skips that ore entirely (never partially-wired).
+    // mAllowedScannableResources exactly as KAPI's own ScanForMinerAssets does. knowledge-3: each
+    // clone lives in the /NodeShuffle/RuntimeMinerInfo runtime package under a deterministic
+    // NSMinerInfo_<Ore> name (RF_Public|RF_Standalone + rooted) so KLib's SaveGame reference to it
+    // (mExtractionInfo) serializes down FObjectReferenceDisc's ASSET branch (LevelName empty,
+    // absolute path) — the GameInstance-outered knowledge-2 clone crashed the save writer's
+    // level-resolution machinery. Returns false when KAPI is present but not yet scanned (defer).
+    // When KAPI is absent: returns true with bOutFilterUnlocks=false (no filtering — no Modular
+    // Miner exists to crash). Every reflection lookup is null-checked; any failure skips that ore
+    // entirely (never partially-wired).
     bool ProvideKAPIMinerInfo(const TArray<UClass*>& ManagedModded, TSet<UClass*>& OutWithMinerInfo,
                               bool& bOutFilterUnlocks);
     // knowledge-2: bounded defer while KAPI's game-instance-init scan hasn't populated mMinerMapping

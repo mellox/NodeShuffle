@@ -50,6 +50,7 @@
 #include "FGGameState.h"
 #include "FGUnlockSubsystem.h" // knowledge-1: UnlockScannableResource + FScannableResourcePair (+ geyser descriptor transitively)
 #include "UObject/UnrealType.h" // knowledge-2: FMapProperty/FSetProperty + script helpers (KAPI reflection)
+#include "UObject/Package.h" // knowledge-3: CreatePackage — package identity for provisioned MinerInfo clones
 #include "Materials/MaterialInstanceDynamic.h"
 #include "FGActorRepresentationManager.h"
 #include "Representation/FGResourceNodeRepresentation.h"
@@ -5507,7 +5508,23 @@ bool ANodeShuffleSubsystem::UnlockModdedScannerKnowledge()
         return false;
     }
 
+    // knowledge-3 item c (DEDUP — the 42-resource unlock line re-fired every load and duplicate
+    // pairs accumulated in the save): UnlockScannableResource writes the PAIRS array
+    // (mScannableResourcesPairs) while GetScannableResources() reads a different view, so a
+    // pairs-only unlock can look "unknown" forever. Check BOTH views and unlock only when the
+    // descriptor is absent from both — the once-per-save Display line then goes quiet on later
+    // loads as originally intended.
     const TArray<TSubclassOf<UFGResourceDescriptor>> Known = Unlocks->GetScannableResources();
+    const TArray<FScannableResourcePair> KnownPairs = Unlocks->GetScannableResourcePairs();
+    const auto IsScannerKnown = [&Known, &KnownPairs](UClass* Res)
+    {
+        if (Known.Contains(Res)) { return true; }
+        for (const FScannableResourcePair& Pair : KnownPairs)
+        {
+            if (Pair.ResourceDescriptor.Get() == Res) { return true; }
+        }
+        return false;
+    };
     int32 Unlocked = 0;
     FString UnlockedNames;
     for (UClass* ResClass : Managed)
@@ -5523,7 +5540,7 @@ bool ANodeShuffleSubsystem::UnlockModdedScannerKnowledge()
             }
             continue;
         }
-        if (Known.Contains(ResClass))
+        if (IsScannerKnown(ResClass))
         {
             if (bDiag)
             {
@@ -5570,15 +5587,37 @@ bool ANodeShuffleSubsystem::ProvideKAPIMinerInfo(const TArray<UClass*>& ManagedM
     //   - ScanForMinerAssets keys mMinerMapping by each description's mResourceClass and also adds
     //     that class to mAllowedScannableResources — we mirror BOTH for provided ores.
     //   - AKLMMBuildableMiner::BeginPlay -> Miner_GetForKey (plain Contains+Find) -> fgcheckf.
-    // The clone: DuplicateObject of a TEMPLATE description (prefer the Desc_Stone_C entry, else
-    // Desc_OreIron_C, else the first solid-resource entry), then rewire mResourceClass and EVERY
-    // FKAPIModuleItems.mProductionItem in mModuleInformation to the ore (the resource descriptor IS
-    // the item class: UFGResourceDescriptor : UFGItemDescriptor). mTrashItem/tier/UI fields stay
-    // template (there is no per-ore name field on the description; the screenshot/rarity text are
-    // cosmetic flavor). Outer = the KAPI subsystem (its UPROPERTY map strong-refs the clone and its
-    // lifetime matches the game instance) + AddToRoot as a belt against a mid-session
-    // StartScanForDataAssets re-run emptying the map (our entries would drop until next load; the
-    // rooted clone just leaks one small object per rescan, bounded).
+    // The clone: template-initialized copy of an existing description (prefer the Desc_Stone_C
+    // entry, else Desc_OreIron_C, else the first solid-resource entry), then rewire mResourceClass
+    // and EVERY FKAPIModuleItems.mProductionItem in mModuleInformation to the ore (the resource
+    // descriptor IS the item class: UFGResourceDescriptor : UFGItemDescriptor). mTrashItem/tier/UI
+    // fields stay template (there is no per-ore name field on the description; the screenshot/
+    // rarity text are cosmetic flavor).
+    //
+    // knowledge-3 (SAVE-CRASH FIX — EXCEPTION_ACCESS_VIOLATION in UFGSaveSession::SaveLevelState:
+    // FObjectReferenceDisc::Set -> ULevel::GetWorldPartitionRuntimeCell -> FWeakObjectPtr::Get).
+    // KLib's miner serializes mExtractionInfo as UPROPERTY(SaveGame) (KLMMBuildableMiner.h:122), so
+    // the save writes an FObjectReferenceDisc for OUR clone. Its contract (FGObjectReference.h:
+    // 26-27): "Name of the level we reside in, if empty, PathName is a absolute path" — i.e. the
+    // SAFE branch for non-level objects is the ASSET branch, which requires an outermost that is a
+    // plain content UPackage (that is how every vanilla descriptor reference serializes). The
+    // knowledge-2 clone was outered to the KAPI subsystem -> GameInstance -> engine-transient chain
+    // — no level AND no content package, an identity Set() was never built for; its level-name
+    // machinery dereferenced garbage in a ParallelFor save worker. FIX: every clone now lives in a
+    // dedicated runtime content package (/NodeShuffle/RuntimeMinerInfo) under a DETERMINISTIC
+    // per-ore name (NSMinerInfo_<Ore>), so Set() takes the string-only asset branch. Determinism
+    // matters for the reference a save captures: same path resolves to the same object next session
+    // once provisioning has run. If a load resolves the reference BEFORE provisioning (actor
+    // property deserialization precedes our PostLoadGame pass), StaticFindOrLoad misses and the
+    // field restores null — harmless BY KLIB's OWN DESIGN: AKLMMBuildableMiner::BeginPlay
+    // unconditionally re-fetches ("GetAssetSubsystem()->Miner_GetForKey(GetResourceClass(),
+    // TempExtractionInfo); SetExtractionInfo(TempExtractionInfo);" — KLMMBuildableMiner.cpp:202-204)
+    // before its fgcheckf, and our provisioning runs before BeginPlay (PostLoadGame early pass).
+    // Flags: RF_Public (referenced from outside its package — the save reference is external) |
+    // RF_Standalone (lives with its package even while nothing references it) + AddToRoot (belt
+    // against a mid-session KAPI rescan emptying the map). Reuse-or-create keeps the name unique:
+    // a same-session re-provision after a rescan FINDS the existing rooted clone instead of
+    // colliding with it.
     bOutFilterUnlocks = false;
     UClass* SubsysClass = FindObject<UClass>(nullptr, TEXT("/Script/KAPI.KAPIDataAssetSubsystem"));
     if (!SubsysClass)
@@ -5676,6 +5715,20 @@ bool ANodeShuffleSubsystem::ProvideKAPIMinerInfo(const TArray<UClass*>& ManagedM
         return true;
     }
 
+    // knowledge-3: the runtime content package all provisioned clones live in. CreatePackage is
+    // find-or-create (idempotent); rooted + marked fully loaded so nothing ever tries to "finish
+    // loading" a package that has no disk backing (the ContentLib-style runtime-content idiom).
+    UPackage* RuntimePackage = CreatePackage(TEXT("/NodeShuffle/RuntimeMinerInfo"));
+    if (!RuntimePackage)
+    {
+        UE_LOG(LogNodeShuffle, Warning,
+            TEXT("minerinfo: could not create the /NodeShuffle/RuntimeMinerInfo package — withholding modded scanner unlocks this session"));
+        OutWithMinerInfo.Reset();
+        return true;
+    }
+    if (!RuntimePackage->IsRooted()) { RuntimePackage->AddToRoot(); }
+    RuntimePackage->MarkAsFullyLoaded();
+
     FScriptSetHelper SetHelper(AllowedSetProp, AllowedSetProp->ContainerPtrToValuePtr<void>(Subsys));
     int32 Provided = 0;
     FString ProvidedNames;
@@ -5699,10 +5752,20 @@ bool ANodeShuffleSubsystem::ProvideKAPIMinerInfo(const TArray<UClass*>& ManagedM
                 *Ore->GetName());
             continue;
         }
-        UObject* Clone = DuplicateObject<UObject>(Template, Subsys, NAME_None);
+        // Deterministic per-ore identity inside the runtime package (see knowledge-3 block above):
+        // reuse an existing clone (same-session re-provision after a KAPI rescan) or template-init a
+        // new one. NewObject-with-template copies all property values, same as DuplicateObject for
+        // this asset shape (no Instanced subobjects on the description).
+        const FString CloneName = FString::Printf(TEXT("NSMinerInfo_%s"), *Ore->GetName());
+        UObject* Clone = FindObject<UObject>(RuntimePackage, *CloneName);
         if (!Clone)
         {
-            UE_LOG(LogNodeShuffle, Warning, TEXT("minerinfo: DuplicateObject failed for %s — skipped"), *Ore->GetName());
+            Clone = NewObject<UObject>(RuntimePackage, DescClass, FName(*CloneName),
+                RF_Public | RF_Standalone, Template);
+        }
+        if (!Clone)
+        {
+            UE_LOG(LogNodeShuffle, Warning, TEXT("minerinfo: clone creation failed for %s — skipped"), *Ore->GetName());
             continue;
         }
         Clone->AddToRoot();
