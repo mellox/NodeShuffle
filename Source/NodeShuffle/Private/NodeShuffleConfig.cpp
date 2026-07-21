@@ -139,6 +139,10 @@ void UNodeShuffleConfig::PostInitProperties()
         TEXT("Spawn-On-Discovery Radius (m)"),
         TEXT("New node locations only materialize (their rock + minable node appear) once you come within this many metres AND the terrain there has streamed in, so they always settle correctly on the ground. Smaller = more exploration, fewer live actors at once; larger = nodes pop in from further away. Far, undiscovered nodes stay as data until you reach them."));
 
+    AddBool(TEXT("UnlockModdedKnowledge"), true,
+        TEXT("Unlock Scanner Knowledge For Shuffled Modded Resources"),
+        TEXT("Shuffled modded resources are registered with the resource scanner so scanners recognize them. NOTE: some overhaul mods also gate MINER PLACEMENT on scanner knowledge, so this can let you place miners on modded ores before that overhaul's own research would have allowed it (crafting/recipes stay gated as normal). Turn off if you prefer each mod's own progression to grant this. Vanilla resources are never affected."));
+
     AddBool(TEXT("EnableDiagnostics"), false,
         TEXT("Enable Diagnostic Logging (Experimental)"),
         TEXT("OFF by default. Turn ON only when troubleshooting (e.g. to capture why a miner won't place): the mod writes verbose placement / node diagnostics to FactoryGame.log. Leave OFF for normal play — it keeps your log clean and avoids any overhead. The mod's actual fixes are always active whether this is on or off."));

@@ -296,6 +296,19 @@ private:
     void CaptureOriginalNodeRecord();
     void SettleNewNodesNearPlayers();
     void ReassociateOrphanedExtractors();
+    // knowledge-1 item 2: extractors whose resource binding this session already healed/refreshed
+    // (bounded once-per-extractor logging + no re-heal churn). Weak keys — dead actors drop out.
+    TSet<TWeakObjectPtr<const AActor>> ExtractorsHealed;
+    // knowledge-1 item 1: on authority, once per load after the layout is applied, register the
+    // DISTINCT modded resources the shuffle actively manages with the game's scanner-unlock list
+    // (AFGUnlockSubsystem::UnlockScannableResource — SaveGame + Replicated, so it persists). This is
+    // what lets resource scanners AND mods that gate extractors on scanner knowledge (SF+'s Modular
+    // Miner checks GetScannableResources().Contains via KLib's HasInformationAboutOre) recognize
+    // shuffled modded resources whose own unlock schematics never ran in this save. Vanilla
+    // resources are NEVER touched (their scanner unlocks are progression). Config-gated
+    // (UnlockModdedKnowledge, default ON); idempotent per load (Contains gate).
+    void UnlockModdedScannerKnowledge();
+    bool bKnowledgeUnlockDone = false;
     void RefreshScannersAndRadarTowers();
     // Removes one-off resource deposits sitting on shuffled nodes when their
     // resource contradicts the node's assigned one (runs once per session).
@@ -384,6 +397,17 @@ private:
     TMap<FString, int32> CapturePendingPasses;
     TSet<FString> CaptureTerminalThisSession;
     static constexpr int32 CaptureGiveUpPasses = 36;
+    // knowledge-1 item 3: bounded give-up for spawns that fail every pass (evidence: 675 identical
+    // "Failed to spawn new node (Node_BioWaterSF+_C)" warnings in ~4 min — SpawnActor returns null
+    // each attempt, likely spawn-gated by the owning mod). Consecutive per-ENTRY failures; at
+    // SpawnGiveUpAttempts the entry parks for the session (retries next load). Same lifecycle as the
+    // capture retry budget: success clears the counter, RollLayout's clear block resets all, and
+    // everything is session-only (no SaveGame). FlagsLogged bounds the one-shot per-CLASS class-flag
+    // breadcrumb (diagnostics-gated) that hints WHY the class refuses to spawn.
+    TMap<FGuid, int32> SpawnFailCounts;
+    TSet<FGuid> SpawnParkedThisSession;
+    TSet<FString> SpawnFailFlagsLogged;
+    static constexpr int32 SpawnGiveUpAttempts = 10;
     void RedressSpawnedOfResource(const FString& ResourceClassName);
     // Find a persisted capture for a resource short name (null when none).
     const FNodeShuffleCapturedVisual* FindCapturedVisual(const FString& ResourceClassName) const;

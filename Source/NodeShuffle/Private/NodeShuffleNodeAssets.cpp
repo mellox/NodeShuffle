@@ -68,6 +68,32 @@ namespace
                 { TEXT("/Game/FactoryGame/Resource/RawResources/SAM/Material/MI_SAM_Node_01.MI_SAM_Node_01") },
                 FVector(0.0f, 0.0f, 50.0f), FVector(1.3333f, 1.3333f, 1.8f) });
 
+            // knowledge-1 (FicsitFarming dirt): authored entries for all three dirt variants, taken
+            // from live captures (2026-07-21 session logs: 'CAPTURE: ... mesh /FicsitFarming/World/
+            // ResourceNodes/Dirt/Mesh/SM_DirtNode(.._WithDecal), scale=(1.00,1.00,1.00)').
+            // Fertilized never yielded a capture in any session (its originals always lost the
+            // mesh-actor pairing lottery), so it reuses the base SM_DirtNode mound.
+            // MaterialPaths are intentionally EMPTY: DressRock leaves uncovered slots on the MESH'S
+            // OWN default materials — for these modded meshes that IS FicsitFarming's authored dirt
+            // look, and it can't go stale the way copied material paths could. Offset Z matches the
+            // proven captured-dress placement (the dress default the redress used successfully).
+            // Authored rank > capture, so dirt looks no longer depend on capture-vs-destroyer races;
+            // a missing FicsitFarming simply makes LoadObject miss and the row is skipped.
+            const FVector DirtOffset(0.0f, 0.0f, -40.0f);
+            const FVector DirtScale(1.0f, 1.0f, 1.0f); // captured world scale
+
+            M.Add("Desc_FF_Dirt_C", {
+                TEXT("/FicsitFarming/World/ResourceNodes/Dirt/Mesh/SM_DirtNode.SM_DirtNode"),
+                {}, DirtOffset, DirtScale });
+
+            M.Add("Desc_FF_Dirt_Wet_C", {
+                TEXT("/FicsitFarming/World/ResourceNodes/Dirt/Mesh/SM_DirtNode_WithDecal.SM_DirtNode_WithDecal"),
+                {}, DirtOffset, DirtScale });
+
+            M.Add("Desc_FF_Dirt_Fertilized_C", {
+                TEXT("/FicsitFarming/World/ResourceNodes/Dirt/Mesh/SM_DirtNode.SM_DirtNode"),
+                {}, DirtOffset, DirtScale });
+
             return M;
         }();
         return Map;

@@ -69,6 +69,7 @@ All settings are in the in-game **Mods → Node Shuffle** panel (and persist to
 | Randomize Purity | on | Shuffle purities, dealt from the vanilla distribution (overall balance preserved). |
 | Allow Vanilla Nodes To Disappear | on | Off = every vanilla node stays active; only new locations roll. |
 | Include Modded Nodes | on | Shuffle nodes added by other mods too; their solid nodes also **relocate** on a re-roll, like vanilla nodes. |
+| Unlock Scanner Knowledge For Shuffled Modded Resources | on | Registers shuffled modded resources with the resource scanner so it can find them. Some overhaul mods also gate **miner placement** on scanner knowledge, so this can allow placing miners on modded ores earlier than that overhaul's own research intended (crafting stays gated). Turn off to let each mod's own progression grant this. Vanilla resources are never affected. |
 | Spawn-On-Discovery Radius (m) | 600 | New nodes materialize once you come within this range and the terrain has streamed in. |
 | Enable Diagnostic Logging | off | Verbose placement/node logging to `FactoryGame.log` for troubleshooting. The mod's fixes work whether this is on or off. |
 | Starter Nodes Near Spawn | on | New game only: place a small starter set (2 Iron, 2 Limestone, 1 Copper, Pure) near spawn. |

@@ -48,6 +48,7 @@
 #include "FGAmbientVolume.h"
 #include "FGRadioactivitySubsystem.h"
 #include "FGGameState.h"
+#include "FGUnlockSubsystem.h" // knowledge-1: UnlockScannableResource + FScannableResourcePair (+ geyser descriptor transitively)
 #include "Materials/MaterialInstanceDynamic.h"
 #include "FGActorRepresentationManager.h"
 #include "Representation/FGResourceNodeRepresentation.h"
@@ -281,6 +282,15 @@ void ANodeShuffleSubsystem::RefreshTick()
         {
             bDidInitialApply = true;
             LogLayoutSummary();
+        }
+        // knowledge-1 item 1: once per load (and once more after a re-roll — RollLayout re-arms the
+        // flag), after the layout is applied and resource classes resolve: register managed MODDED
+        // resources with the game's scanner-unlock list. Post-apply so a re-roll's fresh deal is
+        // what gets registered.
+        if (!bKnowledgeUnlockDone)
+        {
+            bKnowledgeUnlockDone = true;
+            UnlockModdedScannerKnowledge();
         }
         DiagnoseRocksNearPlayers();
     }
@@ -1347,6 +1357,12 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     CapturePendingThisPass.Reset();
     CapturePendingPasses.Empty();
     CaptureTerminalThisSession.Empty();
+    // knowledge-1 item 3: same lifecycle for the spawn-failure budget (new roll = new entries/spots).
+    SpawnFailCounts.Empty();
+    SpawnParkedThisSession.Empty();
+    // knowledge-1 item 1: a re-roll can deal modded resources that weren't active before — let the
+    // post-apply knowledge pass run again for this new population.
+    bKnowledgeUnlockDone = false;
 
     UE_LOG(LogNodeShuffle, Display,
         TEXT("Rolled layout: seed %d, pool %d (vanilla %d, new %d), active %d, pinned %d"),
@@ -2244,11 +2260,17 @@ void ANodeShuffleSubsystem::SpawnVisualRockForNode(AFGResourceNode* Node, UClass
     FQuat RockRelQuat = FQuat::Identity;
     float SlopeDeg = 0.0f;
     bool bUndergroundEntry = false;
+    bool bPinnedEntry = false;
     for (const FNodeShuffleEntry& E : Layout)
     {
-        if (E.EntryGuid == EntryGuid) { bUndergroundEntry = E.bUnderground; break; }
+        if (E.EntryGuid == EntryGuid) { bUndergroundEntry = E.bUnderground; bPinnedEntry = E.bPinned; break; }
     }
-    if (!bUndergroundEntry)
+    // knowledge-1 item 5: a PINNED entry has a BUILDING on it (that is what pinning means), so the
+    // slope probe below raycasts into the miner's mesh/foundation instead of terrain — a bogus steep
+    // "ground" normal that tilted the rock and slope-sank it ~1 m below the node origin (ROCKDIAG at
+    // the dirty-caterium miner: rock Z 3827.60 vs entry 3927.15). The entry is settled — trust its
+    // stored Z and dress flat, exactly like a fresh spawn on flat open ground.
+    if (!bUndergroundEntry && !bPinnedEntry)
     {
         FVector ProbeLoc;
         FRotator ProbeRot = FRotator::ZeroRotator;
@@ -3349,6 +3371,13 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
         return;
     }
 
+    // knowledge-1 item 3: an entry whose class refused to spawn SpawnGiveUpAttempts times in a row is
+    // parked for the session (it retries next load) — no per-pass class loads/raycasts/spawn attempts.
+    if (SpawnParkedThisSession.Num() > 0 && SpawnParkedThisSession.Contains(Entry.EntryGuid))
+    {
+        return;
+    }
+
     UClass* NodeClass = LoadClassByPath(Entry.NodeClassPath);
     UClass* ResourceClass = LoadClassByPath(Entry.AssignedResourceClassPath);
     if (!NodeClass || !ResourceClass)
@@ -3595,8 +3624,35 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
     {
         UE_LOG(LogNodeShuffle, Warning, TEXT("Failed to spawn new node (%s) at %s"),
             *SpawnClass->GetName(), *Entry.Location.ToCompactString());
+        // knowledge-1 item 3: consecutive-failure budget (evidence: 675 identical warnings in ~4 min
+        // for Node_BioWaterSF+_C — SpawnActor returns null every pass at the same coordinates).
+        // First failure per CLASS also drops a diag-gated class-flags breadcrumb toward the real
+        // cause (an abstract/deprecated class can never spawn).
+        if (FNodeShuffleModule::AreDiagnosticsEnabled() && !SpawnFailFlagsLogged.Contains(SpawnClass->GetName()))
+        {
+            SpawnFailFlagsLogged.Add(SpawnClass->GetName());
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("spawn: class '%s' flags: abstract=%d deprecated=%d newerVersionExists=%d raw=0x%08x"),
+                *SpawnClass->GetName(),
+                SpawnClass->HasAnyClassFlags(CLASS_Abstract) ? 1 : 0,
+                SpawnClass->HasAnyClassFlags(CLASS_Deprecated) ? 1 : 0,
+                SpawnClass->HasAnyClassFlags(CLASS_NewerVersionExists) ? 1 : 0,
+                static_cast<uint32>(SpawnClass->GetClassFlags()));
+        }
+        int32& Fails = SpawnFailCounts.FindOrAdd(Entry.EntryGuid);
+        if (++Fails >= SpawnGiveUpAttempts)
+        {
+            SpawnFailCounts.Remove(Entry.EntryGuid);
+            SpawnParkedThisSession.Add(Entry.EntryGuid);
+            // Ungated by design: one line per parked entry per session — shipping-log evidence of a
+            // class that refuses to spawn, without the per-pass warning firehose.
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("spawn: giving up on %s at %s for this session after %d attempts (SpawnActor returned null — class may be spawn-gated by its owning mod)"),
+                *SpawnClass->GetName(), *Entry.Location.ToCompactString(), SpawnGiveUpAttempts);
+        }
         return;
     }
+    SpawnFailCounts.Remove(Entry.EntryGuid); // success resets the consecutive-failure budget
     // Resource + purity via the subsystem's Friend access to AFGResourceNode(Base) — works on ANY concrete
     // node class. mResourceClassOverride/mPurityOverride are the SaveGame fields the engine restores BEFORE
     // BeginPlay, so GetResourceClass()/rate are valid the instant a built miner restores -> no assert.
@@ -5198,8 +5254,28 @@ void ANodeShuffleSubsystem::ReassociateOrphanedExtractors()
     for (TActorIterator<AFGBuildableResourceExtractorBase> It(GetWorld()); It; ++It)
     {
         AFGBuildableResourceExtractorBase* Extractor = *It;
-        if (Extractor->GetExtractableResource().GetObject() != nullptr)
+        UObject* BoundObj = Extractor->GetExtractableResource().GetObject();
+        if (BoundObj != nullptr)
         {
+            // knowledge-1 item 2b (the "Invalid"-output heal): a grandfathered extractor can restore
+            // BOUND to a valid node yet with its extract resource resolving null (its save was
+            // written mid-destroyer-war; live case: a Mk.1 on the pinned dirty-caterium node showing
+            // output "Invalid" while mining). Re-derive the binding exactly like the construct path
+            // (SetResourceNode — the hologram-era setter that binds AND claims, re-running the
+            // OnExtractableResourceSet derivation). Critical without a rebuild: SF+ removed vanilla
+            // miners from the build menu, so existing ones are irreplaceable. Once per extractor per
+            // session (weak-key set) so a genuinely unhealable binding can't churn or spam.
+            IFGExtractableResourceInterface* BoundRes = Cast<IFGExtractableResourceInterface>(BoundObj);
+            AFGResourceNode* BoundNode = Cast<AFGResourceNode>(BoundObj);
+            if (BoundNode && BoundRes && BoundRes->GetResourceClass() == nullptr
+                && !ExtractorsHealed.Contains(Extractor))
+            {
+                ExtractorsHealed.Add(Extractor);
+                Extractor->SetResourceNode(BoundNode);
+                UClass* HealedClass = BoundRes->GetResourceClass().Get();
+                UE_LOG(LogNodeShuffle, Display, TEXT("relink: refreshed resource binding on %s -> %s"),
+                    *Extractor->GetName(), HealedClass ? *HealedClass->GetName() : TEXT("<still null>"));
+            }
             continue;
         }
         const FVector Loc = Extractor->GetActorLocation();
@@ -5208,7 +5284,11 @@ void ANodeShuffleSubsystem::ReassociateOrphanedExtractors()
             AFGResourceNode* Node = Pair.Value;
             if (IsValid(Node) && FVector::DistSquared(Node->GetActorLocation(), Loc) < FMath::Square(ExtractorSnapDistance))
             {
-                Extractor->SetExtractableResource(TScriptInterface<IFGExtractableResourceInterface>(Node));
+                // knowledge-1 item 2a: re-link via SetResourceNode — the construct path's setter
+                // ("set as our current, also claiming it"), which re-derives the extract-resource
+                // binding the same way a freshly-built extractor does. The old bare
+                // SetExtractableResource bound the interface but skipped the node-claim half.
+                Extractor->SetResourceNode(Node);
                 UE_LOG(LogNodeShuffle, Verbose, TEXT("Re-associated extractor %s with new node"), *Extractor->GetName());
                 break;
             }
@@ -5262,6 +5342,76 @@ void ANodeShuffleSubsystem::RefreshScannersAndRadarTowers()
         if (!IsValid(Tower)) { continue; }
         Tower->ClearScannedResources();
         Tower->ScanForResources();
+    }
+}
+
+void ANodeShuffleSubsystem::UnlockModdedScannerKnowledge()
+{
+    // knowledge-1 item 1 (THE headline fix). SF+'s Modular Miner hologram (KLib) gates placement on
+    // AKLUnlockSubsystem::HasInformationAboutOre == AFGUnlockSubsystem::GetScannableResources()
+    // .Contains(Desc) — the STOCK scanner-unlock list. Shuffled modded resources whose own unlock
+    // schematics never ran in this save (AllMinable's likely fell to SF+'s content remover) are
+    // therefore machine-unminable even though the nodes work. Register every DISTINCT modded
+    // resource the shuffle actively manages; the backing list is UPROPERTY(SaveGame, Replicated) so
+    // the unlock persists and replicates. Vanilla resources are NEVER touched — their scanner
+    // unlocks are progression. Idempotent (Contains gate); config-gated, default ON.
+    if (!HasAuthority()) { return; }
+    const FNodeShuffleConfigStruct Config = FNodeShuffleConfigStruct::GetActiveConfig(this);
+    if (!Config.UnlockModdedKnowledge) { return; }
+    const AFGGameState* GS = GetWorld() ? GetWorld()->GetGameState<AFGGameState>() : nullptr;
+    AFGUnlockSubsystem* Unlocks = GS ? GS->GetUnlockSubsystem() : nullptr;
+    if (!Unlocks)
+    {
+        UE_LOG(LogNodeShuffle, Warning, TEXT("knowledge: unlock subsystem unavailable — scanner-knowledge pass skipped this load"));
+        return;
+    }
+
+    const bool bDiag = FNodeShuffleModule::AreDiagnosticsEnabled();
+    const TArray<TSubclassOf<UFGResourceDescriptor>> Known = Unlocks->GetScannableResources();
+    TSet<FString> SeenPaths;
+    int32 Unlocked = 0;
+    FString UnlockedNames;
+    for (const FNodeShuffleEntry& E : Layout)
+    {
+        // Active entries incl. pinned occupied originals — exactly the resources the shuffle deals.
+        if (!E.bActive) { continue; }
+        const FString& Path = E.AssignedResourceClassPath;
+        if (Path.IsEmpty() || Path.StartsWith(TEXT("/Game/"))) { continue; } // vanilla: never touched
+        bool bSeen = false;
+        SeenPaths.Add(Path, &bSeen);
+        if (bSeen) { continue; }
+        UClass* ResClass = LoadClassByPath(Path);
+        if (!ResClass || !ResClass->IsChildOf(UFGResourceDescriptor::StaticClass())) { continue; }
+        if (Known.Contains(ResClass))
+        {
+            if (bDiag)
+            {
+                UE_LOG(LogNodeShuffle, Verbose, TEXT("knowledge: %s already scanner-known — skipped"), *ResClass->GetName());
+            }
+            continue;
+        }
+        // Two-arg pair ctor on purpose: the one-arg ctor's geyser branch is dead code (it assigns
+        // Geyser then unconditionally overwrites with Node) — mirror the MIGRATION INTENT instead:
+        // geyser-descriptor subclasses register as Geyser-type scannables, everything else as Node.
+        const EResourceNodeType PairType = ResClass->IsChildOf(UFGResourceDescriptorGeyser::StaticClass())
+            ? EResourceNodeType::Geyser : EResourceNodeType::Node;
+        Unlocks->UnlockScannableResource(FScannableResourcePair(
+            TSubclassOf<UFGResourceDescriptor>(ResClass), PairType));
+        Unlocked++;
+        UnlockedNames += (UnlockedNames.IsEmpty() ? TEXT("") : TEXT(", "));
+        UnlockedNames += ResClass->GetName();
+        if (bDiag)
+        {
+            UE_LOG(LogNodeShuffle, Verbose, TEXT("knowledge: scanner-unlocked %s (type=%s)"),
+                *ResClass->GetName(), PairType == EResourceNodeType::Geyser ? TEXT("Geyser") : TEXT("Node"));
+        }
+    }
+    if (Unlocked > 0)
+    {
+        // Ungated by design: one line per load (usually only the FIRST load changes anything — the
+        // list is SaveGame, so later loads skip via Contains).
+        UE_LOG(LogNodeShuffle, Display, TEXT("knowledge: scanner-unlocked %d modded resource(s): %s"),
+            Unlocked, *UnlockedNames);
     }
 }
 
@@ -5880,13 +6030,18 @@ void ANodeShuffleSubsystem::DiagnoseRocksNearPlayers()
     TSet<UStaticMeshComponent*> Claimed;
     for (const auto& Pair : SpawnedNodes)
     {
-        if (UNodeShuffleNodeComponent* Comp = UNodeShuffleNodeComponent::Find(Pair.Value))
+        if (!IsValid(Pair.Value)) { continue; }
+        // knowledge-1 item 5: count EVERY static-mesh component owned by a managed spawned node as
+        // paired, not just our RockMesh subobject. A real-class node rendering its NATIVE slab (esc_
+        // AllMinable) has an EMPTY RockMesh, so the old RockMesh-only set reported paired-to-this=0
+        // for a perfectly-owned native slab (false alarm at the dirty-caterium miner). RockMesh is
+        // among the owned components, so both old cases stay covered. The stray-rock backstop
+        // already protects owned meshes via its NodeShuffleIsOurNode owner check — this only makes
+        // the DIAGNOSTIC agree with it.
+        TInlineComponentArray<UStaticMeshComponent*> OwnedMeshes(Pair.Value);
+        for (UStaticMeshComponent* MC : OwnedMeshes)
         {
-            if (IsValid(Comp->RockMesh)) { Claimed.Add(Comp->RockMesh); }
-        }
-        else if (ANodeShuffleResourceNode* OurNode = Cast<ANodeShuffleResourceNode>(Pair.Value))
-        {
-            if (IsValid(OurNode->RockMesh)) { Claimed.Add(OurNode->RockMesh); }
+            if (IsValid(MC)) { Claimed.Add(MC); }
         }
     }
 

@@ -67,6 +67,13 @@ struct NODESHUFFLE_API FNodeShuffleConfigStruct
     UPROPERTY(BlueprintReadWrite)
     int32 SpawnRadiusMeters{600};
 
+    // knowledge-1: register shuffled MODDED resources with the game's scanner-unlock list (SaveGame,
+    // replicated) so scanners — and mods that gate extractors on scanner knowledge (SF+ Modular
+    // Miner via KLib HasInformationAboutOre) — recognize them even when their own unlock schematics
+    // never ran in this save. Vanilla resources are never touched.
+    UPROPERTY(BlueprintReadWrite)
+    bool UnlockModdedKnowledge{true};
+
     // Diagnostics gate. OFF by default so normal users get NO extra log output and
     // no overhead. When ON, the mod writes verbose HOLOGRAMHOOK / placement / node
     // diagnostics to FactoryGame.log for troubleshooting (e.g. Miner snap issues).

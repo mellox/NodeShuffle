@@ -176,6 +176,23 @@ namespace
                 continue;
             }
 
+            // knowledge-1 item 6: cooperative-by-default for SUBCLASSED listeners. The destroy risk
+            // the veto exists for lives in the STOCK UKBFLWorldCDOActorListener pattern (behavior in
+            // config-driven requirement BPs whose DeferedCall performs the destroy — SF+'s
+            // ResearchNodeRemover). A listener SUBCLASS is bespoke cooperative C++ (e.g. SF+'s
+            // SFPResourceNodeMaterialListener, a material mapper) — vetoing it blocked processing of
+            // all 399 managed nodes with zero benefit. So: prepend on exact-class listeners only;
+            // DESTROYERS (any subclass) stay unconditionally vetoed — destruction is their whole
+            // contract. Residual: a hypothetically DESTRUCTIVE subclassed listener would slip this
+            // filter, but the external-destroy tombstone backstop (coexist-1) still contains it.
+            if (!bIsDestroyer && ListenerClass && AssetClass != ListenerClass)
+            {
+                UE_LOG(LogNodeShuffle, Display,
+                    TEXT("veto: asset '%s' class=%s — subclassed listener (cooperative), not vetoed"),
+                    *Asset->GetPathName(), *AssetClass->GetName());
+                continue;
+            }
+
             // ---- (d) PREPEND our requirement class at index 0 of the PUBLIC mRequirements array
             // (reflection). Index 0 (not append) so KBFL's short-circuiting Requirements_IsMet never
             // reaches the asset's own — side-effectful — requirement code for a vetoed node. Nothing
