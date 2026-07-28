@@ -493,6 +493,23 @@ private:
     TSet<FGuid> SpawnParkedThisSession;
     TSet<FString> SpawnFailFlagsLogged;
     static constexpr int32 SpawnGiveUpAttempts = 10;
+    // P3 (deckevict-1): node classes that PROVED unspawnable this session (SpawnActor returned null
+    // through the whole give-up budget) -> the class path we substitute for them. An EMPTY value means
+    // "evicted, but no viable substitute exists" (entries stay parked). Keyed by CLASS PATH, not by
+    // entry guid, so it survives a re-roll (which mints new EntryGuids) with zero re-seeding and is
+    // inherently idempotent. SESSION-ONLY BY DESIGN: spawn-gating is a property of the loaded MOD
+    // STACK, not of the world, so nothing here may reach the save. Deliberately NOT cleared in
+    // RollLayout's reset block even though its siblings are -- a re-roll does not un-gate a class.
+    TMap<FString, FString> SpawnRefusedClassSubstitute;
+    // Classes we have WATCHED spawn successfully this session, by resource form (1 solid / 2 liquid).
+    // Only /Game/ (vanilla) paths are recorded: a vanilla-origin node takes our fallback rock (see the
+    // bVanillaOrigin dress branch), so a substitute drawn from here is guaranteed visible.
+    TMap<uint8, FString> ProvenSpawnClassByForm;
+    static constexpr int32 MaxEvictedClassesPerSession = 8;
+    static constexpr int32 MaxSubstituteChain = 2;
+    // P3: log-once latch for the eviction-cap Display line (design §5 line B) — the cap condition
+    // itself (SpawnRefusedClassSubstitute.Num() vs MaxEvictedClassesPerSession) needs no counter.
+    bool bEvictionCapLogged = false;
     void RedressSpawnedOfResource(const FString& ResourceClassName);
     // Find a persisted capture for a resource short name (null when none).
     const FNodeShuffleCapturedVisual* FindCapturedVisual(const FString& ResourceClassName) const;
@@ -545,6 +562,21 @@ private:
     // redesign-6 FIX 2: the live original as AFGResourceNodeBase (covers esc_ Base-only originals too).
     AFGResourceNodeBase* FindOriginalBaseByPath(const FString& Path) const;
     static UClass* LoadClassByPath(const FString& Path);
+    // P3 (deckevict-1): the class an entry should ACTUALLY spawn from. Identical to Entry.NodeClassPath
+    // unless that class was evicted this session (SpawnActor proved it unspawnable). Never mutates the
+    // entry -> nothing persists; the save stays honest about what the world originally held, and the
+    // workaround evaporates when the stack changes.
+    FString ResolveSpawnNodeClassPath(const FNodeShuffleEntry& Entry) const;
+    // P3: called only from the give-up block, on the FIRST give-up for a class. Idempotent (a Contains
+    // check is the first statement). Picks a substitute via PickSubstituteClass, records it (possibly
+    // empty = no viable substitute), then sweeps Layout reviving every OTHER entry already parked or
+    // mid-budget on the same refused class — the whole point of evicting class-wide instead of per-entry.
+    void EvictSpawnRefusingClass(const FString& RefusedPath, const FNodeShuffleEntry& Cause);
+    // P3: ordered substitute-selection ladder (design §2.4) — gas gate first (DESCRIPTOR form, never
+    // the ResourceForm byte), then a class proven spawnable THIS session, then a data-only layout scan,
+    // then our own always-spawnable C++ fallback (solid only), then park (liquid with nothing proven).
+    // Returns empty when no viable candidate exists.
+    FString PickSubstituteClass(const FString& RefusedPath, const FNodeShuffleEntry& Cause) const;
     // playtest-fixes-1 / steepfix-1: optional out-flag distinguishes the definitive UNPLACEABLE
     // failure (the probe HIT ground but it is underwater OR steeper than a Miner tolerates, and the
     // 300 m spiral found no flat land) from the ambiguous no-terrain-hit defer (unstreamed terrain or

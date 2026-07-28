@@ -677,7 +677,9 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
             {
                 PurityDeckSource.Add(Old.OriginalPurity);
             }
-            if (!Old.NodeClassPath.IsEmpty())
+            // P3 (deckevict-1): never adopt a session-refused class as the representative — a re-roll
+            // must not re-arm a class the mod stack already proved unspawnable this session.
+            if (!Old.NodeClassPath.IsEmpty() && !SpawnRefusedClassSubstitute.Contains(Old.NodeClassPath))
             {
                 if (Old.ResourceForm == FormLiquid)
                 {
@@ -763,13 +765,17 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                     FormByResource.FindOrAdd(E.OriginalResourceClassPath) = EntryForm;
                 }
                 if (E.OriginalPurity != RP_MAX) { PurityDeckSource.Add(E.OriginalPurity); }
-                if (EntryForm == FormLiquid)
+                // P3 (deckevict-1): never adopt a session-refused class as the representative.
+                if (!SpawnRefusedClassSubstitute.Contains(E.NodeClassPath))
                 {
-                    if (SpawnableLiquidNodeClassPath.IsEmpty()) { SpawnableLiquidNodeClassPath = E.NodeClassPath; }
-                }
-                else if (SpawnableNodeClassPath.IsEmpty())
-                {
-                    SpawnableNodeClassPath = E.NodeClassPath;
+                    if (EntryForm == FormLiquid)
+                    {
+                        if (SpawnableLiquidNodeClassPath.IsEmpty()) { SpawnableLiquidNodeClassPath = E.NodeClassPath; }
+                    }
+                    else if (SpawnableNodeClassPath.IsEmpty())
+                    {
+                        SpawnableNodeClassPath = E.NodeClassPath;
+                    }
                 }
                 VanillaCount++;
                 ExperimentalAdded++;
@@ -848,7 +854,11 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                 VanillaResourceCounts.FindOrAdd(E.OriginalResourceClassPath)++;
                 FormByResource.FindOrAdd(E.OriginalResourceClassPath) = FormSolid;
                 if (E.OriginalPurity != RP_MAX) { PurityDeckSource.Add(E.OriginalPurity); }
-                if (SpawnableNodeClassPath.IsEmpty()) { SpawnableNodeClassPath = E.NodeClassPath; }
+                // P3 (deckevict-1): never adopt a session-refused class as the representative.
+                if (SpawnableNodeClassPath.IsEmpty() && !SpawnRefusedClassSubstitute.Contains(E.NodeClassPath))
+                {
+                    SpawnableNodeClassPath = E.NodeClassPath;
+                }
                 VanillaCount++;
                 bModded ? ModdedAdded++ : VanillaAdded++;
             }
@@ -946,13 +956,17 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                 FormByResource.FindOrAdd(Res->GetPathName()) = E.ResourceForm;
             }
             PurityDeckSource.Add(E.OriginalPurity);
-            if (E.ResourceForm == FormLiquid)
+            // P3 (deckevict-1): never adopt a session-refused class as the representative.
+            if (!SpawnRefusedClassSubstitute.Contains(BaseNode->GetClass()->GetPathName()))
             {
-                if (SpawnableLiquidNodeClassPath.IsEmpty()) { SpawnableLiquidNodeClassPath = BaseNode->GetClass()->GetPathName(); }
-            }
-            else if (SpawnableNodeClassPath.IsEmpty())
-            {
-                SpawnableNodeClassPath = BaseNode->GetClass()->GetPathName();
+                if (E.ResourceForm == FormLiquid)
+                {
+                    if (SpawnableLiquidNodeClassPath.IsEmpty()) { SpawnableLiquidNodeClassPath = BaseNode->GetClass()->GetPathName(); }
+                }
+                else if (SpawnableNodeClassPath.IsEmpty())
+                {
+                    SpawnableNodeClassPath = BaseNode->GetClass()->GetPathName();
+                }
             }
             VanillaCount++;
         }
@@ -1466,6 +1480,13 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     // knowledge-1 item 3: same lifecycle for the spawn-failure budget (new roll = new entries/spots).
     SpawnFailCounts.Empty();
     SpawnParkedThisSession.Empty();
+    // P3 (deckevict-1) — DELIBERATE OMISSION, read before "fixing" it: SpawnRefusedClassSubstitute,
+    // ProvenSpawnClassByForm and bEvictionCapLogged are SESSION-scoped, not ROLL-scoped, and are NOT
+    // reset here even though their siblings above are. Spawn-gating is a property of the loaded MOD
+    // STACK, not of the world layout — a re-roll re-randomizes locations/resources but does not un-gate
+    // a class the stack refuses to spawn. Clearing these here would re-arm the exact bug P3 fixes on
+    // every re-roll (design §2.7, §9 ruling R8). They reset only on a genuine new world/session (a new
+    // subsystem instance default-constructs them empty).
     // knowledge-1 item 1: a re-roll can deal modded resources that weren't active before — let the
     // post-apply knowledge pass run again for this new population.
     bKnowledgeUnlockDone = false;
@@ -2465,10 +2486,15 @@ void ANodeShuffleSubsystem::AppendStarterNodes(TArray<FNodeShuffleEntry>& NewLay
     };
 
     // A spawnable solid node class: reuse the first one already on a spawned/new entry.
+    // P3 (deckevict-1): never adopt a session-refused class as the representative.
     FString SolidNodeClassPath;
     for (const FNodeShuffleEntry& E : NewLayout)
     {
-        if (E.bIsNewNode && !E.NodeClassPath.IsEmpty()) { SolidNodeClassPath = E.NodeClassPath; break; }
+        if (E.bIsNewNode && !E.NodeClassPath.IsEmpty() && !SpawnRefusedClassSubstitute.Contains(E.NodeClassPath))
+        {
+            SolidNodeClassPath = E.NodeClassPath;
+            break;
+        }
     }
 
     // Candidate placement points: a few random spots within the radius around the player start.
@@ -2735,7 +2761,11 @@ bool ANodeShuffleSubsystem::FinalizeAdoptedNode(AFGResourceNode* Node, int32 Ent
         return false;
     }
     FNodeShuffleEntry& E = Layout[EntryIdx];
-    const bool bVanillaOrigin = E.NodeClassPath.StartsWith(TEXT("/Game/"));
+    // P3 (deckevict-1): resolve through the substitute redirect — same reason as EnsureNewNodeSpawned's
+    // adopt branch (this is the load-time path): a substituted node must re-assert placement gates
+    // based on the class it actually spawned from, not E.NodeClassPath's original (possibly refusing)
+    // value.
+    const bool bVanillaOrigin = ResolveSpawnNodeClassPath(E).StartsWith(TEXT("/Game/"));
     ANodeShuffleResourceNode* Legacy = Cast<ANodeShuffleResourceNode>(Node);
 
     // Restored nodes lost the (unserialized) interaction box — re-assert it (no-op for real native boxes).
@@ -3365,7 +3395,10 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
         // real-class redesign: a restored node lost its runtime component — re-attach it. RockMesh's
         // mesh/materials are not SaveGame, so a vanilla node's FALLBACK rock is EMPTY after reload; re-dress
         // it once. Modded-origin nodes use their own native visual (re-trigger only if restored hidden).
-        const bool bVanillaOrigin = Entry.NodeClassPath.StartsWith(TEXT("/Game/"));
+        // P3 (deckevict-1): resolve through the substitute redirect — a substituted node adopted after
+        // reload must re-dress as vanilla-origin using the class it ACTUALLY spawned from, not the
+        // entry's original (possibly refusing) NodeClassPath still recorded in the save.
+        const bool bVanillaOrigin = ResolveSpawnNodeClassPath(Entry).StartsWith(TEXT("/Game/"));
         // Legacy old-save nodes (ANodeShuffleResourceNode) carry their OWN rock/decal subobjects — never
         // attach a component to them (it would add a SECOND, duplicate rock). Only real-class nodes get a
         // component (re-attached after reload).
@@ -3485,7 +3518,15 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
         return;
     }
 
-    UClass* NodeClass = LoadClassByPath(Entry.NodeClassPath);
+    // P3 (deckevict-1): resolve through the session-only substitute redirect BEFORE loading — an entry
+    // whose original class proved unspawnable this session transparently spawns from its substitute
+    // instead. Entry.NodeClassPath itself is NEVER rewritten (it is UPROPERTY(SaveGame)) — the save
+    // stays honest about what the world originally held; see ResolveSpawnNodeClassPath. Hoisted to a
+    // local so bVanillaOrigin and the give-up block further below in THIS spawn path reuse the SAME
+    // resolved value instead of calling the resolver again. (The EARLIER adopt/idempotent branch above
+    // — which returns before reaching here — resolves separately, since this local isn't in scope yet.)
+    const FString ResolvedNodeClassPath = ResolveSpawnNodeClassPath(Entry);
+    UClass* NodeClass = LoadClassByPath(ResolvedNodeClassPath);
     UClass* ResourceClass = LoadClassByPath(Entry.AssignedResourceClassPath);
     if (!NodeClass || !ResourceClass)
     {
@@ -3710,7 +3751,10 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
     // reload. Identity lives in the SaveGame Layout (FNodeShuffleEntry) + a runtime UNodeShuffleNodeComponent
     // attached below — never on the actor's class — so ANY node class can be one of ours. ANodeShuffleResource
     // Node remains only as a defensive fallback if the original class fails to resolve (and so old saves load).
-    const bool bVanillaOrigin = Entry.NodeClassPath.StartsWith(TEXT("/Game/"));
+    // P3 (deckevict-1): bVanillaOrigin drives the placement-gate re-assert below and the visual branch
+    // further down — it must reflect the class we're ACTUALLY spawning (ResolvedNodeClassPath, hoisted
+    // above), not the entry's original (possibly refusing) NodeClassPath.
+    const bool bVanillaOrigin = ResolvedNodeClassPath.StartsWith(TEXT("/Game/"));
     UClass* SpawnClass = NodeClass ? NodeClass : ANodeShuffleResourceNode::StaticClass();
 
     FActorSpawnParameters Params;
@@ -3756,10 +3800,26 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
             UE_LOG(LogNodeShuffle, Display,
                 TEXT("spawn: giving up on %s at %s for this session after %d attempts (SpawnActor returned null — class may be spawn-gated by its owning mod)"),
                 *SpawnClass->GetName(), *Entry.Location.ToCompactString(), SpawnGiveUpAttempts);
+            // P3 (deckevict-1): evict the CLASS (not just this entry) on its FIRST give-up. Must run
+            // AFTER the park+log above — EvictSpawnRefusingClass un-parks whatever it successfully
+            // rebinds, including this same entry if a substitute exists (order per design §2.3).
+            EvictSpawnRefusingClass(ResolvedNodeClassPath, Entry);
         }
         return;
     }
     SpawnFailCounts.Remove(Entry.EntryGuid); // success resets the consecutive-failure budget
+    // P3 (deckevict-1): SpawnForm hoisted from its original declaration further below (still used there,
+    // for the visual-dress branch) so it's available here too, for the ProvenSpawnClassByForm record.
+    const EResourceForm SpawnForm = UFGItemDescriptor::GetForm(TSubclassOf<UFGItemDescriptor>(ResourceClass));
+    // P3: remember a class we WATCHED spawn, per resource FORM — the substitution ladder's strongest
+    // candidate (measured spawnable in THIS exact stack, not merely assumed). Only /Game/ classes count
+    // (a vanilla-origin node takes our fallback rock, so a substitute drawn from here is always visible).
+    const FString SpawnClassPath = SpawnClass->GetPathName();
+    if (SpawnClassPath.StartsWith(TEXT("/Game/")))
+    {
+        const uint8 FormKey = (SpawnForm == EResourceForm::RF_LIQUID) ? FormLiquid : FormSolid;
+        if (!ProvenSpawnClassByForm.Contains(FormKey)) { ProvenSpawnClassByForm.Add(FormKey, SpawnClassPath); }
+    }
     // Resource + purity via the subsystem's Friend access to AFGResourceNode(Base) — works on ANY concrete
     // node class. mResourceClassOverride/mPurityOverride are the SaveGame fields the engine restores BEFORE
     // BeginPlay, so GetResourceClass()/rate are valid the instant a built miner restores -> no assert.
@@ -3816,8 +3876,8 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
     // invisible). Vanilla-origin solids: OUR fallback rock (a runtime vanilla node gets no engine mesh actor).
     // Modded-origin (solid OR gas): the REAL node class supplies its own visual — use it, NO quartz
     // placeholder. This is what finally gives lithium its real look instead of the quartz stand-in.
-    const EResourceForm SpawnForm =
-        UFGItemDescriptor::GetForm(TSubclassOf<UFGItemDescriptor>(ResourceClass));
+    // P3 (deckevict-1): SpawnForm now hoisted above (near the ProvenSpawnClassByForm record) — reused
+    // here unchanged.
     if (SpawnForm == EResourceForm::RF_LIQUID)
     {
         RebuildNodeNativeVisual(Node);
@@ -5427,6 +5487,210 @@ bool ANodeShuffleSubsystem::TryRedealWaterLockedEntry(FNodeShuffleEntry& Entry)
     return false; // all candidates grid-water or too close — retry with fresh salt next pass
 }
 
+FString ANodeShuffleSubsystem::ResolveSpawnNodeClassPath(const FNodeShuffleEntry& Entry) const
+{
+    // P3 (deckevict-1): the class an entry should ACTUALLY spawn from. Identical to Entry.NodeClassPath
+    // unless that class was evicted this session -> nothing persists (design §2.2). Num()==0 fast path
+    // mirrors the established idiom elsewhere in this file (e.g. VanillaNodeCache/SteadyHiddenOriginals
+    // early-outs) — the common case (no eviction ever happened) is a single int compare.
+    if (SpawnRefusedClassSubstitute.Num() == 0) { return Entry.NodeClassPath; }
+    const FString* Sub = SpawnRefusedClassSubstitute.Find(Entry.NodeClassPath);
+    return (Sub && !Sub->IsEmpty()) ? *Sub : Entry.NodeClassPath;
+}
+
+FString ANodeShuffleSubsystem::PickSubstituteClass(const FString& RefusedPath, const FNodeShuffleEntry& Cause) const
+{
+    // deckevict-1 (design §2.4). Ordered ladder, first hit wins. Every candidate must (a) differ from
+    // RefusedPath, (b) not itself already be a KEY in SpawnRefusedClassSubstitute (no A->B->A
+    // ping-pong), (c) respect the MaxSubstituteChain depth cap (checked once, up front, below).
+    const bool bDiag = FNodeShuffleModule::AreDiagnosticsEnabled();
+    const FString RefusedLabel = FPackageName::ObjectPathToObjectName(RefusedPath);
+
+    // Rung 1 (design §2.4.1 / R2 HARD GATE): GAS is relocate-only and bound to its own modded reactive
+    // extractor (AlkaLib) — overriding its node class is exactly the exclude-gas-1 bug class. Tested via
+    // the DESCRIPTOR form (same IsGasResourcePath idiom RollLayout's deck build uses at LoadClassByPath
+    // + UFGItemDescriptor::GetForm), NEVER the ResourceForm byte — gas entries record ResourceForm as
+    // FormSolid, so the byte would silently miss every gas entry and let one get substituted.
+    UClass* AssignedRC = LoadClassByPath(Cause.AssignedResourceClassPath);
+    const bool bIsGas = AssignedRC
+        && UFGItemDescriptor::GetForm(TSubclassOf<UFGItemDescriptor>(AssignedRC)) == EResourceForm::RF_GAS;
+    if (bIsGas)
+    {
+        if (bDiag)
+        {
+            UE_LOG(LogNodeShuffle, Verbose,
+                TEXT("deck-substitute: %s -> <none> (source=none; gas entry, never substituted)"), *RefusedLabel);
+        }
+        return FString();
+    }
+
+    // Chain-depth guard (design §2.4c / §2.8): walk backward from RefusedPath through EXISTING
+    // substitution links. A class already MaxSubstituteChain links deep is the terminal end of an
+    // already-exhausted chain (e.g. A->B, B->C: C is depth 2) — no further substitution, entries park.
+    {
+        int32 Depth = 0;
+        FString Probe = RefusedPath;
+        for (int32 i = 0; i < MaxSubstituteChain; i++)
+        {
+            const FString* UpstreamKey = SpawnRefusedClassSubstitute.FindKey(Probe);
+            if (!UpstreamKey) { break; }
+            Depth++;
+            Probe = *UpstreamKey;
+        }
+        if (Depth >= MaxSubstituteChain)
+        {
+            if (bDiag)
+            {
+                UE_LOG(LogNodeShuffle, Verbose,
+                    TEXT("deck-substitute: %s -> <none> (source=none; substitution chain exhausted at depth %d)"),
+                    *RefusedLabel, Depth);
+            }
+            return FString();
+        }
+    }
+
+    const uint8 Form = Cause.ResourceForm;
+    const auto IsEligible = [&](const FString& Candidate) -> bool
+    {
+        return !Candidate.IsEmpty() && Candidate != RefusedPath && !SpawnRefusedClassSubstitute.Contains(Candidate);
+    };
+
+    // Rung 2: a /Game/ class we WATCHED spawn successfully this session — measured, not assumed.
+    if (const FString* Proven = ProvenSpawnClassByForm.Find(Form))
+    {
+        if (IsEligible(*Proven))
+        {
+            if (bDiag)
+            {
+                UE_LOG(LogNodeShuffle, Verbose, TEXT("deck-substitute: %s -> %s (source=proven)"),
+                    *RefusedLabel, *FPackageName::ObjectPathToObjectName(*Proven));
+            }
+            return *Proven;
+        }
+    }
+
+    // Rung 3: scan the layout for any active bIsNewNode entry already on a /Game/ class of this form —
+    // data-only fallback for when the refusing class gives up before anything of that form has spawned.
+    for (const FNodeShuffleEntry& E : Layout)
+    {
+        if (!E.bIsNewNode || !E.bActive || E.ResourceForm != Form) { continue; }
+        if (!E.NodeClassPath.StartsWith(TEXT("/Game/"))) { continue; }
+        if (!IsEligible(E.NodeClassPath)) { continue; }
+        if (bDiag)
+        {
+            UE_LOG(LogNodeShuffle, Verbose, TEXT("deck-substitute: %s -> %s (source=layout-scan)"),
+                *RefusedLabel, *FPackageName::ObjectPathToObjectName(E.NodeClassPath));
+        }
+        return E.NodeClassPath;
+    }
+
+    // Rung 4 (SOLID ONLY): our own C++ fallback class — always spawnable, ships its own UseBox +
+    // RockMesh subobjects and mCanPlaceResourceExtractor=true in its ctor. Ranked LAST: its path is
+    // /Script/NodeShuffle.NodeShuffleResourceNode, so bVanillaOrigin is false for it -> the placement-
+    // gate re-assert is skipped. The component force-accept is still applied, so extractor snapping
+    // should still work, but this is engine/hologram behaviour: graded ASSUMED, not provably provided
+    // (design §2.4.4, R4 — the in-game check names this explicitly).
+    if (Form != FormLiquid)
+    {
+        const FString Fallback = ANodeShuffleResourceNode::StaticClass()->GetPathName();
+        if (IsEligible(Fallback))
+        {
+            if (bDiag)
+            {
+                UE_LOG(LogNodeShuffle, Verbose, TEXT("deck-substitute: %s -> %s (source=cpp-fallback)"),
+                    *RefusedLabel, *Fallback);
+            }
+            return Fallback;
+        }
+    }
+
+    // Rung 5: liquid with no proven/scanned liquid class — never hand a liquid resource a solid node
+    // class (oil/liquid extractors bind to the node TYPE). Park instead of guessing.
+    if (bDiag)
+    {
+        UE_LOG(LogNodeShuffle, Verbose,
+            TEXT("deck-substitute: %s -> <none> (source=none; no eligible candidate for form %d)"),
+            *RefusedLabel, Form);
+    }
+    return FString();
+}
+
+void ANodeShuffleSubsystem::EvictSpawnRefusingClass(const FString& RefusedPath, const FNodeShuffleEntry& Cause)
+{
+    // deckevict-1 (design §2.3, §2.9). IDEMPOTENT: the Nth give-up of the same class is a single hash
+    // lookup + return — the FIRST eviction already swept and revived every entry carrying this class,
+    // including ones that gave up earlier in the session.
+    if (SpawnRefusedClassSubstitute.Contains(RefusedPath))
+    {
+        return;
+    }
+    if (SpawnRefusedClassSubstitute.Num() >= MaxEvictedClassesPerSession)
+    {
+        if (!bEvictionCapLogged)
+        {
+            bEvictionCapLogged = true;
+            // Line B (design §5): ungated, Display, once for the whole session.
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("deck: eviction cap %d reached — further spawn-refusing classes stay parked this session"),
+                MaxEvictedClassesPerSession);
+        }
+        return;
+    }
+
+    const FString Substitute = PickSubstituteClass(RefusedPath, Cause);
+    SpawnRefusedClassSubstitute.Add(RefusedPath, Substitute); // may be empty -> "evicted, no substitute"
+
+    const bool bDiag = FNodeShuffleModule::AreDiagnosticsEnabled();
+    const FString RefusedLabel = FPackageName::ObjectPathToObjectName(RefusedPath);
+    int32 Redealt = 0, Parked = 0;
+    for (FNodeShuffleEntry& E : Layout)
+    {
+        if (!E.bIsNewNode || !E.bActive || E.bPinned) { continue; }  // occupied originals + pinned: untouched
+        if (E.NodeClassPath != RefusedPath) { continue; }
+        if (DormantThisSession.Contains(E.EntryGuid)) { continue; } // dormant entries do no work
+        if (SpawnedNodes.Contains(E.EntryGuid)) { continue; }       // defensive: cannot happen, class never spawned
+        if (Substitute.IsEmpty())
+        {
+            Parked++;
+            continue; // stays parked (today's terminal state) — still counted for the log
+        }
+        // THE REVIVE: un-park + reset the fail budget so the entry re-attempts on the substitute class
+        // via the resolver, next pass, with a fresh SpawnGiveUpAttempts budget.
+        SpawnParkedThisSession.Remove(E.EntryGuid);
+        SpawnFailCounts.Remove(E.EntryGuid);
+        Redealt++;
+        // Line D (design §5): diagnostics-gated, Verbose, one per rebound entry — proves §2.6's
+        // "location untouched" claim from the log alone (settled=1, same Location as before).
+        if (bDiag)
+        {
+            UE_LOG(LogNodeShuffle, Verbose,
+                TEXT("deck-rebind: entry %s (%s) %s -> %s at %s (settled=%d, purity kept, budget reset)"),
+                *E.EntryGuid.ToString(), *E.AssignedResourceClassPath, *RefusedLabel,
+                *FPackageName::ObjectPathToObjectName(Substitute), *E.Location.ToCompactString(),
+                E.bRayCasted ? 1 : 0);
+        }
+    }
+
+    // Line A (design §5): ungated, Display, once per evicted class — the acceptance line. Contains the
+    // literal "deck: evicted <class> after give-up, redealt N" the acceptance criterion requires.
+    UE_LOG(LogNodeShuffle, Display,
+        TEXT("deck: evicted %s after give-up, redealt %d (substitute=%s, form=%d; %d entries parked — no substitute)"),
+        *RefusedLabel, Redealt, Substitute.IsEmpty() ? TEXT("<none>") : *FPackageName::ObjectPathToObjectName(Substitute),
+        Cause.ResourceForm, Parked);
+
+    // Line C (design §5): ungated, Display, only for the parked-terminal case (no substitute exists) —
+    // extra detail (gas flag) beyond line A.
+    if (Substitute.IsEmpty())
+    {
+        UClass* AssignedRC = LoadClassByPath(Cause.AssignedResourceClassPath);
+        const bool bIsGas = AssignedRC
+            && UFGItemDescriptor::GetForm(TSubclassOf<UFGItemDescriptor>(AssignedRC)) == EResourceForm::RF_GAS;
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("deck: no viable substitute for %s (form=%d, gas=%d) — %d entries stay parked this session"),
+            *RefusedLabel, Cause.ResourceForm, bIsGas ? 1 : 0, Parked);
+    }
+}
+
 void ANodeShuffleSubsystem::LogHereCensus() const
 {
     // playtest-fixes-1: `NodeShuffle.Here` — one command turns "something is odd at this spot" into a
@@ -5441,10 +5705,10 @@ void ANodeShuffleSubsystem::LogHereCensus() const
     }
     const FVector P = Pawn->GetActorLocation();
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("HERE: player at X=%.0f Y=%.0f Z=%.0f | inWaterVolume=%d belowDepthFloor=%d | layout=%d spawn-entries, %d live spawned, %d water-locked this session"),
+        TEXT("HERE: player at X=%.0f Y=%.0f Z=%.0f | inWaterVolume=%d belowDepthFloor=%d | layout=%d spawn-entries, %d live spawned, %d water-locked this session, %d node classes evicted this session"),
         P.X, P.Y, P.Z,
         IsPointInWater(P) ? 1 : 0, (P.Z < DeepWaterFloorZ) ? 1 : 0,
-        Layout.Num(), SpawnedNodes.Num(), WaterLockedThisSession.Num());
+        Layout.Num(), SpawnedNodes.Num(), WaterLockedThisSession.Num(), SpawnRefusedClassSubstitute.Num());
     // playtest-fixes-3: learned water-grid knowledge (the roll/redeal excluded-areas store).
     EnsureWaterGridLoaded();
     int32 GridLand = 0, GridWater = 0, GridMixed = 0;
@@ -5530,6 +5794,10 @@ void ANodeShuffleSubsystem::LogHereCensus() const
         // coexist-veto-1 FIX 4a: a tombstoned (externally destroyed, dormant-this-session) entry
         // would otherwise read as a plain "no-actor" — indistinguishable from not-yet-streamed.
         if (DormantThisSession.Contains(E.EntryGuid)) { Flags += TEXT("|DORMANT"); }
+        // P3 (deckevict-1): surface spawn-parked / class-substituted state so NodeShuffle.Here can
+        // diagnose a dead spot without a second launch.
+        if (SpawnParkedThisSession.Contains(E.EntryGuid)) { Flags += TEXT("|SPAWN-PARKED"); }
+        if (ResolveSpawnNodeClassPath(E) != E.NodeClassPath) { Flags += TEXT("|CLASS-SUBBED"); }
         UE_LOG(LogNodeShuffle, Display,
             TEXT("HERE: entry %s dist=%.0fm dz=%+.0fm [%s] at %s"),
             *ShortName(E.AssignedResourceClassPath), FMath::Sqrt(D2) / 100.0f,
