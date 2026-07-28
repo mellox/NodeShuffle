@@ -173,6 +173,27 @@ namespace
     // (pass 2) and the BeginPlay veto pre-registration pass so the two can never drift apart.
     // Restored transforms are exact; 3 m just disambiguates.
     constexpr float AdoptMatchRadiusCm = 300.0f;
+
+    // rehide-1: an actor's leaf object name with a trailing auto-numbered "_<digits>" suffix stripped
+    // — lead_C_2147470535 -> lead_C. GetPathName() for a level/runtime actor is
+    // "Package.Level:PersistentLevel.ActorName", so the leaf is everything after the LAST '.'. Spawner
+    // mods re-create their nodes with a fresh auto-number every process boot; this recovers the stable
+    // class-name token used as TryRematchStaleRecord's legacy fallback (design §3.1 point 2) when no
+    // layout entry resolves to give a real NodeClassPath.
+    FString RehideClassNameToken(const FString& ObjectPath)
+    {
+        int32 Dot = INDEX_NONE;
+        const FString Leaf = ObjectPath.FindLastChar(TEXT('.'), Dot) ? ObjectPath.Mid(Dot + 1) : ObjectPath;
+        int32 Underscore = INDEX_NONE;
+        if (Leaf.FindLastChar(TEXT('_'), Underscore) && Underscore + 1 < Leaf.Len())
+        {
+            const FString Suffix = Leaf.Mid(Underscore + 1);
+            bool bAllDigits = Suffix.Len() > 0;
+            for (const TCHAR C : Suffix) { if (!FChar::IsDigit(C)) { bAllDigits = false; break; } }
+            if (bAllDigits) { return Leaf.Left(Underscore); }
+        }
+        return Leaf;
+    }
 }
 
 ANodeShuffleSubsystem::ANodeShuffleSubsystem()
@@ -354,6 +375,9 @@ void ANodeShuffleSubsystem::RestoreOriginalsForReroll()
     // dirtdress-1 (cold review): same lifecycle for the capture-chain diag dedupe — the re-rolled
     // population re-runs capture from scratch, so it should re-emit its CAPTURE-CHAIN breadcrumbs.
     CaptureChainLogged.Empty();
+    // rehide-1 (cold review): same lifecycle for the no-match REHIDE throttle — rebuilt records keep
+    // their old path keys, so without this a still-stale record stays log-silent after a re-roll.
+    RematchNoMatchLogged.Empty();
 
     int32 Unhidden = 0;
     for (const FNodeShuffleSuppressedOriginal& Rec : OriginalNodeRecord)
@@ -542,6 +566,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     // class (still form-correct via the oil descriptor).
     FString SpawnableLiquidNodeClassPath;
     int32 VanillaCount = 0;
+    int32 ZombiesDropped = 0; // rehide-1: pre-fix un-anchorable runtime-foreign records dropped at rebuild (§5)
 
     TArray<FNodeShuffleEntry> NewLayout;
 
@@ -573,6 +598,25 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
             const bool bOccupied = (IsValid(Live) && Live->IsOccupied())
                 || (LiveNode && PortableMinerNodes.Contains(LiveNode));
 
+            // rehide-1 ZOMBIE-GC (design §11 ruling 1, §5): a !bPinned entry whose path no longer
+            // resolves, whose resource is modded (non-/Game/), and whose OriginalTrueLocation was never
+            // stamped is a PRE-FIX runtime-foreign record that can never be re-anchored — every capture
+            // site post-rehide-1 always stamps OriginalTrueLocation, so only a pre-fix zombie can ever
+            // satisfy all three legs at once. Drop it instead of carrying it forward: it would otherwise
+            // inflate the pool with an un-healable duplicate of a resource that already lives on
+            // elsewhere in the layout. Never touches a pinned (occupied) entry.
+            if (!Old.bPinned && !IsValid(Live) && !Old.OriginalResourceClassPath.StartsWith(TEXT("/Game/"))
+                && Old.OriginalTrueLocation.IsNearlyZero())
+            {
+                ZombiesDropped++;
+                // Ungated by design (rare: only at an explicit re-roll, only pre-fix zombies): name WHAT
+                // was dropped so an unexpectedly large ZombiesDropped count is diagnosable from the log.
+                UE_LOG(LogNodeShuffle, Display,
+                    TEXT("Re-roll ZOMBIE-GC: dropping un-anchorable pre-fix entry path='%s' res='%s' (unpinned, path dead, no TrueLocation)"),
+                    *Old.VanillaNodePath, *Old.OriginalResourceClassPath);
+                continue;
+            }
+
             FNodeShuffleEntry E;
             E.EntryGuid = FGuid::NewGuid();
             E.bIsNewNode = false;                 // re-enters the pool as an original; conversion re-runs below
@@ -587,6 +631,16 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
             E.bPinned = bOccupied;
             E.bActive = true;
             E.NodeClassPath = Old.NodeClassPath;
+            // rehide-1: carry the durable anchor through the rebuild. Opportunistically stamp it when
+            // Old never got one but is STILL a raw (unconverted) original (!bIsNewNode) with a live,
+            // path-resolvable node — Live above IS that node itself in this case, a true first-hand
+            // location (this only applies to carried pinned/occupied originals; converted/relocated
+            // entries were already stamped at their own capture site or the prior rebuild).
+            E.OriginalTrueLocation = Old.OriginalTrueLocation;
+            if (E.OriginalTrueLocation.IsNearlyZero() && !Old.bIsNewNode && IsValid(Live))
+            {
+                E.OriginalTrueLocation = Live->GetActorLocation();
+            }
             NewLayout.Add(E);
 
             VanillaLocations.Add(Old.Location);
@@ -614,8 +668,8 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
         // unoccupied originals it re-detaches). Without this, stale records from the prior layout linger.
         OriginalNodeRecord.Reset();
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("Re-roll pool (redesign-6): rebuilt %d original entries from the FULL saved layout (pinned + all relocated), %d resource kinds — no collapse"),
-            VanillaCount, VanillaResourceCounts.Num());
+            TEXT("Re-roll pool (redesign-6): rebuilt %d original entries from the FULL saved layout (pinned + all relocated), %d resource kinds — no collapse (rehide-1: %d pre-fix un-anchorable zombie(s) dropped)"),
+            VanillaCount, VanillaResourceCounts.Num(), ZombiesDropped);
 
         // EXPERIMENTAL-FORM augment into the reroll (generic — covers oil AND gas):
         // the saved Layout was captured when experimental forms were excluded
@@ -665,6 +719,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                 E.VanillaNodePath = Path;
                 E.Location = Node->GetActorLocation();
                 E.Rotation = Node->GetActorRotation();
+                E.OriginalTrueLocation = E.Location; // rehide-1: first-hand live capture — true by construction
                 E.OriginalResourceClassPath = Node->GetResourceClass() ? Node->GetResourceClass()->GetPathName() : FString();
                 E.OriginalPurity = NormalizePurity(Node->GetResourcePurity());
                 E.AssignedResourceClassPath = E.OriginalResourceClassPath;
@@ -752,6 +807,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                 E.VanillaNodePath = Path;
                 E.Location = BaseNode->GetActorLocation();
                 E.Rotation = BaseNode->GetActorRotation();
+                E.OriginalTrueLocation = E.Location; // rehide-1: first-hand live capture — true by construction
                 E.OriginalResourceClassPath = RC->GetPathName();
                 E.OriginalPurity = NormalizePurity(NodePurity);
                 E.AssignedResourceClassPath = E.OriginalResourceClassPath;
@@ -846,6 +902,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
             E.VanillaNodePath = BaseNode->GetPathName();
             E.Location = BaseNode->GetActorLocation();
             E.Rotation = BaseNode->GetActorRotation();
+            E.OriginalTrueLocation = E.Location; // rehide-1: first-hand live capture — true by construction
             E.OriginalResourceClassPath = BaseNode->GetResourceClass() ? BaseNode->GetResourceClass()->GetPathName() : FString();
             E.OriginalPurity = NormalizePurity(NodePurity);
             E.AssignedResourceClassPath = E.OriginalResourceClassPath;
@@ -1277,6 +1334,13 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                 FNodeShuffleSuppressedOriginal Rec;
                 Rec.VanillaNodePath = E.VanillaNodePath;
                 Rec.Location = E.Location;
+                // rehide-1: durable anchor for this record — prefer the entry's own first-hand capture
+                // (TRUE at initial capture and every live-capture augment); fall back to E.Location
+                // (correct here too, since we are BEFORE the relocation two lines below — see design §2
+                // row 4 — but on a re-roll-rebuilt entry E.OriginalTrueLocation is the carried-forward
+                // real anchor while E.Location is only the previous relocated dest, so the field wins
+                // whenever it's set).
+                Rec.TrueLocation = !E.OriginalTrueLocation.IsNearlyZero() ? E.OriginalTrueLocation : E.Location;
                 Rec.bModdedOrigin = !E.OriginalResourceClassPath.StartsWith(TEXT("/Game/"));
                 OriginalNodeRecord.Add(Rec);
                 Recorded++;
@@ -3955,6 +4019,7 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
     const bool bDiagHide = FNodeShuffleModule::AreDiagnosticsEnabled();
     int32 DbgNear = 0, DbgFoundPath = 0, DbgAlreadyHidden = 0, DbgOcc = 0, DbgMissedPath = 0;
     int32 DbgCapturePending = 0; // dirtdress-1: originals held out of steady, awaiting a capture source
+    int32 DbgRematched = 0; // rehide-1: stale records resolved THIS pass by location+class+resource re-match
 
     int32 NodesHidden = 0;
     // Real locations of the originals we processed near the player this pass (resolved by path). The stray-
@@ -3962,7 +4027,15 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
     // re-roll) so a lingering separate rock next to a just-hidden node is still caught.
     TArray<FVector> NearOriginalLocs;
     NearOriginalLocs.Reserve(OriginalNodeRecord.Num());
-    for (const FNodeShuffleSuppressedOriginal& Rec : OriginalNodeRecord)
+    // rehide-1: candidate pool for stale-record re-matching — lazily built at most once per pass, only
+    // if a record's path actually misses below (most passes never need it: once a record re-matches it
+    // resolves by path from then on, and the common case is zero stale records at all). BoundCandidates
+    // is per-pass too: a candidate already claimed by an earlier record this pass can't satisfy another
+    // (design §3.7) — a fresh local set each call already scopes this correctly with no member state.
+    TArray<AFGResourceNodeBase*> RematchPool;
+    bool bRematchPoolBuilt = false;
+    TSet<AFGResourceNodeBase*> RematchBoundThisPass;
+    for (FNodeShuffleSuppressedOriginal& Rec : OriginalNodeRecord)
     {
         // THE FIX (stale record location after re-roll). Resolve the live node BY PATH first, then test
         // proximity against its REAL location. On a re-roll the pool is rebuilt from the saved Layout,
@@ -3973,7 +4046,29 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
         // is an O(1)-ish cache hit, so resolving every record each pass is cheap. esc_ (Base-only) originals
         // resolve via the BASE finder too.
         AFGResourceNodeBase* Node = FindOriginalBaseByPath(Rec.VanillaNodePath);
-        if (!Node) { DbgMissedPath++; continue; } // not streamed in (or genuinely gone)
+        if (!Node)
+        {
+            // rehide-1: the record's path is dead — most likely a spawner mod re-created this node with
+            // a fresh auto-numbered id since the last process boot (exactly what the funnel comment
+            // above predicted). Try to recover identity from location+class+resource before giving up;
+            // this is the ONLY place TryRematchStaleRecord is called, and it mutates ONLY Rec + the
+            // originating Layout entry on success — no hide/suppress decision is made here or in it.
+            if (!bRematchPoolBuilt)
+            {
+                BuildRematchCandidatePool(RematchPool);
+                bRematchPoolBuilt = true;
+                if (bDiagHide)
+                {
+                    UE_LOG(LogNodeShuffle, Verbose,
+                        TEXT("REHIDE: candidate pool built (%d eligible foreign runtime nodes) for this pass's stale-record re-match"),
+                        RematchPool.Num());
+                }
+            }
+            AFGResourceNodeBase* Rematched = TryRematchStaleRecord(Rec, RematchPool, RematchBoundThisPass);
+            if (!Rematched) { DbgMissedPath++; continue; } // still not streamed in / no re-match this pass
+            DbgRematched++;
+            Node = Rematched; // rebind already done inside TryRematchStaleRecord — fall through unchanged below
+        }
         // coexist-1 §2 (IDEMPOTENT PASS): the SAME resolved instance was fully processed (captured,
         // roof-classified, deregistered, hidden) on an earlier pass and is still hidden — nothing can
         // have changed (a hidden, collision-less node cannot become occupied), so skip the funnel work.
@@ -3996,6 +4091,11 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
         // can scan-and-walk to it. Cheap — the hide is idempotent (skip-if-already-hidden) and the deregister
         // runs once per node (ScannerDeregistered), and only loaded actors ever reach this point.
         const FVector NodeLoc = Node->GetActorLocation();
+        // rehide-1 backfill: heal a record's durable anchor the first time its path resolves this
+        // session (covers records whose TrueLocation was never stamped — pre-rehide-1 saves, or a
+        // record just rebound by TryRematchStaleRecord where it's already set and this is a no-op). By
+        // the next restart every live record has a TRUE anchor, independent of the stamping sites above.
+        if (Rec.TrueLocation.IsNearlyZero()) { Rec.TrueLocation = NodeLoc; }
         NearOriginalLocs.Add(NodeLoc); // hidden-original locations for the stray-rock backstop below
         DbgNear++;
 
@@ -4179,9 +4279,9 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
     {
         bLoadFunnelLogged = true;
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("Hide-originals funnel (first pass this load): records=%d loaded=%d newlyHidden=%d alreadyHidden=%d occupied=%d notStreamed=%d capturePending=%d"),
+            TEXT("Hide-originals funnel (first pass this load): records=%d loaded=%d newlyHidden=%d alreadyHidden=%d occupied=%d notStreamed=%d capturePending=%d rematched=%d"),
             OriginalNodeRecord.Num(), DbgNear, NodesHidden, DbgAlreadyHidden, DbgOcc, DbgMissedPath,
-            DbgCapturePending);
+            DbgCapturePending, DbgRematched);
     }
     if (bDiagHide && (DbgNear > 0 || DbgMissedPath > 0))
     {
@@ -4191,16 +4291,194 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
         // coexist-1 §2: DELTA-ONLY — identical numbers are not re-logged every pass.
         // dirtdress-1: capturePending = originals deferred from steady awaiting a capture source; a stuck
         // non-zero value across passes names the resource-capture gap (pair with the CAPTURE-CHAIN lines).
-        const int32 Funnel[7] = { OriginalNodeRecord.Num(), DbgNear, DbgFoundPath, DbgAlreadyHidden, DbgOcc, DbgMissedPath, DbgCapturePending };
+        const int32 Funnel[8] = { OriginalNodeRecord.Num(), DbgNear, DbgFoundPath, DbgAlreadyHidden, DbgOcc, DbgMissedPath, DbgCapturePending, DbgRematched };
         bool bFunnelChanged = false;
-        for (int32 i = 0; i < 7; i++) { if (Funnel[i] != LastHideFunnel[i]) { bFunnelChanged = true; LastHideFunnel[i] = Funnel[i]; } }
+        for (int32 i = 0; i < 8; i++) { if (Funnel[i] != LastHideFunnel[i]) { bFunnelChanged = true; LastHideFunnel[i] = Funnel[i]; } }
         if (bFunnelChanged)
         {
             UE_LOG(LogNodeShuffle, Display,
-                TEXT("HIDEDIAG funnel: recordsTotal=%d loaded=%d foundByPath=%d alreadyHidden=%d occupied=%d pathMissed=%d capturePending=%d"),
-                Funnel[0], Funnel[1], Funnel[2], Funnel[3], Funnel[4], Funnel[5], Funnel[6]);
+                TEXT("HIDEDIAG funnel: recordsTotal=%d loaded=%d foundByPath=%d alreadyHidden=%d occupied=%d pathMissed=%d capturePending=%d rematched=%d"),
+                Funnel[0], Funnel[1], Funnel[2], Funnel[3], Funnel[4], Funnel[5], Funnel[6], Funnel[7]);
         }
     }
+}
+
+void ANodeShuffleSubsystem::BuildRematchCandidatePool(TArray<AFGResourceNodeBase*>& OutPool) const
+{
+    // rehide-1: VanillaNodeCache already excludes our own nodes (built that way, :1622-1636) and holds
+    // every live non-ours original loaded this pass — including nodes a HEALTHY record already resolves
+    // by path (harmless to include: the identity key below still has to match a STALE record's own
+    // class+resource+anchor, and MinNodeSpacing keeps distinct authored spots outside 300 cm of each
+    // other — design §3.1). Filter down to the actor-kind pre-gates that make a re-match safe at all
+    // (§3.1/§3.4): a level-placed actor can NEVER be re-matched (IsNetStartupActor is the same hard
+    // guarantee the veto pre-registration relies on, :2491-2492), a mod-spawned transient is never part
+    // of the vanilla/foreign pool (parity with IsEligibleVanillaNodeReason's capture-eligibility gate,
+    // :5822-5827), our own nodes and anything already managed/adopted are never foreign, and fracking
+    // wells are handled on their own dedicated path (never suppressed, never re-matched).
+    OutPool.Reset();
+    for (const TPair<FString, TWeakObjectPtr<AFGResourceNodeBase>>& Pair : VanillaNodeCache)
+    {
+        AFGResourceNodeBase* Candidate = Pair.Value.Get();
+        if (!IsValid(Candidate)) { continue; }
+        if (Candidate->IsNetStartupActor()) { continue; }       // level actor — never re-matchable
+        if (Candidate->HasAnyFlags(RF_Transient)) { continue; } // parity with capture eligibility
+        if (NodeShuffleIsOurNode(Candidate)) { continue; }
+        if (FNodeShuffleModule::IsManagedSpawnedNode(Candidate)) { continue; }
+        if (IsFrackingActor(Candidate)) { continue; }
+        if (Cast<AFGResourceDeposit>(Candidate)) { continue; } // design §3.1: deposits are never re-match candidates
+        OutPool.Add(Candidate);
+    }
+}
+
+AFGResourceNodeBase* ANodeShuffleSubsystem::TryRematchStaleRecord(FNodeShuffleSuppressedOriginal& Rec,
+    const TArray<AFGResourceNodeBase*>& CandidatePool, TSet<AFGResourceNodeBase*>& BoundCandidates)
+{
+    // rehide-1 (design §3.1/§3.2). Anchor: TrueLocation when stamped (the durable cross-session
+    // anchor); legacy records (never stamped) fall back to Location, which is TRUE at initial capture
+    // and STALE (the previous relocated dest) after a re-roll rebuild — the stale case NORMALLY fails
+    // closed below (our own node sits at the dest and is pool-excluded). Cold-review P1 residual: a
+    // same-class+resource FOREIGN node within 300 cm of the dest ring WOULD bind, and the rebind
+    // persists (TrueLocation stamped at match). Accepted as §3.4.5's risk class; the ungated REHIDE
+    // MATCHED line (anchor kind [legacy], distance, names) is the audit trail for exactly this case.
+    const FVector Anchor = !Rec.TrueLocation.IsNearlyZero() ? Rec.TrueLocation : Rec.Location;
+    const bool bTrueAnchor = !Rec.TrueLocation.IsNearlyZero();
+
+    // Resolve the originating layout entry — it kept its VanillaNodePath through the Hide & Replace
+    // conversion (redesign-6 FIX 3, :1287-1291) — for the class + resource identity legs, and so a
+    // successful match can rebind it too (design §3.3).
+    FNodeShuffleEntry* MatchEntry = nullptr;
+    for (FNodeShuffleEntry& E : Layout)
+    {
+        if (E.VanillaNodePath == Rec.VanillaNodePath) { MatchEntry = &E; break; }
+    }
+    const FString ExpectedClassPath = MatchEntry ? MatchEntry->NodeClassPath : FString();
+    const FString ExpectedResourcePath = MatchEntry ? MatchEntry->OriginalResourceClassPath : FString();
+    const FString LegacyClassToken = RehideClassNameToken(Rec.VanillaNodePath);
+    const FString ClassLabel = !ExpectedClassPath.IsEmpty()
+        ? FPackageName::ObjectPathToObjectName(ExpectedClassPath) : LegacyClassToken;
+    const FString ResLabel = !ExpectedResourcePath.IsEmpty()
+        ? FPackageName::ObjectPathToObjectName(ExpectedResourcePath) : TEXT("<unknown>");
+
+    const float MatchSq = FMath::Square(AdoptMatchRadiusCm);
+    AFGResourceNodeBase* Best = nullptr;
+    float BestSq = MatchSq;
+    int32 CandidatesInRadius = 0;
+    for (AFGResourceNodeBase* Candidate : CandidatePool)
+    {
+        if (!IsValid(Candidate) || BoundCandidates.Contains(Candidate)) { continue; }
+        const float DSq = FVector::DistSquared(Candidate->GetActorLocation(), Anchor);
+        if (DSq >= MatchSq) { continue; } // fixed radius gate, independent of the running best (BestSq)
+
+        // Class leg: prefer the resolved entry's NodeClassPath (full path, exact); fall back to the
+        // legacy name-token parse (design §3.1 point 2) only when no entry resolved.
+        if (!ExpectedClassPath.IsEmpty())
+        {
+            if (Candidate->GetClass()->GetPathName() != ExpectedClassPath) { continue; }
+        }
+        else if (Candidate->GetClass()->GetName() != LegacyClassToken)
+        {
+            continue;
+        }
+
+        // Resource leg: skip the check only when BOTH sides are unknown (mirrors adopt's guard,
+        // :2614-2616 / :2525-2526).
+        const UClass* CandidateRes = Candidate->GetResourceClass();
+        const FString CandidateResPath = CandidateRes ? CandidateRes->GetPathName() : FString();
+        if (!(CandidateResPath.IsEmpty() && ExpectedResourcePath.IsEmpty())
+            && CandidateResPath != ExpectedResourcePath)
+        {
+            continue;
+        }
+
+        CandidatesInRadius++;
+        if (DSq < BestSq) { BestSq = DSq; Best = Candidate; }
+    }
+
+    if (!Best)
+    {
+        // FAIL-CLOSED (design §3.4 point 4): zero mutation, the record stays stale and is retried next
+        // pass — covers late/lazy spawners. Only the LOG is throttled to once per record per session.
+        if (!RematchNoMatchLogged.Contains(Rec.VanillaNodePath))
+        {
+            RematchNoMatchLogged.Add(Rec.VanillaNodePath);
+            // Diagnostic-only second pass: nearest same-class candidate regardless of radius, so the
+            // log itself proves which §5 timeline is real (small distance = a late spawner about to
+            // heal on its own; huge distance = a stale/legacy anchor needing one re-roll, §11 ruling 2).
+            AFGResourceNodeBase* Nearest = nullptr;
+            float NearestSq = TNumericLimits<float>::Max();
+            for (AFGResourceNodeBase* Candidate : CandidatePool)
+            {
+                if (!IsValid(Candidate)) { continue; }
+                const bool bClassOk = !ExpectedClassPath.IsEmpty()
+                    ? Candidate->GetClass()->GetPathName() == ExpectedClassPath
+                    : Candidate->GetClass()->GetName() == LegacyClassToken;
+                if (!bClassOk) { continue; }
+                const float DSq = FVector::DistSquared(Candidate->GetActorLocation(), Anchor);
+                if (DSq < NearestSq) { NearestSq = DSq; Nearest = Candidate; }
+            }
+            if (Nearest)
+            {
+                UE_LOG(LogNodeShuffle, Display,
+                    TEXT("REHIDE: record='%s' anchor=%s[%s] res='%s' class='%s' -> no-match (cands=0 in %.0fcm; nearest same-class '%s' at %.0fcm) — twin stays visible this session"),
+                    *Rec.VanillaNodePath, *Anchor.ToCompactString(), bTrueAnchor ? TEXT("true") : TEXT("legacy"),
+                    *ResLabel, *ClassLabel, AdoptMatchRadiusCm, *Nearest->GetName(), FMath::Sqrt(NearestSq));
+            }
+            else
+            {
+                UE_LOG(LogNodeShuffle, Display,
+                    TEXT("REHIDE: record='%s' anchor=%s[%s] res='%s' class='%s' -> no-match (cands=0 in %.0fcm; no same-class candidate anywhere loaded) — twin stays visible this session"),
+                    *Rec.VanillaNodePath, *Anchor.ToCompactString(), bTrueAnchor ? TEXT("true") : TEXT("legacy"),
+                    *ResLabel, *ClassLabel, AdoptMatchRadiusCm);
+            }
+        }
+        else if (FNodeShuffleModule::AreDiagnosticsEnabled())
+        {
+            UE_LOG(LogNodeShuffle, Verbose,
+                TEXT("REHIDE: record='%s' still no-match this pass (retry suppressed after first report)"),
+                *Rec.VanillaNodePath);
+        }
+        return nullptr;
+    }
+
+    // MATCH. Identity is real (class + resource + 300 cm of our own recorded anchor, design §3.4) —
+    // rebind unconditionally, even when the matched candidate turns out to be occupied: the funnel's
+    // existing occupancy gate a few lines below the caller independently skips the hide for an occupied
+    // node, same parity as an occupied vanilla original (design §3.6). Bind BEFORE any other record
+    // this pass can claim the same actor (design §3.7).
+    BoundCandidates.Add(Best);
+    const float MatchedDistCm = FMath::Sqrt(BestSq);
+    const FString OldPath = Rec.VanillaNodePath;
+    Rec.VanillaNodePath = Best->GetPathName();
+    Rec.TrueLocation = Best->GetActorLocation();
+    if (MatchEntry)
+    {
+        MatchEntry->VanillaNodePath = Rec.VanillaNodePath;
+        MatchEntry->OriginalTrueLocation = Rec.TrueLocation;
+    }
+
+    // Occupancy PEEK for log wording only — mirrors the funnel's own predicate exactly (Node->IsOccupied()
+    // || IsNodeOccupiedAnyway for the portable-miner case). This makes NO hide/skip decision of its own;
+    // the funnel re-evaluates and enforces it independently moments later on the same Node pointer,
+    // byte-identical to how it already treats a path-resolved original (reviewer focus item (c)).
+    AFGResourceNode* BestAsNode = Cast<AFGResourceNode>(Best);
+    const bool bBestOccupied = Best->IsOccupied() || (BestAsNode && IsNodeOccupiedAnyway(BestAsNode));
+
+    if (bBestOccupied)
+    {
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("REHIDE: record='%s' anchor=%s[%s] res='%s' class='%s' -> candidate OCCUPIED (miner present) '%s' dist=%.0fcm (cands=%d) — rebound, hide skipped (occupied), will re-test"),
+            *OldPath, *Anchor.ToCompactString(), bTrueAnchor ? TEXT("true") : TEXT("legacy"),
+            *ResLabel, *ClassLabel, *Best->GetName(), MatchedDistCm, CandidatesInRadius);
+    }
+    else
+    {
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("REHIDE: record='%s' anchor=%s[%s] res='%s' class='%s' -> MATCHED '%s' dist=%.0fcm (cands=%d) — path rebound, entry rebound, falling through hide funnel"),
+            *OldPath, *Anchor.ToCompactString(), bTrueAnchor ? TEXT("true") : TEXT("legacy"),
+            *ResLabel, *ClassLabel, *Best->GetName(), MatchedDistCm, CandidatesInRadius);
+    }
+
+    return Best;
 }
 
 int32 ANodeShuffleSubsystem::MergeWaterGridFromContent(const FString& Content, const TCHAR* SourceLabel,

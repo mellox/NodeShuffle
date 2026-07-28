@@ -69,6 +69,14 @@ struct FNodeShuffleEntry
     // hit the cave ROOF and strand the node on the surface. Set when a deal draw (roll, relocation,
     // water-locked redeal) randomly picks a cave cell at the natural share; never by a quota fill.
     UPROPERTY(SaveGame) bool bUnderground = false;
+
+    // rehide-1: the TRUE live location this entry's original was captured at (before any relocation),
+    // stamped at every live-capture site (initial roll, re-scan augment, experimental augment) and
+    // carried through re-roll rebuilds (opportunistically backfilled there too). ZeroVector = unset
+    // (pre-rehide-1 saves). Feeds Rec.TrueLocation at the Hide & Replace conversion so a runtime-
+    // foreign twin can be re-matched by location once its record's VanillaNodePath goes stale (spawner
+    // mods re-create their nodes with a fresh auto-numbered id every process boot).
+    UPROPERTY(SaveGame) FVector OriginalTrueLocation = FVector::ZeroVector;
 };
 
 // One original vanilla node location to suppress on stream-in after a wipe-on-
@@ -82,6 +90,12 @@ struct FNodeShuffleSuppressedOriginal
 
     UPROPERTY(SaveGame) FString VanillaNodePath;
     UPROPERTY(SaveGame) FVector Location = FVector::ZeroVector;
+    // rehide-1: the durable cross-session anchor for location-based re-matching once VanillaNodePath
+    // goes stale (runtime-foreign spawner nodes get a fresh auto-numbered id every process boot, so
+    // path resolution alone dies at every restart). ZeroVector = unset (legacy sentinel) — falls back
+    // to Location, which is TRUE at initial capture and STALE (the previous relocated dest) after a
+    // re-roll rebuild; see SuppressOriginalNodes/TryRematchStaleRecord in NodeShuffleSubsystem.cpp.
+    UPROPERTY(SaveGame) FVector TrueLocation = FVector::ZeroVector;
     // correct-visual-6: true when this record's node is MODDED-origin (original resource class path
     // not under /Game/). Such nodes are LEFT NATIVE and must NEVER be suppressed/hidden — set at
     // CaptureOriginalNodeRecord time so SuppressOriginalNodes can skip them in BOTH hide loops.
@@ -291,6 +305,28 @@ private:
     // resources live on as our spawned relocated nodes. Occupied/pinned originals are never touched.
     // Driven by the persistent OriginalNodeRecord so it works across sessions and stream-ins.
     void SuppressOriginalNodes();
+    // rehide-1: called only from SuppressOriginalNodes' path-miss branch, when a stale record's
+    // VanillaNodePath no longer resolves (a spawner mod re-created the node with a fresh id since last
+    // process boot). Recovers identity from location (Rec.TrueLocation, or Rec.Location for legacy
+    // unstamped records) + class + resource against CandidatePool (built once per pass by
+    // BuildRematchCandidatePool). On a match: rebinds Rec's VanillaNodePath/TrueLocation AND the
+    // originating layout entry's VanillaNodePath/OriginalTrueLocation (found by the OLD path), marks
+    // the winning candidate in BoundCandidates (so a later record this pass can't claim it too), logs
+    // once (REHIDE), and returns the live actor so the caller falls through the UNCHANGED hide funnel.
+    // Returns null (zero mutation) when nothing matches within AdoptMatchRadiusCm — fail-closed: the
+    // record stays stale and is retried next pass. Adds ZERO hide/suppress logic of its own.
+    AFGResourceNodeBase* TryRematchStaleRecord(FNodeShuffleSuppressedOriginal& Rec,
+        const TArray<AFGResourceNodeBase*>& CandidatePool, TSet<AFGResourceNodeBase*>& BoundCandidates);
+    // rehide-1: candidate pool for TryRematchStaleRecord — VanillaNodeCache filtered down to the
+    // actor-kind pre-gates that make a re-match safe (design §3.1/§3.4): valid, runtime-only
+    // (!IsNetStartupActor — a level actor can NEVER be re-matched), non-transient (parity with capture
+    // eligibility, :5822-5827), not one of our own nodes, not already managed/adopted, not fracking.
+    // Built lazily by the caller: once per pass, only once a record's path misses.
+    void BuildRematchCandidatePool(TArray<AFGResourceNodeBase*>& OutPool) const;
+    // rehide-1: stale records already reported "no-match" this session — throttles the no-match REHIDE
+    // log to once per record (the record itself still retries silently every pass, covering late/lazy
+    // spawners; see TryRematchStaleRecord).
+    TSet<FString> RematchNoMatchLogged;
     // Build/refresh the persistent record of EVERY unoccupied original node location (vanilla AND
     // modded) so SuppressOriginalNodes can hide them. Captured at roll time from the layout.
     void CaptureOriginalNodeRecord();
@@ -621,7 +657,7 @@ private:
     // One ungated hide-funnel totals line per LOAD (the per-pass HIDEDIAG stays diagnostics-gated and
     // now only logs when its numbers CHANGE); per-pass change tally feeds the gated "pass: 0 changes".
     bool bLoadFunnelLogged = false;
-    int32 LastHideFunnel[7] = { -1, -1, -1, -1, -1, -1, -1 }; // dirtdress-1: +capturePending slot
+    int32 LastHideFunnel[8] = { -1, -1, -1, -1, -1, -1, -1, -1 }; // dirtdress-1: +capturePending slot; rehide-1: +rematched slot
     int32 SuppressChangesLastPass = 0;
     float LastRockBackstopSeconds = 0.f; // stray-rock backstop cooldown (forced when a node newly hides)
     // playtest-fixes-1 (ghost radiation): resolve the radioactivity subsystem via the GameState's
