@@ -233,6 +233,10 @@ void ANodeShuffleSubsystem::EndPlay(const EEndPlayReason::Type EndPlayReason)
 
 void ANodeShuffleSubsystem::RefreshTick()
 {
+    // scanregen-1 (P2 §4 touch-point 5): per-pass debounce reset, unconditional and BEFORE any
+    // early-out below (Config.Enabled, world-not-ready, ...) — every RefreshTick invocation gets
+    // exactly one "has this pass already refreshed scanners" answer, even a pass that returns early.
+    bScannerRefreshedThisPass = false;
     const FNodeShuffleConfigStruct Config = FNodeShuffleConfigStruct::GetActiveConfig(this);
     if (!Config.Enabled)
     {
@@ -314,6 +318,28 @@ void ANodeShuffleSubsystem::RefreshTick()
         if (!bKnowledgeUnlockDone && UnlockModdedScannerKnowledge())
         {
             bKnowledgeUnlockDone = true;
+        }
+        // scanregen-1 consume point (P2 §4 touch-point 3, §9 AMENDMENT — binding): do NOT clear
+        // bScannerClusterRefreshPending on the SKIPPED branch. The flag clears ONLY when
+        // RefreshScannersAndRadarTowers() actually runs from HERE (it sets bScannerRefreshedThisPass
+        // itself). Why: on a re-roll tick the flow is Refresh #1 (the live-reroll branch above) ->
+        // ApplyLayout (possible Refresh #2 via its bChangedWorld tail) -> the knowledge pass HERE,
+        // where the unlock lands and sets pending — both refreshes already ran BEFORE the unlock, and
+        // radar towers re-scan eagerly, so skip-and-clear would leave the tower/map surface stale for
+        // a resource newly unlocked by that same re-roll. With the amendment the refresh runs on the
+        // next pass where nothing else already refreshed (typically +5s); worst case one redundant,
+        // idempotent refresh during a world-settling storm.
+        if (bScannerClusterRefreshPending && !bScannerRefreshedThisPass)
+        {
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("SCANREGEN: consuming refresh (pending=1, alreadyRefreshedThisPass=0) -> invalidating"));
+            RefreshScannersAndRadarTowers();
+            bScannerClusterRefreshPending = false;
+        }
+        else if (bScannerClusterRefreshPending)
+        {
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("SCANREGEN: consuming refresh (pending=1, alreadyRefreshedThisPass=1) -> SKIPPED (already refreshed this pass)"));
         }
         DiagnoseRocksNearPlayers();
     }
@@ -5696,11 +5722,45 @@ void ANodeShuffleSubsystem::ReassociateOrphanedExtractors()
 
 void ANodeShuffleSubsystem::RefreshScannersAndRadarTowers()
 {
+    // scanregen-1 (P2 §4 touch-point 4): mark this pass as having refreshed — the debounce the new
+    // knowledge-unlock consume point in RefreshTick reads (bScannerRefreshedThisPass). Existing
+    // callers (the live-reroll branch, ApplyLayout's bChangedWorld tail) are unaffected: this is a
+    // pure addition inside the function body, their call sites stay byte-identical.
+    bScannerRefreshedThisPass = true;
+
+    // scanregen-1 root-cause discriminator (P2 §5 point 4, diagnostics-gated, zero new imports): only
+    // meaningful when THIS call is knowledge-triggered (a pending unlock batch is still unconsumed at
+    // the moment we're called) — the re-roll/bChangedWorld callers are unrelated to any unlock, so the
+    // gate keeps their calls silent on this line. K==0 confirms the cluster cache was the stale thing
+    // (this fix's premise); K>0 would mean the real gate is the scanner's own selection list/UI, not
+    // the cache (design alternative D) — discriminated in this SAME launch instead of a second one.
+    const bool bRunCensus = FNodeShuffleModule::AreDiagnosticsEnabled()
+        && bScannerClusterRefreshPending && ScanRegenUnlockedClasses.Num() > 0;
+    int32 CensusTotal = 0, CensusAlreadyCarrying = 0;
+
+    int32 ScannersInvalidated = 0;
     for (TActorIterator<AFGResourceScanner> It(GetWorld()); It; ++It)
     {
+        if (bRunCensus)
+        {
+            // Friend read (AccessTransformers): walk the cluster list BEFORE flipping it stale below.
+            for (const FNodeClusterData& Cluster : It->mNodeClusters)
+            {
+                CensusTotal++;
+                if (ScanRegenUnlockedClasses.Contains(Cluster.ResourceDescriptor)) { CensusAlreadyCarrying++; }
+            }
+        }
         // Friend access (AccessTransformers): force cluster rebuild on next use.
         It->mNodeClustersUpToDate = false;
+        ScannersInvalidated++;
     }
+    if (bRunCensus)
+    {
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("SCANREGEN: pre-invalidate cluster census total=%d, clusters already carrying newly-unlocked descriptor=%d"),
+            CensusTotal, CensusAlreadyCarrying);
+    }
+
     // Radar towers cache the resources they scanned; without a re-scan they keep showing the OLD
     // (pre-shuffle) resource set on the map until rebuilt. Force every built radar tower to re-scan so
     // the map reflects the relocated/retyped/deactivated nodes. (This function previously only touched
@@ -5709,13 +5769,22 @@ void ANodeShuffleSubsystem::RefreshScannersAndRadarTowers()
     // found node (network-replicated). This function is gated by bChangedWorld in ApplyLayout, so it only
     // runs on actual world mutations (rolls / nodes settling), never in steady state — keep it that way;
     // do NOT call this from a per-tick hot path.
+    int32 TowersRescanned = 0;
     for (TActorIterator<AFGBuildableRadarTower> It(GetWorld()); It; ++It)
     {
         AFGBuildableRadarTower* Tower = *It;
         if (!IsValid(Tower)) { continue; }
         Tower->ClearScannedResources();
         Tower->ScanForResources();
+        TowersRescanned++;
     }
+
+    // scanregen-1: ungated for this build (P5 quiets it) — "N=0" is the single most valuable line in
+    // the packet: it means no AFGResourceScanner actor existed at this moment, so the invalidation was
+    // a no-op and any staleness lives elsewhere (P2 design §5 point 3).
+    UE_LOG(LogNodeShuffle, Display,
+        TEXT("SCANREGEN: invalidated %d scanner cluster cache(s), re-scanned %d radar tower(s)"),
+        ScannersInvalidated, TowersRescanned);
 }
 
 bool ANodeShuffleSubsystem::UnlockModdedScannerKnowledge()
@@ -5805,6 +5874,10 @@ bool ANodeShuffleSubsystem::UnlockModdedScannerKnowledge()
     };
     int32 Unlocked = 0;
     FString UnlockedNames;
+    // scanregen-1: reset+repopulate every pass this loop runs (whether or not it unlocks anything) so
+    // the census in RefreshScannersAndRadarTowers never reads a stale list from an earlier batch; it
+    // is only ever READ while bScannerClusterRefreshPending is true, which is set below iff Unlocked>0.
+    ScanRegenUnlockedClasses.Reset();
     for (UClass* ResClass : Managed)
     {
         if (bFilterUnlocks && !WithMinerInfo.Contains(ResClass))
@@ -5836,6 +5909,7 @@ bool ANodeShuffleSubsystem::UnlockModdedScannerKnowledge()
         Unlocked++;
         UnlockedNames += (UnlockedNames.IsEmpty() ? TEXT("") : TEXT(", "));
         UnlockedNames += ResClass->GetName();
+        ScanRegenUnlockedClasses.Add(TSubclassOf<UFGResourceDescriptor>(ResClass)); // scanregen-1
         if (bDiag)
         {
             UE_LOG(LogNodeShuffle, Verbose, TEXT("knowledge: scanner-unlocked %s (type=%s)"),
@@ -5847,6 +5921,15 @@ bool ANodeShuffleSubsystem::UnlockModdedScannerKnowledge()
         // Ungated by design: one line per load (usually only the FIRST load changes anything — the
         // list is SaveGame, so later loads skip via Contains).
         UE_LOG(LogNodeShuffle, Display, TEXT("knowledge: scanner-unlocked %d modded resource(s): %s"),
+            Unlocked, *UnlockedNames);
+        // scanregen-1 (P2 §4 touch-point 2): this is the ONLY place that knows a batch actually
+        // changed the scanner-unlock list (Unlocked counts past the IsScannerKnown dedup above, so a
+        // reload of an already-unlocked save sets nothing here). Record-only — RefreshTick's consume
+        // point acts, never here (this function's OTHER caller is PostLoadGame_Implementation, mid
+        // save-load, before actor settling — see P2 design §2.1).
+        bScannerClusterRefreshPending = true;
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("SCANREGEN: knowledge unlocked %d resource(s) [%s] -> scanner cluster refresh PENDING"),
             Unlocked, *UnlockedNames);
     }
     return true;

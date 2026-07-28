@@ -8,6 +8,7 @@
 
 class AFGNodeMeshActor;
 class AFGResourceScanner;
+class UFGResourceDescriptor; // scanregen-1: TSubclassOf<> member below only needs the forward decl
 
 // One node-pool entry of the per-save layout. The layout is rolled exactly
 // once per save (seeded) and afterwards only ever *applied*; it is the single
@@ -355,6 +356,22 @@ private:
     // only on true.
     bool UnlockModdedScannerKnowledge();
     bool bKnowledgeUnlockDone = false;
+    // scanregen-1 (P2 design §4 touch-point 1): knowledge-unlock -> scanner/radar-tower refresh
+    // trigger. UnlockModdedScannerKnowledge() has TWO callers — RefreshTick (world-settled) and
+    // PostLoadGame_Implementation (mid save-load, before actor settling) — so the producer only
+    // RECORDS that an unlock landed; only RefreshTick ACTS on it (never PostLoadGame — see the
+    // knowledge-3 save-crash ordering class this avoids repeating).
+    bool bScannerClusterRefreshPending = false;
+    // scanregen-1: per-pass collapse so a re-roll tick (whose OWN existing call sites already invoke
+    // RefreshScannersAndRadarTowers up to twice) can't make the new consume point a third redundant
+    // call in the same pass. Set INSIDE RefreshScannersAndRadarTowers itself; cleared at the top of
+    // every RefreshTick, before any early-out (design §9 amendment relies on this surviving a SKIP).
+    bool bScannerRefreshedThisPass = false;
+    // scanregen-1: resource classes unlocked by the CURRENT pending batch — read once by the
+    // diagnostics-gated pre-invalidate cluster census in RefreshScannersAndRadarTowers, guarded by
+    // bScannerClusterRefreshPending so a stale leftover list from an already-consumed batch is never
+    // read (the producer resets + repopulates this every pass it runs, whether or not it unlocks).
+    TArray<TSubclassOf<UFGResourceDescriptor>> ScanRegenUnlockedClasses;
     // knowledge-2 item 1: runtime MinerInfo provisioning — PURE REFLECTION against KAPI's
     // UKAPIDataAssetSubsystem (a UGameInstanceSubsystem; no KAPI include/link/stub anywhere). For
     // each managed modded ore MISSING from mMinerMapping, template-clone an existing description
