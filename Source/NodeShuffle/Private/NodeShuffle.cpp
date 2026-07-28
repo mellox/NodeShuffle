@@ -21,6 +21,8 @@
 #include "Engine/HitResult.h"
 #include "Components/PrimitiveComponent.h"
 #include "GameFramework/Actor.h"
+#include "FGConstructDisqualifier.h" // fu1diag-1: TSubclassOf<UFGConstructDisqualifier>::Get() needs
+                                      // the complete type (IsChildOf(T::StaticClass()) internally)
 
 DEFINE_LOG_CATEGORY(LogNodeShuffle);
 
@@ -238,16 +240,22 @@ void FNodeShuffleModule::DbgLogAcceptance(AFGResourceExtractorHologram* Hologram
             for (const TSubclassOf<UFGResourceDescriptor>& R : Ext->mAllowedResources)
             { if (R.Get() == RN->GetResourceClass().Get()) { bResAllowed = true; break; } }
         }
+        // fu1diag-1 (FU1 §6.1): identity fields — Hologram is proven non-null by the early return above;
+        // GetBuildClass() already has a call site in NodeShuffleIsFrackingExtractor (zero new symbol).
+        const UClass* AcceptBuildClass = Hologram->GetBuildClass().Get();
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("HOLOGRAMHOOK ACCEPT-EXT restrictToNodeType='%s' nodeIsA=%d | allowedForms=[%s] formAllowed=%d | onlyCertain=%d resAllowed=%d | extractorType='%s'"),
+            TEXT("HOLOGRAMHOOK ACCEPT-EXT restrictToNodeType='%s' nodeIsA=%d | allowedForms=[%s] formAllowed=%d | onlyCertain=%d resAllowed=%d | extractorType='%s' | holo='%s' build='%s'"),
             Restrict ? *Restrict->GetName() : TEXT("<none>"), bIsAType ? 1 : 0,
             *FormsStr, bFormAllowed ? 1 : 0,
             Ext->mOnlyAllowCertainResources ? 1 : 0, bResAllowed ? 1 : 0,
-            *Ext->GetExtractorTypeName().ToString());
+            *Ext->GetExtractorTypeName().ToString(),
+            *Hologram->GetClass()->GetName(), AcceptBuildClass ? *AcceptBuildClass->GetName() : TEXT("<none>"));
     }
     else
     {
-        UE_LOG(LogNodeShuffle, Display, TEXT("HOLOGRAMHOOK ACCEPT-EXT mDefaultExtractor=<null>"));
+        const UClass* AcceptBuildClass = Hologram->GetBuildClass().Get();
+        UE_LOG(LogNodeShuffle, Display, TEXT("HOLOGRAMHOOK ACCEPT-EXT mDefaultExtractor=<null> | holo='%s' build='%s'"),
+            *Hologram->GetClass()->GetName(), AcceptBuildClass ? *AcceptBuildClass->GetName() : TEXT("<none>"));
     }
 }
 
@@ -267,10 +275,37 @@ static bool NodeShuffleIsFrackingExtractor(const AFGResourceExtractorHologram* H
                        || BuildClass->IsChildOf(AFGBuildableFrackingExtractor::StaticClass()));
 }
 
+// D2-A (fu1diag-1, FU1 design §4.3 / §6.5): shared "is this actor one of OUR nodes" predicate for
+// DIAGNOSTIC purposes — the SAME robust three-way test the TrySnapToActor hook already used (rock-
+// mesh component name prefix OR UNodeShuffleNodeComponent OR legacy subclass name), hoisted into one
+// place so the OURNODE-POS and KEPT-FOREIGN sites stop using the legacy-name-ONLY check that matches
+// NOTHING since the real-class redesign (a dead diagnostic that carried no information about where a
+// failure sits — not evidence of an un-reached branch; FU1 §4.3). HitComp may be null: sites not
+// driven by a line-trace hit (KEPT-FOREIGN's cluster-node iteration) have no hit component to offer
+// for the rock-name leg — the component-find + legacy-name legs alone are the robust test there.
+static bool NodeShuffleIsOursForDiag(const AActor* Actor, const UPrimitiveComponent* HitComp)
+{
+    if (!Actor) { return false; }
+    const bool bLegacy = (Actor->GetClass()->GetName() == TEXT("NodeShuffleResourceNode"));
+    const bool bRock = HitComp && HitComp->GetName().StartsWith(TEXT("NodeShuffleRockMesh"));
+    const bool bComp = (UNodeShuffleNodeComponent::Find(Actor) != nullptr);
+    return bLegacy || bRock || bComp;
+}
+
+// fu1diag-1: SUBSCRIBE_UOBJECT_METHOD is a function-like macro, and the preprocessor argument
+// splitter tracks only round-paren nesting — a bare comma inside angle brackets (TMap<K, V>) used
+// directly inside a hooked lambda's body is misread as an extra macro argument (the same class of
+// trap the file's own comment above already documents for lambda CAPTURE-list commas). Alias every
+// multi-arg template used inside a macro-wrapped hook body to a single identifier here, OUTSIDE any
+// macro invocation, so the hook bodies below never spell a bare top-level comma.
+using FNodeShuffleFlipResultMap = TMap<FString, bool>;
+using FNodeShuffleDqSignatureMap = TMap<FString, FString>;
+using FNodeShuffleDqTimeMap = TMap<FString, float>;
+
 void FNodeShuffleModule::StartupModule()
 {
     UE_LOG(LogNodeShuffle, Log, TEXT("NodeShuffle module loaded"));
-    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle 1.3.0 LOADED (2026-07-28-followups-3) ====="));
+    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle 1.3.0 LOADED (2026-07-28-followups-4) ====="));
 
 #if !WITH_EDITOR
     // redesign-13 HOLOGRAM HOOK (DIAGNOSTICS). r12 proved the Mk1 build trace NEVER hits our node (0 hits on
@@ -286,6 +321,15 @@ void FNodeShuffleModule::StartupModule()
         if (!GNodeShuffleDiagnosticsEnabled) { return; } // logging gated OFF by default (config: EnableDiagnostics)
         AActor* HitActor = hitResult.GetActor();
         UPrimitiveComponent* HitComp = hitResult.GetComponent();
+        // fu1diag-1 (FU1 §6.1): identity fields reused by every log line in this hook — WHICH hologram
+        // instance and which buildable class it's constructing. GetBuildClass() already has a call site
+        // in NodeShuffleIsFrackingExtractor above — zero new symbol.
+        const FString HoloName = Self ? Self->GetClass()->GetName() : TEXT("<none>");
+        const UClass* BuildClassPtr = Self ? Self->GetBuildClass().Get() : nullptr;
+        const FString BuildName = BuildClassPtr ? BuildClassPtr->GetName() : TEXT("<none>");
+        // fu1diag-1: robust ours-predicate (D2-A), needed below by both OURNODE-POS and the DQ dump.
+        const bool bOurs = NodeShuffleIsOursForDiag(HitActor, HitComp);
+
         static TSet<FString> LoggedHits;
         const FString Key = (HitActor ? HitActor->GetName() : TEXT("<null>"))
             + TEXT("|") + (HitComp ? HitComp->GetName() : TEXT("<null>"));
@@ -293,23 +337,91 @@ void FNodeShuffleModule::StartupModule()
         {
             LoggedHits.Add(Key);
             UE_LOG(LogNodeShuffle, Display,
-                TEXT("HOLOGRAMHOOK IsValidHitResult -> %d | hitActor='%s' class='%s'"),
+                TEXT("HOLOGRAMHOOK IsValidHitResult -> %d | hitActor='%s' class='%s' | holo='%s' build='%s'"),
                 bOriginal ? 1 : 0,
                 HitActor ? *HitActor->GetName() : TEXT("<null>"),
-                HitActor ? *HitActor->GetClass()->GetName() : TEXT("<null>"));
+                HitActor ? *HitActor->GetClass()->GetName() : TEXT("<null>"),
+                *HoloName, *BuildName);
             LogCompCollision(TEXT("HIT"), HitComp); // FULL collision of the component the trace landed on
             // redesign-17: when the trace hits OUR node, log node Z vs the trace impact Z. r16 PROVED the
             // trace now hits our node and IsValidHitResult -> 1 (valid). The user reports the Mk1 STILL
             // won't place AND that our node's resource-manager convergence is BELOW the surface — so the
             // gate is now placement/position, not detection. This names how far below the impact our node
             // origin sits (a buried node origin makes the snapped miner fail clearance/position).
-            if (HitActor && HitActor->GetClass()->GetName() == TEXT("NodeShuffleResourceNode"))
+            // D2-A (fu1diag-1, FU1 §4.3): was a legacy-name-ONLY check that matches nothing since the
+            // real-class redesign (S3 in FU1's evidence — a dead diagnostic, not evidence of an
+            // un-reached branch). Now the shared robust predicate. SPEC GAP (flagged, see final report):
+            // the design also asks for mBoxComponent name/extent on this line; mBoxComponent is
+            // protected on AFGResourceNodeBase and FNodeShuffleModule has no friend grant to that class
+            // (only ANodeShuffleSubsystem does) — this packet authorizes exactly one
+            // AccessTransformers.ini addition (AFGHologram, for mConstructDisqualifiers) and explicitly
+            // nothing else, and the only public accessor (GetBoxExtent()) would be an unverified NEW
+            // engine call, which this diagnostic-only/zero-new-import packet is designed to avoid.
+            // Omitted rather than silently widening scope.
+            if (bOurs)
             {
                 const FVector NL = HitActor->GetActorLocation();
                 UE_LOG(LogNodeShuffle, Display,
                     TEXT("HOLOGRAMHOOK OURNODE-POS nodeActorLoc=%s | traceImpact=%s | node.Z - impact.Z = %.1f"),
                     *NL.ToCompactString(), *hitResult.ImpactPoint.ToCompactString(),
                     NL.Z - hitResult.ImpactPoint.Z);
+            }
+        }
+
+        // fu1diag-1 (FU1 §6.2): result-CHANGE (FLIP) logging — runs every invocation (NOT gated by the
+        // first-sight dedup above), so a hit-validity flip on an already-logged actor is never invisible
+        // again. Bounded: transitions only, keyed per (hologram, actor).
+        {
+            static FNodeShuffleFlipResultMap LastResult;
+            static int32 sCallCount = 0;
+            ++sCallCount;
+            const FString FlipKey = HoloName + TEXT("|") + (HitActor ? HitActor->GetName() : TEXT("<null>"));
+            const bool* Prev = LastResult.Find(FlipKey);
+            if (!Prev || *Prev != bOriginal)
+            {
+                UE_LOG(LogNodeShuffle, Display,
+                    TEXT("HOLOGRAMHOOK FLIP IsValidHitResult %s->%d actor='%s' holo='%s' frame=%d"),
+                    Prev ? (*Prev ? TEXT("1") : TEXT("0")) : TEXT("?"), bOriginal ? 1 : 0,
+                    HitActor ? *HitActor->GetName() : TEXT("<null>"), *HoloName, sCallCount);
+                LastResult.Add(FlipKey, bOriginal);
+            }
+        }
+
+        // fu1diag-1 (FU1 §6.3, the load-bearing line): read mSnappedExtractableResource (Friend,
+        // AccessTransformers.ini:19 on the derived class) + mConstructDisqualifiers (Friend, the NEW
+        // AFGHologram grant this packet adds — the base-class member) directly. This is the LAST
+        // COMPLETED validate's disqualifier list, i.e. exactly what the HUD showed. Member READS
+        // ONLY — no new engine calls. On-change + 1/s heartbeat, and ONLY while the hit actor carries
+        // our component — never floods for foreign nodes/empty ground. No CheckValidPlacement hook
+        // (explicitly excluded from v1 — a new protected-member address-take, the shipping-export
+        // 127-risk class; build it only if this dump proves ambiguous, behind its own import gate).
+        if (bOurs)
+        {
+            const bool bSnapped = Self->mSnappedExtractableResource.GetObject() != nullptr;
+            FString DisqStr;
+            for (const TSubclassOf<UFGConstructDisqualifier>& DQ : Self->mConstructDisqualifiers)
+            {
+                if (UClass* DQClass = DQ.Get())
+                {
+                    DisqStr += (DisqStr.IsEmpty() ? TEXT("") : TEXT(",")) + DQClass->GetName();
+                }
+            }
+            static FNodeShuffleDqSignatureMap LastDqSignature;
+            static FNodeShuffleDqTimeMap LastDqLogSeconds;
+            const FString DqKey = HoloName + TEXT("|") + (HitActor ? HitActor->GetName() : TEXT("<null>"));
+            const FString Signature = FString::Printf(TEXT("%d|%s"), bSnapped ? 1 : 0, *DisqStr);
+            const FString* PrevSig = LastDqSignature.Find(DqKey);
+            const float* PrevTime = LastDqLogSeconds.Find(DqKey);
+            const float NowSeconds = Self->GetWorld() ? Self->GetWorld()->GetTimeSeconds() : 0.f;
+            const bool bChanged = !PrevSig || (*PrevSig != Signature);
+            const bool bHeartbeatDue = PrevTime && (NowSeconds - *PrevTime >= 1.0f);
+            if (bChanged || bHeartbeatDue)
+            {
+                UE_LOG(LogNodeShuffle, Display,
+                    TEXT("HOLOGRAMHOOK DQ holo='%s' snapped=%d disq=[%s]"),
+                    *HoloName, bSnapped ? 1 : 0, DisqStr.IsEmpty() ? TEXT("<none>") : *DisqStr);
+                LastDqSignature.Add(DqKey, Signature);
+                LastDqLogSeconds.Add(DqKey, NowSeconds);
             }
         }
     });
@@ -329,22 +441,30 @@ void FNodeShuffleModule::StartupModule()
         // real-class redesign: detect OUR node robustly — the trace hits our uniquely-named rock component
         // (NodeShuffleRockMesh / _Rt), OR the actor carries our component, OR it's a legacy subclass. The old
         // name-only check missed real-class nodes (BP_ResourceNode_C), so this dump never fired for them.
+        // D2-A (fu1diag-1): hoisted into the shared NodeShuffleIsOursForDiag helper (also used by
+        // OURNODE-POS and KEPT-FOREIGN) — identical test, identical result, single source of truth.
+        // OurComp is kept as its own lookup (not exposed by the shared bool-returning helper) — the
+        // log line below needs the ACTUAL component pointer for compFound=/bForceAccept=.
         UPrimitiveComponent* HitComp = hitResult.GetComponent();
-        const bool bOursRock = HitComp && HitComp->GetName().StartsWith(TEXT("NodeShuffleRockMesh"));
         const UNodeShuffleNodeComponent* OurComp = HitActor ? UNodeShuffleNodeComponent::Find(HitActor) : nullptr;
-        const bool bOurs = (HitActor && HitActor->GetClass()->GetName() == TEXT("NodeShuffleResourceNode"))
-            || bOursRock || (OurComp != nullptr);
+        const bool bOurs = NodeShuffleIsOursForDiag(HitActor, HitComp);
+        // fu1diag-1 (FU1 §6.1): identity fields.
+        const FString HoloName = Self ? Self->GetClass()->GetName() : TEXT("<none>");
+        const UClass* BuildClassPtr = Self ? Self->GetBuildClass().Get() : nullptr;
+        const FString BuildName = BuildClassPtr ? BuildClassPtr->GetName() : TEXT("<none>");
+
         static TSet<FString> Logged;
         const FString Key = (HitActor ? HitActor->GetName() : TEXT("<null>"));
         if (!Logged.Contains(Key))
         {
             Logged.Add(Key);
-            UE_LOG(LogNodeShuffle, Display, TEXT("HOLOGRAMHOOK TrySnapToActor -> %d | hitActor='%s' class='%s'%s | hitComp='%s' compFound=%d bForceAccept=%d"),
+            UE_LOG(LogNodeShuffle, Display, TEXT("HOLOGRAMHOOK TrySnapToActor -> %d | hitActor='%s' class='%s'%s | hitComp='%s' compFound=%d bForceAccept=%d | holo='%s' build='%s'"),
                 r ? 1 : 0, HitActor ? *HitActor->GetName() : TEXT("<null>"),
                 HitActor ? *HitActor->GetClass()->GetName() : TEXT("<null>"),
                 bOurs ? TEXT("  <-- OUR NODE") : TEXT(""),
                 HitComp ? *HitComp->GetName() : TEXT("<null>"),
-                OurComp ? 1 : 0, OurComp ? (OurComp->bForceAccept ? 1 : 0) : -1);
+                OurComp ? 1 : 0, OurComp ? (OurComp->bForceAccept ? 1 : 0) : -1,
+                *HoloName, *BuildName);
             // redesign-18: when the snap fails on OUR node, log its resource state so we can confirm the
             // mResourceClass-null-after-reload hypothesis (GetResourceClass() = override, valid; original
             // = mResourceClass, was null post-reload — the suspected snap gate).
@@ -365,6 +485,24 @@ void FNodeShuffleModule::StartupModule()
                 // redesign-19: call the hologram's PROTECTED acceptance checks (via the friended helper) to
                 // see which one rejects our node inside TrySnapToActor.
                 FNodeShuffleModule::DbgLogAcceptance(Self, HitActor);
+            }
+        }
+
+        // fu1diag-1 (FU1 §6.2): result-CHANGE (FLIP) logging for TrySnapToActor — mirrors the
+        // IsValidHitResult hook's FLIP block. Runs every invocation, transitions only.
+        {
+            static FNodeShuffleFlipResultMap LastResult;
+            static int32 sCallCount = 0;
+            ++sCallCount;
+            const FString FlipKey = HoloName + TEXT("|") + Key;
+            const bool* Prev = LastResult.Find(FlipKey);
+            if (!Prev || *Prev != r)
+            {
+                UE_LOG(LogNodeShuffle, Display,
+                    TEXT("HOLOGRAMHOOK FLIP TrySnapToActor %s->%d actor='%s' holo='%s' frame=%d"),
+                    Prev ? (*Prev ? TEXT("1") : TEXT("0")) : TEXT("?"), r ? 1 : 0,
+                    HitActor ? *HitActor->GetName() : TEXT("<null>"), *HoloName, sCallCount);
+                LastResult.Add(FlipKey, r);
             }
         }
     });
@@ -392,16 +530,25 @@ void FNodeShuffleModule::StartupModule()
         const UNodeShuffleNodeComponent* Comp = Actor ? UNodeShuffleNodeComponent::Find(Actor) : nullptr;
         const bool bLegacy = (Obj && Obj->GetClass()->GetName() == TEXT("NodeShuffleResourceNode"));
         const bool bResult = Comp ? Comp->bForceAccept : bLegacy;
-        // ISOURNODE diag (capped): show WHY a real-class node does/doesn't get force-accepted — whether the
+        // ISOURNODE diag: show WHY a real-class node does/doesn't get force-accepted — whether the
         // component was found and its bForceAccept — so we can pin the real-vanilla-node rejection.
-        static int32 sIsOurNodeLog = 0;
-        if (GNodeShuffleDiagnosticsEnabled && sIsOurNodeLog < 50)
+        // fu1diag-1 (FU1 §6.4): PER-ACTOR cap (was a flat 50/process cap — a second attempt, or a
+        // second tool, on an already-capped actor went invisible for the rest of the session, exactly
+        // the gap FU1's test matrix needs closed). FObjectKey-keyed, session lifetime; TMap only grows
+        // while diagnostics is on (matches the original zero-cost-when-off profile).
+        static constexpr int32 IsOurNodeMaxLogsPerActor = 12;
+        static TMap<FObjectKey, int32> sIsOurNodeLogCounts;
+        if (GNodeShuffleDiagnosticsEnabled && Obj)
         {
-            sIsOurNodeLog++;
-            UE_LOG(LogNodeShuffle, Display,
-                TEXT("ISOURNODE obj='%s' class='%s' compFound=%d bForceAccept=%d legacy=%d -> result=%d"),
-                Obj ? *Obj->GetName() : TEXT("<null>"), Obj ? *Obj->GetClass()->GetName() : TEXT("<null>"),
-                Comp ? 1 : 0, Comp ? (Comp->bForceAccept ? 1 : 0) : -1, bLegacy ? 1 : 0, bResult ? 1 : 0);
+            int32& LogCount = sIsOurNodeLogCounts.FindOrAdd(FObjectKey(Obj));
+            if (LogCount < IsOurNodeMaxLogsPerActor)
+            {
+                LogCount++;
+                UE_LOG(LogNodeShuffle, Display,
+                    TEXT("ISOURNODE obj='%s' class='%s' compFound=%d bForceAccept=%d legacy=%d -> result=%d"),
+                    *Obj->GetName(), *Obj->GetClass()->GetName(),
+                    Comp ? 1 : 0, Comp ? (Comp->bForceAccept ? 1 : 0) : -1, bLegacy ? 1 : 0, bResult ? 1 : 0);
+            }
         }
         return bResult;
     };
@@ -413,9 +560,16 @@ void FNodeShuffleModule::StartupModule()
     {
         if (IsOurNode(resource) && !NodeShuffleIsFrackingExtractor(Self)) // never force-accept fracking (crash)
         {
-            static bool bLoggedOnce = false;
-            if (GNodeShuffleDiagnosticsEnabled && !bLoggedOnce) { bLoggedOnce = true;
-                UE_LOG(LogNodeShuffle, Display, TEXT("HOLOGRAMHOOK FORCE-ACCEPT IsAllowedOnResource->true (our node)")); }
+            // fu1diag-1 (FU1 §6.4): once-per-actor (was once-per-process — a force-accept on a SECOND
+            // actor after the first-ever one went invisible for the rest of the session). Scope.Override
+            // below is UNCHANGED and ALWAYS active regardless of this logging gate.
+            static TSet<FObjectKey> sLoggedActors;
+            const UObject* Obj = resource.GetObject();
+            if (GNodeShuffleDiagnosticsEnabled && Obj && !sLoggedActors.Contains(FObjectKey(Obj)))
+            {
+                sLoggedActors.Add(FObjectKey(Obj));
+                UE_LOG(LogNodeShuffle, Display, TEXT("HOLOGRAMHOOK FORCE-ACCEPT IsAllowedOnResource->true (our node) obj='%s'"), *Obj->GetName());
+            }
             Scope.Override(true); // accept our node; skip the BP_ResourceNode_C IsA() rejection (ALWAYS active)
         }
     });
@@ -425,9 +579,15 @@ void FNodeShuffleModule::StartupModule()
     {
         if (IsOurNode(resource) && !NodeShuffleIsFrackingExtractor(Self)) // never force-accept fracking (crash)
         {
-            static bool bLoggedOnce = false;
-            if (GNodeShuffleDiagnosticsEnabled && !bLoggedOnce) { bLoggedOnce = true;
-                UE_LOG(LogNodeShuffle, Display, TEXT("HOLOGRAMHOOK FORCE-ACCEPT CanOccupyResource->true (our node)")); }
+            // fu1diag-1 (FU1 §6.4): once-per-actor (mirrors the IsAllowedOnResource hook above).
+            // Scope.Override below is ALWAYS active (the fix) regardless of this logging gate.
+            static TSet<FObjectKey> sLoggedActors;
+            const UObject* Obj = resource.GetObject();
+            if (GNodeShuffleDiagnosticsEnabled && Obj && !sLoggedActors.Contains(FObjectKey(Obj)))
+            {
+                sLoggedActors.Add(FObjectKey(Obj));
+                UE_LOG(LogNodeShuffle, Display, TEXT("HOLOGRAMHOOK FORCE-ACCEPT CanOccupyResource->true (our node) obj='%s'"), *Obj->GetName());
+            }
             Scope.Override(true); // ALWAYS active (the fix); only the log above is diagnostics-gated
         }
     });
@@ -513,7 +673,14 @@ void FNodeShuffleModule::StartupModule()
                 // Diagnostic: a KEPT node that is NOT one of our relocated copies is a candidate "escaped
                 // original" (a vanilla node we failed to hide). If phantom pings persist after this fix, these
                 // lines name the offender. Logged once each, gated.
-                if (GNodeShuffleDiagnosticsEnabled && N->GetClass()->GetName() != TEXT("NodeShuffleResourceNode"))
+                // D2-A (fu1diag-1, FU1 §4.3): was a legacy-name-ONLY check — since the real-class
+                // redesign it named EVERY one of our own spawned nodes "foreign" (contaminating this
+                // census, not just going quiet — see FU1 §4.3's audience-count breakage). The shared
+                // robust predicate now excludes ours from the foreign census entirely; ours=%d on the
+                // line is a self-verifying field (should always read 0 here — a 1 would mean this gate
+                // broke).
+                const bool bOursNode = NodeShuffleIsOursForDiag(N, nullptr);
+                if (GNodeShuffleDiagnosticsEnabled && !bOursNode)
                 {
                     static TSet<FString> LoggedForeign;
                     const FString Key = N->GetName();
@@ -521,10 +688,11 @@ void FNodeShuffleModule::StartupModule()
                     {
                         LoggedForeign.Add(Key);
                         UE_LOG(LogNodeShuffle, Display,
-                            TEXT("SCANDIAG KEPT-FOREIGN node='%s' class='%s' loc=%s hidden=%d coll=%d res='%s'"),
+                            TEXT("SCANDIAG KEPT-FOREIGN node='%s' class='%s' loc=%s hidden=%d coll=%d res='%s' ours=%d"),
                             *Key, *N->GetClass()->GetName(), *N->GetActorLocation().ToCompactString(),
                             N->IsHidden() ? 1 : 0, N->GetActorEnableCollision() ? 1 : 0,
-                            cluster.ResourceDescriptor.Get() ? *cluster.ResourceDescriptor.Get()->GetName() : TEXT("<null>"));
+                            cluster.ResourceDescriptor.Get() ? *cluster.ResourceDescriptor.Get()->GetName() : TEXT("<null>"),
+                            bOursNode ? 1 : 0);
                     }
                 }
             }
