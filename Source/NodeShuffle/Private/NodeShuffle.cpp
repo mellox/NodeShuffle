@@ -305,7 +305,7 @@ using FNodeShuffleDqTimeMap = TMap<FString, float>;
 void FNodeShuffleModule::StartupModule()
 {
     UE_LOG(LogNodeShuffle, Log, TEXT("NodeShuffle module loaded"));
-    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle 1.3.0 LOADED (2026-07-29-followups-5) ====="));
+    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle 1.3.0 LOADED (2026-07-29-followups-6) ====="));
 
 #if !WITH_EDITOR
     // redesign-13 HOLOGRAM HOOK (DIAGNOSTICS). r12 proved the Mk1 build trace NEVER hits our node (0 hits on
@@ -538,7 +538,7 @@ void FNodeShuffleModule::StartupModule()
         // while diagnostics is on (matches the original zero-cost-when-off profile).
         static constexpr int32 IsOurNodeMaxLogsPerActor = 12;
         static TMap<FObjectKey, int32> sIsOurNodeLogCounts;
-        if (GNodeShuffleDiagnosticsEnabled && Obj)
+        if (GNodeShuffleDiagnosticsEnabled)
         {
             int32& LogCount = sIsOurNodeLogCounts.FindOrAdd(FObjectKey(Obj));
             if (LogCount < IsOurNodeMaxLogsPerActor)
@@ -546,7 +546,7 @@ void FNodeShuffleModule::StartupModule()
                 LogCount++;
                 UE_LOG(LogNodeShuffle, Display,
                     TEXT("ISOURNODE obj='%s' class='%s' compFound=%d bForceAccept=%d legacy=%d -> result=%d"),
-                    *Obj->GetName(), *Obj->GetClass()->GetName(),
+                    Obj ? *Obj->GetName() : TEXT("<null>"), Obj ? *Obj->GetClass()->GetName() : TEXT("<null>"),
                     Comp ? 1 : 0, Comp ? (Comp->bForceAccept ? 1 : 0) : -1, bLegacy ? 1 : 0, bResult ? 1 : 0);
             }
         }
@@ -679,7 +679,11 @@ void FNodeShuffleModule::StartupModule()
                 // robust predicate now excludes ours from the foreign census entirely; ours=%d on the
                 // line is a self-verifying field (should always read 0 here — a 1 would mean this gate
                 // broke).
-                const bool bOursNode = NodeShuffleIsOursForDiag(N, nullptr);
+                // FU1v1-F1 (verbatim, review warning): short-circuit the predicate itself, not just the
+                // log — NodeShuffleIsOursForDiag is a component-list walk + FString compare that ran on
+                // every kept node in every cluster EVEN WITH DIAGNOSTICS OFF. Printed ours= value under
+                // diag-on is identical either way.
+                const bool bOursNode = GNodeShuffleDiagnosticsEnabled && NodeShuffleIsOursForDiag(N, nullptr);
                 if (GNodeShuffleDiagnosticsEnabled && !bOursNode)
                 {
                     static TSet<FString> LoggedForeign;

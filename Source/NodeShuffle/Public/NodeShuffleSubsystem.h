@@ -98,8 +98,10 @@ struct FNodeShuffleSuppressedOriginal
     // re-roll rebuild; see SuppressOriginalNodes/TryRematchStaleRecord in NodeShuffleSubsystem.cpp.
     UPROPERTY(SaveGame) FVector TrueLocation = FVector::ZeroVector;
     // correct-visual-6: true when this record's node is MODDED-origin (original resource class path
-    // not under /Game/). Such nodes are LEFT NATIVE and must NEVER be suppressed/hidden — set at
-    // CaptureOriginalNodeRecord time so SuppressOriginalNodes can skip them in BOTH hide loops.
+    // not under /Game/). Such nodes are LEFT NATIVE and must NEVER be suppressed/hidden — set inside
+    // RollLayout's Hide & Replace conversion (NodeShuffleSubsystem.cpp, the ONLY place OriginalNodeRecord
+    // is built; P5: the dead CaptureOriginalNodeRecord() this comment used to name has been removed) so
+    // SuppressOriginalNodes can skip them in BOTH hide loops.
     UPROPERTY(SaveGame) bool bModdedOrigin = false;
 };
 
@@ -328,9 +330,10 @@ private:
     // log to once per record (the record itself still retries silently every pass, covering late/lazy
     // spawners; see TryRematchStaleRecord).
     TSet<FString> RematchNoMatchLogged;
-    // Build/refresh the persistent record of EVERY unoccupied original node location (vanilla AND
-    // modded) so SuppressOriginalNodes can hide them. Captured at roll time from the layout.
-    void CaptureOriginalNodeRecord();
+    // P5 (addenda item 3): the standalone CaptureOriginalNodeRecord() declaration that used to sit
+    // here was dead code (no callers) and has been removed. OriginalNodeRecord — the persistent record
+    // of every unoccupied original node location (vanilla AND modded) that SuppressOriginalNodes hides
+    // — is built inline inside RollLayout's Hide & Replace conversion instead.
     void SettleNewNodesNearPlayers();
     void ReassociateOrphanedExtractors();
     // knowledge-1 item 2: extractors whose resource binding this session already healed/refreshed
@@ -485,10 +488,15 @@ private:
     // knowledge-1 item 3: bounded give-up for spawns that fail every pass (evidence: 675 identical
     // "Failed to spawn new node (Node_BioWaterSF+_C)" warnings in ~4 min — SpawnActor returns null
     // each attempt, likely spawn-gated by the owning mod). Consecutive per-ENTRY failures; at
-    // SpawnGiveUpAttempts the entry parks for the session (retries next load). Same lifecycle as the
-    // capture retry budget: success clears the counter, RollLayout's clear block resets all, and
-    // everything is session-only (no SaveGame). FlagsLogged bounds the one-shot per-CLASS class-flag
-    // breadcrumb (diagnostics-gated) that hints WHY the class refuses to spawn.
+    // SpawnGiveUpAttempts the entry gives up and parks. P5 (addenda item 1 / P3 design §2.9 decision
+    // Q6): this is NOT a one-time terminal event per entry — P3's deckevict-1 (EvictSpawnRefusingClass)
+    // can REVIVE a parked entry onto a substitute class when one exists, resetting this budget, so the
+    // SAME entry can give up again on the new class. The give-up therefore fires ONCE PER (entry,
+    // class), bounded at 1 + MaxSubstituteChain (currently 3) total give-ups before the entry parks for
+    // good with no further substitute to try — not once per entry. Same lifecycle as the capture retry
+    // budget otherwise: success clears the counter, RollLayout's clear block resets all, and everything
+    // is session-only (no SaveGame). FlagsLogged bounds the one-shot per-CLASS class-flag breadcrumb
+    // (diagnostics-gated) that hints WHY the class refuses to spawn.
     TMap<FGuid, int32> SpawnFailCounts;
     TSet<FGuid> SpawnParkedThisSession;
     TSet<FString> SpawnFailFlagsLogged;

@@ -331,15 +331,23 @@ void ANodeShuffleSubsystem::RefreshTick()
         // idempotent refresh during a world-settling storm.
         if (bScannerClusterRefreshPending && !bScannerRefreshedThisPass)
         {
-            UE_LOG(LogNodeShuffle, Display,
-                TEXT("SCANREGEN: consuming refresh (pending=1, alreadyRefreshedThisPass=0) -> invalidating"));
+            // P5: SCANREGEN line #2 (P2 design §5) — gated; RefreshScannersAndRadarTowers() below is
+            // the behavior and is UNCHANGED, always runs regardless of this log.
+            if (FNodeShuffleModule::AreDiagnosticsEnabled())
+            {
+                UE_LOG(LogNodeShuffle, Display,
+                    TEXT("SCANREGEN: consuming refresh (pending=1, alreadyRefreshedThisPass=0) -> invalidating"));
+            }
             RefreshScannersAndRadarTowers();
             bScannerClusterRefreshPending = false;
         }
         else if (bScannerClusterRefreshPending)
         {
-            UE_LOG(LogNodeShuffle, Display,
-                TEXT("SCANREGEN: consuming refresh (pending=1, alreadyRefreshedThisPass=1) -> SKIPPED (already refreshed this pass)"));
+            if (FNodeShuffleModule::AreDiagnosticsEnabled())
+            {
+                UE_LOG(LogNodeShuffle, Display,
+                    TEXT("SCANREGEN: consuming refresh (pending=1, alreadyRefreshedThisPass=1) -> SKIPPED (already refreshed this pass)"));
+            }
         }
         DiagnoseRocksNearPlayers();
     }
@@ -624,10 +632,14 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     if (bIsReroll)
     {
         // redesign-6 FIX 3 (REROLL COLLAPSE). In the Hide & Replace model every UNOCCUPIED original was
-        // converted at the initial roll into a bIsNewNode SPAWNED entry (its VanillaNodePath emptied) —
-        // only OCCUPIED/pinned originals remain as !bIsNewNode entries. So the old reroll loop, which
-        // rebuilt from !bIsNewNode entries ONLY, saw just the few pinned ones and COLLAPSED the pool
-        // (732 -> 349). The complete original pool = EVERY entry that carries an original resource:
+        // converted at the initial roll into a bIsNewNode SPAWNED entry. PRE-FIX-3, that conversion
+        // EMPTIED its VanillaNodePath — only OCCUPIED/pinned originals remained as !bIsNewNode entries,
+        // so the OLD reroll loop, which rebuilt from !bIsNewNode entries ONLY, saw just the few pinned
+        // ones and COLLAPSED the pool (732 -> 349). P5 (addenda item 4): the emptying described above is
+        // PRE-FIX-3 history, not current behavior — the conversion below (see "redesign-6 FIX 3: KEEP
+        // VanillaNodePath") instead KEEPS the path, and P1's rehide-1 relies on that identity surviving
+        // for path-based re-matching across process restarts. The complete original pool = EVERY entry
+        // that carries an original resource:
         //   - pinned originals (kept as !bIsNewNode), AND
         //   - every spawned entry (bIsNewNode) — each one IS a relocated original carrying its
         //     OriginalResourceClassPath / OriginalPurity / ResourceForm.
@@ -671,7 +683,11 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
             FNodeShuffleEntry E;
             E.EntryGuid = FGuid::NewGuid();
             E.bIsNewNode = false;                 // re-enters the pool as an original; conversion re-runs below
-            E.VanillaNodePath = Old.VanillaNodePath; // empty for already-relocated originals (fine — they hide via record)
+            // P5 (addenda item 4): PRE-FIX-3 this was empty for an already-relocated original (the old
+            // conversion emptied it); post-FIX-3 (current) the conversion KEEPS the original's identity,
+            // so Old.VanillaNodePath is populated here too, carried straight through — P1's rehide-1
+            // depends on this surviving so a stale record can still resolve/re-match by path.
+            E.VanillaNodePath = Old.VanillaNodePath;
             E.Location = Old.Location;
             E.Rotation = Old.Rotation;
             E.OriginalResourceClassPath = Old.OriginalResourceClassPath;
@@ -1376,8 +1392,9 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     // itself is recorded for whole-actor hiding (SuppressOriginalNodes). Occupied/pinned originals
     // stay exactly where they are, 100% untouched (save-safety — built miners keep working).
     //
-    // Build OriginalNodeRecord here (not in CaptureOriginalNodeRecord) because after this conversion
-    // the unoccupied originals are no longer present in Layout as non-new entries.
+    // Build OriginalNodeRecord HERE — the only place it is built (P5: the dead standalone
+    // CaptureOriginalNodeRecord() this comment used to contrast against has been removed) — because
+    // after this conversion the unoccupied originals are no longer present in Layout as non-new entries.
     OriginalNodeRecord.Reset();
     {
         // Count the unoccupied originals that need a relocated home (active ones carry a resource;
@@ -1781,7 +1798,7 @@ void ANodeShuffleSubsystem::ApplyLayout()
         // Our own spawned (relocated) nodes are never cached as originals. dirtdress-1 (cold review)
         // NOTE: this exclusion is one layer of the capture poison-guard, but the safety ultimately
         // rests on OriginalNodeRecord being built SOLELY from !bIsNewNode entries at roll time (the
-        // Hide & Replace conversion in RollLayout; CaptureOriginalNodeRecord) — so SuppressOriginalNodes
+        // Hide & Replace conversion in RollLayout — the ONLY place it is built) — so SuppressOriginalNodes
         // can only ever hand true originals to CaptureOriginalVisualIfNeeded. Any future refactor that
         // widens SuppressOriginalNodes' caller population must re-verify our-node exclusion end to end.
         // The transient first-pass cache gap (restored-not-yet-adopted spawned nodes, before
@@ -3166,24 +3183,31 @@ void ANodeShuffleSubsystem::RegisterNodeWithManager(AFGResourceNode* Node)
     // REGDIAG full-set (redesign-12): the r11 REGDIAG only sampled ONE node. Count ALL our
     // ANodeShuffleResourceNode entries actually present in mResourceNodes vs how many we've spawned, to
     // confirm the WHOLE set registers (not just the sample). One-shot, logged after the list has grown.
+    // P5: the ONE-SHOT LATCH stays unconditional (bRegDiagLogged still flips on the very first call,
+    // diagnostics on or off — identical trigger timing to before this pass); only the compute + log
+    // inside now also require diagnostics, so an all-session-off run does the census work zero times
+    // instead of once, and the line itself is silent.
     if (!bRegDiagLogged)
     {
         bRegDiagLogged = true;
-        int32 OursInList = 0;
-        for (AFGResourceNode* N : Mgr->mResourceNodes)
+        if (FNodeShuffleModule::AreDiagnosticsEnabled())
         {
-            if (IsValid(N) && NodeShuffleIsOurNode(N)) { OursInList++; }
+            int32 OursInList = 0;
+            for (AFGResourceNode* N : Mgr->mResourceNodes)
+            {
+                if (IsValid(N) && NodeShuffleIsOurNode(N)) { OursInList++; }
+            }
+            int32 OursSpawned = 0;
+            for (const auto& Pair : SpawnedNodes)
+            {
+                if (Pair.Value && NodeShuffleIsOurNode(Pair.Value)) { OursSpawned++; }
+            }
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("REGDIAG full-set: mResourceNodes was %d -> now %d; OUR nodes in list = %d (of %d spawned this session); last add: %s '%s' Contains=%d"),
+                Before, Mgr->mResourceNodes.Num(), OursInList, OursSpawned,
+                bWasIn ? TEXT("already had") : TEXT("ADDED"), *Node->GetName(),
+                Mgr->mResourceNodes.Contains(Node) ? 1 : 0);
         }
-        int32 OursSpawned = 0;
-        for (const auto& Pair : SpawnedNodes)
-        {
-            if (Pair.Value && NodeShuffleIsOurNode(Pair.Value)) { OursSpawned++; }
-        }
-        UE_LOG(LogNodeShuffle, Display,
-            TEXT("REGDIAG full-set: mResourceNodes was %d -> now %d; OUR nodes in list = %d (of %d spawned this session); last add: %s '%s' Contains=%d"),
-            Before, Mgr->mResourceNodes.Num(), OursInList, OursSpawned,
-            bWasIn ? TEXT("already had") : TEXT("ADDED"), *Node->GetName(),
-            Mgr->mResourceNodes.Contains(Node) ? 1 : 0);
     }
 }
 
@@ -4086,30 +4110,10 @@ bool ANodeShuffleSubsystem::IsLocationNearAnyPlayer(const FVector& Loc, float Ra
 // nodes, only-visual ghosts, and vanished modded nodes; actor count is not a real
 // problem in Satisfactory).
 
-void ANodeShuffleSubsystem::CaptureOriginalNodeRecord()
-{
-    // Snapshot every ORIGINAL vanilla node location from the freshly-rolled layout.
-    // SuppressOriginalNodes uses this persistent record to hide originals (and their
-    // rocks) on stream-in after a wipe — reliable across sessions because it does
-    // not depend on a live scan. Rebuilt on every roll so it always matches the
-    // current layout's notion of which spots were vanilla.
-    OriginalNodeRecord.Reset();
-    for (const FNodeShuffleEntry& E : Layout)
-    {
-        if (E.bIsNewNode || E.VanillaNodePath.IsEmpty())
-        {
-            continue;
-        }
-        FNodeShuffleSuppressedOriginal Rec;
-        Rec.VanillaNodePath = E.VanillaNodePath;
-        Rec.Location = E.Location;
-        // correct-visual-6: flag modded-origin records so SuppressOriginalNodes never hides them
-        // (its node OR its native rock) — the second hide path that re-opened the modded-blank bug.
-        Rec.bModdedOrigin = !E.OriginalResourceClassPath.StartsWith(TEXT("/Game/"));
-        OriginalNodeRecord.Add(Rec);
-    }
-    UE_LOG(LogNodeShuffle, Display, TEXT("Captured original-node record: %d vanilla locations"), OriginalNodeRecord.Num());
-}
+// P5 (addenda item 3): CaptureOriginalNodeRecord() removed — dead code, no callers (P1 designer
+// found; P1 review §B confirmed untouched). OriginalNodeRecord is built the ONE real way, inside
+// RollLayout's Hide & Replace conversion (see the "Build OriginalNodeRecord here" comment there),
+// which is also where Rec.bModdedOrigin is actually stamped.
 
 void ANodeShuffleSubsystem::SuppressOriginalNodes()
 {
@@ -4503,6 +4507,18 @@ AFGResourceNodeBase* ANodeShuffleSubsystem::TryRematchStaleRecord(FNodeShuffleSu
 
         // Class leg: prefer the resolved entry's NodeClassPath (full path, exact); fall back to the
         // legacy name-token parse (design §3.1 point 2) only when no entry resolved.
+        // P1 review finding 5 (INFO, carried into P5 per the reviewer's own recommendation: "leave
+        // as-is"): this else-if is LABEL-ONLY as a matcher in practice, not dead in the sense of
+        // unreachable code — when ExpectedClassPath is empty (no MatchEntry resolved),
+        // ExpectedResourcePath is ALSO empty, and the resource leg below rejects every candidate that
+        // HAS a resource class (P1 review's exact wording), so no candidate carrying a resource class
+        // can pass both legs via this branch. NOT proven for the one residual corner: a candidate whose
+        // GetResourceClass() is NULL leaves CandidateResPath empty too, so the resource leg's
+        // both-sides-unknown escape applies and such a candidate COULD bind here on a class-name-token
+        // match alone. Neither the cache build (:1796-1809) nor BuildRematchCandidatePool requires a
+        // resource class, so the pool can contain one; treat this as an assumed-rare corner with no
+        // static proof, not as an impossibility. Left in place rather than deleted: P5 is
+        // log/diagnostics hygiene only, and this branch is control flow, not a log line.
         if (!ExpectedClassPath.IsEmpty())
         {
             if (Candidate->GetClass()->GetPathName() != ExpectedClassPath) { continue; }
@@ -4533,34 +4549,43 @@ AFGResourceNodeBase* ANodeShuffleSubsystem::TryRematchStaleRecord(FNodeShuffleSu
         if (!RematchNoMatchLogged.Contains(Rec.VanillaNodePath))
         {
             RematchNoMatchLogged.Add(Rec.VanillaNodePath);
-            // Diagnostic-only second pass: nearest same-class candidate regardless of radius, so the
-            // log itself proves which §5 timeline is real (small distance = a late spawner about to
-            // heal on its own; huge distance = a stale/legacy anchor needing one re-roll, §11 ruling 2).
-            AFGResourceNodeBase* Nearest = nullptr;
-            float NearestSq = TNumericLimits<float>::Max();
-            for (AFGResourceNodeBase* Candidate : CandidatePool)
+            // P5: this whole block is diagnostic work, not just its log — the "nearest" scan below is a
+            // SECOND full CandidatePool pass solely to enrich the message, so it is gated alongside the
+            // log rather than left to run once-per-record regardless of diagnostics. The once-per-record
+            // THROTTLE above (RematchNoMatchLogged.Add) is unaffected by this gate — it still marks the
+            // record whether or not diagnostics is on, so behavior (never re-scanning this record again
+            // this session) is unchanged.
+            if (FNodeShuffleModule::AreDiagnosticsEnabled())
             {
-                if (!IsValid(Candidate)) { continue; }
-                const bool bClassOk = !ExpectedClassPath.IsEmpty()
-                    ? Candidate->GetClass()->GetPathName() == ExpectedClassPath
-                    : Candidate->GetClass()->GetName() == LegacyClassToken;
-                if (!bClassOk) { continue; }
-                const float DSq = FVector::DistSquared(Candidate->GetActorLocation(), Anchor);
-                if (DSq < NearestSq) { NearestSq = DSq; Nearest = Candidate; }
-            }
-            if (Nearest)
-            {
-                UE_LOG(LogNodeShuffle, Display,
-                    TEXT("REHIDE: record='%s' anchor=%s[%s] res='%s' class='%s' -> no-match (cands=0 in %.0fcm; nearest same-class '%s' at %.0fcm) — twin stays visible this session"),
-                    *Rec.VanillaNodePath, *Anchor.ToCompactString(), bTrueAnchor ? TEXT("true") : TEXT("legacy"),
-                    *ResLabel, *ClassLabel, AdoptMatchRadiusCm, *Nearest->GetName(), FMath::Sqrt(NearestSq));
-            }
-            else
-            {
-                UE_LOG(LogNodeShuffle, Display,
-                    TEXT("REHIDE: record='%s' anchor=%s[%s] res='%s' class='%s' -> no-match (cands=0 in %.0fcm; no same-class candidate anywhere loaded) — twin stays visible this session"),
-                    *Rec.VanillaNodePath, *Anchor.ToCompactString(), bTrueAnchor ? TEXT("true") : TEXT("legacy"),
-                    *ResLabel, *ClassLabel, AdoptMatchRadiusCm);
+                // Diagnostic-only second pass: nearest same-class candidate regardless of radius, so the
+                // log itself proves which §5 timeline is real (small distance = a late spawner about to
+                // heal on its own; huge distance = a stale/legacy anchor needing one re-roll, §11 ruling 2).
+                AFGResourceNodeBase* Nearest = nullptr;
+                float NearestSq = TNumericLimits<float>::Max();
+                for (AFGResourceNodeBase* Candidate : CandidatePool)
+                {
+                    if (!IsValid(Candidate)) { continue; }
+                    const bool bClassOk = !ExpectedClassPath.IsEmpty()
+                        ? Candidate->GetClass()->GetPathName() == ExpectedClassPath
+                        : Candidate->GetClass()->GetName() == LegacyClassToken;
+                    if (!bClassOk) { continue; }
+                    const float DSq = FVector::DistSquared(Candidate->GetActorLocation(), Anchor);
+                    if (DSq < NearestSq) { NearestSq = DSq; Nearest = Candidate; }
+                }
+                if (Nearest)
+                {
+                    UE_LOG(LogNodeShuffle, Display,
+                        TEXT("REHIDE: record='%s' anchor=%s[%s] res='%s' class='%s' -> no-match (cands=0 in %.0fcm; nearest same-class '%s' at %.0fcm) — twin stays visible this session"),
+                        *Rec.VanillaNodePath, *Anchor.ToCompactString(), bTrueAnchor ? TEXT("true") : TEXT("legacy"),
+                        *ResLabel, *ClassLabel, AdoptMatchRadiusCm, *Nearest->GetName(), FMath::Sqrt(NearestSq));
+                }
+                else
+                {
+                    UE_LOG(LogNodeShuffle, Display,
+                        TEXT("REHIDE: record='%s' anchor=%s[%s] res='%s' class='%s' -> no-match (cands=0 in %.0fcm; no same-class candidate anywhere loaded) — twin stays visible this session"),
+                        *Rec.VanillaNodePath, *Anchor.ToCompactString(), bTrueAnchor ? TEXT("true") : TEXT("legacy"),
+                        *ResLabel, *ClassLabel, AdoptMatchRadiusCm);
+                }
             }
         }
         else if (FNodeShuffleModule::AreDiagnosticsEnabled())
@@ -4588,26 +4613,33 @@ AFGResourceNodeBase* ANodeShuffleSubsystem::TryRematchStaleRecord(FNodeShuffleSu
         MatchEntry->OriginalTrueLocation = Rec.TrueLocation;
     }
 
-    // Occupancy PEEK for log wording only — mirrors the funnel's own predicate exactly (Node->IsOccupied()
-    // || IsNodeOccupiedAnyway for the portable-miner case). This makes NO hide/skip decision of its own;
-    // the funnel re-evaluates and enforces it independently moments later on the same Node pointer,
-    // byte-identical to how it already treats a path-resolved original (reviewer focus item (c)).
-    AFGResourceNode* BestAsNode = Cast<AFGResourceNode>(Best);
-    const bool bBestOccupied = Best->IsOccupied() || (BestAsNode && IsNodeOccupiedAnyway(BestAsNode));
+    // P5: matched/occupied REHIDE lines (P1 decision ruling 4, revisit-in-P5) — gated. The occupancy
+    // PEEK below is for log wording only (mirrors the funnel's own predicate; makes NO hide/skip
+    // decision of its own — the funnel re-evaluates and enforces it independently moments later on the
+    // same Node pointer, byte-identical to how it already treats a path-resolved original, reviewer
+    // focus item (c)), so it is gated alongside the log rather than computed unconditionally. No new
+    // throttle added here — a successful rematch is inherently rare (the record resolves by path
+    // directly on every later pass unless it goes stale again), unlike the no-match branch above, which
+    // keeps its existing once-per-record throttle unchanged.
+    if (FNodeShuffleModule::AreDiagnosticsEnabled())
+    {
+        AFGResourceNode* BestAsNode = Cast<AFGResourceNode>(Best);
+        const bool bBestOccupied = Best->IsOccupied() || (BestAsNode && IsNodeOccupiedAnyway(BestAsNode));
 
-    if (bBestOccupied)
-    {
-        UE_LOG(LogNodeShuffle, Display,
-            TEXT("REHIDE: record='%s' anchor=%s[%s] res='%s' class='%s' -> candidate OCCUPIED (miner present) '%s' dist=%.0fcm (cands=%d) — rebound, hide skipped (occupied), will re-test"),
-            *OldPath, *Anchor.ToCompactString(), bTrueAnchor ? TEXT("true") : TEXT("legacy"),
-            *ResLabel, *ClassLabel, *Best->GetName(), MatchedDistCm, CandidatesInRadius);
-    }
-    else
-    {
-        UE_LOG(LogNodeShuffle, Display,
-            TEXT("REHIDE: record='%s' anchor=%s[%s] res='%s' class='%s' -> MATCHED '%s' dist=%.0fcm (cands=%d) — path rebound, entry rebound, falling through hide funnel"),
-            *OldPath, *Anchor.ToCompactString(), bTrueAnchor ? TEXT("true") : TEXT("legacy"),
-            *ResLabel, *ClassLabel, *Best->GetName(), MatchedDistCm, CandidatesInRadius);
+        if (bBestOccupied)
+        {
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("REHIDE: record='%s' anchor=%s[%s] res='%s' class='%s' -> candidate OCCUPIED (miner present) '%s' dist=%.0fcm (cands=%d) — rebound, hide skipped (occupied), will re-test"),
+                *OldPath, *Anchor.ToCompactString(), bTrueAnchor ? TEXT("true") : TEXT("legacy"),
+                *ResLabel, *ClassLabel, *Best->GetName(), MatchedDistCm, CandidatesInRadius);
+        }
+        else
+        {
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("REHIDE: record='%s' anchor=%s[%s] res='%s' class='%s' -> MATCHED '%s' dist=%.0fcm (cands=%d) — path rebound, entry rebound, falling through hide funnel"),
+                *OldPath, *Anchor.ToCompactString(), bTrueAnchor ? TEXT("true") : TEXT("legacy"),
+                *ResLabel, *ClassLabel, *Best->GetName(), MatchedDistCm, CandidatesInRadius);
+        }
     }
 
     return Best;
@@ -6093,12 +6125,18 @@ void ANodeShuffleSubsystem::RefreshScannersAndRadarTowers()
         TowersRescanned++;
     }
 
-    // scanregen-1: ungated for this build (P5 quiets it) — "N=0" is the single most valuable line in
-    // the packet: it means no AFGResourceScanner actor existed at this moment, so the invalidation was
-    // a no-op and any staleness lives elsewhere (P2 design §5 point 3).
-    UE_LOG(LogNodeShuffle, Display,
-        TEXT("SCANREGEN: invalidated %d scanner cluster cache(s), re-scanned %d radar tower(s)"),
-        ScannersInvalidated, TowersRescanned);
+    // P5 (addenda item 10): SCANREGEN line #3 (P2 design §5) — gated. Phase C evidence showed this
+    // fires on EVERY call to this function (the live-reroll branch at :297, RefreshTick's consume
+    // point, AND ApplyLayout's bChangedWorld tail at :1945 — frequent during a world-settling storm),
+    // not only the knowledge-unlock path this comment originally described. "N=0" is still the single
+    // most valuable line under diagnostics: it means no AFGResourceScanner actor existed at this
+    // moment, so the invalidation was a no-op and any staleness lives elsewhere (P2 design §5 point 3).
+    if (FNodeShuffleModule::AreDiagnosticsEnabled())
+    {
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("SCANREGEN: invalidated %d scanner cluster cache(s), re-scanned %d radar tower(s)"),
+            ScannersInvalidated, TowersRescanned);
+    }
 }
 
 bool ANodeShuffleSubsystem::UnlockModdedScannerKnowledge()
@@ -6188,10 +6226,13 @@ bool ANodeShuffleSubsystem::UnlockModdedScannerKnowledge()
     };
     int32 Unlocked = 0;
     FString UnlockedNames;
-    // scanregen-1: reset+repopulate every pass this loop runs (whether or not it unlocks anything) so
-    // the census in RefreshScannersAndRadarTowers never reads a stale list from an earlier batch; it
-    // is only ever READ while bScannerClusterRefreshPending is true, which is set below iff Unlocked>0.
-    ScanRegenUnlockedClasses.Reset();
+    // scanregen-1 (P2 review F1, verbatim fold): build the batch LOCALLY and commit to the member ONLY
+    // when a batch actually lands (Unlocked>0), so a completed no-op pass (Unlocked==0, e.g. a second
+    // re-roll toggle inside the pending window) can never wipe the list of a still-pending EARLIER
+    // batch (§9 amendment: pending may survive several ticks before consume). The member therefore
+    // always corresponds to the batch that set bScannerClusterRefreshPending -- it is only ever READ
+    // while that flag is true.
+    TArray<TSubclassOf<UFGResourceDescriptor>> NewlyUnlockedThisPass;
     for (UClass* ResClass : Managed)
     {
         if (bFilterUnlocks && !WithMinerInfo.Contains(ResClass))
@@ -6223,7 +6264,7 @@ bool ANodeShuffleSubsystem::UnlockModdedScannerKnowledge()
         Unlocked++;
         UnlockedNames += (UnlockedNames.IsEmpty() ? TEXT("") : TEXT(", "));
         UnlockedNames += ResClass->GetName();
-        ScanRegenUnlockedClasses.Add(TSubclassOf<UFGResourceDescriptor>(ResClass)); // scanregen-1
+        NewlyUnlockedThisPass.Add(TSubclassOf<UFGResourceDescriptor>(ResClass)); // scanregen-1
         if (bDiag)
         {
             UE_LOG(LogNodeShuffle, Verbose, TEXT("knowledge: scanner-unlocked %s (type=%s)"),
@@ -6241,10 +6282,20 @@ bool ANodeShuffleSubsystem::UnlockModdedScannerKnowledge()
         // reload of an already-unlocked save sets nothing here). Record-only — RefreshTick's consume
         // point acts, never here (this function's OTHER caller is PostLoadGame_Implementation, mid
         // save-load, before actor settling — see P2 design §2.1).
+        // P2 review F1 (verbatim fold): commit the batch to the member HERE, alongside the flag that
+        // marks it pending, so the member and the flag always describe the same batch (see the
+        // declaration comment above).
+        ScanRegenUnlockedClasses = MoveTemp(NewlyUnlockedThisPass);
         bScannerClusterRefreshPending = true;
-        UE_LOG(LogNodeShuffle, Display,
-            TEXT("SCANREGEN: knowledge unlocked %d resource(s) [%s] -> scanner cluster refresh PENDING"),
-            Unlocked, *UnlockedNames);
+        // P5: SCANREGEN line #1 (P2 design §5) — gated; the "knowledge:" line above stays ungated
+        // (it is the one-per-load acceptance line for the unlock itself), this one is the internal
+        // scanner-refresh trigger detail and is redundant with it outside diagnostics.
+        if (FNodeShuffleModule::AreDiagnosticsEnabled())
+        {
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("SCANREGEN: knowledge unlocked %d resource(s) [%s] -> scanner cluster refresh PENDING"),
+                Unlocked, *UnlockedNames);
+        }
     }
     return true;
 }
