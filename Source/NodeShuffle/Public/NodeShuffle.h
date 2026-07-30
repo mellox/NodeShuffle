@@ -20,6 +20,18 @@ public:
     // our trace hit, and log which check rejects our node (TrySnapToActor -> 0 with a valid resource).
     static void DbgLogAcceptance(class AFGResourceExtractorHologram* Hologram, class AActor* ResourceActor);
 
+    // redesign-24 (Packet E): classifies the CALLING extractor's own node-type restriction
+    // (Hologram->mDefaultExtractor->mRestrictToNodeType -- both protected, both already friend-granted
+    // via the SAME AccessTransformers entries DbgLogAcceptance uses; no new grant needed) as GENERIC
+    // (unset, or the one vanilla node class every ordinary Miner/Pump restricts to) vs a SPECIAL,
+    // narrower type a mod defines for its own resource (e.g. AlkaLib's Lithium/Alkali reactive-ore
+    // node). The force-accept hooks below only waive the native class check for a GENERIC extractor --
+    // a SPECIAL extractor's own restriction is left to run natively so it correctly rejects a node
+    // that isn't its own type. Named static member function, not a lambda inside the hook -- a lambda
+    // can't touch these protected members even inside a friended module (same constraint
+    // DbgLogAcceptance documents). OutRestrictName is optional, for the hook's own diagnostic log.
+    static bool IsGenericExtractorRestriction(const class AFGResourceExtractorHologram* Hologram, FString* OutRestrictName = nullptr);
+
     // Diagnostics gate (config-driven, OFF by default). The behavioral hooks (Mk1 accept-fix)
     // ALWAYS run; only the verbose diagnostic LOGGING is gated by this so normal users get a
     // clean log and zero overhead. The subsystem pushes the config value here each ApplyLayout

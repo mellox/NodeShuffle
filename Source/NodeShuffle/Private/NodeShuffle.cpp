@@ -259,6 +259,50 @@ void FNodeShuffleModule::DbgLogAcceptance(AFGResourceExtractorHologram* Hologram
     }
 }
 
+// redesign-24 (Packet E): see the declaration comment in NodeShuffle.h for the full reasoning. Reads
+// mDefaultExtractor (protected on AFGResourceExtractorHologram) and mRestrictToNodeType (protected on
+// AFGBuildableResourceExtractorBase) -- both already friend-granted to this module by the SAME
+// AccessTransformers entries DbgLogAcceptance above uses; no new grant was added for this.
+bool FNodeShuffleModule::IsGenericExtractorRestriction(const AFGResourceExtractorHologram* Hologram, FString* OutRestrictName)
+{
+    if (!Hologram)
+    {
+        if (OutRestrictName) { *OutRestrictName = TEXT("<no-holo>"); }
+        return true; // nothing to restrict on -- treat as generic (matches the pre-Packet-E unconditional override)
+    }
+    const AFGBuildableResourceExtractorBase* Ext = Hologram->mDefaultExtractor;
+    if (!Ext)
+    {
+        if (OutRestrictName) { *OutRestrictName = TEXT("<no-default-extractor>"); }
+        return true; // mirrors DbgLogAcceptance's own null-Ext branch -- nothing to check against, don't newly reject
+    }
+    const UClass* Restrict = Ext->mRestrictToNodeType.Get();
+    if (OutRestrictName) { *OutRestrictName = Restrict ? Restrict->GetName() : TEXT("<none>"); }
+    // (a) Unset -- no node-type restriction at all. Generic by definition (the header documents
+    // "If None, there is no node-type restriction for this extractor type").
+    if (!Restrict) { return true; }
+    // (b) The vanilla generic node class every ordinary Miner restricts to. MEASURED two ways: the
+    // Build_MinerMk5_C CDO export carries
+    //   mRestrictToNodeType = "/Game/FactoryGame/Resource/BP_ResourceNode.BP_ResourceNode_C"
+    // and 12 in-game ACCEPT-EXT lines print restrictToNodeType='BP_ResourceNode_C' for both
+    // Build_MinerMk5_C and Build_ModularMiner_01_C. Compared by NAME, not path, so a repackaged or
+    // relocated vanilla asset still matches -- same idiom as NodeShuffleIsOursForDiag's bLegacy check.
+    static const FString GenericNodeClassName = TEXT("BP_ResourceNode_C");
+    if (Restrict->GetName() == GenericNodeClassName) { return true; }
+    // (c) ANY stock-game node class. (b) is measured for SOLID-ore Miners only -- the Oil Pump's
+    // restriction has never appeared in any log we hold (zero Pump ACCEPT-EXT lines across 14 sessions)
+    // and no Oil Pump CDO export exists, so if it restricts to some OTHER vanilla node class then (b)
+    // alone would newly refuse oil pumps on the two node cases that still depend on the override (the
+    // ANodeShuffleResourceNode spawn fallback, and legacy old-save oil nodes). Every class shipped by
+    // the base game lives under /Game/FactoryGame/; a mod defines its node class under its OWN mount
+    // root (MEASURED: AlkaLib restricts to
+    // "/Lithium/World/BP_ResourdeNode_Alkali.BP_ResourdeNode_Alkali_C"). So this clause can only WIDEN
+    // "generic" to other stock classes -- it is structurally incapable of re-admitting the mod-special
+    // extractor this packet exists to reject. GetPathName()/StartsWith are both already-used symbols
+    // (NodeShuffleSubsystem.cpp:1045, :2901) -- no new import.
+    return Restrict->GetPathName().StartsWith(TEXT("/Game/FactoryGame/"));
+}
+
 // CRASH GUARD (fracking-crash-fix): our nodes are regular Node-type resource nodes, NOT fracking
 // core/satellite nodes. A FRACKING extractor (Resource Well Pressurizer = AFGBuildableFrackingActivator, or the
 // satellite Resource Well Extractor = AFGBuildableFrackingExtractor; modded wells derive from these) does a
@@ -301,11 +345,15 @@ static bool NodeShuffleIsOursForDiag(const AActor* Actor, const UPrimitiveCompon
 using FNodeShuffleFlipResultMap = TMap<FString, bool>;
 using FNodeShuffleDqSignatureMap = TMap<FString, FString>;
 using FNodeShuffleDqTimeMap = TMap<FString, float>;
+// redesign-24 (Packet E): the FORCE-ACCEPT-EVAL log dedup key -- (actor, extractor build class) --
+// same trap as above (TPair<A, B> has a bare comma), aliased here for the same reason.
+using FNodeShuffleActorExtractorKey = TPair<FObjectKey, FObjectKey>;
+using FNodeShuffleActorExtractorLoggedSet = TSet<FNodeShuffleActorExtractorKey>;
 
 void FNodeShuffleModule::StartupModule()
 {
     UE_LOG(LogNodeShuffle, Log, TEXT("NodeShuffle module loaded"));
-    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle 1.3.0 LOADED (2026-07-30-followups-7) ====="));
+    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle 1.3.0 LOADED (2026-07-30-followups-8) ====="));
 
 #if !WITH_EDITOR
     // redesign-13 HOLOGRAM HOOK (DIAGNOSTICS). r12 proved the Mk1 build trace NEVER hits our node (0 hits on
@@ -517,12 +565,15 @@ void FNodeShuffleModule::StartupModule()
     // on server + clients). SML detours patch the function body, so TrySnapToActor's INTERNAL calls to these are
     // intercepted too. Friend grant (AccessTransformers) makes the protected method addresses takeable here.
     // real-class redesign: relocated nodes are now their ORIGINAL class + a UNodeShuffleNodeComponent. We
-    // force-accept the Mk hologram based on the component's bForceAccept flag (computed at spawn from the
-    // node's native mCanPlacePortableMiner): vanilla nodes AND modded nodes that allow normal mining
-    // (AllMinable item-nodes) are force-accepted (a runtime-spawned node otherwise fails the hologram's
-    // IsA(BP_ResourceNode_C) gate); SPECIAL modded nodes that reject portable mining (lithium's Alkali
-    // reactive-ore node) are NOT force-accepted, so their native rules stand and only their own extractor
-    // binds. Legacy old-save subclass nodes are always force-accepted (they are our generic node).
+    // force-accept the Mk hologram based on the component's bForceAccept flag. redesign-24 correction: that
+    // flag is computed at spawn/adopt as (Node->GetResourceForm() != RF_GAS) -- NOT from the node's native
+    // mCanPlacePortableMiner, as this comment previously claimed. So EVERY non-gas node of ours is
+    // force-accept-eligible; the node side performs NO special-resource discrimination whatsoever. Gas-form
+    // nodes (lithium's Alkali reactive-ore node) are excluded purely by that form test, which is why their
+    // native rules stand and only their own extractor binds. Believing the node side filtered special
+    // resources is what let a mod's SPECIAL extractor be waved onto an ordinary coal node for a full packet
+    // cycle -- the extractor-side narrowing below (IsGenericExtractorRestriction) is what actually filters.
+    // Legacy old-save subclass nodes are always force-accepted (they are our generic node).
     auto IsOurNode = [](const TScriptInterface<IFGExtractableResourceInterface>& Resource) -> bool
     {
         const UObject* Obj = Resource.GetObject();
@@ -560,17 +611,47 @@ void FNodeShuffleModule::StartupModule()
     {
         if (IsOurNode(resource) && !NodeShuffleIsFrackingExtractor(Self)) // never force-accept fracking (crash)
         {
-            // fu1diag-1 (FU1 §6.4): once-per-actor (was once-per-process — a force-accept on a SECOND
-            // actor after the first-ever one went invisible for the rest of the session). Scope.Override
-            // below is UNCHANGED and ALWAYS active regardless of this logging gate.
-            static TSet<FObjectKey> sLoggedActors;
+            // redesign-24 (Packet E): the blanket override used to fire for ANY extractor on ANY of our
+            // non-gas nodes, regardless of what the CALLING extractor's own mRestrictToNodeType demands —
+            // so a mod's SPECIAL extractor (AlkaLib's Reactive Ore Extractor Mk.2, restricted to its own
+            // Lithium/Alkali node class) got waved through onto an ordinary node (e.g. coal) it was never
+            // meant to accept. Only waive the native IsA(...) rejection for a GENERIC extractor (unset
+            // restriction, or the one vanilla class every ordinary Miner/Pump restricts to) — the case
+            // this hook was built for (redesign-23: our node failing IsA(BP_ResourceNode_C)). Computed
+            // UNCONDITIONALLY (behavior) — only the log below is diagnostics-gated.
+            FString RestrictName;
+            // Only pay for the name when it will actually be printed -- GetName() returns FString BY
+            // VALUE (a heap allocation) and these hooks run per hologram tick. The RETURN VALUE is
+            // unaffected by the out-param, so bGeneric (the decision) stays diagnostics-independent.
+            const bool bGeneric = FNodeShuffleModule::IsGenericExtractorRestriction(
+                Self, GNodeShuffleDiagnosticsEnabled ? &RestrictName : nullptr);
+            // fu1diag-1 (FU1 §6.4) / redesign-24 (Packet E): keyed per (actor, extractor build class) now,
+            // not per-actor — the old per-actor dedup let the FIRST extractor tried on a node (e.g. a
+            // Mk8 Miner) consume the log slot for every other extractor later tried on the SAME node
+            // (e.g. the Reactive Ore Extractor), making exactly this bug unprovable from the log.
+            static FNodeShuffleActorExtractorLoggedSet sLoggedActorExtractor;
             const UObject* Obj = resource.GetObject();
-            if (GNodeShuffleDiagnosticsEnabled && Obj && !sLoggedActors.Contains(FObjectKey(Obj)))
+            const UClass* BuildClass = Self ? Self->GetBuildClass().Get() : nullptr;
+            // '=' initialization (not brace-init, not bare parens): brace-init's comma is just as
+            // unprotected from the macro's paren-only nesting tracker as the earlier TMap<K, V> trap
+            // (SUBSCRIBE_UOBJECT_METHOD only tracks ROUND parens); plain LogKey(a, b) parens hit the
+            // "most vexing parse" (reads as a function declaration). This form keeps the only bare
+            // comma inside a round-paren constructor call, which the macro splitter DOES track.
+            const FNodeShuffleActorExtractorKey LogKey = FNodeShuffleActorExtractorKey(FObjectKey(Obj), FObjectKey(BuildClass));
+            if (GNodeShuffleDiagnosticsEnabled && Obj && !sLoggedActorExtractor.Contains(LogKey))
             {
-                sLoggedActors.Add(FObjectKey(Obj));
-                UE_LOG(LogNodeShuffle, Display, TEXT("HOLOGRAMHOOK FORCE-ACCEPT IsAllowedOnResource->true (our node) obj='%s'"), *Obj->GetName());
+                sLoggedActorExtractor.Add(LogKey);
+                UE_LOG(LogNodeShuffle, Display,
+                    TEXT("HOLOGRAMHOOK FORCE-ACCEPT-EVAL IsAllowedOnResource obj='%s' extractor='%s' restrict='%s' generic=%d -> %s"),
+                    *Obj->GetName(), BuildClass ? *BuildClass->GetName() : TEXT("<none>"),
+                    *RestrictName, bGeneric ? 1 : 0, bGeneric ? TEXT("OVERRIDE->true") : TEXT("native (no override)"));
             }
-            Scope.Override(true); // accept our node; skip the BP_ResourceNode_C IsA() rejection (ALWAYS active)
+            if (bGeneric)
+            {
+                Scope.Override(true); // accept our node; skip the BP_ResourceNode_C IsA() rejection -- GENERIC extractor only
+            }
+            // else: fall through -- Scope is never called, so the ORIGINAL (native) IsAllowedOnResource
+            // runs and correctly rejects a SPECIAL extractor whose own restriction this node doesn't satisfy.
         }
     });
     SUBSCRIBE_UOBJECT_METHOD(AFGResourceExtractorHologram, CanOccupyResource,
@@ -579,16 +660,36 @@ void FNodeShuffleModule::StartupModule()
     {
         if (IsOurNode(resource) && !NodeShuffleIsFrackingExtractor(Self)) // never force-accept fracking (crash)
         {
-            // fu1diag-1 (FU1 §6.4): once-per-actor (mirrors the IsAllowedOnResource hook above).
-            // Scope.Override below is ALWAYS active (the fix) regardless of this logging gate.
-            static TSet<FObjectKey> sLoggedActors;
+            // redesign-24 (Packet E): mirrors the IsAllowedOnResource hook above — see its comment.
+            FString RestrictName;
+            // Only pay for the name when it will actually be printed -- GetName() returns FString BY
+            // VALUE (a heap allocation) and these hooks run per hologram tick. The RETURN VALUE is
+            // unaffected by the out-param, so bGeneric (the decision) stays diagnostics-independent.
+            const bool bGeneric = FNodeShuffleModule::IsGenericExtractorRestriction(
+                Self, GNodeShuffleDiagnosticsEnabled ? &RestrictName : nullptr);
+            static FNodeShuffleActorExtractorLoggedSet sLoggedActorExtractor;
             const UObject* Obj = resource.GetObject();
-            if (GNodeShuffleDiagnosticsEnabled && Obj && !sLoggedActors.Contains(FObjectKey(Obj)))
+            const UClass* BuildClass = Self ? Self->GetBuildClass().Get() : nullptr;
+            // '=' initialization (not brace-init, not bare parens): brace-init's comma is just as
+            // unprotected from the macro's paren-only nesting tracker as the earlier TMap<K, V> trap
+            // (SUBSCRIBE_UOBJECT_METHOD only tracks ROUND parens); plain LogKey(a, b) parens hit the
+            // "most vexing parse" (reads as a function declaration). This form keeps the only bare
+            // comma inside a round-paren constructor call, which the macro splitter DOES track.
+            const FNodeShuffleActorExtractorKey LogKey = FNodeShuffleActorExtractorKey(FObjectKey(Obj), FObjectKey(BuildClass));
+            if (GNodeShuffleDiagnosticsEnabled && Obj && !sLoggedActorExtractor.Contains(LogKey))
             {
-                sLoggedActors.Add(FObjectKey(Obj));
-                UE_LOG(LogNodeShuffle, Display, TEXT("HOLOGRAMHOOK FORCE-ACCEPT CanOccupyResource->true (our node) obj='%s'"), *Obj->GetName());
+                sLoggedActorExtractor.Add(LogKey);
+                UE_LOG(LogNodeShuffle, Display,
+                    TEXT("HOLOGRAMHOOK FORCE-ACCEPT-EVAL CanOccupyResource obj='%s' extractor='%s' restrict='%s' generic=%d -> %s"),
+                    *Obj->GetName(), BuildClass ? *BuildClass->GetName() : TEXT("<none>"),
+                    *RestrictName, bGeneric ? 1 : 0, bGeneric ? TEXT("OVERRIDE->true") : TEXT("native (no override)"));
             }
-            Scope.Override(true); // ALWAYS active (the fix); only the log above is diagnostics-gated
+            if (bGeneric)
+            {
+                Scope.Override(true); // GENERIC extractor only -- see IsAllowedOnResource hook above
+            }
+            // else: fall through -- native CanOccupyResource runs and correctly rejects a SPECIAL
+            // extractor whose own restriction this node doesn't satisfy.
         }
     });
 
