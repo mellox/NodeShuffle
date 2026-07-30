@@ -274,6 +274,9 @@ FNodeShuffleExtractorAcceptance FNodeShuffleModule::EvaluateExtractorAcceptance(
     FNodeShuffleExtractorAcceptance Out;
     if (!Extractor) { return Out; } // nothing to check against -- mirrors DbgLogAcceptance's null-Ext branch
     Out.bHasExtractorCdo = true;
+    // Packet G: the ONE input that can turn a vacuous "nothing to compare" into a false ACCEPT (see the
+    // struct comment in NodeShuffle.h for the four-case argument) -- set unconditionally, not gated.
+    Out.bComparedAgainstNode = (NodeClass != nullptr);
 
     const UClass* Restrict = Extractor->mRestrictToNodeType.Get();
     Out.bHasRestriction = (Restrict != nullptr);
@@ -298,6 +301,11 @@ FNodeShuffleExtractorAcceptance FNodeShuffleModule::EvaluateExtractorAcceptance(
         Out.AllowedResourcePaths.Add(RCls->GetPathName());
         if (Extractor->mOnlyAllowCertainResources && RCls == NodeResourceClass) { Out.bResourceAllowed = true; }
     }
+
+    // ns-review-g G4: the verdict is only node-EVIDENCED if at least one sub-check was non-vacuous.
+    Out.bDiscriminated = Out.bHasRestriction
+        || Extractor->mAllowedResourceForms.Num() > 0
+        || Extractor->mOnlyAllowCertainResources;
     return Out;
 }
 
@@ -395,7 +403,8 @@ using FNodeShuffleActorExtractorLoggedSet = TSet<FNodeShuffleActorExtractorKey>;
 void FNodeShuffleModule::StartupModule()
 {
     UE_LOG(LogNodeShuffle, Log, TEXT("NodeShuffle module loaded"));
-    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle 1.3.0 LOADED (2026-07-30-automatch-1) ====="));
+    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle 1.3.0 LOADED (2026-07-30-automatch-3) ====="));
+    FNodeShuffleModule::LogAutoAllowExtractorsState(); // Packet G: log the CVar state once at startup
 
 #if !WITH_EDITOR
     // redesign-13 HOLOGRAM HOOK (DIAGNOSTICS). r12 proved the Mk1 build trace NEVER hits our node (0 hits on

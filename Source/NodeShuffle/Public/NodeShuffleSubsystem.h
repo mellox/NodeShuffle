@@ -134,6 +134,19 @@ struct FNodeShuffleCapturedVisual
     UPROPERTY(SaveGame) FVector MeshScale = FVector(1.0f, 1.0f, 1.0f);
 };
 
+// ns-review-g G1 (Packet G, CRITICAL fix): one (node class, resource class, form) group derived from
+// the ROLLED LAYOUT, not from live/spawned actors -- see BuildManagedNodeGroupsFromLayout's own comment
+// in NodeShuffleSubsystem.cpp for the full "why". Plain (not reflected -- this never crosses SaveGame or
+// Blueprint) so it can be returned across the public/private header boundary without pulling in
+// NodeShuffleExtractorDiscovery.h (a Private header) from this Public one.
+struct FNodeShuffleManagedGroup
+{
+    UClass* NodeClass = nullptr;
+    UClass* ResourceClass = nullptr;
+    int32 Form = -1;
+    int32 Count = 0; // number of ACTIVE layout entries in this group -- loaded or not
+};
+
 // Server-side brain of NodeShuffle.
 //
 // Lifecycle per session:
@@ -176,6 +189,23 @@ public:
     // check keeps surface spots out (a buildable roof is rejected), and the floor is re-sampled at
     // the cell center. Counts toward the underground placement quota.
     void SeedCaveCellAtPlayer();
+
+    // ns-review-g G1 (Packet G, CRITICAL fix — mechanism A from the review). Builds the auto-allow
+    // pass's managed-node census from the ROLLED LAYOUT rather than from live/spawned actors: NodeShuffle
+    // spawns relocated nodes lazily, only within SpawnRadiusCm (~600 m) of a player ("far nodes stay as
+    // data until explored" -- see EnsureNewNodeSpawned), so a live-actor census only sees whatever
+    // happened to stream in near the load point -- non-deterministic, and unstable across sessions/
+    // vantage points. Every active FNodeShuffleEntry is dealt at roll time regardless of streaming state,
+    // so this is complete and deterministic: the result depends only on the rolled layout, never on
+    // where the player is standing. Public so FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled (a free
+    // function in NodeShuffleAutoAllowExtractors.cpp) can call it via TActorIterator, the same idiom
+    // NodeShuffle.Here already uses to reach the subsystem from a console-command-style entry point.
+    // OutTotalActiveEntries / OutUnresolvedEntries: the residual, much-narrower honesty log the review
+    // asked to keep (ns-review-g G1's "(C) honesty log" recommendation) -- an active entry whose
+    // resource or node class fails to resolve THIS pass contributes no group and is not silently
+    // dropped from the log, even though the census no longer depends on player position or streaming.
+    void BuildManagedNodeGroupsFromLayout(TArray<FNodeShuffleManagedGroup>& OutGroups,
+        int32& OutTotalActiveEntries, int32& OutUnresolvedEntries) const;
 
 protected:
     virtual void BeginPlay() override;
@@ -359,6 +389,13 @@ private:
     // only on true.
     bool UnlockModdedScannerKnowledge();
     bool bKnowledgeUnlockDone = false;
+    // Packet G (ns-automatch): once per load (and once more after a re-roll -- re-armed alongside
+    // bKnowledgeUnlockDone in RollLayout, same reasoning: a re-roll can change which node types are
+    // actively MANAGED), run the auto-allow-extractors pass. Mirrors UnlockModdedScannerKnowledge()'s
+    // own idiom exactly: FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled() returns false only when a
+    // dependency (the recipe manager) isn't ready yet, so RefreshTick retries; true means the pass
+    // COMPLETED this tick (including "disabled" and "SF+ absent" -- there is nothing further to retry).
+    bool bAutoAllowExtractorsDone = false;
     // scanregen-1 (P2 design §4 touch-point 1): knowledge-unlock -> scanner/radar-tower refresh
     // trigger. UnlockModdedScannerKnowledge() has TWO callers — RefreshTick (world-settled) and
     // PostLoadGame_Implementation (mid save-load, before actor settling) — so the producer only

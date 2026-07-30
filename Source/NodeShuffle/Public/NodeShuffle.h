@@ -37,9 +37,55 @@ struct NODESHUFFLE_API FNodeShuffleExtractorAcceptance
     TArray<FString> AllowedResourcePaths; // full paths of each TSubclassOf<UFGResourceDescriptor> entry
     bool bResourceAllowed = true;
 
-    // The extractor's OWN, unhooked verdict for the node-side inputs supplied (vacuously true if none
-    // were supplied) -- ANDs the three sub-checks exactly like the native acceptance path does.
-    bool AcceptsNatively() const { return bNodeIsA && bFormAllowed && bResourceAllowed; }
+    // Packet G (ns-automatch) / Packet F cold review, finding: EvaluateExtractorAcceptance(Ext, nullptr,
+    // -1, nullptr).AcceptsNatively() returns TRUE for every extractor, because ALL THREE defaults are
+    // permissive when nothing is compared (bNodeIsA/bFormAllowed/bResourceAllowed default true). Packet
+    // F's own dump-summary line uses exactly that vacuous shape ON PURPOSE (it prints an extractor's OWN
+    // rules; it never calls AcceptsNatively() on the result). true only when a REAL NodeClass was passed
+    // in -- the minimal, sufficient condition: analysed field-by-field, a null NodeResourceForm/
+    // NodeResourceClass can only ever push a sub-check toward the SAFE (reject) direction, never toward
+    // a false accept, but a null NodeClass makes bNodeIsA vacuously true even for a genuinely RESTRICTED
+    // extractor -- that is the one input that can flip an otherwise-correct rejection into a false
+    // accept. So this flag is keyed on NodeClass alone; see the report for the full four-case argument.
+    bool bComparedAgainstNode = false;
+
+    // ns-review-g G4: true only when the accept verdict was actually INFLUENCED by the node -- i.e. the
+    // extractor declares at least one real restriction that the supplied node had to satisfy. An
+    // extractor with mRestrictToNodeType unset AND an empty mAllowedResourceForms AND
+    // !mOnlyAllowCertainResources accepts EVERY node vacuously; bComparedAgainstNode is true for it
+    // (a real NodeClass was passed) but nothing about the node decided anything. An ALLOW decision must
+    // require this flag; a descriptive dump must not.
+    bool bDiscriminated = false;
+
+    // The extractor's OWN, unhooked verdict for the node-side inputs supplied -- ANDs the three
+    // sub-checks exactly like the native acceptance path does.
+    //
+    // ns-review-g G3 (corrected): the ensureMsgf below is a DEVELOPMENT-ONLY guard. In this project's
+    // Shipping configuration DO_CHECK is 0, so ensureMsgf collapses to a bare condition evaluation --
+    // no log, no report. MEASURED: the message text below is absent from a raw-byte scan of the
+    // deployed Shipping DLL, and dumpbin shows no Ensure* import. So in the DLL the user actually
+    // runs, this guard has ZERO effect; the real protection is CALL-SITE DISCIPLINE, audited here:
+    //   - NodeShuffleExtractorDump.cpp:278 (match matrix) passes G.NodeClass, never null.
+    //   - NodeShuffleAutoAllowExtractors.cpp:226 (the auto-allow decision) passes G.NodeClass, never null.
+    //   - Packet F's descriptive EXTRACTOR summary line uses the vacuous shape but does NOT call this.
+    // Keep the ensure for Editor/Development/PIE, but do not describe it as a shipping safety net.
+    //
+    // SECOND, SEPARATE TRAP -- bComparedAgainstNode does NOT cover it: a real NodeClass can still yield
+    // a DEGENERATE comparison when the extractor declares no restrictions at all (mRestrictToNodeType
+    // unset AND mAllowedResourceForms empty AND !mOnlyAllowCertainResources). All three sub-checks are
+    // then vacuously true and this returns true for EVERY node. Any caller making an ALLOW decision
+    // must additionally require a positive, node-specific signal -- see bDiscriminated below.
+    bool AcceptsNatively() const
+    {
+        ensureMsgf(bComparedAgainstNode,
+            TEXT("FNodeShuffleExtractorAcceptance::AcceptsNatively() called on the VACUOUS shape (no real ")
+            TEXT("node compared -- NodeClass was null) -- this returns true for EVERY extractor by ")
+            TEXT("default and must never back an allow/accept DECISION. The vacuous shape exists only so ")
+            TEXT("a descriptive dump can print an extractor's OWN rules with no comparison target -- read ")
+            TEXT("RestrictClassPath/AllowedFormsCsv/AllowedResourcePaths directly for that. Any caller ")
+            TEXT("making a decision (e.g. auto-allow) MUST supply a real NodeClass."));
+        return bNodeIsA && bFormAllowed && bResourceAllowed;
+    }
 };
 
 // Module installs diagnostic hooks on the Mk1 extractor hologram (redesign-13..19).
@@ -122,6 +168,25 @@ public:
     // NodeShuffle.DestroyerVeto CVar, checks KBFL presence by module NAME, loads the veto module on
     // demand, and invokes its registered arm function for this world.
     static void ArmDestroyerVetoIfEnabled(class UWorld* World);
+
+    // Packet G (ns-automatch): "allow an extractor if it natively accepts a node type NodeShuffle
+    // manages" -- generates a machine-written KDataForge pack under DataForge/NodeShuffleAutoAllow/ that
+    // appends any newly-qualifying extractor to SF+'s PDA_SFP_ExtractorList.mAllowedExtractors, so KDF
+    // applies it on the NEXT boot (see the report for why runtime mutation of the live PDA array cannot
+    // work: KAPI resolves/merges that list at GAME-INSTANCE INIT, ~270 ms after KDataForge's own
+    // "Initial load finished", both of which complete long before any world (and therefore any
+    // NodeShuffle-managed node) exists -- our subsystem starts at world load, structurally after the
+    // window KAPI actually reads). Gated by NodeShuffle.AutoAllowExtractors (default ON in this dev
+    // build; TODO(pre-release): move behind EnableExperimentalFeatures, default false, before public
+    // release). Mirrors ANodeShuffleSubsystem::UnlockModdedScannerKnowledge()'s retry idiom: returns
+    // false when a dependency (the recipe manager) is not ready yet and the caller should retry next
+    // tick; true when the pass COMPLETED this tick (including "disabled", "SF+ not installed", and "ran
+    // and wrote/cleared the generated pack") -- the caller latches on true only.
+    static bool RunAutoAllowExtractorsIfEnabled(class UWorld* World);
+    // Logs the CVar's configured value once, called from StartupModule (module load, before any world) --
+    // "log the state once at startup" is a hard requirement so a user reading the log from boot alone
+    // can tell whether this experimental pass is armed for the session.
+    static void LogAutoAllowExtractorsState();
 };
 
 // spawnrace-1: RAII spawn-window guard for FNodeShuffleModule::IsSpawningManagedNode(). Construct

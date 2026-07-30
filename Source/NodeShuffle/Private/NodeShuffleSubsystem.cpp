@@ -319,6 +319,13 @@ void ANodeShuffleSubsystem::RefreshTick()
         {
             bKnowledgeUnlockDone = true;
         }
+        // Packet G (ns-automatch): once per load / re-roll, after the layout (and therefore the managed-
+        // node census) has been applied -- see the member declaration comment in NodeShuffleSubsystem.h
+        // for why this sits alongside bKnowledgeUnlockDone and mirrors its exact retry idiom.
+        if (!bAutoAllowExtractorsDone && FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled(GetWorld()))
+        {
+            bAutoAllowExtractorsDone = true;
+        }
         // scanregen-1 consume point (P2 §4 touch-point 3, §9 AMENDMENT — binding): do NOT clear
         // bScannerClusterRefreshPending on the SKIPPED branch. The flag clears ONLY when
         // RefreshScannersAndRadarTowers() actually runs from HERE (it sets bScannerRefreshedThisPass
@@ -1624,6 +1631,9 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     // post-apply knowledge pass run again for this new population.
     bKnowledgeUnlockDone = false;
     KnowledgeDeferPasses = 0; // knowledge-2: fresh defer budget for the re-armed pass
+    // Packet G: a re-roll can change which node types are actively MANAGED -- let the auto-allow pass
+    // reconsider extractors against this new population (mirrors bKnowledgeUnlockDone immediately above).
+    bAutoAllowExtractorsDone = false;
 
     UE_LOG(LogNodeShuffle, Display,
         TEXT("Rolled layout: seed %d, pool %d (vanilla %d, new %d), active %d, pinned %d"),
@@ -5644,6 +5654,59 @@ FString ANodeShuffleSubsystem::ResolveSpawnNodeClassPath(const FNodeShuffleEntry
     if (SpawnRefusedClassSubstitute.Num() == 0) { return Entry.NodeClassPath; }
     const FString* Sub = SpawnRefusedClassSubstitute.Find(Entry.NodeClassPath);
     return (Sub && !Sub->IsEmpty()) ? *Sub : Entry.NodeClassPath;
+}
+
+// ns-review-g G1 (Packet G, CRITICAL fix): see the declaration comment in NodeShuffleSubsystem.h for
+// the full "why this replaces a live-actor census" argument. Walks EVERY active Layout entry (loaded or
+// not -- Layout is the rolled, per-save source of truth, dealt once regardless of streaming), resolving
+// each entry's resource->node-class pairing via the SAME functions the spawner itself uses
+// (ResolveSpawnNodeClassPath -- Packet D's, 4320467, resource-keyed substitution logic -- and
+// LoadClassByPath), so this never re-derives that keying, only reuses it. Form comes from
+// UFGItemDescriptor::GetForm on the resolved resource class -- the same idiom already used throughout
+// this file (e.g. PickSubstituteClass's gas check just below). An entry whose resource or node class
+// cannot currently be resolved is skipped, not guessed -- it simply does not contribute a group this
+// pass (no silent placeholder value).
+void ANodeShuffleSubsystem::BuildManagedNodeGroupsFromLayout(TArray<FNodeShuffleManagedGroup>& OutGroups,
+    int32& OutTotalActiveEntries, int32& OutUnresolvedEntries) const
+{
+    OutTotalActiveEntries = 0;
+    OutUnresolvedEntries = 0;
+    TMap<FString, int32> KeyToIndex;
+    for (const FNodeShuffleEntry& Entry : Layout)
+    {
+        if (!Entry.bActive) { continue; }
+        // ns-review-g2 F2: MANAGED means bIsNewNode. After a roll, Layout holds exactly two kinds of
+        // entry (see ApplyLayout's contract comment): bIsNewNode entries, which are OUR relocated/spawned
+        // nodes, and !bIsNewNode entries, which are OCCUPIED/PINNED originals ApplyLayout leaves "100%
+        // UNTOUCHED" -- every UNOCCUPIED original was already converted to a bIsNewNode entry by the Hide
+        // & Replace conversion, and the RemoveAll immediately after it drops the rest. Counting a pinned
+        // original as a managed group would allow-list an extractor on the evidence of a node this mod
+        // never touches, which is over-reach onto SF+'s own vanilla balance and nothing this pass claims
+        // the right to change. Nothing is lost by excluding them: a pinned original already has an
+        // extractor on it, so its placement question was settled before NodeShuffle ran.
+        if (!Entry.bIsNewNode) { continue; }
+        ++OutTotalActiveEntries;
+        UClass* ResourceClass = LoadClassByPath(Entry.AssignedResourceClassPath);
+        if (!ResourceClass) { ++OutUnresolvedEntries; continue; }
+        UClass* NodeClass = LoadClassByPath(ResolveSpawnNodeClassPath(Entry));
+        if (!NodeClass) { ++OutUnresolvedEntries; continue; }
+        const int32 Form = (int32)UFGItemDescriptor::GetForm(TSubclassOf<UFGItemDescriptor>(ResourceClass));
+        const FString Key = NodeClass->GetPathName() + TEXT("|") + ResourceClass->GetPathName()
+            + TEXT("|") + FString::FromInt(Form);
+        if (const int32* ExistingIdx = KeyToIndex.Find(Key))
+        {
+            ++OutGroups[*ExistingIdx].Count;
+        }
+        else
+        {
+            KeyToIndex.Add(Key, OutGroups.Num());
+            FNodeShuffleManagedGroup& G = OutGroups.AddDefaulted_GetRef();
+            G.NodeClass = NodeClass;
+            G.ResourceClass = ResourceClass;
+            G.Form = Form;
+            G.Count = 1;
+        }
+    }
 }
 
 FString ANodeShuffleSubsystem::PickSubstituteClass(const FString& RefusedPath, const FNodeShuffleEntry& Cause) const
