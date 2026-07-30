@@ -624,6 +624,39 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     {
         return !VanillaFirst.IsEmpty() ? VanillaFirst : AnyFirst;
     };
+    // repclass-2 (PacketD): the form tiers above key a representative class by resource FORM, which
+    // conflates unrelated resources that happen to share a form (solid coal and solid lithium/alkali
+    // are both FormSolid) -- whichever is scanned first wins the class for BOTH, so a new-location
+    // node stamped for one resource can come out as the other's class (the AlkaLib Reactive Ore
+    // Extractor Mk.2 regression: a coal node stamped with the lithium/alkali node class). Key the
+    // representative by the actual RESOURCE instead so each resource gets ITS OWN observed class --
+    // this is populated at the same four sites that already call LatchRepresentative above (each one
+    // has both the resource path and the node class in scope), guarded by the same P3
+    // (SpawnRefusedClassSubstitute) exclusion. The form tiers (Spawnable*NodeClassPath) remain
+    // untouched as the fallback for a resource this session never actually observed on a real node.
+    TMap<FString, FString> NodeClassByResource;      // resource descriptor path -> node class path
+    TSet<FString> NodeClassByResourceConflictLogged; // diagnostics-only: resources already logged for a class conflict
+    const auto LatchByResource = [](const FString& ResourcePath, const FString& ClassPath,
+        TMap<FString, FString>& Map, TSet<FString>& ConflictLogged)
+    {
+        if (ResourcePath.IsEmpty() || ClassPath.IsEmpty()) { return; }
+        if (const FString* Existing = Map.Find(ResourcePath))
+        {
+            // Same resource, two different observed node classes across this roll's capture sites.
+            // Keep the FIRST (matches LatchRepresentative's first-seen semantics) -- genuinely
+            // interesting, not noise, so log it once per resource (diagnostics-gated; the map write
+            // itself is unconditional behavior above/below this branch).
+            if (*Existing != ClassPath && FNodeShuffleModule::AreDiagnosticsEnabled() && !ConflictLogged.Contains(ResourcePath))
+            {
+                ConflictLogged.Add(ResourcePath);
+                UE_LOG(LogNodeShuffle, Display,
+                    TEXT("rep-class byResource CONFLICT: resource='%s' second class='%s' seen -- keeping first '%s'"),
+                    *ResourcePath, *ClassPath, **Existing);
+            }
+            return;
+        }
+        Map.Add(ResourcePath, ClassPath);
+    };
     int32 VanillaCount = 0;
     int32 ZombiesDropped = 0; // rehide-1: pre-fix un-anchorable runtime-foreign records dropped at rebuild (§5)
 
@@ -730,6 +763,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                 {
                     LatchRepresentative(Old.NodeClassPath, SpawnableNodeClassPath, SpawnableVanillaNodeClassPath);
                 }
+                LatchByResource(Old.OriginalResourceClassPath, Old.NodeClassPath, NodeClassByResource, NodeClassByResourceConflictLogged);
             }
             VanillaCount++;
         }
@@ -817,6 +851,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                     {
                         LatchRepresentative(E.NodeClassPath, SpawnableNodeClassPath, SpawnableVanillaNodeClassPath);
                     }
+                    LatchByResource(E.OriginalResourceClassPath, E.NodeClassPath, NodeClassByResource, NodeClassByResourceConflictLogged);
                 }
                 VanillaCount++;
                 ExperimentalAdded++;
@@ -899,6 +934,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                 if (!SpawnRefusedClassSubstitute.Contains(E.NodeClassPath))
                 {
                     LatchRepresentative(E.NodeClassPath, SpawnableNodeClassPath, SpawnableVanillaNodeClassPath);
+                    LatchByResource(E.OriginalResourceClassPath, E.NodeClassPath, NodeClassByResource, NodeClassByResourceConflictLogged);
                 }
                 VanillaCount++;
                 bModded ? ModdedAdded++ : VanillaAdded++;
@@ -1008,6 +1044,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                 {
                     LatchRepresentative(BaseNode->GetClass()->GetPathName(), SpawnableNodeClassPath, SpawnableVanillaNodeClassPath);
                 }
+                LatchByResource(E.OriginalResourceClassPath, BaseNode->GetClass()->GetPathName(), NodeClassByResource, NodeClassByResourceConflictLogged);
             }
             VanillaCount++;
         }
@@ -1035,11 +1072,13 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     const FString ResolvedLiquidRepresentative = PickRepresentative(SpawnableVanillaLiquidNodeClassPath, AnyTierLiquidRepresentative);
     SpawnableNodeClassPath = ResolvedSolidRepresentative;
     SpawnableLiquidNodeClassPath = ResolvedLiquidRepresentative;
-    UE_LOG(LogNodeShuffle, Display,
-        TEXT("rep-class: solid='%s' vanilla=%d liquid='%s' vanilla=%d (any-tier solid='%s' liquid='%s')"),
-        *ResolvedSolidRepresentative, SpawnableVanillaNodeClassPath.IsEmpty() ? 0 : 1,
-        *ResolvedLiquidRepresentative, SpawnableVanillaLiquidNodeClassPath.IsEmpty() ? 0 : 1,
-        *AnyTierSolidRepresentative, *AnyTierLiquidRepresentative);
+    // repclass-2 (PacketD): the rep-class census line is emitted AFTER the Phase-2 stamp loop below
+    // (not here) so it can report how many new-location entries were actually stamped from
+    // NodeClassByResource vs the form fallback -- that count doesn't exist until stamping runs. The
+    // any-tier/vanilla values it prints are still captured HERE (this exact point, right after
+    // resolution, before anything downstream could touch them) into the consts above/below so the
+    // "snapshotted before the overwrite" guarantee those fields depend on is unchanged; only the LOG
+    // STATEMENT moved, not what it reads.
 
     // 2. New node locations: custom JSON wins, otherwise seeded generation.
     //
@@ -1368,6 +1407,18 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     // must spawn from a liquid node class so oil extractors accept it; solid nodes
     // keep the solid class. Liquid/gas are part of the pool now, so this handles
     // them whenever FormByResource has such entries.
+    //
+    // repclass-2 (PacketD): this is the AUTHORITATIVE stamp point for new-location entries -- the
+    // provisional stamp at new-location creation (above, section 2) only guarantees NodeClassPath is
+    // never left empty; the resource isn't dealt until the deck loop just above THIS one, so this is
+    // the first place a new-location entry's FINAL AssignedResourceClassPath can be looked up in
+    // NodeClassByResource. A hit means this exact resource was actually observed on a real node this
+    // roll, so its class is provably correct for THIS resource -- not merely a same-form guess like
+    // the fallback below. A miss falls back to the existing form representative (Packet B, unchanged)
+    // so a resource this session never observed on a real node still gets something (never regresses
+    // to empty where the pre-fix code produced a class).
+    int32 StampedByResource = 0;
+    int32 StampedByFormFallback = 0;
     for (FNodeShuffleEntry& E : NewLayout)
     {
         if (!E.bIsNewNode || !E.bActive || E.bPinned || E.AssignedResourceClassPath.IsEmpty())
@@ -1376,15 +1427,34 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
         }
         const uint8 Form = FormByResource.FindRef(E.AssignedResourceClassPath);
         E.ResourceForm = Form != 0 ? Form : FormSolid;
-        if (E.ResourceForm == FormLiquid && !SpawnableLiquidNodeClassPath.IsEmpty())
+        if (const FString* ByResource = NodeClassByResource.Find(E.AssignedResourceClassPath))
         {
-            E.NodeClassPath = SpawnableLiquidNodeClassPath;
+            E.NodeClassPath = *ByResource;
+            StampedByResource++;
         }
-        else if (E.NodeClassPath.IsEmpty())
+        else
         {
-            E.NodeClassPath = SpawnableNodeClassPath;
+            StampedByFormFallback++;
+            if (E.ResourceForm == FormLiquid && !SpawnableLiquidNodeClassPath.IsEmpty())
+            {
+                E.NodeClassPath = SpawnableLiquidNodeClassPath;
+            }
+            else if (E.NodeClassPath.IsEmpty())
+            {
+                E.NodeClassPath = SpawnableNodeClassPath;
+            }
         }
     }
+    // rep-class census (repclass-2 extension): moved here (not at resolution above) so it can report
+    // the resource-keyed map plus how many of THIS roll's new-location stamps actually came from it
+    // vs the form fallback -- see the comment at the resolution point for why the log statement moved
+    // while what it reads did not. Kept as the single greppable "rep-class:" line.
+    UE_LOG(LogNodeShuffle, Display,
+        TEXT("rep-class: solid='%s' vanilla=%d liquid='%s' vanilla=%d (any-tier solid='%s' liquid='%s') byResource=%d stampedByResource=%d stampedByFallback=%d"),
+        *ResolvedSolidRepresentative, SpawnableVanillaNodeClassPath.IsEmpty() ? 0 : 1,
+        *ResolvedLiquidRepresentative, SpawnableVanillaLiquidNodeClassPath.IsEmpty() ? 0 : 1,
+        *AnyTierSolidRepresentative, *AnyTierLiquidRepresentative,
+        NodeClassByResource.Num(), StampedByResource, StampedByFormFallback);
 
     // redesign-1 (Hide & Replace) CONVERSION. The deck above dealt resources onto the original
     // node SLOTS, preserving counts/floors/purity. Now we DETACH every unoccupied original from its
