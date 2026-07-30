@@ -585,12 +585,37 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     TMap<FString, int32> VanillaResourceCounts;     // descriptor path -> count
     TMap<FString, uint8> FormByResource;            // descriptor path -> EResourceForm value
     TArray<TEnumAsByte<EResourcePurity>> PurityDeckSource;
-    FString SpawnableNodeClassPath;                 // a solid-node BP class (default)
+    FString SpawnableNodeClassPath;                 // a solid-node BP class; first-seen-ANY (pre-fix fallback tier)
     // Phase 2: the BP class of an actual liquid (oil) node, so spawned oil nodes
     // are the right node type for oil extractors. Empty when no oil node exists or
     // experimental features are off; liquid entries then fall back to the solid
     // class (still form-correct via the oil descriptor).
     FString SpawnableLiquidNodeClassPath;
+    // FU1-v2 (D4-A, followups-plan-2 Packet B): companion vanilla-preferred tier for each
+    // Spawnable*NodeClassPath above. New-location entries (bIsNewNode, no original) stamp their
+    // NodeClassPath from these Spawnable* variables (:1071, :1356-1362, :1441) -- pre-fix, that was
+    // whichever solid/liquid class happened to be scanned FIRST, vanilla or modded (the FicsitFarming
+    // BP_DirtNode_C-on-lead contamination). Track the first /Game/ candidate per form separately;
+    // PickRepresentative below then prefers it, falling back to the any-tier so a pool with no /Game/
+    // candidate still latches something -- see the rep-class census log just before first use.
+    FString SpawnableVanillaNodeClassPath;
+    FString SpawnableVanillaLiquidNodeClassPath;
+    // Shared two-tier latch, called from every capture site below (reroll rebuild, liquid/gas
+    // augment, full re-scan augment, initial live scan) AFTER each site's own SpawnRefusedClassSubstitute
+    // exclusion (P3/deckevict-1 -- kept at each call site, not folded in here, so that guard stays
+    // visibly in force at every latch). AnyLatch keeps the exact pre-fix first-seen semantics.
+    const auto LatchRepresentative = [](const FString& CandidatePath, FString& AnyLatch, FString& VanillaLatch)
+    {
+        if (AnyLatch.IsEmpty()) { AnyLatch = CandidatePath; }
+        if (VanillaLatch.IsEmpty() && CandidatePath.StartsWith(TEXT("/Game/"))) { VanillaLatch = CandidatePath; }
+    };
+    // Resolves a (vanilla, any) pair to the single value consumers read: vanilla wins when present,
+    // else the any-tier -- so the two-tier fallback can only ADD a preferred pick, never regress to
+    // empty where the pre-fix any-only code found a class (design §8 invariant).
+    const auto PickRepresentative = [](const FString& VanillaFirst, const FString& AnyFirst) -> FString
+    {
+        return !VanillaFirst.IsEmpty() ? VanillaFirst : AnyFirst;
+    };
     int32 VanillaCount = 0;
     int32 ZombiesDropped = 0; // rehide-1: pre-fix un-anchorable runtime-foreign records dropped at rebuild (§5)
 
@@ -683,11 +708,11 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
             {
                 if (Old.ResourceForm == FormLiquid)
                 {
-                    if (SpawnableLiquidNodeClassPath.IsEmpty()) { SpawnableLiquidNodeClassPath = Old.NodeClassPath; }
+                    LatchRepresentative(Old.NodeClassPath, SpawnableLiquidNodeClassPath, SpawnableVanillaLiquidNodeClassPath);
                 }
-                else if (SpawnableNodeClassPath.IsEmpty())
+                else
                 {
-                    SpawnableNodeClassPath = Old.NodeClassPath;
+                    LatchRepresentative(Old.NodeClassPath, SpawnableNodeClassPath, SpawnableVanillaNodeClassPath);
                 }
             }
             VanillaCount++;
@@ -770,11 +795,11 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                 {
                     if (EntryForm == FormLiquid)
                     {
-                        if (SpawnableLiquidNodeClassPath.IsEmpty()) { SpawnableLiquidNodeClassPath = E.NodeClassPath; }
+                        LatchRepresentative(E.NodeClassPath, SpawnableLiquidNodeClassPath, SpawnableVanillaLiquidNodeClassPath);
                     }
-                    else if (SpawnableNodeClassPath.IsEmpty())
+                    else
                     {
-                        SpawnableNodeClassPath = E.NodeClassPath;
+                        LatchRepresentative(E.NodeClassPath, SpawnableNodeClassPath, SpawnableVanillaNodeClassPath);
                     }
                 }
                 VanillaCount++;
@@ -855,9 +880,9 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                 FormByResource.FindOrAdd(E.OriginalResourceClassPath) = FormSolid;
                 if (E.OriginalPurity != RP_MAX) { PurityDeckSource.Add(E.OriginalPurity); }
                 // P3 (deckevict-1): never adopt a session-refused class as the representative.
-                if (SpawnableNodeClassPath.IsEmpty() && !SpawnRefusedClassSubstitute.Contains(E.NodeClassPath))
+                if (!SpawnRefusedClassSubstitute.Contains(E.NodeClassPath))
                 {
-                    SpawnableNodeClassPath = E.NodeClassPath;
+                    LatchRepresentative(E.NodeClassPath, SpawnableNodeClassPath, SpawnableVanillaNodeClassPath);
                 }
                 VanillaCount++;
                 bModded ? ModdedAdded++ : VanillaAdded++;
@@ -961,11 +986,11 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
             {
                 if (E.ResourceForm == FormLiquid)
                 {
-                    if (SpawnableLiquidNodeClassPath.IsEmpty()) { SpawnableLiquidNodeClassPath = BaseNode->GetClass()->GetPathName(); }
+                    LatchRepresentative(BaseNode->GetClass()->GetPathName(), SpawnableLiquidNodeClassPath, SpawnableVanillaLiquidNodeClassPath);
                 }
-                else if (SpawnableNodeClassPath.IsEmpty())
+                else
                 {
-                    SpawnableNodeClassPath = BaseNode->GetClass()->GetPathName();
+                    LatchRepresentative(BaseNode->GetClass()->GetPathName(), SpawnableNodeClassPath, SpawnableVanillaNodeClassPath);
                 }
             }
             VanillaCount++;
@@ -978,6 +1003,27 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
             VanillaCount, VanillaResourceCounts.Num(), PurityDeckSource.Num());
         return;
     }
+
+    // FU1-v2 (D4-A): resolve the two-tier latch into the SAME variables every consumer below already
+    // reads (:1071 new-location stamp, :1356-1362 Phase-2 form stamp, :1441 conversion fallback need no
+    // changes) -- vanilla wins when a /Game/ candidate was seen, else the any-tier. This is BEHAVIOR
+    // (runs unconditionally, not diagnostics-gated); the log line below is the diagnostics half and is
+    // what makes a non-firing vanilla tier visible (vanilla=0 with a non-empty pick == the fallback
+    // fired). The any-tier values are SNAPSHOTTED FIRST so that line stays truthful however the
+    // statements below are later reordered or gated (P5 owns log hygiene): reading the live Spawnable*
+    // variables after the overwrite would print the resolved value twice and silently delete the only
+    // evidence the fallback was used.
+    const FString AnyTierSolidRepresentative = SpawnableNodeClassPath;
+    const FString AnyTierLiquidRepresentative = SpawnableLiquidNodeClassPath;
+    const FString ResolvedSolidRepresentative = PickRepresentative(SpawnableVanillaNodeClassPath, AnyTierSolidRepresentative);
+    const FString ResolvedLiquidRepresentative = PickRepresentative(SpawnableVanillaLiquidNodeClassPath, AnyTierLiquidRepresentative);
+    SpawnableNodeClassPath = ResolvedSolidRepresentative;
+    SpawnableLiquidNodeClassPath = ResolvedLiquidRepresentative;
+    UE_LOG(LogNodeShuffle, Display,
+        TEXT("rep-class: solid='%s' vanilla=%d liquid='%s' vanilla=%d (any-tier solid='%s' liquid='%s')"),
+        *ResolvedSolidRepresentative, SpawnableVanillaNodeClassPath.IsEmpty() ? 0 : 1,
+        *ResolvedLiquidRepresentative, SpawnableVanillaLiquidNodeClassPath.IsEmpty() ? 0 : 1,
+        *AnyTierSolidRepresentative, *AnyTierLiquidRepresentative);
 
     // 2. New node locations: custom JSON wins, otherwise seeded generation.
     //
