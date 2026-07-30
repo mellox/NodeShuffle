@@ -1,0 +1,29 @@
+# NodeShuffle SF+ compat — re-admit bamrenew's Miner Mk.8 to SF+'s extractor allow-list.
+# See extractor-allowlist-vanilla.cdo.yml for the full WHY/append-vs-replace rationale.
+#
+# Gated on bamrenew's real mod reference `bamrenewfp` (confirmed on disk: the mod mounts at
+# `FactoryGame\Mods\GameFeatures\bamrenewfp\`, .uplugin filename `bamrenewfp.uplugin` — SML's
+# ModReference is the folder/.uplugin stem, matching how the shipped MkPlus/SatisfactoryPlus
+# hasMod entries elsewhere in KPatchwork match THEIR folder names). The in-game "Miner Mk.8"
+# is this mod's building, NOT the /MkPlus/ Build_MinerMk5_PH placeholder (that placeholder
+# package does not exist as a real buildable — KDF SkipPackage'd it in an earlier iteration).
+# Class path CONFIRMED via KDF-editor export of the live CDO (`Default__build_minermk5_C.cdo.yml`,
+# archived at _team/nodeshuffle-followups/kdf-exports/) — do not guess this path, 3 boots
+# were burned on wrong ones. A malformed/nonexistent path in this array previously aborted
+# the WHOLE property patch for the document it was in (07-28 23:21 boot, a bad Reactive Ore
+# Extractor Mk1 placeholder path took the entire mAllowedExtractors op down with it) — keep
+# this document to ONE property patch so a future bad path here can only cost the Mk8 entry,
+# never the vanilla or AlkaLib documents.
+type: cdo
+conditions:
+  hasMod:
+    - SatisfactoryPlus
+    - NodeShuffle
+    - bamrenewfp
+patches:
+  - target: "/SatisfactoryPlus/AssetDatas/Modules/PDA_SFP_ExtractorList.PDA_SFP_ExtractorList"
+    properties:
+      - path: mAllowedExtractors
+        op: append
+        value:
+          - "/bamrenewfp/content/buildable/Factory/minermk4/build_minermk5.Build_MinerMk5_C"

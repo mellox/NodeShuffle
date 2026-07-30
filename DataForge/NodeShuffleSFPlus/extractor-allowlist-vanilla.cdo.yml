@@ -1,0 +1,51 @@
+# NodeShuffle SF+ compat pack — re-admit ordinary ore miners + the reactive extractor
+# to SatisfactoryPlus's extractor allow-list (FU1-v2 data lane, 2026-07-28; hardened
+# 2026-07-29 Packet A — see _team/NodeShuffle-state.md ★ 2026-07-29 CURRENT block for the
+# full campaign history).
+#
+# WHY: SF+'s C++ hook disqualifies resource-extractor holograms whose build class is not
+# sanctioned (HUD: "Invalid aim location!"). Its allow-list asset ships pumps/fracking/
+# Modular Miner/biowater/mini-extractors ONLY — every ordinary ore miner is deliberately
+# absent, which defeats NodeShuffle's purpose (modded resources dealt onto nodes that the
+# matching tools then cannot be placed on).
+#
+# WHY THIS IS "vanilla" AND "append", NOT "replace" (v0.2.0 hardening, supersedes v0.1.0):
+# `op: append` is a real, shipped KDataForge verb — KPatchwork's own
+# `SatisfactoryPlus/MkPlusSFPlus/PDA/PDA-allowed-extractors.yml` appends 4 entries to this
+# SAME target (/SatisfactoryPlus/AssetDatas/Modules/PDA_SFP_ExtractorList, property
+# mAllowedExtractors) and is installed+enabled on this profile TODAY — its 4 entries
+# (/MkPlus/ x2, /MkPlusSFPlus/ x2) are proven-present in the KAPI-resolved list without any
+# help from us. v0.1.0's full-array REPLACE re-listed those 4 plus 3 more SF+-default paths
+# (OilPump/WaterPump/FrackingExtractor/FrackingSmasher — SF+ ships these itself) plus 4 more
+# (/KLib/ ModularMiner_01 + BioWaterExtractor_SF+, /AB_FluidExtras/ MiniEx) that are ALSO
+# SF+ defaults present with zero help from us — 11 entries total, confirmed via KAPI's own
+# `mAllowedResourceExtractors Found …` log lines on a boot where our OWN pack's replace
+# aborted entirely (bad path elsewhere in the array) and those 11 still resolved. Re-pinning
+# 11 entries we don't own risked going stale the moment SF+ or MkPlusSFPlus updates their
+# own lists. v0.2.0 drops all 11 and appends ONLY the genuinely-missing entries, split one
+# document per owning mod so a profile missing that mod isn't affected by anything here.
+#
+# THIS DOCUMENT — vanilla Mk1/Mk2/Mk3: no third-party mod needed, gated only on the base
+# pack requirement (SatisfactoryPlus + NodeShuffle), restated here for self-sufficiency.
+# NOTE (unresolved, see PacketA-report.md "skip-vs-abort"): on every successful boot so far,
+# these 3 vanilla paths do NOT appear in KAPI's resolved-list log even though KDataForge
+# reports ZERO errors for this document (no "Class not found" for any of the 3 in any boot
+# log checked) — the working theory is SF+ removes their recipes so KAPI's own downstream
+# enumeration never wires them, NOT that KDataForge silently drops the array entries. Kept
+# in the pack regardless (harmless if genuinely inert; correct if a future SF+ profile keeps
+# their recipes). Class paths are exact vanilla content paths, not from KDF-editor export
+# (there is nothing to export — these are stock FactoryGame classes).
+type: cdo
+conditions:
+  hasMod:
+    - SatisfactoryPlus
+    - NodeShuffle
+patches:
+  - target: "/SatisfactoryPlus/AssetDatas/Modules/PDA_SFP_ExtractorList.PDA_SFP_ExtractorList"
+    properties:
+      - path: mAllowedExtractors
+        op: append
+        value:
+          - "/Game/FactoryGame/Buildable/Factory/MinerMk1/Build_MinerMk1.Build_MinerMk1_C"
+          - "/Game/FactoryGame/Buildable/Factory/MinerMk2/Build_MinerMk2.Build_MinerMk2_C"
+          - "/Game/FactoryGame/Buildable/Factory/MinerMk3/Build_MinerMk3.Build_MinerMk3_C"

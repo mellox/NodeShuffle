@@ -1,0 +1,26 @@
+# NodeShuffle SF+ compat — re-admit AlkaLib's Reactive Ore Extractor Mk.2 to SF+'s
+# extractor allow-list. See extractor-allowlist-vanilla.cdo.yml for the full WHY/
+# append-vs-replace rationale.
+#
+# Gated on AlkaLib's real mod reference `AlkaLib` (confirmed on disk: mounts at
+# `FactoryGame\Mods\GameFeatures\AlkaLib\`, .uplugin filename `AlkaLib.uplugin`).
+# Class path CONFIRMED via KDF-editor export of the live CDO
+# (`Default__Build_ReactiveOreExtractorMk2_C.cdo.yml`, archived at
+# _team/nodeshuffle-followups/kdf-exports/) — an EARLIER iteration of this pack listed the
+# Mk.1 building (`.../ReactiveOreExtractor/Build_ReactiveOreExtractor.Build_ReactiveOreExtractor_C`),
+# which does not exist and produced "Class not found" (07-28 23:21 boot) that aborted the
+# whole property patch it lived in. Kept isolated to its own document/document-level
+# conditions so a future bad path here can only cost this one entry.
+type: cdo
+conditions:
+  hasMod:
+    - SatisfactoryPlus
+    - NodeShuffle
+    - AlkaLib
+patches:
+  - target: "/SatisfactoryPlus/AssetDatas/Modules/PDA_SFP_ExtractorList.PDA_SFP_ExtractorList"
+    properties:
+      - path: mAllowedExtractors
+        op: append
+        value:
+          - "/AlkaLib/Buildables/ReactiveOreExtractor/Mk2/Build_ReactiveOreExtractorMk2.Build_ReactiveOreExtractorMk2_C"
