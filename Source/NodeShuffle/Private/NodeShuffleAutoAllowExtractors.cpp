@@ -59,6 +59,20 @@
 // of those WOULD be the old deletion vector with a new cause. Both are therefore checked and made
 // non-destructive (return false, keep the existing pack, retry) immediately before the clear, NOT
 // argued away here.
+//
+// MEASURED FALSIFICATION, AND THE THIRD INPUT (2026-07-30). The paragraph above enumerated TWO non-layout
+// inputs that can collapse ToGenerate to empty. There was a THIRD, and it was the one that actually
+// fired: the loop used to SKIP any extractor already present in SF+'s allow-list array -- an array our
+// OWN generated pack appends to. Measured across three real boots: boot A generated 7 documents; boot B
+// saw all 7 as already-present, skipped all 7, produced an EMPTY ToGenerate, and the clear-and-rebuild
+// below DELETED the entire pack (log: "pass complete -- 0 matched, 0 document(s) WRITTEN", leaving a
+// lone 627-byte pack.yml); boot C had nothing and regenerated. The pack oscillated every other boot, and
+// the "every completed pass within the same roll produces the SAME ToGenerate set" claim above was FALSE
+// for exactly this reason. The skip is gone (see the OSCILLATION FIX comment in the loop): PDA
+// membership is now REPORTED as sfPlusAlreadyAllows=%d and never acted on, which makes ToGenerate a pure
+// function of (available extractors x managed node groups) and restores that claim. The general lesson,
+// worth more than the fix: AN INPUT DERIVED FROM THIS PASS'S OWN PREVIOUS OUTPUT IS A FEEDBACK LOOP, NOT
+// A SHORT-CIRCUIT. Do not add one back.
 
 #include "NodeShuffle.h"
 #include "NodeShuffleExtractorDiscovery.h"
@@ -66,6 +80,8 @@
 #include "EngineUtils.h"
 #include "HAL/IConsoleManager.h"
 #include "Buildables/FGBuildableResourceExtractorBase.h"
+#include "Buildables/FGBuildableFrackingActivator.h" // fracking crash guard (mirrors NodeShuffle.cpp)
+#include "Buildables/FGBuildableFrackingExtractor.h"
 #include "FGRecipeManager.h"
 #include "Misc/Paths.h"
 #include "Misc/FileHelper.h"
@@ -308,20 +324,80 @@ bool FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled(UWorld* World)
         }
         const FString ExtPath = RawCls->GetPathName();
 
-        if (AllowList.AllowedExtractorClasses.Contains(RawCls))
+        // FAIL-CLOSED INVARIANT for the GENERATED pack, mirroring NodeShuffle.cpp's
+        // NodeShuffleIsFrackingExtractor (fracking-crash-fix). A FRACKING extractor (Resource Well
+        // Pressurizer = AFGBuildableFrackingActivator, or the satellite Resource Well Extractor =
+        // AFGBuildableFrackingExtractor; both are UCLASS(Abstract), so every concrete well -- vanilla or
+        // MODDED -- is necessarily a subclass) does a CHECKED cast of the node to a fracking node type in
+        // OnExtractableResourceSet. Placing one on one of our regular Node-type nodes is a FATAL,
+        // user-reported crash. This pass therefore never appends one to SF+'s allow-list.
+        //
+        // WHAT THIS IS AND IS NOT (ns-review-frack, 2026-07-30, boot-2 MEASURED) -- do not let a later
+        // reader mistake this for a crash fix:
+        //  * MEASURED: on the profile this was written against it caught six classes
+        //    (vanilla + MkPlus Smasher/Extractor, bamrenew build_frqking_C / build_pressuresqtmk5_C) and
+        //    changed ZERO decisions -- all six were already being skipped, four as already-in-PDA-array
+        //    and two as no-managed-node-type-natively-accepted. It averted nothing observed.
+        //  * MEASURED: Build_PneuMk1/2/3_C (PneumaticFrackingMachine), the classes whose boot-1 ADD
+        //    prompted this guard, do NOT derive from either base -- the guard does not fire for them and
+        //    they still ADD. The alarm was the mod's NAME. They are ordinary resource extractors and were
+        //    never exposed to the checked cast.
+        //  * Allow-listing is NOT the last block, so this is NOT what keeps a well off our nodes. Vanilla
+        //    Build_FrackingSmasher_C / Build_FrackingExtractor_C are ALREADY on SF+'s list (SF+ ships them)
+        //    and do not crash on our nodes -- the extractor's own NATIVE node-type rule rejects them, and
+        //    the KAPI allow-list does not touch that rule. Correspondingly, for anything SF+ already
+        //    allows, our declining to append it protects NOTHING: we only ever append, never remove.
+        //  * THE REAL GAP IS ELSEWHERE AND IS STILL OPEN: NodeShuffleIsFrackingExtractor is PASSIVE -- it
+        //    withholds our Override and lets the native check decide. A fracking-derived class that is
+        //    already SF+-approved AND whose native rule accepts our node would still place, and still
+        //    crash. Closing that needs Scope.Override(false) in the two hologram hooks, not this guard.
+        //    Do not treat this line as covering that case.
+        // Value retained despite all of the above: the pack below is MACHINE-GENERATED and fully rewritten
+        // every world load against a mod set that changes without notice, so "the generated pack never
+        // contains a fracking-derived class" is worth holding as a structural invariant rather than as an
+        // accident of how today's skips happen to land. Detected on the buildable CLASS -- the same axis,
+        // and the same predicate, the hologram-side guard applies to GetBuildClass().
+        if (RawCls->IsChildOf(AFGBuildableFrackingActivator::StaticClass())
+            || RawCls->IsChildOf(AFGBuildableFrackingExtractor::StaticClass()))
         {
-            // ns-review-g G5: this reads UKAPIExtractorAllowList::mAllowedExtractors, the INPUT array --
-            // NOT proof the entry reached KAPI's separate, EFFECTIVE mAllowedResourceExtractors TSet.
+            // ns-review-frack F4: report SF+ allow-list membership on THIS line rather than reordering the
+            // guard behind the already-in-PDA-array check. Both branches merely `continue`, so the order is
+            // behaviourally a no-op and the only question is what the log preserves -- and for a fracking
+            // class, membership is exactly the fact that proves this skip protected nothing (see above).
+            // Keeping the guard first also keeps it observable: behind the PDA check, a silently broken
+            // guard would be indistinguishable from a working one for every SF+-approved class.
             UE_LOG(LogNodeShuffle, Display,
-                TEXT("AUTOALLOW extractor='%s' decision=SKIP reason=already-in-PDA-array (NOTE: this ")
-                TEXT("reads UKAPIExtractorAllowList::mAllowedExtractors -- the INPUT array. KAPI caches a ")
-                TEXT("SEPARATE TSet (UKAPIDataAssetSubsystem::mAllowedResourceExtractors) at boot, and an ")
-                TEXT("entry present here is NOT proof it reached that set -- MEASURED precedent: the 3 ")
-                TEXT("vanilla miner appends resolve here but never appear in KAPI's boot log. If this ")
-                TEXT("extractor is still refused in-game, check LogKApi's 'mAllowedResourceExtractors ")
-                TEXT("Found ...' lines for it.)"), *ExtPath);
+                TEXT("AUTOALLOW extractor='%s' decision=SKIP reason=fracking-extractor-crash-guard ")
+                TEXT("sfPlusAlreadyAllows=%d (this class derives from AFGBuildableFrackingActivator/")
+                TEXT("AFGBuildableFrackingExtractor, whose OnExtractableResourceSet does a CHECKED cast to a ")
+                TEXT("fracking node type -- fatal on one of our Node-type nodes. Fail-closed: we decline to ")
+                TEXT("APPEND it. This removes NOTHING -- if sfPlusAlreadyAllows=1, SF+ permits it with or ")
+                TEXT("without us and this skip protects nothing; what normally keeps such a machine off our ")
+                TEXT("nodes is its own native node-type rule, not this list.)"),
+                *ExtPath, AllowList.AllowedExtractorClasses.Contains(RawCls) ? 1 : 0);
             continue;
         }
+
+        // OSCILLATION FIX (2026-07-30, MEASURED in the wild). This USED TO `continue`, which made the
+        // generated pack oscillate on alternate boots: boot N generated 7 documents; KDF applied them at
+        // boot N+1, so every one of them then read as already-in-PDA, ToGenerate came out EMPTY, and the
+        // "0 matched is a valid, harmless state" path DELETED the whole pack -- so boot N+2 had nothing,
+        // regenerated, and boot N+3 worked again. Observed exactly: a pass logging
+        // "pass complete -- 0 matched, 0 document(s) WRITTEN" left a 0-document pack.yml on disk after the
+        // 7-entry boot. That is the "it worked, then it stopped" failure ns-review-g predicted, reached
+        // through the one door its F1 guard did not cover (F1 covers an unreliable allow-list read and an
+        // empty census -- NOT an empty ToGenerate caused by our own entries having landed).
+        //
+        // The pack must therefore be a PURE FUNCTION of (available extractors x managed node groups),
+        // independent of what is already applied -- the same determinism property the census fix gave the
+        // node side. PDA membership is now recorded on the line and nothing more. Re-appending an entry
+        // SF+ already has is safe: ns-review-g MEASURED from KAPI's shipped PDB that the effective consumer
+        // is a TSet (UKAPIDataAssetSubsystem::mAllowedResourceExtractors), so duplicate appends collapse.
+        // COST, stated rather than hidden: we now also emit documents for extractors SF+ already allows
+        // (ModularMiner, BioWater, MiniEx, the vanilla pumps...) when they match one of our managed node
+        // groups, so the document count rises. If SF+ ever DELIBERATELY removes one of those, we would
+        // re-add it -- accepted, because the alternative is a pack that deletes itself every other boot.
+        const bool bAlreadyInPdaArray = AllowList.AllowedExtractorClasses.Contains(RawCls);
 
         // Find a node group NodeShuffle actually MANAGES that this extractor natively accepts AND that
         // the comparison actually DISCRIMINATED on (ns-review-g G4: AcceptsNatively() alone is true for
@@ -338,10 +414,15 @@ bool FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled(UWorld* World)
             {
                 bMatched = true;
                 MatchedGroup = &G;
+                // sfPlusAlreadyAllows is REPORTED, never acted on (oscillation fix above): an entry SF+
+                // already has is still regenerated, so the pack stays a pure function of the rule and
+                // cannot delete itself once its own entries land. sfPlusAlreadyAllows=1 on a first-ever
+                // pass means SF+ ships it; on a later pass it usually means WE put it there last boot.
                 UE_LOG(LogNodeShuffle, Display,
-                    TEXT("AUTOALLOW extractor='%s' decision=%s matchedNode(class='%s' resource='%s' form=%d(%s)) ")
+                    TEXT("AUTOALLOW extractor='%s' sfPlusAlreadyAllows=%d decision=%s matchedNode(class='%s' resource='%s' form=%d(%s)) ")
                     TEXT("nodeIsA=%d formAllowed=%d resAllowed=%d"),
-                    *ExtPath, bAllowListUnreliable ? TEXT("SKIP(unreliable-read)") : TEXT("ADD"),
+                    *ExtPath, bAlreadyInPdaArray ? 1 : 0,
+                    bAllowListUnreliable ? TEXT("SKIP(unreliable-read)") : TEXT("ADD"),
                     *G.NodeClass->GetPathName(), G.ResourceClass ? *G.ResourceClass->GetPathName() : TEXT("<none>"),
                     G.Form, NodeShuffleFormName(G.Form), A.bNodeIsA ? 1 : 0, A.bFormAllowed ? 1 : 0, A.bResourceAllowed ? 1 : 0);
                 break;
@@ -355,8 +436,8 @@ bool FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled(UWorld* World)
             const FNodeShuffleExtractorAcceptance Desc =
                 FNodeShuffleModule::EvaluateExtractorAcceptance(Ext, RawCls, -1, nullptr);
             UE_LOG(LogNodeShuffle, Display,
-                TEXT("AUTOALLOW extractor='%s' decision=SKIP reason=%s (hasRestriction=%d allowedForms=[%s] onlyCertainResources=%d)"),
-                *ExtPath,
+                TEXT("AUTOALLOW extractor='%s' sfPlusAlreadyAllows=%d decision=SKIP reason=%s (hasRestriction=%d allowedForms=[%s] onlyCertainResources=%d)"),
+                *ExtPath, bAlreadyInPdaArray ? 1 : 0,
                 Desc.bDiscriminated ? TEXT("no-managed-node-type-natively-accepted")
                                     : TEXT("declares-no-restrictions-accept-would-be-vacuous"),
                 Desc.bHasRestriction ? 1 : 0, *Desc.AllowedFormsCsv, Desc.bOnlyCertainResources ? 1 : 0);
@@ -376,12 +457,23 @@ bool FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled(UWorld* World)
         ToGenerate.Add(Doc);
     }
 
-    // Regenerate the pack directory fresh every completed pass -- fully idempotent, and safe to do even
-    // when ToGenerate is empty (an empty, valid pack is a well-defined, harmless state; KDataForge
-    // applies zero documents for it). Clearing first means an extractor that no longer qualifies (mod
-    // removed, or now already on the list some other way) never leaves a stale entry behind. SAFE now
-    // that the census is deterministic (see the file header's "WHY CLEAR-AND-REBUILD IS NOW SAFE"): there
-    // is no earlier, richer pass this session whose data could be lost by clearing.
+    // Regenerate the pack directory fresh every completed pass -- fully idempotent. Clearing first means
+    // an extractor that no longer qualifies (mod removed, or the layout re-rolled away from its resource)
+    // never leaves a stale entry behind.
+    //
+    // "AN EMPTY PACK IS A HARMLESS STATE" WAS MEASURED FALSE (2026-07-30) AND IS ONLY TRUE AGAIN BECAUSE
+    // OF THE OSCILLATION FIX ABOVE -- do NOT restore the old unconditional wording. An empty pack
+    // un-allow-lists every extractor a good earlier pass added, and for one whole boot the user gets the
+    // pre-mod behaviour back. The old code reached that state by SKIPPING every extractor whose entry our
+    // OWN previous pack had already landed, so ToGenerate collapsed to empty on alternate boots and this
+    // very clear deleted a correct 7-document pack. ToGenerate no longer reads the allow-list at all, so
+    // it is now a pure function of (available extractors x managed node groups) -- neither of which
+    // depends on the pack -- and an empty ToGenerate therefore means the RULE genuinely matched nothing,
+    // which IS a legitimately empty answer. That is the ONLY reason clearing on empty is safe now. Any
+    // future change that reintroduces a pack-derived input to ToGenerate reintroduces this bug.
+    //
+    // SAFE also because the census is deterministic (see the file header's "WHY CLEAR-AND-REBUILD IS NOW
+    // SAFE"): there is no earlier, richer pass this session whose data could be lost by clearing.
     // ns-review-g G2: EVERY filesystem result is checked. This pass writes into the GAME INSTALL; a
     // failed write must never be reported as a generated document, and the pass must not latch on a
     // failure (returning false makes RefreshTick retry next tick).
