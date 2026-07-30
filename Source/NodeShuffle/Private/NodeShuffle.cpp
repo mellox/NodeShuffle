@@ -228,26 +228,26 @@ void FNodeShuffleModule::DbgLogAcceptance(AFGResourceExtractorHologram* Hologram
     const AFGBuildableResourceExtractorBase* Ext = Hologram->mDefaultExtractor;
     if (Ext)
     {
-        const UClass* Restrict = Ext->mRestrictToNodeType.Get();
-        const bool bIsAType = (Restrict && ResourceActor) ? ResourceActor->IsA(Restrict) : true;
-        bool bFormAllowed = Ext->mAllowedResourceForms.Num() == 0; // empty = unrestricted
-        for (EResourceForm F : Ext->mAllowedResourceForms) { if ((int32)F == NodeForm) { bFormAllowed = true; break; } }
-        FString FormsStr;
-        for (EResourceForm F : Ext->mAllowedResourceForms) { FormsStr += FString::Printf(TEXT("%d,"), (int32)F); }
-        bool bResAllowed = !Ext->mOnlyAllowCertainResources;
-        if (Ext->mOnlyAllowCertainResources && RN)
-        {
-            for (const TSubclassOf<UFGResourceDescriptor>& R : Ext->mAllowedResources)
-            { if (R.Get() == RN->GetResourceClass().Get()) { bResAllowed = true; break; } }
-        }
+        // Packet F (ns-automatch): the four sub-checks below (restrict/nodeIsA, forms/formAllowed,
+        // onlyCertain/resAllowed) used to be inlined here. They now live in the reusable
+        // EvaluateExtractorAcceptance helper (see its declaration comment in NodeShuffle.h) so
+        // NodeShuffle.DumpExtractors' match matrix can call the SAME predicate instead of a second copy.
+        // Parity argument (zero behavior change): the original ran two separate loops over
+        // mAllowedResourceForms (one that broke on first form match, one that always built the full CSV);
+        // the helper runs a single merged loop that both appends to the CSV AND sets bFormAllowed on
+        // match, never breaking early -- the CSV was always built in full regardless, and once
+        // bFormAllowed is set true nothing later can un-set it, so the merge changes no observable value.
+        const FNodeShuffleExtractorAcceptance A = FNodeShuffleModule::EvaluateExtractorAcceptance(
+            Ext, ResourceActor ? ResourceActor->GetClass() : nullptr, NodeForm,
+            (RN && RN->GetResourceClass()) ? RN->GetResourceClass().Get() : nullptr);
         // fu1diag-1 (FU1 §6.1): identity fields — Hologram is proven non-null by the early return above;
         // GetBuildClass() already has a call site in NodeShuffleIsFrackingExtractor (zero new symbol).
         const UClass* AcceptBuildClass = Hologram->GetBuildClass().Get();
         UE_LOG(LogNodeShuffle, Display,
             TEXT("HOLOGRAMHOOK ACCEPT-EXT restrictToNodeType='%s' nodeIsA=%d | allowedForms=[%s] formAllowed=%d | onlyCertain=%d resAllowed=%d | extractorType='%s' | holo='%s' build='%s'"),
-            Restrict ? *Restrict->GetName() : TEXT("<none>"), bIsAType ? 1 : 0,
-            *FormsStr, bFormAllowed ? 1 : 0,
-            Ext->mOnlyAllowCertainResources ? 1 : 0, bResAllowed ? 1 : 0,
+            *A.RestrictClassName, A.bNodeIsA ? 1 : 0,
+            *A.AllowedFormsCsv, A.bFormAllowed ? 1 : 0,
+            A.bOnlyCertainResources ? 1 : 0, A.bResourceAllowed ? 1 : 0,
             *Ext->GetExtractorTypeName().ToString(),
             *Hologram->GetClass()->GetName(), AcceptBuildClass ? *AcceptBuildClass->GetName() : TEXT("<none>"));
     }
@@ -257,6 +257,48 @@ void FNodeShuffleModule::DbgLogAcceptance(AFGResourceExtractorHologram* Hologram
         UE_LOG(LogNodeShuffle, Display, TEXT("HOLOGRAMHOOK ACCEPT-EXT mDefaultExtractor=<null> | holo='%s' build='%s'"),
             *Hologram->GetClass()->GetName(), AcceptBuildClass ? *AcceptBuildClass->GetName() : TEXT("<none>"));
     }
+}
+
+// Packet F (ns-automatch): see the declaration comment in NodeShuffle.h for why this must be a named
+// static member (protected-member friend access) and what it's reused for. Reads the SAME four
+// protected fields DbgLogAcceptance above always has (mRestrictToNodeType, mAllowedResourceForms,
+// mOnlyAllowCertainResources, mAllowedResources) — already friend-granted by the SAME
+// AccessTransformers entry DbgLogAcceptance uses; no new grant needed. Pure: no logging, no engine
+// mutation, and it never reasons about which form is "normal" — it only ever compares against whatever
+// NodeResourceForm/NodeResourceClass the caller supplies, which is what keeps it correct for a liquid
+// (oil) extractor without a single oil-specific line anywhere in this function.
+FNodeShuffleExtractorAcceptance FNodeShuffleModule::EvaluateExtractorAcceptance(
+    const AFGBuildableResourceExtractorBase* Extractor, const UClass* NodeClass,
+    int32 NodeResourceForm, const UClass* NodeResourceClass)
+{
+    FNodeShuffleExtractorAcceptance Out;
+    if (!Extractor) { return Out; } // nothing to check against -- mirrors DbgLogAcceptance's null-Ext branch
+    Out.bHasExtractorCdo = true;
+
+    const UClass* Restrict = Extractor->mRestrictToNodeType.Get();
+    Out.bHasRestriction = (Restrict != nullptr);
+    Out.RestrictClassName = Restrict ? Restrict->GetName() : TEXT("<none>");
+    Out.RestrictClassPath = Restrict ? Restrict->GetPathName() : TEXT("<none>");
+    Out.bNodeIsA = (Restrict && NodeClass) ? NodeClass->IsChildOf(Restrict) : true;
+
+    Out.bFormAllowed = Extractor->mAllowedResourceForms.Num() == 0; // empty = unrestricted
+    for (EResourceForm F : Extractor->mAllowedResourceForms)
+    {
+        Out.AllowedForms.Add((int32)F);
+        Out.AllowedFormsCsv += FString::Printf(TEXT("%d,"), (int32)F);
+        if ((int32)F == NodeResourceForm) { Out.bFormAllowed = true; }
+    }
+
+    Out.bOnlyCertainResources = Extractor->mOnlyAllowCertainResources;
+    Out.bResourceAllowed = !Extractor->mOnlyAllowCertainResources;
+    for (const TSubclassOf<UFGResourceDescriptor>& R : Extractor->mAllowedResources)
+    {
+        UClass* RCls = R.Get();
+        if (!RCls) { continue; }
+        Out.AllowedResourcePaths.Add(RCls->GetPathName());
+        if (Extractor->mOnlyAllowCertainResources && RCls == NodeResourceClass) { Out.bResourceAllowed = true; }
+    }
+    return Out;
 }
 
 // redesign-24 (Packet E): see the declaration comment in NodeShuffle.h for the full reasoning. Reads
@@ -353,7 +395,7 @@ using FNodeShuffleActorExtractorLoggedSet = TSet<FNodeShuffleActorExtractorKey>;
 void FNodeShuffleModule::StartupModule()
 {
     UE_LOG(LogNodeShuffle, Log, TEXT("NodeShuffle module loaded"));
-    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle 1.3.0 LOADED (2026-07-30-followups-8) ====="));
+    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle 1.3.0 LOADED (2026-07-30-automatch-1) ====="));
 
 #if !WITH_EDITOR
     // redesign-13 HOLOGRAM HOOK (DIAGNOSTICS). r12 proved the Mk1 build trace NEVER hits our node (0 hits on

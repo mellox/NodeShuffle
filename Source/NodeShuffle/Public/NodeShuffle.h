@@ -7,6 +7,41 @@
 // NodeShuffleVetoKBFL module logs under the SAME LogNodeShuffle category users already filter on.
 NODESHUFFLE_API DECLARE_LOG_CATEGORY_EXTERN(LogNodeShuffle, Log, All);
 
+// Packet F (ns-automatch, extractor-automatch): the result of evaluating ONE extractor building's
+// OWN declared acceptance rules (mRestrictToNodeType / mAllowedResourceForms / mOnlyAllowCertainResources
+// / mAllowedResources) against an optional node-side comparison target. Plain data, no engine calls of
+// its own — a pure, form-agnostic value type so NodeShuffle.DumpExtractors (Packet F) and the
+// auto-allow decision (Packet G) can both consume it without re-deriving the same fields. Deliberately
+// says nothing about "solid" or "liquid" specifically -- it reasons only from whatever the extractor's
+// OWN rules declare, which is what keeps it correct for oil/liquid extractors without ever naming them.
+struct NODESHUFFLE_API FNodeShuffleExtractorAcceptance
+{
+    // False only when the caller passed a null extractor CDO -- every other field then holds its
+    // vacuous "nothing to check against" default (mirrors DbgLogAcceptance's pre-existing null-Ext branch).
+    bool bHasExtractorCdo = false;
+
+    bool bHasRestriction = false;
+    FString RestrictClassName = TEXT("<none>");
+    FString RestrictClassPath = TEXT("<none>");
+    // True when no NodeClass was supplied to compare (vacuous), OR NodeClass IsChildOf the restriction,
+    // OR there is no restriction at all.
+    bool bNodeIsA = true;
+
+    // Raw declared form values (EResourceForm cast to int32; see FGItemDescriptor.h for the enum) --
+    // empty means "unrestricted" (every form allowed), exactly like the native field's own semantics.
+    TArray<int32> AllowedForms;
+    FString AllowedFormsCsv; // "%d," per element -- preserves DbgLogAcceptance's existing log format
+    bool bFormAllowed = true;
+
+    bool bOnlyCertainResources = false;
+    TArray<FString> AllowedResourcePaths; // full paths of each TSubclassOf<UFGResourceDescriptor> entry
+    bool bResourceAllowed = true;
+
+    // The extractor's OWN, unhooked verdict for the node-side inputs supplied (vacuously true if none
+    // were supplied) -- ANDs the three sub-checks exactly like the native acceptance path does.
+    bool AcceptsNatively() const { return bNodeIsA && bFormAllowed && bResourceAllowed; }
+};
+
 // Module installs diagnostic hooks on the Mk1 extractor hologram (redesign-13..19).
 // coexist-veto-1: NODESHUFFLE_API so the optional NodeShuffleVetoKBFL module can link the statics
 // below (diagnostics gate, managed-node registry, arm-hook registration).
@@ -31,6 +66,24 @@ public:
     // can't touch these protected members even inside a friended module (same constraint
     // DbgLogAcceptance documents). OutRestrictName is optional, for the hook's own diagnostic log.
     static bool IsGenericExtractorRestriction(const class AFGResourceExtractorHologram* Hologram, FString* OutRestrictName = nullptr);
+
+    // Packet F (ns-automatch): the SAME acceptance predicate DbgLogAcceptance's ACCEPT-EXT block has
+    // always computed (restrictToNodeType/nodeIsA, allowedForms/formAllowed, onlyCertain/resAllowed),
+    // factored into one reusable, named static member function -- required (not just nice-to-have)
+    // because mRestrictToNodeType/mAllowedResourceForms/mOnlyAllowCertainResources/mAllowedResources are
+    // PROTECTED on AFGBuildableResourceExtractorBase and only a MEMBER of the friended FNodeShuffleModule
+    // class can read them (a free function or lambda in another .cpp of this same module cannot, even
+    // though friendship is module-wide in spirit -- C++ friendship is class-to-class, not module-to-
+    // module). DbgLogAcceptance now calls this instead of inlining the same checks; NodeShuffle.DumpExtractors
+    // (this packet) calls it per (extractor, node-class) pair for the match matrix; Packet G will call it
+    // to decide auto-allowing. NodeClass/NodeResourceClass may be null (vacuous "nothing to compare",
+    // matching DbgLogAcceptance's existing null-safety); NodeResourceForm is a raw EResourceForm int32
+    // (pass a value that cannot appear in mAllowedResourceForms, e.g. -1, when no node form applies).
+    static FNodeShuffleExtractorAcceptance EvaluateExtractorAcceptance(
+        const class AFGBuildableResourceExtractorBase* Extractor,
+        const class UClass* NodeClass,
+        int32 NodeResourceForm,
+        const class UClass* NodeResourceClass);
 
     // Diagnostics gate (config-driven, OFF by default). The behavioral hooks (Mk1 accept-fix)
     // ALWAYS run; only the verbose diagnostic LOGGING is gated by this so normal users get a
