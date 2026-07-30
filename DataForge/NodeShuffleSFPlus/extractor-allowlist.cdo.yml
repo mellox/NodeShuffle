@@ -1,0 +1,40 @@
+# NodeShuffle SF+ compat pack — re-admit ordinary ore miners + the reactive extractor
+# to SatisfactoryPlus's extractor allow-list (FU1-v2 data lane, 2026-07-28).
+#
+# WHY: SF+'s C++ hook disqualifies resource-extractor holograms whose build class is not
+# sanctioned (HUD: "Invalid aim location!"). Its allow-list asset ships pumps/fracking/
+# Modular Miner/biowater/mini-extractors ONLY — every ordinary ore miner is deliberately
+# absent, which defeats NodeShuffle's purpose (modded resources dealt onto nodes that the
+# matching tools then cannot be placed on). This pack REPLACES mAllowedExtractors with the
+# stock 11 entries (reconstructed from the 2026-07-28 boot log, KAPI resolution lines)
+# plus: vanilla Mk1-3 miners, MkPlus Mk4/Mk5 (in-game "Mk.8" rides Build_MinerMk5_C),
+# and AlkaLib's reactive ore extractors.
+# NOTE: full-array replace (not append) — if SF+ updates its list, refresh the stock
+# entries here. Added entries use path-by-convention where unverified; a bad path shows
+# up as a KDF resolve error in the boot report (baseline: 0 errors).
+# 2026-07-28: MkPlus Mk4 entry REMOVED — package /MkPlus/Buildables/MinerMk4/Build_MinerMk4
+# does not exist (KDF SkipPackage). The in-game "Miner Mk.8" (Build_MinerMk5_C) is actually
+# BAMRENEW's miner — exact path below confirmed via KDF-editor export (the /MkPlus/
+# Build_MinerMk5_PH is only a placeholder and is deliberately not listed).
+type: cdo
+patches:
+  - target: "/SatisfactoryPlus/AssetDatas/Modules/PDA_SFP_ExtractorList.PDA_SFP_ExtractorList"
+    properties:
+      - path: mAllowedExtractors
+        value:
+          - "/Game/FactoryGame/Buildable/Factory/OilPump/Build_OilPump.Build_OilPump_C"
+          - "/Game/FactoryGame/Buildable/Factory/WaterPump/Build_WaterPump.Build_WaterPump_C"
+          - "/Game/FactoryGame/Buildable/Factory/FrackingExtractor/Build_FrackingExtractor.Build_FrackingExtractor_C"
+          - "/Game/FactoryGame/Buildable/Factory/FrackingSmasher/Build_FrackingSmasher.Build_FrackingSmasher_C"
+          - "/KLib/Assets/Buildings/ModularExtractor/Build_ModularMiner_01.Build_ModularMiner_01_C"
+          - "/KLib/Assets/Buildings/BioWaterExtractor/Build_BioWaterExtractor_SF+.Build_BioWaterExtractor_SF+_C"
+          - "/AB_FluidExtras/MiniExtractor/Build_AB_MiniEx.Build_AB_MiniEx_C"
+          - "/MkPlus/Buildables/FrackingSmasher/Build_FrackingSmasher_Mk2.Build_FrackingSmasher_Mk2_C"
+          - "/MkPlus/Buildables/FrackingExtractor/Build_FrackingExtractor_Mk2.Build_FrackingExtractor_Mk2_C"
+          - "/MkPlusSFPlus/Buildings/BioWaterExtractor/Build_BioWaterExtractor_SF+Mk2.Build_BioWaterExtractor_SF+Mk2_C"
+          - "/MkPlusSFPlus/Buildings/MiniExtractor/Build_AB_MiniExMk2.Build_AB_MiniExMk2_C"
+          - "/Game/FactoryGame/Buildable/Factory/MinerMk1/Build_MinerMk1.Build_MinerMk1_C"
+          - "/Game/FactoryGame/Buildable/Factory/MinerMk2/Build_MinerMk2.Build_MinerMk2_C"
+          - "/Game/FactoryGame/Buildable/Factory/MinerMk3/Build_MinerMk3.Build_MinerMk3_C"
+          - "/bamrenewfp/content/buildable/Factory/minermk4/build_minermk5.Build_MinerMk5_C"
+          - "/AlkaLib/Buildables/ReactiveOreExtractor/Mk2/Build_ReactiveOreExtractorMk2.Build_ReactiveOreExtractorMk2_C"

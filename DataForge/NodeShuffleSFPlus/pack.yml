@@ -1,0 +1,9 @@
+ref: NodeShuffleSFPlus
+name: Node Shuffle SatisfactoryPlus Extractor Compat
+version: 0.1.0
+contributer: mellox
+enabled: true
+conditions:
+  hasMod:
+  - SatisfactoryPlus
+  - NodeShuffle
