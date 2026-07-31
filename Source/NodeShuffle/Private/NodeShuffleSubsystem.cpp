@@ -1635,6 +1635,15 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     // reconsider extractors against this new population (mirrors bKnowledgeUnlockDone immediately above).
     bAutoAllowExtractorsDone = false;
 
+    // Packet H1 (ns-wells-h1): deal each resource well a resource, IN PLACE. Placed HERE, at the end of
+    // the roll, for two reasons. (a) Wells must re-roll with the rest of the layout, and this is the one
+    // function both the initial roll and the re-roll go through. (b) It must run AFTER every draw above,
+    // because it deliberately uses its OWN salted stream (see RollWellLayout) rather than this Rng —
+    // taking draws from Rng would shift every later draw and change the NODE layout for a given seed,
+    // i.e. merely enabling well shuffling would silently re-shuffle the player's ordinary nodes too.
+    // Self-gated: a no-op that leaves any existing well data untouched when the config toggle is off.
+    RollWellLayout(Seed, bIsReroll);
+
     UE_LOG(LogNodeShuffle, Display,
         TEXT("Rolled layout: seed %d, pool %d (vanilla %d, new %d), active %d, pinned %d"),
         Seed, PoolSize, VanillaCount, NewLocations.Num(), ActiveCount, PinnedCount);
@@ -1965,6 +1974,15 @@ void ANodeShuffleSubsystem::ApplyLayout()
         // became un-pinned and un-occupied it will be hidden by SuppressOriginalNodes, since its
         // location is in OriginalNodeRecord whenever it is not occupied.)
     }
+
+    // Packet H1 (ns-wells-h1): apply the rolled well retype. Placed AFTER the VanillaNodeCache refresh
+    // above, because that is what makes the path->live-actor lookup work — fracking cores and satellites
+    // are AFGResourceNodeBase actors and the cache's own iterator already includes them (it excludes only
+    // OUR spawned nodes). Idempotent and re-run every pass on purpose: a well that has not streamed in
+    // yet is written on whichever later pass it appears, exactly like SuppressOriginalNodes' hide funnel.
+    // NOTHING ELSE IN THIS PASS TOUCHES WELLS: they are excluded from the regular node population by
+    // IsFrackingActor, so this call is the mod's entire well surface.
+    ApplyWellRetype(Config.ShuffleResourceWells);
 
     SettleNewNodesNearPlayers();
     ReassociateOrphanedExtractors();
@@ -5707,6 +5725,79 @@ void ANodeShuffleSubsystem::BuildManagedNodeGroupsFromLayout(TArray<FNodeShuffle
             G.Count = 1;
         }
     }
+
+    // ---- Packet H1 (ns-wells-h1): resource wells contribute managed groups too (design §2.6) ----
+    //
+    // *** READ THIS FIRST: THIS IS GROUNDWORK FOR H2 AND CHANGES NO ALLOW-LIST DECISION TODAY. ***
+    //
+    // ns-review-h1 F1 (MEASURED against the code, and it corrects the DESIGN, not this file). Design
+    // decision 2 claims that managing wells auto-allow-lists bamrenew's build_frqking_C and
+    // build_pressuresqtmk5_C "by the rule". IT CANNOT, and the reason is design decision 3 — the
+    // fracking crash guard, which decisions 2 and 3 were BOTH signed off without noticing they are
+    // mutually exclusive. NodeShuffleAutoAllowExtractors.cpp:360-379 skips every class deriving from
+    // AFGBuildableFrackingActivator or AFGBuildableFrackingExtractor BEFORE the group-matching loop is
+    // ever reached. Both bases are UCLASS(Abstract), so a Resource Well Pressurizer and a Resource Well
+    // Extractor are necessarily subclasses of one of them — vanilla or modded, no exceptions. That
+    // guard's own measured comment at :337-340 names build_frqking_C and build_pressuresqtmk5_C
+    // explicitly as classes it already skips.
+    //
+    // So: the groups below are EMITTED and are CORRECT, and no fracking machine can consume them while
+    // the guard stands. That is the deliberate outcome for this packet — the guard is the highest-
+    // consequence code in the mod and narrowing it to design §5.3's fail-closed pairing rule is its own
+    // packet with its own cold review, NOT a rider on a retype change. The value of emitting them now is
+    // that the managed-node census becomes correct and complete for wells, so when the guard is
+    // eventually narrowed nothing else has to move.
+    //
+    // WHY THE EXTENSION IS STILL REQUIRED. The loop above requires bIsNewNode, and a well is never
+    // spawned, so without this a managed well contributes NOTHING to the census — which would be wrong
+    // independently of the guard. It feeds the SAME rule ("allow an extractor that natively accepts a
+    // node type we manage") the same kind of evidence; nothing is hardcoded. The ns-review-g2 F2
+    // exclusion above still holds exactly as written for its own population: only bManaged wells are
+    // counted, and a PINNED well — one a player has already built on, which NodeShuffle leaves vanilla —
+    // is excluded for precisely the reason a pinned original is.
+    //
+    // BOTH the satellite class AND the core class are emitted, deliberately, because they answer
+    // different questions: a Resource Well Extractor restricts to the SATELLITE node type and a
+    // Resource Well Pressurizer restricts to the CORE node type. Emitting only one would leave the
+    // census half-right in a way that would look correct until the guard is narrowed and then produce a
+    // well nobody can finish building.
+    //
+    // The class paths come from the LIVE actors captured at roll time, never from hardcoded
+    // /Game/FactoryGame/... paths, so a modded well class joins automatically.
+    for (const FNodeShuffleWellEntry& Well : WellLayout)
+    {
+        if (!Well.bManaged) { continue; }
+        ++OutTotalActiveEntries; // one well = one entry, not one per member
+        UClass* WellResource = LoadClassByPath(Well.AssignedResourceClassPath);
+        if (!WellResource) { ++OutUnresolvedEntries; continue; }
+        const int32 WellForm = (int32)UFGItemDescriptor::GetForm(TSubclassOf<UFGItemDescriptor>(WellResource));
+        bool bAnyResolved = false;
+        const FString WellNodeClassPaths[2] = { Well.SatelliteNodeClassPath, Well.CoreNodeClassPath };
+        for (const FString& WellNodeClassPath : WellNodeClassPaths)
+        {
+            UClass* WellNodeClass = LoadClassByPath(WellNodeClassPath);
+            if (!WellNodeClass) { continue; }
+            bAnyResolved = true;
+            const FString WellKey = WellNodeClass->GetPathName() + TEXT("|") + WellResource->GetPathName()
+                + TEXT("|") + FString::FromInt(WellForm);
+            if (const int32* ExistingIdx = KeyToIndex.Find(WellKey))
+            {
+                ++OutGroups[*ExistingIdx].Count;
+            }
+            else
+            {
+                KeyToIndex.Add(WellKey, OutGroups.Num());
+                FNodeShuffleManagedGroup& G = OutGroups.AddDefaulted_GetRef();
+                G.NodeClass = WellNodeClass;
+                G.ResourceClass = WellResource;
+                G.Form = WellForm;
+                G.Count = 1;
+            }
+        }
+        // Counted as unresolved only when NEITHER class resolved — a well that contributed at least one
+        // real group is not an entry we silently dropped, which is what that honesty counter means.
+        if (!bAnyResolved) { ++OutUnresolvedEntries; }
+    }
 }
 
 FString ANodeShuffleSubsystem::PickSubstituteClass(const FString& RefusedPath, const FNodeShuffleEntry& Cause) const
@@ -6892,7 +6983,9 @@ bool ANodeShuffleSubsystem::IsFrackingActor(const AActor* Actor)
     return T == EResourceNodeType::FrackingCore || T == EResourceNodeType::FrackingSatellite;
 }
 
-void ANodeShuffleSubsystem::RebuildNodeNativeVisual(AFGResourceNode* Node)
+// Packet H1: parameter widened to AFGResourceNodeBase* so a fracking CORE (an AFGResourceNodeBase but
+// NOT an AFGResourceNode) can be rebuilt too. Body unchanged — it only ever used UObject methods.
+void ANodeShuffleSubsystem::RebuildNodeNativeVisual(AFGResourceNodeBase* Node)
 {
     // The node draws its own visual (solid mesh OR oil decal) from its CURRENT
     // resource descriptor. After SetResourceClassOverride the override descriptor is

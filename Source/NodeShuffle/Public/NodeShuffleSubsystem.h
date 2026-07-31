@@ -147,6 +147,70 @@ struct FNodeShuffleManagedGroup
     int32 Count = 0; // number of ACTIVE layout entries in this group -- loaded or not
 };
 
+// Packet H1 (ns-wells-h1): ONE SATELLITE of a managed resource well. Purity is recorded and NEVER
+// written back -- H0 measured that vanilla wells MIX purities across their satellites (design §Q2),
+// so there is no shared purity to normalise and normalising one would be a silent balance change.
+// The field exists purely so the log (and H2) can state what the vanilla purity vector was without
+// re-reading a possibly-unstreamed actor.
+USTRUCT()
+struct FNodeShuffleWellSatellite
+{
+    GENERATED_BODY()
+
+    // GetPathName() of the LEVEL satellite actor. Wells are never spawned or moved by H1, so this is
+    // a level-actor path and is stable across loads -- the same identity idiom FNodeShuffleEntry uses
+    // for a vanilla original.
+    UPROPERTY(SaveGame) FString SatellitePath;
+
+    // RECORD ONLY -- read at roll time, never applied. See the struct comment.
+    UPROPERTY(SaveGame) TEnumAsByte<EResourcePurity> OriginalPurity = RP_MAX;
+};
+
+// Packet H1: one resource well (fracking core + its satellites) as a unit of the per-save layout.
+// Deliberately a SEPARATE array from Layout rather than an FNodeShuffleEntry: a well is one thing
+// with N members, and FNodeShuffleEntry is one-node-shaped (design §2.2).
+//
+// H1 scope, stated so the next reader does not look for the missing half: the well is RETYPED IN
+// PLACE. There is no location, no rotation, no group yaw, no offsets and no satellite spawn state
+// here, because H1 never moves a well -- all of that arrives with H2.
+USTRUCT()
+struct FNodeShuffleWellEntry
+{
+    GENERATED_BODY()
+
+    // GetPathName() of the LEVEL core actor -- this entry's identity. Also the deterministic SORT KEY
+    // for dealing (see RollWellLayout): dealing in actor-iteration order would make the same seed
+    // produce different worlds depending on what had streamed in, which is the exact class of bug
+    // design §Q3a's "deterministic" rule exists to prevent.
+    UPROPERTY(SaveGame) FString CorePath;
+
+    // Captured from the LIVE actors at roll time -- never hardcoded /Game/FactoryGame/... well paths
+    // (design §2.2). Consumed by BuildManagedNodeGroupsFromLayout for the SF+ auto-allow extension.
+    UPROPERTY(SaveGame) FString CoreNodeClassPath;
+    UPROPERTY(SaveGame) FString SatelliteNodeClassPath;
+
+    // The AUTHORED resource (AFGResourceNodeBase::mResourceClass, via GetResourceClassOriginal()),
+    // never the effective one -- on a re-roll the core already carries OUR override, and reading the
+    // effective class would feed our own previous output back into the deck. That is the
+    // "output-derived input is a loop" failure mode (memory: lessons-output-derived-input-is-a-loop).
+    UPROPERTY(SaveGame) FString OriginalResourceClassPath;
+
+    // What this well was dealt. Equal to OriginalResourceClassPath for a pinned well.
+    UPROPERTY(SaveGame) FString AssignedResourceClassPath;
+
+    UPROPERTY(SaveGame) TArray<FNodeShuffleWellSatellite> Satellites;
+
+    // Someone has already built on this well (activator on the core, extractor on ANY satellite, or
+    // either reporting IsOccupied()). Mirrors FNodeShuffleEntry::bPinned: a well a player has built on
+    // is not ours to change. Set at roll time AND re-checked at apply time.
+    UPROPERTY(SaveGame) bool bPinned = false;
+
+    // True only when NodeShuffle actually owns this well's resource this save. False for a pinned
+    // well and for one whose resource could not be resolved -- both fail SAFE to "left vanilla".
+    // Also the gate on the SF+ auto-allow contribution: we only claim to manage what we retype.
+    UPROPERTY(SaveGame) bool bManaged = false;
+};
+
 // Server-side brain of NodeShuffle.
 //
 // Lifecycle per session:
@@ -574,7 +638,14 @@ private:
     // Re-applies the native visual (mesh-actor refresh or oil/gas decal) a node draws
     // for its CURRENT descriptor, by invoking the game's own OnRep_ResourceClassOverride via
     // ProcessEvent. Handles liquids (oil decal, no rock) and the no-mesh-actor case.
-    void RebuildNodeNativeVisual(AFGResourceNode* Node);
+    // Packet H1: parameter WIDENED AFGResourceNode* -> AFGResourceNodeBase* so a fracking CORE can use
+    // it. A core is an AFGResourceNodeBase but NOT an AFGResourceNode (design §2.1 -- the single biggest
+    // asymmetry in Packet H), so the narrower signature could not reach it. The body is unchanged and
+    // touches only UObject methods (IsValid / FindFunction / ProcessEvent), so this is a pure widening:
+    // every pre-existing caller passes an AFGResourceNode* and binds exactly as before, and the function
+    // still dispatches to whichever OnRep_ResourceClassOverride override the concrete class has
+    // (AFGResourceNode's for nodes and satellites, AFGResourceNodeBase's for cores).
+    void RebuildNodeNativeVisual(AFGResourceNodeBase* Node);
     // Per-pass spawned-visual coverage counters (reset + logged each ApplyLayout).
     int32 SpawnedRockVanilla = 0;
     int32 SpawnedRockQuartz = 0;
@@ -850,4 +921,54 @@ private:
     // Used by SuppressOriginalNodes to hide an original node's paired mesh actor on stream-in.
     TMap<TWeakObjectPtr<AFGResourceNodeBase>, TWeakObjectPtr<AFGNodeMeshActor>> MeshActorCache;
     void RebuildMeshActorCache();
+
+    // ---- Packet H1 (ns-wells-h1): IN-PLACE RESOURCE-WELL RETYPE ----
+    // Everything below is DEFINED IN NodeShuffleWellRoll.cpp (the deal) and NodeShuffleWellRetype.cpp
+    // (the write), not in NodeShuffleSubsystem.cpp; NodeShuffleWellRetype.h holds the shared pure
+    // helpers and states which file owns what. They must be MEMBERS (not free functions in those files)
+    // because writing AFGResourceNodeBase's PRIVATE mResourceClassOverride needs this class's
+    // AccessTransformers Friend grant, and C++ friendship is class-to-class -- exactly the constraint
+    // FNodeShuffleModule::DbgLogAcceptance documents for the module side. Defining members across extra
+    // translation units keeps the code out of an already 8000-line file without giving up that access.
+
+    // Deals a resource to every non-pinned well. Called from RollLayout (initial roll AND re-roll) so
+    // wells re-roll with the rest of the layout. No-op (and leaves any existing assignment untouched)
+    // when the ShuffleResourceWells config toggle is off.
+    void RollWellLayout(int32 Seed, bool bIsReroll);
+
+    // Idempotent per-pass apply, called from ApplyLayout. Writes the dealt resource to the core AND
+    // every satellite, asserts they agree afterwards, and NEVER touches purity. bWellShuffleEnabled is
+    // passed in rather than re-read so ApplyLayout's single config fill stays the only one per pass.
+    void ApplyWellRetype(bool bWellShuffleEnabled);
+
+    // Writes ResourceClass onto ONE well member (core or satellite) and rebuilds its native visual.
+    // Returns true when it actually changed something (so the caller's per-pass counters only count
+    // real writes, keeping the steady-state log silent). MemberRole/CoreName are for the log line only.
+    bool RetypeWellMember(AFGResourceNodeBase* Member, UClass* ResourceClass,
+                          const TCHAR* MemberRole, const TCHAR* CoreName);
+
+    // Packet H1: a well is one thing with N members, so it gets its own SaveGame array rather than
+    // being squeezed into Layout. Empty on every save where ShuffleResourceWells was never turned on,
+    // which is what makes the mod's stable core byte-identical with the feature off.
+    UPROPERTY(SaveGame) TArray<FNodeShuffleWellEntry> WellLayout;
+    UPROPERTY(SaveGame) bool bWellLayoutRolled = false;
+
+    // Session-scoped log throttles -- the apply pass runs every ~5 s over every well, so any line that
+    // is not delta-driven would be a firehose (the 153k-line / 35 MB precedent this file already
+    // documents for the deferral log). None of these are persisted.
+    TSet<FString> WellAppliedLogged;   // core paths whose successful retype has been announced
+    TSet<FString> WellSkipLogged;      // core paths whose skip reason has been announced
+    int32 WellMembersWrittenThisSession = 0;
+    bool bWellDisabledLogged = false;  // "feature off but this save has well data" -- said once
+    // "feature ON but this save has no roll yet" -- said once. Its own latch, not shared with the one
+    // above: the two states are opposites and a user can move between them mid-session by toggling, so
+    // one shared flag would silently suppress the second message.
+    bool bWellNoRollLogged = false;
+    // Apply-pass counter, used ONLY to fire the once-per-session live-vs-layout well census on a
+    // settled world. Apply runs every ~5 s, so pass 6 is roughly 30 s after the layout starts applying
+    // -- late enough that streaming has caught up, early enough to be in the log before the player
+    // reaches a well. A boolean latch would have fired on the first pass, mid-load, and reported a
+    // half-streamed world as the answer.
+    int32 WellApplyPasses = 0;
+    static constexpr int32 WellCensusScanPass = 6;
 };

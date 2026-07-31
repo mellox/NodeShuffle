@@ -155,6 +155,10 @@ void UNodeShuffleConfig::PostInitProperties()
         TEXT("Starter Node Radius (m)"),
         TEXT("How far from your spawn point the starter nodes may be placed. Smaller keeps them right at your feet; larger spreads them out. Only used on a brand-new game's first roll."));
 
+    AddBool(TEXT("ShuffleResourceWells"), false,
+        TEXT("Shuffle Resource Wells (In Place)"),
+        TEXT("OFF by default. When ON, each RESOURCE WELL is re-rolled to produce a different resource — a nitrogen well may become a water well, and so on. The wells themselves DO NOT MOVE: only what they yield changes, so your map knowledge still works.\n\nThe overall mix is preserved: the resources are dealt from the wells' own existing set, so a save never ends up short of a well-only resource such as Nitrogen Gas.\n\nWells that already have a Resource Well Pressurizer or any Resource Well Extractor on them are NEVER changed. Applied when the layout is rolled — turn this on and then use 'Re-roll Layout' to apply it to an existing save."));
+
     AddBool(TEXT("EnableExperimentalFeatures"), false,
         TEXT("Enable Experimental Features"),
         TEXT("THIS VERSION HAS NO EXPERIMENTAL FEATURES, so this option currently does nothing — leave it off. (Cave node placement graduated to always-on: it fixes a real issue where the shuffle emptied caves and never put nodes back in them.)"));

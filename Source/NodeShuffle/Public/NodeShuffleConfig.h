@@ -95,6 +95,19 @@ struct NODESHUFFLE_API FNodeShuffleConfigStruct
     UPROPERTY(BlueprintReadWrite)
     int32 StarterNodeRadiusMeters{200};
 
+    // Packet H1 (ns-wells-h1): shuffle which RESOURCE each resource well produces, IN PLACE. The well
+    // never moves — only what it yields changes (a nitrogen well may become a water well). Wells with
+    // a pressurizer or any fracking extractor already on them are never changed.
+    //
+    // DEFAULT OFF, and it is its OWN toggle rather than a use of EnableExperimentalFeatures: that flag
+    // is documented in-UI as "THIS VERSION HAS NO EXPERIMENTAL FEATURES ... leave it off", and it is a
+    // single switch, so hanging wells off it would (a) contradict its own tooltip and (b) mean any
+    // future experimental feature could not be enabled independently of well shuffling. With this off,
+    // WellLayout is never rolled and ApplyWellRetype returns immediately, so the mod's stable core
+    // behaves identically to a build without Packet H1.
+    UPROPERTY(BlueprintReadWrite)
+    bool ShuffleResourceWells{false};
+
     // The standard experimental gate (workspace convention: every mod keeps this flag, even when
     // inert). cave-nodes-4: cave placement GRADUATED to always-on — it fixes the cave-drain
     // regression, so it is not optional. NOTHING is currently gated by this flag.
