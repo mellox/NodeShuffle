@@ -82,6 +82,11 @@
 #include "Buildables/FGBuildableResourceExtractorBase.h"
 #include "Buildables/FGBuildableFrackingActivator.h" // fracking crash guard (mirrors NodeShuffle.cpp)
 #include "Buildables/FGBuildableFrackingExtractor.h"
+// H1b: the NODE side of the pairing rule. Both are UCLASS(Abstract) bases -- BP_FrackingCore_C /
+// BP_FrackingSatellite_C derive from them -- so IsChildOf against StaticClass() is the hierarchy test
+// the packet requires, with no class name or /Game/... path anywhere in the decision.
+#include "Resources/FGResourceNodeFrackingCore.h"
+#include "Resources/FGResourceNodeFrackingSatellite.h"
 #include "FGRecipeManager.h"
 #include "Misc/Paths.h"
 #include "Misc/FileHelper.h"
@@ -108,8 +113,15 @@ static FAutoConsoleVariableRef CVarNodeShuffleAutoAllowExtractors(
 
 namespace
 {
-    // DataForge/NodeShuffleAutoAllow/ -- a pack directory EXCLUSIVELY owned by this generator (never
-    // the hand-written NodeShuffleSFPlus/ pack, never touched by anything else). Computed from
+    // DataForge/NodeShuffleAutoAllow/ -- a pack directory EXCLUSIVELY owned by this generator, and since
+    // 2026-07-31 the ONLY NodeShuffle pack there is. The hand-written NodeShuffleSFPlus/ pack this comment
+    // used to contrast against was RETIRED in 1ab8868, for two reasons worth stating so nobody restores it
+    // after finding it in git history: (a) its live entries were already covered by this generator's rule,
+    // so it was duplicated by something that self-maintains; (b) DataForge/ is in no build mirror list, so
+    // every build DELETED the deployed copy and only a manual re-sideload brought it back -- which is
+    // exactly what bit the user (four builds, no re-sideload, KDF loading 3 packs/63 documents instead of
+    // 6/79, Mk8 Miner and Reactive Ore Extractor red in-game). Nothing under DataForge/ now needs a human
+    // to put it back. This path is hardcoded here and never depended on that pack. Computed from
     // FPaths::ProjectDir() (already-linked symbol, confirmed by Packet F's own import list) the SAME way
     // KDataForge itself finds every mod's DataForge root (measured: FactoryGame.log's own
     // "Found 7 DataForge root(s) under <ProjectDir>/" line enumerates exactly this pattern).
@@ -119,8 +131,10 @@ namespace
     }
 
     // Derives the SML "ModReference" (a generated document's extra hasMod entry) from an object path
-    // like "/AlkaLib/Buildables/.../Build_X_C" -- the first path segment, the SAME convention the
-    // hand-written pack documents ("SML's ModReference is the folder/.uplugin stem"). Empty for vanilla
+    // like "/AlkaLib/Buildables/.../Build_X_C" -- the first path segment. The rule, stated on its own terms
+    // rather than by citation (the hand-written pack that used to document it was retired in 1ab8868):
+    // SML's ModReference IS the mod's folder / .uplugin stem, and a mounted mod's content root is that
+    // same stem, so the leading path segment of any object inside it is the ModReference. Empty for vanilla
     // (/Game/) or native (/Script/) content, which needs nothing beyond the pack's base gate.
     FString DeriveModReferenceFromPath(const FString& ObjectPath)
     {
@@ -324,16 +338,69 @@ bool FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled(UWorld* World)
         }
         const FString ExtPath = RawCls->GetPathName();
 
-        // FAIL-CLOSED INVARIANT for the GENERATED pack, mirroring NodeShuffle.cpp's
-        // NodeShuffleIsFrackingExtractor (fracking-crash-fix). A FRACKING extractor (Resource Well
-        // Pressurizer = AFGBuildableFrackingActivator, or the satellite Resource Well Extractor =
-        // AFGBuildableFrackingExtractor; both are UCLASS(Abstract), so every concrete well -- vanilla or
-        // MODDED -- is necessarily a subclass) does a CHECKED cast of the node to a fracking node type in
-        // OnExtractableResourceSet. Placing one on one of our regular Node-type nodes is a FATAL,
-        // user-reported crash. This pass therefore never appends one to SF+'s allow-list.
+        // ================= H1b (ns-h1b, 2026-07-31): FAIL-CLOSED *PAIRING* RULE =================
+        // Replaces a blanket "skip every fracking-derived class" guard that used to sit HERE, before the
+        // group-matching loop ever ran. Read this whole block before touching it: it is the
+        // highest-consequence decision in this file.
+        //
+        // WHY IT CHANGED. Design decisions 2 and 3 (both signed off 2026-07-30, neither reviewed against
+        // the other) are mutually exclusive: 2 says managing wells auto-allow-lists fracking machines "by
+        // the rule", 3 says leave the blanket guard alone -- and the blanket guard made 2 unreachable. That
+        // is not theory; it is MEASURED and user-visible. On 2026-07-31 the user retyped wells successfully
+        // and still could not place bamrenew's machines on them:
+        //   AUTOALLOW extractor='...build_frqking_C'        decision=SKIP reason=fracking-extractor-crash-guard sfPlusAlreadyAllows=0
+        //   AUTOALLOW extractor='...build_pressuresqtmk5_C' decision=SKIP reason=fracking-extractor-crash-guard sfPlusAlreadyAllows=0
+        //
+        // WHAT THE GUARD PROTECTS, PRECISELY. A fracking machine (Resource Well Pressurizer =
+        // AFGBuildableFrackingActivator, satellite Resource Well Extractor = AFGBuildableFrackingExtractor;
+        // both UCLASS(Abstract), so every concrete well -- vanilla or MODDED -- is a subclass) does a
+        // CHECKED cast of the node to a fracking node type in OnExtractableResourceSet
+        // (FGBuildableFrackingExtractor.h declares that override). On one of our ordinary Node-type nodes
+        // that cast is a FATAL, user-reported crash. So the invariant worth holding is NOT "never
+        // allow-list a fracking machine" -- it is "never allow-list a machine that could reach that cast
+        // with a NON-fracking node". On a genuine BP_FrackingSatellite_C / BP_FrackingCore_C the cast
+        // succeeds, so that case was never the hazard.
+        //
+        // THE PREDICATE, AND WHY IT TESTS *BOTH* SIDES. Two axes were candidates:
+        //   (i)  the matched GROUP's node class -- is this evidence coming from a fracking node?
+        //   (ii) the EXTRACTOR's own mRestrictToNodeType -- is this machine natively confined to fracking
+        //        nodes EVERYWHERE, not merely compatible with the one group we happened to match first?
+        // BOTH are required, and (i) alone is NOT sufficient. mRestrictToNodeType is a bare
+        // TSubclassOf<AFGResourceNodeBase> with no native default (FGBuildableResourceExtractorBase.h:140-142
+        // -- read directly), so a fracking-derived class may legitimately leave it UNSET or set it to a
+        // broad base. Such a machine is still bDiscriminated on mAllowedResourceForms alone, so under (i)
+        // alone it would match a fracking group whose resource is liquid/gas, get allow-listed, and then --
+        // its native node-type rule restricting nothing -- be placeable on one of OUR ordinary liquid
+        // nodes, reaching the checked cast with a non-fracking node. That is the original crash, re-opened
+        // through the front door by the very change meant to be safe. (ii) closes it: the restriction must
+        // itself be a class confined to the fracking hierarchy, which makes "cannot be placed on a
+        // non-fracking node" a property of the MACHINE rather than of our matching order.
+        // MEASURED, so this is not a hypothetical cost: both bamrenew classes report hasRestriction=1
+        // (FactoryGame.log 2026-07-30 19:59:53, the last boot before the blanket guard existed), so (ii) is
+        // expected to PASS for them. What is NOT yet measured is WHICH class they restrict to -- the old
+        // SKIP line never printed it. The FRACKPAIR line below prints it, so one boot settles it either way.
+        //
+        // PER-KIND, NOT "ANY FRACKING NODE" (design SS Q4's table): a Pressurizer belongs on the CORE, a
+        // Well Extractor on a SATELLITE. Accepting a cross-paired group would be evidence of the wrong
+        // shape, so the required node base is chosen from the machine's kind.
+        //
+        // FAIL CLOSED, EVERYWHERE -- unknown means skip. A null node class, a class that is not a child of
+        // the required base, an unset or broader restriction, and the both-bases case all leave the pairing
+        // false. Nothing is inferred from a name or a path: the whole decision is IsChildOf against
+        // StaticClass(). (A path/name test was already rejected once on measured evidence -- it would have
+        // mis-skipped Build_PneuMk1_C and missed the misspelled build_frqking_C.)
+        //
+        // WHAT THIS PACKET DELIBERATELY DOES NOT TOUCH: the two hologram hooks in NodeShuffle.cpp
+        // (NodeShuffleIsFrackingExtractor + the IsAllowedOnResource / CanOccupyResource subscriptions).
+        // They are a SEPARATE, still-blanket defence -- they withhold our Scope.Override(true) for EVERY
+        // fracking machine on EVERY one of our nodes -- and they, not this list, are what prevents the
+        // crash at placement time. Allow-listing is not the last block. Both defences must hold
+        // independently, and this packet narrows only this one.
         //
         // WHAT THIS IS AND IS NOT (ns-review-frack, 2026-07-30, boot-2 MEASURED) -- do not let a later
-        // reader mistake this for a crash fix:
+        // reader mistake this for a crash fix. Every bullet below described the BLANKET guard and is kept
+        // because each is a measurement, not an opinion; they are the reason narrowing this guard is safe
+        // rather than brave:
         //  * MEASURED: on the profile this was written against it caught six classes
         //    (vanilla + MkPlus Smasher/Extractor, bamrenew build_frqking_C / build_pressuresqtmk5_C) and
         //    changed ZERO decisions -- all six were already being skipped, four as already-in-PDA-array
@@ -352,31 +419,53 @@ bool FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled(UWorld* World)
         //    already SF+-approved AND whose native rule accepts our node would still place, and still
         //    crash. Closing that needs Scope.Override(false) in the two hologram hooks, not this guard.
         //    Do not treat this line as covering that case.
-        // Value retained despite all of the above: the pack below is MACHINE-GENERATED and fully rewritten
-        // every world load against a mod set that changes without notice, so "the generated pack never
-        // contains a fracking-derived class" is worth holding as a structural invariant rather than as an
-        // accident of how today's skips happen to land. Detected on the buildable CLASS -- the same axis,
-        // and the same predicate, the hologram-side guard applies to GetBuildClass().
-        if (RawCls->IsChildOf(AFGBuildableFrackingActivator::StaticClass())
-            || RawCls->IsChildOf(AFGBuildableFrackingExtractor::StaticClass()))
+        // THE STRUCTURAL INVARIANT, RESTATED FOR H1b. The blanket guard's stated value was that "the
+        // generated pack never contains a fracking-derived class" held as a structural property rather than
+        // as an accident of how today's skips happen to land. That sentence is NO LONGER TRUE and must not
+        // be left standing: this pack may now contain a fracking-derived class. The invariant that replaces
+        // it, and that carries the same weight, is:
+        //     the generated pack never contains a fracking-derived class UNLESS that class is natively
+        //     confined to the fracking node hierarchy AND the evidence for it came from a fracking node
+        //     group of the matching kind.
+        // Still decided on the buildable CLASS -- the same axis, though no longer the same predicate, as
+        // the hologram-side guard applies to GetBuildClass(). The hologram side stays BLANKET on purpose
+        // (see the "does not touch" paragraph above); the two are allowed to differ because they answer
+        // different questions -- "may this be on a list" vs "may we waive the native check right now".
+        const bool bFrackActivator = RawCls->IsChildOf(AFGBuildableFrackingActivator::StaticClass());
+        const bool bFrackExtractor = RawCls->IsChildOf(AFGBuildableFrackingExtractor::StaticClass());
+        const bool bFrackingDerived = bFrackActivator || bFrackExtractor;
+
+        // The node class this machine's evidence MUST come from, chosen per kind (design SS Q4's table).
+        // Stays NULL for the (currently impossible -- UCLASSes are single-inheritance) case of a class
+        // deriving from BOTH bases, which makes every pairing below fail closed instead of guessing.
+        const UClass* RequiredFrackingNodeBase = nullptr;
+        if (bFrackActivator && !bFrackExtractor)
         {
-            // ns-review-frack F4: report SF+ allow-list membership on THIS line rather than reordering the
-            // guard behind the already-in-PDA-array check. Both branches merely `continue`, so the order is
-            // behaviourally a no-op and the only question is what the log preserves -- and for a fracking
-            // class, membership is exactly the fact that proves this skip protected nothing (see above).
-            // Keeping the guard first also keeps it observable: behind the PDA check, a silently broken
-            // guard would be indistinguishable from a working one for every SF+-approved class.
-            UE_LOG(LogNodeShuffle, Display,
-                TEXT("AUTOALLOW extractor='%s' decision=SKIP reason=fracking-extractor-crash-guard ")
-                TEXT("sfPlusAlreadyAllows=%d (this class derives from AFGBuildableFrackingActivator/")
-                TEXT("AFGBuildableFrackingExtractor, whose OnExtractableResourceSet does a CHECKED cast to a ")
-                TEXT("fracking node type -- fatal on one of our Node-type nodes. Fail-closed: we decline to ")
-                TEXT("APPEND it. This removes NOTHING -- if sfPlusAlreadyAllows=1, SF+ permits it with or ")
-                TEXT("without us and this skip protects nothing; what normally keeps such a machine off our ")
-                TEXT("nodes is its own native node-type rule, not this list.)"),
-                *ExtPath, AllowList.AllowedExtractorClasses.Contains(RawCls) ? 1 : 0);
-            continue;
+            RequiredFrackingNodeBase = AFGResourceNodeFrackingCore::StaticClass();
         }
+        else if (bFrackExtractor && !bFrackActivator)
+        {
+            RequiredFrackingNodeBase = AFGResourceNodeFrackingSatellite::StaticClass();
+        }
+
+        // Axis (ii), evaluated ONCE per extractor because it is a property of the machine, not of any
+        // group: is this machine's OWN mRestrictToNodeType a class confined to the fracking hierarchy?
+        // The vacuous (null-node) evaluation shape is used deliberately -- we read RestrictClass /
+        // RestrictClassPath from it and NEVER call AcceptsNatively() on it, which is exactly the
+        // descriptive use FNodeShuffleExtractorAcceptance documents as legitimate.
+        const FNodeShuffleExtractorAcceptance FrackSelf = bFrackingDerived
+            ? FNodeShuffleModule::EvaluateExtractorAcceptance(Ext, nullptr, -1, nullptr)
+            : FNodeShuffleExtractorAcceptance();
+        const bool bRestrictionConfinedToFracking = RequiredFrackingNodeBase && FrackSelf.RestrictClass
+            && FrackSelf.RestrictClass->IsChildOf(RequiredFrackingNodeBase);
+
+        // Pairing telemetry, accumulated across the group loop below and printed on ONE FRACKPAIR line per
+        // fracking-derived extractor. Per-group lines were rejected: with ~6 fracking classes x N managed
+        // groups, and the pass re-running on every re-roll, that is a log flood that buries its own answer.
+        int32 FrackGroupsWithFrackingNode = 0; // groups whose node class IS the required fracking type
+        int32 FrackPairingVetoes = 0;          // groups natively accepted but REFUSED by the pairing rule
+        FString FirstVetoNodeClass = TEXT("<none>");
+        const TCHAR* FirstVetoReason = TEXT("<none>");
 
         // OSCILLATION FIX (2026-07-30, MEASURED in the wild). This USED TO `continue`, which made the
         // generated pack oscillate on alternate boots: boot N generated 7 documents; KDF applied them at
@@ -410,23 +499,96 @@ bool FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled(UWorld* World)
         {
             const FNodeShuffleExtractorAcceptance A =
                 FNodeShuffleModule::EvaluateExtractorAcceptance(Ext, G.NodeClass, G.Form, G.ResourceClass);
-            if (A.AcceptsNatively() && A.bDiscriminated)
+
+            // H1b: the pairing veto. Non-fracking extractors are completely unaffected (bPairingOk stays
+            // true and not one IsChildOf runs for them) -- this narrows ONE class of machine and leaves
+            // every other decision in this loop byte-identical to Packet G's.
+            bool bPairingOk = true;
+            if (bFrackingDerived)
             {
-                bMatched = true;
-                MatchedGroup = &G;
-                // sfPlusAlreadyAllows is REPORTED, never acted on (oscillation fix above): an entry SF+
-                // already has is still regenerated, so the pack stays a pure function of the rule and
-                // cannot delete itself once its own entries land. sfPlusAlreadyAllows=1 on a first-ever
-                // pass means SF+ ships it; on a later pass it usually means WE put it there last boot.
-                UE_LOG(LogNodeShuffle, Display,
-                    TEXT("AUTOALLOW extractor='%s' sfPlusAlreadyAllows=%d decision=%s matchedNode(class='%s' resource='%s' form=%d(%s)) ")
-                    TEXT("nodeIsA=%d formAllowed=%d resAllowed=%d"),
-                    *ExtPath, bAlreadyInPdaArray ? 1 : 0,
-                    bAllowListUnreliable ? TEXT("SKIP(unreliable-read)") : TEXT("ADD"),
-                    *G.NodeClass->GetPathName(), G.ResourceClass ? *G.ResourceClass->GetPathName() : TEXT("<none>"),
-                    G.Form, NodeShuffleFormName(G.Form), A.bNodeIsA ? 1 : 0, A.bFormAllowed ? 1 : 0, A.bResourceAllowed ? 1 : 0);
-                break;
+                const bool bNodeIsFrackingType = RequiredFrackingNodeBase && G.NodeClass
+                    && G.NodeClass->IsChildOf(RequiredFrackingNodeBase);
+                if (bNodeIsFrackingType) { ++FrackGroupsWithFrackingNode; }
+                bPairingOk = bNodeIsFrackingType && bRestrictionConfinedToFracking;
+                if (!bPairingOk && A.AcceptsNatively() && A.bDiscriminated)
+                {
+                    // The machine WOULD have been allow-listed on this group's evidence and the pairing
+                    // rule refused it. This counter is the whole point of the packet being observable:
+                    // a nonzero value on a NON-fracking node class is a live sighting of the crash vector
+                    // axis (ii) exists to close, and the log names it rather than leaving it inferred.
+                    ++FrackPairingVetoes;
+                    if (FrackPairingVetoes == 1)
+                    {
+                        FirstVetoNodeClass = G.NodeClass ? G.NodeClass->GetPathName() : TEXT("<null-node-class>");
+                        FirstVetoReason = !RequiredFrackingNodeBase
+                            ? TEXT("unclassifiable-fracking-kind(derives-from-both-bases)")
+                            : (!bNodeIsFrackingType ? TEXT("node-class-is-not-the-required-fracking-type")
+                                                    : TEXT("extractor-restriction-not-confined-to-fracking"));
+                    }
+                }
             }
+            if (A.AcceptsNatively() && A.bDiscriminated && bPairingOk)
+            {
+                if (!bMatched)
+                {
+                    bMatched = true;
+                    MatchedGroup = &G;
+                    // sfPlusAlreadyAllows is REPORTED, never acted on (oscillation fix above): an entry SF+
+                    // already has is still regenerated, so the pack stays a pure function of the rule and
+                    // cannot delete itself once its own entries land. sfPlusAlreadyAllows=1 on a first-ever
+                    // pass means SF+ ships it; on a later pass it usually means WE put it there last boot.
+                    UE_LOG(LogNodeShuffle, Display,
+                        TEXT("AUTOALLOW extractor='%s' sfPlusAlreadyAllows=%d decision=%s matchedNode(class='%s' resource='%s' form=%d(%s)) ")
+                        TEXT("nodeIsA=%d formAllowed=%d resAllowed=%d"),
+                        *ExtPath, bAlreadyInPdaArray ? 1 : 0,
+                        bAllowListUnreliable ? TEXT("SKIP(unreliable-read)") : TEXT("ADD"),
+                        *G.NodeClass->GetPathName(), G.ResourceClass ? *G.ResourceClass->GetPathName() : TEXT("<none>"),
+                        G.Form, NodeShuffleFormName(G.Form), A.bNodeIsA ? 1 : 0, A.bFormAllowed ? 1 : 0, A.bResourceAllowed ? 1 : 0);
+                }
+                // ns-review-h1b F2: a NON-fracking extractor stops at its first match exactly as Packet G
+                // always did -- one match is sufficient evidence and the rest of the census is irrelevant
+                // to it. A FRACKING-derived one deliberately does NOT break: the FRACKPAIR line below
+                // claims to report whether ANY managed group tempted this machine onto a non-fracking
+                // node, and breaking early would make that claim untestable rather than false-in-a-visible
+                // way. BuildManagedNodeGroupsFromLayout emits {Satellite, Core} per well, so a Well
+                // Extractor pairing on the satellite group would otherwise leave that well's core group --
+                // and every later well -- unscanned, and pairingVetoes=0 would read as "nothing tempted
+                // it" when nothing was ever asked. The cost is a few extra IsChildOf per well machine per
+                // pass; the decision (bMatched/MatchedGroup, both first-hit-wins above) is unchanged.
+                if (!bFrackingDerived) { break; }
+            }
+        }
+
+        // H1b: ONE line per fracking-derived extractor, printed whatever the outcome, carrying every input
+        // the pairing rule used and the outcome it produced. Reading this single line must be enough to
+        // say why a well machine is or is not on the list -- including the two facts that were previously
+        // unmeasurable from the log: which node class the machine restricts to, and whether any managed
+        // group tempted it onto a NON-fracking node. Because the loop above does not break for a fracking
+        // class (F2), groupsConsidered/frackingNodeGroups/pairingVetoes cover the WHOLE census, not the
+        // prefix that happened to precede the first match.
+        if (bFrackingDerived)
+        {
+            // ns-review-h1b F1: the decision token is THREE-valued, not two. bMatched says the pairing
+            // rule was satisfied; it does NOT say a document gets written. When the SF+ allow-list read is
+            // unreliable the pass deliberately generates nothing (the ADD line prints SKIP(unreliable-read)
+            // and the guard below returns without writing), so keying this token on bMatched alone would
+            // report a pressurizer as ADDed on a pass that wrote nothing -- exactly the diagnosis dead end
+            // this line exists to remove.
+            const TCHAR* FrackDecision = !bMatched
+                ? TEXT("SKIP(no valid fracking pairing)")
+                : (bAllowListUnreliable ? TEXT("PAIRED(SUPPRESSED: unreliable-allow-list-read, nothing written this pass)")
+                                        : TEXT("PAIRED(proceeds to ADD)"));
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("AUTOALLOW FRACKPAIR extractor='%s' kind=%s requiredNodeBase='%s' restrictToNodeType='%s' ")
+                TEXT("restrictionConfinedToFracking=%d groupsConsidered=%d frackingNodeGroups=%d pairingVetoes=%d ")
+                TEXT("firstVeto(nodeClass='%s' reason=%s) sfPlusAlreadyAllows=%d decision=%s"),
+                *ExtPath,
+                (bFrackActivator && bFrackExtractor) ? TEXT("BOTH-BASES(unclassifiable-fail-closed)")
+                    : (bFrackActivator ? TEXT("activator(pressurizer->core)") : TEXT("extractor(well-extractor->satellite)")),
+                RequiredFrackingNodeBase ? *RequiredFrackingNodeBase->GetName() : TEXT("<none-fail-closed>"),
+                *FrackSelf.RestrictClassPath, bRestrictionConfinedToFracking ? 1 : 0,
+                NodeGroups.Num(), FrackGroupsWithFrackingNode, FrackPairingVetoes,
+                *FirstVetoNodeClass, FirstVetoReason, bAlreadyInPdaArray ? 1 : 0, FrackDecision);
         }
 
         if (!bMatched)
@@ -435,11 +597,26 @@ bool FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled(UWorld* World)
             // all, so an accept would have been vacuous". Both are SKIPs; only the log tells them apart.
             const FNodeShuffleExtractorAcceptance Desc =
                 FNodeShuffleModule::EvaluateExtractorAcceptance(Ext, RawCls, -1, nullptr);
+            // H1b: a fracking-derived class must never report the generic reason -- "no managed node type
+            // natively accepted" would be a LIE when the truth is "one was accepted and the pairing rule
+            // refused it". Three distinct fracking outcomes, each actionable on sight.
+            const TCHAR* SkipReason;
+            if (bFrackingDerived)
+            {
+                SkipReason = (FrackPairingVetoes > 0)
+                    ? TEXT("fracking-pairing-veto-fail-closed")
+                    : ((FrackGroupsWithFrackingNode > 0)
+                        ? TEXT("fracking-node-group-managed-but-not-natively-accepted")
+                        : TEXT("no-managed-fracking-node-group-of-the-required-kind"));
+            }
+            else
+            {
+                SkipReason = Desc.bDiscriminated ? TEXT("no-managed-node-type-natively-accepted")
+                                                 : TEXT("declares-no-restrictions-accept-would-be-vacuous");
+            }
             UE_LOG(LogNodeShuffle, Display,
                 TEXT("AUTOALLOW extractor='%s' sfPlusAlreadyAllows=%d decision=SKIP reason=%s (hasRestriction=%d allowedForms=[%s] onlyCertainResources=%d)"),
-                *ExtPath, bAlreadyInPdaArray ? 1 : 0,
-                Desc.bDiscriminated ? TEXT("no-managed-node-type-natively-accepted")
-                                    : TEXT("declares-no-restrictions-accept-would-be-vacuous"),
+                *ExtPath, bAlreadyInPdaArray ? 1 : 0, SkipReason,
                 Desc.bHasRestriction ? 1 : 0, *Desc.AllowedFormsCsv, Desc.bOnlyCertainResources ? 1 : 0);
             continue;
         }

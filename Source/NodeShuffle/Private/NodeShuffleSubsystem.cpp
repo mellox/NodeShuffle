@@ -5728,25 +5728,25 @@ void ANodeShuffleSubsystem::BuildManagedNodeGroupsFromLayout(TArray<FNodeShuffle
 
     // ---- Packet H1 (ns-wells-h1): resource wells contribute managed groups too (design §2.6) ----
     //
-    // *** READ THIS FIRST: THIS IS GROUNDWORK FOR H2 AND CHANGES NO ALLOW-LIST DECISION TODAY. ***
+    // *** READ THIS FIRST: SINCE H1b THESE GROUPS ARE LOAD-BEARING. THEY DECIDE ALLOW-LIST OUTCOMES. ***
     //
-    // ns-review-h1 F1 (MEASURED against the code, and it corrects the DESIGN, not this file). Design
-    // decision 2 claims that managing wells auto-allow-lists bamrenew's build_frqking_C and
-    // build_pressuresqtmk5_C "by the rule". IT CANNOT, and the reason is design decision 3 — the
-    // fracking crash guard, which decisions 2 and 3 were BOTH signed off without noticing they are
-    // mutually exclusive. NodeShuffleAutoAllowExtractors.cpp:360-379 skips every class deriving from
-    // AFGBuildableFrackingActivator or AFGBuildableFrackingExtractor BEFORE the group-matching loop is
-    // ever reached. Both bases are UCLASS(Abstract), so a Resource Well Pressurizer and a Resource Well
-    // Extractor are necessarily subclasses of one of them — vanilla or modded, no exceptions. That
-    // guard's own measured comment at :337-340 names build_frqking_C and build_pressuresqtmk5_C
-    // explicitly as classes it already skips.
+    // HISTORY, because the previous wording said the opposite and a reader who finds it in git history
+    // needs to know which half changed. H1 emitted these groups as pure GROUNDWORK: ns-review-h1 F1
+    // measured that design decisions 2 and 3 were mutually exclusive (2: managing wells auto-allow-lists
+    // bamrenew's build_frqking_C / build_pressuresqtmk5_C "by the rule"; 3: leave the fracking crash guard
+    // alone), because NodeShuffleAutoAllowExtractors.cpp skipped every AFGBuildableFrackingActivator /
+    // AFGBuildableFrackingExtractor subclass BEFORE the group-matching loop was reached. Both bases are
+    // UCLASS(Abstract), so every Pressurizer and Well Extractor is necessarily such a subclass. So the
+    // groups were correct and unconsumable, and H1 said so.
     //
-    // So: the groups below are EMITTED and are CORRECT, and no fracking machine can consume them while
-    // the guard stands. That is the deliberate outcome for this packet — the guard is the highest-
-    // consequence code in the mod and narrowing it to design §5.3's fail-closed pairing rule is its own
-    // packet with its own cold review, NOT a rider on a retype change. The value of emitting them now is
-    // that the managed-node census becomes correct and complete for wells, so when the guard is
-    // eventually narrowed nothing else has to move.
+    // H1b (2026-07-31) RESOLVED THAT by narrowing the guard to a fail-closed PAIRING rule: a
+    // fracking-derived machine is now allow-listed exactly when the matched group's node class IS the
+    // fracking node type its kind requires AND its own mRestrictToNodeType is itself confined to that
+    // hierarchy. The consequence for THIS function: the two groups emitted below are precisely the
+    // evidence that rule consumes. Dropping either one now silently un-builds half a well — emit the
+    // SATELLITE class and the Pressurizer has nothing to match; emit the CORE class and the Well
+    // Extractor has nothing to match. See NodeShuffleAutoAllowExtractors.cpp's H1b block for the full
+    // predicate and for why the two hologram hooks stay BLANKET regardless of what this census says.
     //
     // WHY THE EXTENSION IS STILL REQUIRED. The loop above requires bIsNewNode, and a well is never
     // spawned, so without this a managed well contributes NOTHING to the census — which would be wrong
@@ -5759,8 +5759,8 @@ void ANodeShuffleSubsystem::BuildManagedNodeGroupsFromLayout(TArray<FNodeShuffle
     // BOTH the satellite class AND the core class are emitted, deliberately, because they answer
     // different questions: a Resource Well Extractor restricts to the SATELLITE node type and a
     // Resource Well Pressurizer restricts to the CORE node type. Emitting only one would leave the
-    // census half-right in a way that would look correct until the guard is narrowed and then produce a
-    // well nobody can finish building.
+    // census half-right and produce a well nobody can finish building — a state that was merely LATENT
+    // under H1's blanket guard and is REACHABLE now that H1b consumes these groups.
     //
     // The class paths come from the LIVE actors captured at roll time, never from hardcoded
     // /Game/FactoryGame/... paths, so a modded well class joins automatically.

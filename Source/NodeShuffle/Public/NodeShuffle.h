@@ -23,6 +23,17 @@ struct NODESHUFFLE_API FNodeShuffleExtractorAcceptance
     bool bHasRestriction = false;
     FString RestrictClassName = TEXT("<none>");
     FString RestrictClassPath = TEXT("<none>");
+    // H1b (ns-h1b, 2026-07-31): the restriction CLASS ITSELF, not just its name/path, so a caller can ask
+    // HIERARCHY questions about it (IsChildOf) instead of matching a path string -- which this codebase
+    // has already rejected once on measured evidence as an unsound axis. Null exactly when
+    // bHasRestriction is false. Single-sourced here on purpose: mRestrictToNodeType is PROTECTED, and
+    // although every member of FNodeShuffleModule could read it a second time, a second read is a second
+    // thing to keep in step with this function. Read it from here instead.
+    // LIFETIME (ns-review-h1b F3): a raw, NON-UPROPERTY pointer -- it is NOT GC-rooted, and this struct is
+    // a plain copyable value that the reflection system never sees. It is valid only for the frame it was
+    // produced in, alongside the CDO it was read from. Read it, decide with it, drop it. DO NOT STORE IT
+    // in a member, a static, a cached map, or anything that outlives the call that produced it.
+    const UClass* RestrictClass = nullptr;
     // True when no NodeClass was supplied to compare (vacuous), OR NodeClass IsChildOf the restriction,
     // OR there is no restriction at all.
     bool bNodeIsA = true;

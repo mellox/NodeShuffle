@@ -280,6 +280,7 @@ FNodeShuffleExtractorAcceptance FNodeShuffleModule::EvaluateExtractorAcceptance(
 
     const UClass* Restrict = Extractor->mRestrictToNodeType.Get();
     Out.bHasRestriction = (Restrict != nullptr);
+    Out.RestrictClass = Restrict; // H1b: hierarchy-queryable form of the same value (see the struct comment)
     Out.RestrictClassName = Restrict ? Restrict->GetName() : TEXT("<none>");
     Out.RestrictClassPath = Restrict ? Restrict->GetPathName() : TEXT("<none>");
     Out.bNodeIsA = (Restrict && NodeClass) ? NodeClass->IsChildOf(Restrict) : true;
@@ -403,7 +404,7 @@ using FNodeShuffleActorExtractorLoggedSet = TSet<FNodeShuffleActorExtractorKey>;
 void FNodeShuffleModule::StartupModule()
 {
     UE_LOG(LogNodeShuffle, Log, TEXT("NodeShuffle module loaded"));
-    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle 1.3.0 LOADED (2026-07-31-wells-h1-3) ====="));
+    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle 1.3.0 LOADED (2026-07-31-h1b-2) ====="));
     FNodeShuffleModule::LogAutoAllowExtractorsState(); // Packet G: log the CVar state once at startup
 
 #if !WITH_EDITOR
