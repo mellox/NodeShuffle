@@ -99,6 +99,66 @@ struct NODESHUFFLE_API FNodeShuffleExtractorAcceptance
     }
 };
 
+// Forward-declared rather than included: FNodeShuffleManagedGroup lives in NodeShuffleSubsystem.h,
+// which includes THIS header. Only references to it appear below, so the incomplete type is enough and
+// the include arrow stays one-way (subsystem -> module).
+struct FNodeShuffleManagedGroup;
+
+// ---- ns-h1b-notice: H1b's fail-closed fracking PAIRING rule, as a shared classification ----
+// EXTRACTED, not re-implemented. The rule decides which (extractor, node-group) pairs may serve as
+// allow-list evidence for a fracking machine (see the long H1b block in NodeShuffleAutoAllowExtractors.cpp
+// for the full argument). It now has TWO consumers: the decision itself, and the pending-notice's
+// resource-naming pass, which must not name a Resource Well Pressurizer as accepting "Coal" just because
+// some non-fracking group satisfied the generic predicate. Two copies of a fail-closed rule is one copy
+// too many -- if they ever disagreed, the log and the message would disagree with the decision, which is
+// exactly the class of bug this mod keeps paying for. Hence one function, two callers.
+enum class ENodeShuffleFrackPair : uint8
+{
+    NotFrackingExtractor,             // the rule does not apply -- always permitted
+    Allowed,                          // fracking machine, correctly paired with its own node kind
+    RejectedUnclassifiableKind,       // derives from BOTH fracking bases -- fail closed
+    RejectedNodeNotFracking,          // the group's node class is not the required fracking type
+    RejectedRestrictionNotConfined,   // the machine's own mRestrictToNodeType is unset or too broad
+};
+
+// ---- ns-h1b-notice: the "restart required" player notice ----
+// ONE extractor this pass wrote an allow-list document for that SF+ does NOT yet permit -- i.e. it
+// needs exactly one game restart before it will build on a shuffled node. Plain transient data: never
+// SaveGame, never reflected. The pending set is a STATE recomputed from scratch every pass, and
+// persisting it would fight the self-clearing property that is the only reason this notice cannot nag.
+struct NODESHUFFLE_API FNodeShufflePendingEntry
+{
+    FString ExtractorPath;       // full class path -- used in the log AND in the de-dup signature
+    FText   BuildingName;        // player-facing name; NameSource says which rung of the ladder produced it
+    int32   NameSource = 0;      // 0 = mDisplayName, 1 = GetExtractorTypeName, 2 = class name (WARNING)
+    TArray<FText> ResourceNames; // capped for the message; ExtraResourceCount carries the remainder
+    int32   ExtraResourceCount = 0;
+    // TRUE means the document could NOT be written. That is a DIFFERENT and louder situation than
+    // "pending": a restart will not fix it, so it gets its own copy and must never be folded in with
+    // the restart message.
+    bool    bWriteFailed = false;
+    // ns-review-notice F1: SF+ ALREADY permits this class, independently of our pack. Only ever true on
+    // a write-FAILED entry (a successful write for an already-allowed class is not pending on anything
+    // and never reaches this struct). It exists because the failure copy would otherwise tell the player
+    // that buildings which demonstrably work are permanently broken -- see EmitPendingNotice for the two
+    // sentences this selects between, and why the flag cannot distinguish the two-sided case perfectly.
+    bool    bAlreadyAllowed = false;
+};
+
+// The raw hand-off from the AUTOALLOW write loop to the notice builder. Deliberately tiny: the write
+// loop's job is to say WHICH classes are pending, not to compose player copy.
+// LIFETIME: ExtractorClass is a raw, non-UPROPERTY, non-GC-rooted pointer, valid only for the pass that
+// produced it. It is consumed synchronously by BuildPendingNotice within that same pass and is NEVER
+// stored on the queue that outlives it -- FNodeShufflePendingEntry deliberately holds text and a path
+// string instead of a class pointer for exactly this reason.
+struct NODESHUFFLE_API FNodeShufflePendingRaw
+{
+    const UClass* ExtractorClass = nullptr;
+    FString ExtractorPath;
+    bool bWriteFailed = false;
+    bool bAlreadyAllowed = false; // ns-review-notice F1 -- see FNodeShufflePendingEntry's field comment
+};
+
 // Module installs diagnostic hooks on the Mk1 extractor hologram (redesign-13..19).
 // coexist-veto-1: NODESHUFFLE_API so the optional NodeShuffleVetoKBFL module can link the statics
 // below (diagnostics gate, managed-node registry, arm-hook registration).
@@ -193,7 +253,41 @@ public:
     // false when a dependency (the recipe manager) is not ready yet and the caller should retry next
     // tick; true when the pass COMPLETED this tick (including "disabled", "SF+ not installed", and "ran
     // and wrote/cleared the generated pack") -- the caller latches on true only.
-    static bool RunAutoAllowExtractorsIfEnabled(class UWorld* World);
+    // ns-h1b-notice: OutPending is an optional out-parameter, filled ONLY on a pass that completed and
+    // actually wrote documents. The RETURN VALUE IS UNCHANGED and must stay that way -- the notice may
+    // never influence this pass's latch/retry semantics. A degraded pass (unreliable allow-list read,
+    // empty census, CVar off, SF+ absent) returns before any document is written, so OutPending is left
+    // empty by construction rather than by a check that could be forgotten.
+    static bool RunAutoAllowExtractorsIfEnabled(class UWorld* World,
+        TArray<FNodeShufflePendingEntry>* OutPending = nullptr);
+
+    // ns-h1b-notice: H1b's pairing rule, single-sourced (see the enum's comment). RestrictClass is the
+    // extractor's own mRestrictToNodeType, taken from FNodeShuffleExtractorAcceptance::RestrictClass so
+    // the protected field is read in exactly one place.
+    static ENodeShuffleFrackPair ClassifyFrackingPairing(const class UClass* ExtractorClass,
+        const class UClass* NodeClass, const class UClass* RestrictClass);
+
+    // ns-h1b-notice: turns the raw pending classes into player-facing entries -- display-name ladder
+    // (§3.4) plus the second, non-breaking collection pass over NodeGroups that names EVERY resource the
+    // extractor accepts (§3.6), honouring the pairing rule above. Pure apart from logging.
+    static void BuildPendingNotice(const TArray<FNodeShufflePendingRaw>& Raw,
+        const TArray<FNodeShuffleManagedGroup>& NodeGroups,
+        TArray<FNodeShufflePendingEntry>& OutEntries);
+
+    // ns-h1b-notice: sorted, joined identity of a pending set. The de-dup key -- see the anti-nag rules.
+    // Derived ONLY from the pending set (which is derived from available extractors x managed groups
+    // MINUS SF+'s list); never from anything the generated pack itself produced, because that is the
+    // feedback-loop shape that caused the oscillation bug.
+    static FString BuildPendingNoticeSignature(const TArray<FNodeShufflePendingEntry>& Entries);
+
+    // ns-review-notice F4: the same keys the signature is built from, as a list, so the subset test and
+    // the signature can never disagree about what "the same entry" means. One format, one function.
+    static void BuildPendingNoticeKeys(const TArray<FNodeShufflePendingEntry>& Entries,
+        TArray<FString>& OutKeys);
+
+    // ns-h1b-notice: composes the copy and posts it to Satisfactory's chat. Returns true when the
+    // message was handed to the chat manager; false means "not delivered, keep the queue and retry".
+    static bool EmitPendingNotice(class UWorld* World, const TArray<FNodeShufflePendingEntry>& Entries);
     // Logs the CVar's configured value once, called from StartupModule (module load, before any world) --
     // "log the state once at startup" is a hard requirement so a user reading the log from boot alone
     // can tell whether this experimental pass is armed for the session.

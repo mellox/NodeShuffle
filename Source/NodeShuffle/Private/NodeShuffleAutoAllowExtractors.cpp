@@ -170,7 +170,8 @@ void FNodeShuffleModule::LogAutoAllowExtractorsState()
             : TEXT("current (pre-Packet-G) behaviour fully restored; any previously-generated pack will be deleted."));
 }
 
-bool FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled(UWorld* World)
+bool FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled(UWorld* World,
+    TArray<FNodeShufflePendingEntry>* OutPending)
 {
     const FString PackDir = GetAutoAllowPackDir();
     // ns-review-g G8 / ns-review-g2 F4: OWNERSHIP ASSERT AT THE SEAM. This function DELETES a directory
@@ -323,6 +324,12 @@ bool FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled(UWorld* World)
         FString MatchedNodeClass;
         FString MatchedResourceClass;
         int32 MatchedForm = -1;
+        // ns-h1b-notice: the two fields the player notice needs, and NOTHING the decision reads.
+        // bAlreadyAllowed is the PENDING signal itself -- a document we wrote for a class SF+ already
+        // permits is not pending on anything, it is already live. Recorded here, at the point the
+        // decision already computed it, rather than re-derived later against a possibly-changed read.
+        const UClass* ExtractorClass = nullptr;
+        bool bAlreadyAllowed = false;
     };
     TArray<FGeneratedDoc> ToGenerate;
 
@@ -438,6 +445,9 @@ bool FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled(UWorld* World)
         // The node class this machine's evidence MUST come from, chosen per kind (design SS Q4's table).
         // Stays NULL for the (currently impossible -- UCLASSes are single-inheritance) case of a class
         // deriving from BOTH bases, which makes every pairing below fail closed instead of guessing.
+        // NOTE (ns-h1b-notice): this local is now for the LOG LINE only. The DECISION lives in
+        // FNodeShuffleModule::ClassifyFrackingPairing, which derives the same base the same way -- see
+        // that function for why the rule had to become shared rather than stay inline here.
         const UClass* RequiredFrackingNodeBase = nullptr;
         if (bFrackActivator && !bFrackExtractor)
         {
@@ -506,10 +516,15 @@ bool FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled(UWorld* World)
             bool bPairingOk = true;
             if (bFrackingDerived)
             {
+                // ns-h1b-notice: the rule itself now lives in ClassifyFrackingPairing so the notice's
+                // resource-naming pass consumes the SAME predicate. The counters below stay here --
+                // they are this pass's telemetry, not part of the rule.
+                const ENodeShuffleFrackPair Pair =
+                    FNodeShuffleModule::ClassifyFrackingPairing(RawCls, G.NodeClass, FrackSelf.RestrictClass);
                 const bool bNodeIsFrackingType = RequiredFrackingNodeBase && G.NodeClass
                     && G.NodeClass->IsChildOf(RequiredFrackingNodeBase);
                 if (bNodeIsFrackingType) { ++FrackGroupsWithFrackingNode; }
-                bPairingOk = bNodeIsFrackingType && bRestrictionConfinedToFracking;
+                bPairingOk = (Pair == ENodeShuffleFrackPair::Allowed);
                 if (!bPairingOk && A.AcceptsNatively() && A.bDiscriminated)
                 {
                     // The machine WOULD have been allow-listed on this group's evidence and the pairing
@@ -520,10 +535,17 @@ bool FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled(UWorld* World)
                     if (FrackPairingVetoes == 1)
                     {
                         FirstVetoNodeClass = G.NodeClass ? G.NodeClass->GetPathName() : TEXT("<null-node-class>");
-                        FirstVetoReason = !RequiredFrackingNodeBase
-                            ? TEXT("unclassifiable-fracking-kind(derives-from-both-bases)")
-                            : (!bNodeIsFrackingType ? TEXT("node-class-is-not-the-required-fracking-type")
-                                                    : TEXT("extractor-restriction-not-confined-to-fracking"));
+                        switch (Pair)
+                        {
+                        case ENodeShuffleFrackPair::RejectedUnclassifiableKind:
+                            FirstVetoReason = TEXT("unclassifiable-fracking-kind(derives-from-both-bases)"); break;
+                        case ENodeShuffleFrackPair::RejectedNodeNotFracking:
+                            FirstVetoReason = TEXT("node-class-is-not-the-required-fracking-type"); break;
+                        case ENodeShuffleFrackPair::RejectedRestrictionNotConfined:
+                            FirstVetoReason = TEXT("extractor-restriction-not-confined-to-fracking"); break;
+                        default:
+                            FirstVetoReason = TEXT("<unexpected-classification>"); break;
+                        }
                     }
                 }
             }
@@ -631,6 +653,8 @@ bool FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled(UWorld* World)
         Doc.MatchedNodeClass = MatchedGroup->NodeClass->GetPathName();
         Doc.MatchedResourceClass = MatchedGroup->ResourceClass ? MatchedGroup->ResourceClass->GetPathName() : TEXT("<none>");
         Doc.MatchedForm = MatchedGroup->Form;
+        Doc.ExtractorClass = RawCls;
+        Doc.bAlreadyAllowed = bAlreadyInPdaArray; // ns-h1b-notice: the pending signal, captured in place
         ToGenerate.Add(Doc);
     }
 
@@ -670,6 +694,15 @@ bool FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled(UWorld* World)
             TEXT("pack at '%s' untouched rather than replacing it with an empty one (deleting it would ")
             TEXT("un-allow-list extractors that a good earlier pass correctly added). Retrying next tick."),
             *PackDir);
+        // ns-h1b-notice: SAY SO EXPLICITLY rather than relying on the reader to notice that OutPending
+        // was never filled. A degraded read is NOT a pending state: nothing was written, so nothing is
+        // waiting on a restart, and telling the player "restart to fix this" would be a confident
+        // falsehood -- in the one packet whose entire purpose is to stop confident falsehoods. The
+        // player is told nothing; the log says why. Do not "helpfully" emit a notice from here.
+        UE_LOG(LogNodeShuffle, Warning,
+            TEXT("PENDINGNOTICE: SUPPRESSED(degraded-pass) -- the SF+ allow-list read was unreliable, so NO ")
+            TEXT("document was written and there is nothing pending. No chat message. This is a BROKEN READ, ")
+            TEXT("not a restart-required state; a restart would not change it."));
         return false;
     }
     if (NodeGroups.Num() == 0 && TotalActiveEntries > 0)
@@ -728,6 +761,12 @@ bool FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled(UWorld* World)
 
     int32 WrittenCount = 0;
     int32 FailedCount = 0;
+    // ns-h1b-notice: PENDING is built from documents that were actually WRITTEN, never from ToGenerate.
+    // A document that failed to write is not "pending on a restart" -- it is broken, and gets its own,
+    // louder message. Keeping both in one array with a flag (rather than two arrays) means the notice
+    // builder sees them in one pass and cannot accidentally report a failure as a restart.
+    TArray<FNodeShufflePendingRaw> NoticeRaw;
+    int32 AlreadyAllowedCount = 0;
     for (const FGeneratedDoc& Doc : ToGenerate)
     {
         FString HasModLines = TEXT("    - SatisfactoryPlus\n    - NodeShuffle\n");
@@ -770,6 +809,18 @@ bool FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled(UWorld* World)
             UE_LOG(LogNodeShuffle, Display,
                 TEXT("AUTOALLOW extractor='%s' decision=ADD -- WROTE '%s' (verified), takes effect NEXT boot"),
                 *Doc.ExtractorPath, *FileName);
+            // The pending set: WRITTEN, and SF+ does not permit it yet. A class SF+ already permits was
+            // still (deliberately) regenerated by the oscillation fix, but it is live right now -- the
+            // player needs no restart for it and must not be told otherwise.
+            if (Doc.bAlreadyAllowed) { ++AlreadyAllowedCount; }
+            else
+            {
+                FNodeShufflePendingRaw& R = NoticeRaw.AddDefaulted_GetRef();
+                R.ExtractorClass = Doc.ExtractorClass;
+                R.ExtractorPath = Doc.ExtractorPath;
+                R.bWriteFailed = false;
+                R.bAlreadyAllowed = false; // by construction: this branch is the !bAlreadyAllowed case
+            }
         }
         else
         {
@@ -777,6 +828,17 @@ bool FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled(UWorld* World)
             UE_LOG(LogNodeShuffle, Error,
                 TEXT("AUTOALLOW extractor='%s' decision=ADD-FAILED -- could NOT write '%s'. This extractor ")
                 TEXT("will NOT be allow-listed next boot."), *Doc.ExtractorPath, *DocPath);
+            // ns-review-notice F1: the failure branch MUST carry bAlreadyAllowed too. Unlike the success
+            // branch above, a failed write is reported for EVERY class -- including ones SF+ ships
+            // natively (ModularMiner, BioWater, MiniEx, the vanilla pumps), which work today and will
+            // keep working. Telling that player their buildings are permanently broken would be a
+            // confident falsehood in the packet built to stop them. See EmitPendingNotice for the two
+            // sentences this selects between.
+            FNodeShufflePendingRaw& R = NoticeRaw.AddDefaulted_GetRef();
+            R.ExtractorClass = Doc.ExtractorClass;
+            R.ExtractorPath = Doc.ExtractorPath;
+            R.bWriteFailed = true;
+            R.bAlreadyAllowed = Doc.bAlreadyAllowed;
         }
     }
 
@@ -784,5 +846,48 @@ bool FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled(UWorld* World)
         TEXT("AUTOALLOW: pass complete -- %d matched, %d document(s) WRITTEN, %d FAILED, at '%s' ")
         TEXT("(0 matched is a valid, harmless state, not an error; a nonzero FAILED count is an error)"),
         ToGenerate.Num(), WrittenCount, FailedCount, *PackDir);
+
+    // ns-h1b-notice: the pass's own one-line answer to "what was the player told, and why".
+    UE_LOG(LogNodeShuffle, Display,
+        TEXT("PENDINGNOTICE: pass summary -- written=%d alreadyAllowed=%d PENDING=%d writeFailed=%d ")
+        TEXT("| sfPlusArrayEntries=%d resolved=%d | netMode=%d"),
+        WrittenCount, AlreadyAllowedCount, NoticeRaw.Num() - FailedCount, FailedCount,
+        AllowList.ArrayEntryCount, AllowList.AllowedExtractorClasses.Num(),
+        World ? (int32)World->GetNetMode() : -1);
+
+    if (NoticeRaw.Num() == 0)
+    {
+        // Distinguishes "the notice never fired" from "the code never ran" -- and states that silence is
+        // the NORMAL steady state, so a reader does not go looking for a broken notice.
+        // ns-review-notice F5: the two silences are NOT the same fact and must not share a sentence.
+        // "all 0 written document(s) are already on SF+'s allow-list" is nonsense, and it appeared in the
+        // exact block a reader consults to tell a working-but-quiet notice from a dead one.
+        if (WrittenCount > 0)
+        {
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("PENDINGNOTICE: nothing pending this pass -- all %d written document(s) are already on ")
+                TEXT("SF+'s allow-list. No message shown (this is the normal steady state)."), WrittenCount);
+        }
+        else
+        {
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("PENDINGNOTICE: nothing pending this pass -- the rule matched NO extractor at all, so no ")
+                TEXT("document was written (matched=%d). Nothing to announce; this is a legitimately empty ")
+                TEXT("answer, not a failure."), ToGenerate.Num());
+        }
+    }
+    else if (OutPending)
+    {
+        FNodeShuffleModule::BuildPendingNotice(NoticeRaw, NodeGroups, *OutPending);
+    }
+    else
+    {
+        // Only reachable if a future caller drops the out-param. Say so rather than going quiet.
+        UE_LOG(LogNodeShuffle, Warning,
+            TEXT("PENDINGNOTICE: %d entr(ies) are pending but this caller passed no OutPending array -- ")
+            TEXT("the player will NOT be told. (Log-only fallback; see RunAutoAllowExtractorsIfEnabled.)"),
+            NoticeRaw.Num());
+    }
+
     return FailedCount == 0; // a partial write must not latch -- retry next tick
 }

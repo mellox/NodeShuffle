@@ -322,10 +322,51 @@ void ANodeShuffleSubsystem::RefreshTick()
         // Packet G (ns-automatch): once per load / re-roll, after the layout (and therefore the managed-
         // node census) has been applied -- see the member declaration comment in NodeShuffleSubsystem.h
         // for why this sits alongside bKnowledgeUnlockDone and mirrors its exact retry idiom.
-        if (!bAutoAllowExtractorsDone && FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled(GetWorld()))
+        if (!bAutoAllowExtractorsDone)
         {
-            bAutoAllowExtractorsDone = true;
+            // ns-h1b-notice: the pass fills PendingFromPass only on a completed pass that actually wrote
+            // documents; every degraded path returns before writing, so there is nothing to filter here.
+            // The RETURN VALUE and therefore the latch/retry behaviour is untouched by the notice.
+            //
+            // ns-review-notice2 F-A (BLOCKING FIX): the hand-off MUST NOT sit inside the success branch.
+            // A bWriteFailed entry exists only when FailedCount > 0, which forces the pass to return
+            // FALSE (a partial write must not latch -- it retries). So with the hand-off inside the
+            // `if`, PendingFromPass died on the stack unread and the ENTIRE failure half of the notice
+            // was unreachable: AV blocks 2 of 7 documents and the player was told nothing at all --
+            // neither the "may stop working" warning for the 2, nor the restart notice for the 5 that
+            // DID write. Silence is the pre-packet state this packet exists to end.
+            //
+            // AND WHY THE OBVIOUS VERSION OF THIS FIX LIVELOCKS -- do not "simplify" it back. Under a
+            // PERMANENT write failure the pass never latches, so it runs every tick. An unconditional
+            // `PendingNoticeGateTicks = -1` here would re-arm the spawn gate every tick, the emitter
+            // would set it to 0 and return, the next tick would reset it to -1, and the message would
+            // never post. So the gate is re-armed ONLY when the pending set is genuinely DIFFERENT from
+            // what is already queued. Repeat-set spam across passes is already handled by
+            // AnnouncedPendingKeys (NewKeyCount == 0 -> SUPPRESSED(duplicate)); this compare exists
+            // solely to stop an unchanged set from resetting the gate underneath the emitter.
+            //
+            // The pass's return contract is deliberately NOT changed to latch on failure: a transient
+            // AV lock would then never self-heal.
+            TArray<FNodeShufflePendingEntry> PendingFromPass;
+            const bool bPassDone = FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled(GetWorld(), &PendingFromPass);
+            if (bPassDone) { bAutoAllowExtractorsDone = true; }
+            if (PendingFromPass.Num() > 0)
+            {
+                TArray<FString> NewKeys, OldKeys;
+                FNodeShuffleModule::BuildPendingNoticeKeys(PendingFromPass, NewKeys);
+                FNodeShuffleModule::BuildPendingNoticeKeys(PendingNoticeQueue, OldKeys);
+                NewKeys.Sort();
+                OldKeys.Sort();
+                if (NewKeys != OldKeys)
+                {
+                    // REPLACE, never append: the newest pass is the authoritative pending state, and
+                    // appending would let a stale entry from an earlier pass ride into the message.
+                    PendingNoticeQueue = MoveTemp(PendingFromPass);
+                    PendingNoticeGateTicks = -1; // re-arm the spawn gate for this genuinely new set
+                }
+            }
         }
+        EmitPendingNoticeIfReady(Config.ShowCompatibilityNotices);
         // scanregen-1 consume point (P2 §4 touch-point 3, §9 AMENDMENT — binding): do NOT clear
         // bScannerClusterRefreshPending on the SKIPPED branch. The flag clears ONLY when
         // RefreshScannersAndRadarTowers() actually runs from HERE (it sets bScannerRefreshedThisPass

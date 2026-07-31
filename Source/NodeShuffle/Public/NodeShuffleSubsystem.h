@@ -4,6 +4,7 @@
 #include "Subsystem/ModSubsystem.h"
 #include "FGSaveInterface.h"
 #include "Resources/FGResourceNode.h"
+#include "NodeShuffle.h" // ns-h1b-notice: FNodeShufflePendingEntry, held by value in a member below
 #include "NodeShuffleSubsystem.generated.h"
 
 class AFGNodeMeshActor;
@@ -460,6 +461,47 @@ private:
     // dependency (the recipe manager) isn't ready yet, so RefreshTick retries; true means the pass
     // COMPLETED this tick (including "disabled" and "SF+ absent" -- there is nothing further to retry).
     bool bAutoAllowExtractorsDone = false;
+
+    // ns-h1b-notice: the deferred emitter. Called every RefreshTick; does nothing at all unless a pass
+    // queued something. Defined in NodeShufflePendingNoticeEmit.cpp (ns-review-notice2 F-B: it used to
+    // say NodeShufflePendingNotice.cpp "next to the copy it delivers", which the file split inverted --
+    // the copy now lives in the OTHER file). The seam between the two is WHEN to speak (this function,
+    // in ...Emit.cpp) versus WHAT to say (the FNodeShuffleModule statics, in NodeShufflePendingNotice.cpp).
+    // Neither lives in this file's already-7000-line .cpp.
+    void EmitPendingNoticeIfReady(bool bNoticesEnabled);
+
+    // ---- ns-h1b-notice: the deferred "restart required" player notice ----
+    // The pass completes ~19-50 s after boot, when the world exists but the local player's chat widget
+    // may not. So the pass QUEUES and RefreshTick emits, once the player has actually spawned.
+    //
+    // ALL THREE MEMBERS ARE TRANSIENT BY DESIGN -- no UPROPERTY(SaveGame) anywhere in this block, and
+    // that is load-bearing, not an omission. PENDING is a STATE recomputed every pass (written documents
+    // MINUS what SF+ already allows); it empties itself one boot after the documents land, which is the
+    // only reason this notice cannot nag. Persisting any of this across boots would fight that mechanism
+    // and could suppress a notice the player genuinely needs after a rebuild.
+    TArray<FNodeShufflePendingEntry> PendingNoticeQueue;
+    // LOG-ONLY BREADCRUMB -- NOT a decision input. ns-review-notice2 F-C: this used to claim it was what
+    // stopped the measured double-pass from double-messaging. It WAS, until F4 moved that job to
+    // AnnouncedPendingKeys below; since then it is written once and read only by log format strings.
+    // Kept deliberately, because a human reading the log wants to see the previous set alongside the new
+    // one when a decision line says EMIT or SUPPRESSED -- but a field documented as load-bearing while
+    // nothing reads it is exactly the documentation falsehood this packet exists to stop, so it says so.
+    FString LastNotifiedSignature;
+    // ns-review-notice F4: the SET of pending keys already announced this session. The signature above is
+    // a set IDENTITY, which makes any change look new -- including a re-roll that merely SHRINKS the
+    // pending set, which would post a second "restart required" message naming a strict subset of what
+    // was already said. This set turns the test into "does the new set contain anything unannounced?",
+    // so a shrink is silent while a genuinely new entry still gets through. Transient, like everything
+    // else in this block.
+    TSet<FString> AnnouncedPendingKeys;
+    // Two-stage emit gate: -1 = nothing armed; 0 = a valid local player+pawn was seen this tick, wait
+    // one more tick (~5 s) so the chat widget is up before we post; 1 = emit now.
+    int32 PendingNoticeGateTicks = -1;
+    // ns-review-notice F3: bounded retries. If the chat manager never materialises after the player gate
+    // has passed, an uncapped retry logs three lines every ~5 s for the rest of the session (~720/hour)
+    // for a message that will never arrive. This workspace has already paid once for unbounded per-call
+    // log output; give up loudly instead.
+    int32 PendingNoticeEmitAttempts = 0;
     // scanregen-1 (P2 design §4 touch-point 1): knowledge-unlock -> scanner/radar-tower refresh
     // trigger. UnlockModdedScannerKnowledge() has TWO callers — RefreshTick (world-settled) and
     // PostLoadGame_Implementation (mid save-load, before actor settling) — so the producer only

@@ -25,7 +25,10 @@ UNodeShuffleConfig::UNodeShuffleConfig()
 {
     ConfigId = FConfigId{"NodeShuffle", ""};
     DisplayName = FText::FromString(TEXT("Node Shuffle"));
-    Description = FText::FromString(TEXT("Per-save randomized resource node layout: extra node locations, shuffled resources and purities, balance minimums."));
+    // ns-h1b-notice, Option A2: a static breadcrumb for the player who missed the chat line. It cannot
+    // name specifics (this text is set once on the CDO and never sees runtime state), which is exactly
+    // why it is an ADD-ON to the chat notice and not a substitute for it.
+    Description = FText::FromString(TEXT("Per-save randomized resource node layout: extra node locations, shuffled resources and purities, balance minimums. If a new extractor won't build on a shuffled node, restart the game once - compatibility patches are written during play and read at startup."));
 }
 
 void UNodeShuffleConfig::PostInitProperties()
@@ -158,6 +161,13 @@ void UNodeShuffleConfig::PostInitProperties()
     AddBool(TEXT("ShuffleResourceWells"), false,
         TEXT("Shuffle Resource Wells (In Place)"),
         TEXT("OFF by default. When ON, each RESOURCE WELL is re-rolled to produce a different resource — a nitrogen well may become a water well, and so on. The wells themselves DO NOT MOVE: only what they yield changes, so your map knowledge still works.\n\nThe overall mix is preserved: the resources are dealt from the wells' own existing set, so a save never ends up short of a well-only resource such as Nitrogen Gas.\n\nWells that already have a Resource Well Pressurizer or any Resource Well Extractor on them are NEVER changed. Applied when the layout is rolled — turn this on and then use 'Re-roll Layout' to apply it to an existing save."));
+
+    // ns-h1b-notice, anti-nag rule 7: the opt-out. Default TRUE deliberately -- see the struct comment.
+    AddBool(TEXT("ShowCompatibilityNotices"), true,
+        TEXT("Show Compatibility Notices In Chat"),
+        TEXT("Posts a one-off chat message when a mod's extractor has been cleared for use on shuffled ")
+        TEXT("nodes but needs a game restart to take effect. It appears at most once per new situation ")
+        TEXT("and says nothing at all when there is nothing to say. Turn off to silence it."));
 
     AddBool(TEXT("EnableExperimentalFeatures"), false,
         TEXT("Enable Experimental Features"),

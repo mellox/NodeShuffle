@@ -108,6 +108,13 @@ struct NODESHUFFLE_API FNodeShuffleConfigStruct
     UPROPERTY(BlueprintReadWrite)
     bool ShuffleResourceWells{false};
 
+    // ns-h1b-notice: post one chat message when an extractor has been cleared for use on shuffled nodes
+    // but needs a game restart before SF+ will permit it. DEFAULT TRUE -- the entire point is that the
+    // player did not know, and the notice is structurally unable to nag (it is a STATE test that empties
+    // itself one boot after the patches land, so a steady-state profile never sees it at all).
+    UPROPERTY(BlueprintReadWrite)
+    bool ShowCompatibilityNotices{true};
+
     // The standard experimental gate (workspace convention: every mod keeps this flag, even when
     // inert). cave-nodes-4: cave placement GRADUATED to always-on — it fixes the cave-drain
     // regression, so it is not optional. NOTHING is currently gated by this flag.

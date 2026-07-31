@@ -15,3 +15,7 @@ graphify-out/
 .claude-flow/
 .ruflo/
 *.tmp
+
+# ruflo was removed workspace-wide 2026-07-31; its .claude/proven-config.json residue
+# must never ride into a commit. Nothing in this repo needs .claude/ tracked.
+.claude/
