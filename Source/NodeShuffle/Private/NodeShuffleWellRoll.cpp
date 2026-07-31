@@ -59,9 +59,22 @@ void ANodeShuffleSubsystem::RollWellLayout(int32 Seed, bool bIsReroll)
         // persist"): turning the toggle off stops us acting, it does not un-retype a world the player
         // has already been playing. ApplyWellRetype also returns immediately while it is off, so
         // nothing further touches a well this session.
+        //
+        // RT-6 (ns-review-h1b, DECIDED AND INTENDED -- not an oversight, do not "fix" it). Because
+        // WellLayout is kept rather than cleared, BuildManagedNodeGroupsFromLayout keeps emitting this
+        // save's well groups, and since H1b those groups are LIVE allow-list evidence: fracking machines
+        // stay allow-listed even with this toggle nominally off. Under H1 that was inert; it is not any
+        // more, so it is written down here. It is the correct behaviour and follows directly from the
+        // sentence above: turning the toggle off does NOT un-retype the wells -- they are still retyped in
+        // the save. Withdrawing the allow-list would leave the player holding retyped wells they can no
+        // longer build on, which is strictly worse than either consistent state. The toggle stops us
+        // CHANGING things; it was never a promise to undo what is already written.
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("WELLH1-ROLL: SKIPPED -- 'Shuffle Resource Wells' is OFF (existing well data in this save: %d wells, kept untouched)."),
-            WellLayout.Num());
+            TEXT("WELLH1-ROLL: SKIPPED -- 'Shuffle Resource Wells' is OFF (existing well data in this save: %d wells, kept untouched). ")
+            TEXT("NOTE (RT-6, intended): those %d wells STAY retyped and keep contributing managed groups, so any ")
+            TEXT("fracking machine H1b's pairing rule allow-listed REMAINS allow-listed -- withdrawing it would leave ")
+            TEXT("retyped wells nothing can be built on."),
+            WellLayout.Num(), WellLayout.Num());
         return;
     }
 
