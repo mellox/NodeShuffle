@@ -100,6 +100,8 @@ void ANodeShuffleSubsystem::RollWellLayout(int32 Seed, bool bIsReroll)
              "assignment (or stay vanilla) -- H1 never fails to a broken well, only to an untouched one."),
         Census.Wells.Num(), CensusSatellites, Census.IteratorCores, Census.AdoptedCores,
         Census.InvalidCoresSkipped, Census.OrphanSatellites.Num());
+    // ns-review-h2 F1: the exclusion has to be VISIBLE, not merely correct -- a silent filter is
+    // indistinguishable from a census that never saw the wells at all. Logged after the merge below.
 
     // 2. MERGE live census over whatever the save already holds. Starting from the saved array rather
     //    than rebuilding from scratch is the same streaming-determinism rule RollLayout applies to
@@ -109,11 +111,27 @@ void ANodeShuffleSubsystem::RollWellLayout(int32 Seed, bool bIsReroll)
     TMap<FString, int32> IndexByCore;
     for (int32 i = 0; i < Merged.Num(); ++i) { IndexByCore.Add(Merged[i].CorePath, i); }
 
-    int32 NewlyDiscovered = 0;
+    int32 NewlyDiscovered = 0, SkippedOurSpawned = 0;
     for (const FNodeShuffleWellRecord& W : Census.Wells)
     {
         AFGResourceNodeFrackingCore* Core = W.Core;
         if (!IsValid(Core)) { continue; } // census only stores valid cores; kept so that stays true by construction
+
+        // ns-review-h2 F1 (CRITICAL). CollectWellCensus iterates EVERY live fracking core with no
+        // filter -- correctly, because NodeShuffle.DumpWells wants an unfiltered view of the world.
+        // But once H2 SPAWNS wells, that view includes OUR OWN relocated cores, and this merge loop
+        // would enrol them as if they were level wells: a spawned core with a non-empty
+        // GetResourceClassOriginal() would contribute a card to the deck AND become a Recipient, so
+        // the nitrogen conservation this deck exists to protect would be contaminated, and H2 would
+        // relocate its own relocated well -- doubling the actor count on every re-roll. H1 was safe
+        // only because H1 spawns nothing; that is no longer true.
+        //
+        // The filter belongs HERE and at RollWellRelocation's equivalent loop, NOT inside
+        // CollectWellCensus: the census is a shared, deliberately unfiltered primitive and the dump
+        // depends on seeing everything. Reachable by the exact sequence this feature's own config
+        // tooltip instructs: enable both toggles, roll, let a well relocate, then Re-roll.
+        if (FNodeShuffleModule::IsManagedSpawnedNode(Core)) { ++SkippedOurSpawned; continue; }
+
         const FString CorePath = WellPathOf(Core);
         if (CorePath.IsEmpty()) { continue; }
 
@@ -170,6 +188,16 @@ void ANodeShuffleSubsystem::RollWellLayout(int32 Seed, bool bIsReroll)
             if (Sat->GetExtractor().IsValid() || Sat->IsOccupied()) { bPinned = true; }
         }
         E.bPinned = bPinned;
+    }
+
+    if (SkippedOurSpawned > 0)
+    {
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("WELLH1-ROLL: skippedOurSpawned=%d -- %d live fracking core(s) in the census are wells H2 ")
+            TEXT("RELOCATED (NodeShuffle-managed spawns), excluded from the deck and from re-enrolment. ")
+            TEXT("Without this they would contribute a card AND receive one, contaminating the well-only ")
+            TEXT("resource conservation and re-relocating our own wells once per re-roll (ns-review-h2 F1)."),
+            SkippedOurSpawned, SkippedOurSpawned);
     }
 
     // 3. DEAL. A DECK PERMUTATION of the wells' own resources, not an independent per-well draw. This

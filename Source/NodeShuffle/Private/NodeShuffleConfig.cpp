@@ -162,6 +162,14 @@ void UNodeShuffleConfig::PostInitProperties()
         TEXT("Shuffle Resource Wells (In Place)"),
         TEXT("OFF by default. When ON, each RESOURCE WELL is re-rolled to produce a different resource — a nitrogen well may become a water well, and so on. The wells themselves DO NOT MOVE: only what they yield changes, so your map knowledge still works.\n\nThe overall mix is preserved: the resources are dealt from the wells' own existing set, so a save never ends up short of a well-only resource such as Nitrogen Gas.\n\nWells that already have a Resource Well Pressurizer or any Resource Well Extractor on them are NEVER changed. Applied when the layout is rolled — turn this on and then use 'Re-roll Layout' to apply it to an existing save."));
 
+    // Packet H2 (ns-wells-h2). A SECOND, separate toggle -- deliberately not folded into the one above.
+    // Retyping a well in place and physically MOVING it are different promises with different risks,
+    // and a player who accepted "my nitrogen well now makes water" has not thereby accepted "my
+    // nitrogen well is now 4 km away". This one also carries a stage warning the other does not.
+    AddBool(TEXT("RelocateResourceWells"), false,
+        TEXT("Relocate Resource Wells (INCOMPLETE - stage H2)"),
+        TEXT("OFF by default, and NOT yet finished — leave it off for normal play.\n\nWhen ON, a whole resource well (its core and every satellite) is MOVED to a new place as a rigid body: the satellites keep their exact spacing and pattern relative to the core, and the whole group is rotated together to find an orientation that fits the terrain. A well is moved all-or-nothing — if the full footprint cannot be placed, the well is left exactly where it was.\n\nWHAT IS NOT DONE YET (stage H2 of 2): a relocated well has NO VISUAL — the rocks, cracks and satellite meshes are not yet re-created at the new site, so the well is functional but INVISIBLE, and you will need the log line 'WELLH2-PLACED' to find it. Requires 'Shuffle Resource Wells' to be on as well, and applies at ROLL time — turn both on, then use 'Re-roll Layout'."));
+
     // ns-h1b-notice, anti-nag rule 7: the opt-out. Default TRUE deliberately -- see the struct comment.
     AddBool(TEXT("ShowCompatibilityNotices"), true,
         TEXT("Show Compatibility Notices In Chat"),

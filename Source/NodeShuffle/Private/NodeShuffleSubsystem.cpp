@@ -1685,6 +1685,17 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     // Self-gated: a no-op that leaves any existing well data untouched when the config toggle is off.
     RollWellLayout(Seed, bIsReroll);
 
+    // Packet H2 (ns-wells-h2): RIGID RELOCATION of whole well groups, dealt immediately after the
+    // retype and on the SAME roll. Strictly after RollWellLayout, never before or merged into it: the
+    // relocation deal reads bManaged, which the retype's own pin/deck logic decides, and it must be
+    // able to refuse a well the retype already stood down from. It also uses its OWN salted stream
+    // ('WLR2'), for the same reason RollWellLayout uses 'WELL' -- so that WITHIN THIS ROLL, turning
+    // relocation on shifts no draw of the node layout or of the well retype. (ns-review-h2 F15: that
+    // isolation is per-roll, NOT across re-rolls -- H2's footprint probes teach the persistent learned
+    // water grid, which gates the ordinary water-locked redeal later. See NodeShuffleWellRelocateRoll.cpp.)
+    // Self-gated: a no-op that leaves already-relocated wells exactly where they are when the toggle is off.
+    RollWellRelocation(Seed, bIsReroll, FNodeShuffleConfigStruct::GetActiveConfig(this).RelocateResourceWells);
+
     UE_LOG(LogNodeShuffle, Display,
         TEXT("Rolled layout: seed %d, pool %d (vanilla %d, new %d), active %d, pinned %d"),
         Seed, PoolSize, VanillaCount, NewLocations.Num(), ActiveCount, PinnedCount);
@@ -2024,6 +2035,15 @@ void ANodeShuffleSubsystem::ApplyLayout()
     // NOTHING ELSE IN THIS PASS TOUCHES WELLS: they are excluded from the regular node population by
     // IsFrackingActor, so this call is the mod's entire well surface.
     ApplyWellRetype(Config.ShuffleResourceWells);
+
+    // Packet H2 (ns-wells-h2): the relocation pass -- spawn-on-discovery placement of relocated well
+    // GROUPS, plus the mCore re-link that every load depends on. Deliberately AFTER ApplyWellRetype, so
+    // a group is only ever spawned with a resource the retype has already resolved and asserted.
+    // NOT self-gated on the toggles in the same way the others are: its first act is the once-per-
+    // session AdoptRestoredWellGroups, which must run even with relocation switched OFF -- a save that
+    // already holds relocated wells must keep them linked whatever the config now says, because an
+    // unlinked satellite is invisible in every way except the well producing nothing.
+    ApplyWellRelocation(Config.ShuffleResourceWells, Config.RelocateResourceWells, SpawnRadiusCm);
 
     SettleNewNodesNearPlayers();
     ReassociateOrphanedExtractors();
@@ -2914,6 +2934,15 @@ void ANodeShuffleSubsystem::AdoptRestoredSpawnedNodes()
         if (!IsValid(Node)) { continue; }
         if (Node->IsA<ANodeShuffleResourceNode>()) { continue; }  // handled in pass 1
         if (Node->IsNetStartupActor()) { continue; }              // level-placed original, not ours
+        // ns-review-h2 F9: NEVER adopt a fracking satellite into the ORDINARY node layout. Packet H2
+        // spawns runtime AFGResourceNodeFrackingSatellite actors, which satisfy every predicate below
+        // (runtime, no component of ours, resource matches a layout entry that happens to hold the same
+        // resource). This pass also runs BEFORE ApplyWellRelocation, so it gets first refusal. Adopting
+        // one would hand it to SettleNewNodesNearPlayers, which MOVES nodes -- silently breaking the
+        // rigid body H2 spent 36 yaws validating, and orphaning the well's own record of where it is.
+        // Wells are excluded from the regular node population everywhere else in this file by exactly
+        // this predicate; this was the one place it was missing.
+        if (IsFrackingActor(Node)) { continue; }
         if (UNodeShuffleNodeComponent::Find(Node)) { continue; }  // already ours this session
         RuntimeNodesSeen++;
 

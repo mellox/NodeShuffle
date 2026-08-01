@@ -108,6 +108,20 @@ struct NODESHUFFLE_API FNodeShuffleConfigStruct
     UPROPERTY(BlueprintReadWrite)
     bool ShuffleResourceWells{false};
 
+    // Packet H2 (ns-wells-h2): RIGID RELOCATION of whole well groups. Its OWN toggle, separate from
+    // ShuffleResourceWells above and DEFAULT OFF, because retyping a well in place and physically
+    // moving it are different promises. Relocation additionally REQUIRES ShuffleResourceWells (a
+    // well NodeShuffle does not manage is not one it may move), so the two together are the gate.
+    //
+    // STAGE WARNING, and it is in the in-game tooltip too, not only here: H2 stage 1 ships the
+    // relocation ENGINE -- placement, the yaw search, the group-atomic spawn and the mCore lifecycle
+    // -- but NOT the group VISUALS (design §2.4: a runtime-spawned node gets no engine
+    // AFGNodeMeshActor, and wells have their own MT_Core / MT_Crack / MT_Satellite mesh vocabulary).
+    // A relocated well is therefore functional but INVISIBLE until stage H2b lands. Deliberately
+    // deferred rather than half-done; see the packet report.
+    UPROPERTY(BlueprintReadWrite)
+    bool RelocateResourceWells{false};
+
     // ns-h1b-notice: post one chat message when an extractor has been cleared for use on shuffled nodes
     // but needs a game restart before SF+ will permit it. DEFAULT TRUE -- the entire point is that the
     // player did not know, and the notice is structurally unable to nag (it is a STATE test that empties

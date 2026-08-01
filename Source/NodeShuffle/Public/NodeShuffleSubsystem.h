@@ -9,6 +9,12 @@
 
 class AFGNodeMeshActor;
 class AFGResourceScanner;
+// Packet H2 (ns-wells-h2): the relocated well group's runtime handles are UPROPERTY TMaps of these,
+// so the pointer types must at least be declared here. The full headers are deliberately NOT pulled
+// into this Public header -- the three H2 .cpp files include NodeShuffleWellCensus.h for them, exactly
+// as H1's files do, so a change to the fracking headers does not rebuild the world.
+class AFGResourceNodeFrackingCore;
+class AFGResourceNodeFrackingSatellite;
 class UFGResourceDescriptor; // scanregen-1: TSubclassOf<> member below only needs the forward decl
 
 // One node-pool entry of the per-save layout. The layout is rolled exactly
@@ -163,8 +169,51 @@ struct FNodeShuffleWellSatellite
     // for a vanilla original.
     UPROPERTY(SaveGame) FString SatellitePath;
 
-    // RECORD ONLY -- read at roll time, never applied. See the struct comment.
+    // RECORD ONLY under H1 -- read at roll time, never written back to a LEVEL satellite.
+    //
+    // Packet H2 (ns-wells-h2) CHANGES WHAT THIS IS FOR, and the distinction matters. H2 relocates a
+    // well by SPAWNING a fresh satellite actor, and a fresh actor has the CDO's purity, not this
+    // satellite's. So the relocation path DOES write mPurityOverride -- from this field. That is not
+    // "changing purity" (H1's forbidden act); it is REPRODUCING the vanilla purity on the actor that
+    // replaces this one. A relocated well that silently normalised its purities would be the balance
+    // change H1 refused to make, arriving by a different road.
     UPROPERTY(SaveGame) TEnumAsByte<EResourcePurity> OriginalPurity = RP_MAX;
+
+    // ---- Packet H2: rigid-body relocation state ----
+    // Offset of this satellite from its CORE, in the core's UNROTATED frame, captured from the live
+    // vanilla actors (design §Q3 point 2). XY is rigid and is what the group yaw rotates; Z is a
+    // capture-time record only -- every relocated member re-settles its own Z on the new terrain
+    // (H0 measured four wells with >12 m vertical spread, so per-node Z settle is mandatory).
+    UPROPERTY(SaveGame) FVector LocalOffset = FVector::ZeroVector;
+
+    // This satellite's OWN actor yaw relative to the core's yaw at capture. Re-applied (plus the group
+    // yaw) to the spawned satellite so the rocks turn WITH the group -- design §Q3a: without it a
+    // rotated well's meshes all face the original direction.
+    UPROPERTY(SaveGame) float LocalYawDeg = 0.0f;
+
+    // Where this satellite ACTUALLY ended up once the group's footprint validated, including its
+    // settled Z. Also the cross-session identity anchor: a spawned satellite carries no SaveGame
+    // field of ours, so it is re-matched on load by location + class, exactly as
+    // AdoptRestoredSpawnedNodes re-matches a real-class relocated node.
+    UPROPERTY(SaveGame) FVector PlacedLocation = FVector::ZeroVector;
+    UPROPERTY(SaveGame) FRotator PlacedRotation = FRotator::ZeroRotator;
+    UPROPERTY(SaveGame) bool bPlaced = false;
+
+    // ns-review-h2 F2 (CRITICAL): THIS SATELLITE'S RIGID-BODY OFFSET WAS ACTUALLY CAPTURED.
+    //
+    // Without it the spawn path could not tell a genuine offset from an absent one, and the review
+    // found the exact path that produces an absent one: RollWellRelocation skips re-capture for a
+    // well that is already bGroupPlaced, but RollWellLayout's merge loop still APPENDS newly-streamed
+    // satellites to that same entry. Those records arrive with LocalOffset and PlacedLocation both
+    // ZeroVector -- and (0,0,0) IS FINITE, so the original IsFiniteVector guard did not fire. The
+    // result was live, extractor-snappable satellite actors spawned AT WORLD ORIGIN, inflating the
+    // well's rate, while the acceptance line printed satellites=7/7/7 OK.
+    //
+    // An explicit flag rather than a geometric heuristic: "did we measure this?" is a fact about our
+    // own bookkeeping, and inferring it from coordinates is how the (0,0,0) hole existed in the first
+    // place. An UNCAPTURED satellite is never spawned, but it is still SUPPRESSED with the rest of
+    // the vanilla group -- otherwise it would be left visible at the abandoned original site.
+    UPROPERTY(SaveGame) bool bCaptured = false;
 };
 
 // Packet H1: one resource well (fracking core + its satellites) as a unit of the per-save layout.
@@ -210,6 +259,72 @@ struct FNodeShuffleWellEntry
     // well and for one whose resource could not be resolved -- both fail SAFE to "left vanilla".
     // Also the gate on the SF+ auto-allow contribution: we only claim to manage what we retype.
     UPROPERTY(SaveGame) bool bManaged = false;
+
+    // ======================= Packet H2 (ns-wells-h2): RIGID RELOCATION =======================
+    // Everything below is inert unless the SEPARATE RelocateResourceWells toggle is on. H1's in-place
+    // retype is untouched and still runs on its own toggle; relocation is strictly additive.
+    //
+    // FAIL-SAFE DIRECTION, stated once for every field here: at every exhaustion point the well is
+    // LEFT AT ITS VANILLA LOCATION (design §Q3 point 4). There is no state in this struct that means
+    // "half moved" -- either bGroupPlaced is true and the whole footprint validated, or the vanilla
+    // well is still the only well.
+
+    // This well is enrolled in the relocation program. Requires bManaged (a pinned well is never
+    // moved -- moving a well someone built a pressurizer on would orphan the machine) AND a COMPLETE
+    // offset capture.
+    UPROPERTY(SaveGame) bool bRelocate = false;
+
+    // The rigid body was captured from live actors: VanillaCoreLocation/Yaw plus every satellite's
+    // LocalOffset/LocalYawDeg. Until this is true the well cannot be relocated at all, because moving
+    // a well whose satellite set we only PARTLY know would permanently shrink it -- design §Q3's
+    // "silently shrink" failure, which is invisible in the log precisely because each missing
+    // satellite looks routine.
+    UPROPERTY(SaveGame) bool bOffsetsCaptured = false;
+    UPROPERTY(SaveGame) FVector VanillaCoreLocation = FVector::ZeroVector;
+    UPROPERTY(SaveGame) float VanillaCoreYawDeg = 0.0f;
+
+    // TODO (2026-07-31, ns-review-h3 H4 -- RETIRE THE h2-1 TEST SAVE, do not write a migration).
+    // A save written by the h2-1 build has bCaptured=false on every satellite (the field did not
+    // exist), so CapturedSatelliteCount is 0 and such a well now reports expected=0 and refuses to
+    // spawn anything. That is LOUD and it fails in the safe direction -- the vanilla well is never
+    // suppressed, because suppression requires a COMPLETE spawn -- so it is a test-hygiene item, not a
+    // code one. Any h2-1 test save must be discarded rather than migrated: a migration would have to
+    // invent a rigid body it does not have, which is exactly the fabricated-capture failure the flag
+    // exists to prevent. Remove this note once no h2-1 save is in circulation.
+    //
+    // ns-review-h2 F2: how many satellites the rigid body was captured from. Compared against
+    // Satellites.Num() on every roll: RollWellLayout's merge can APPEND satellites to an entry that
+    // was already placed (a satellite that streamed in for the first time after the relocation), and
+    // those records have no capture. A mismatch is a Warning naming the difference, never a silent
+    // top-up -- they are refused at spawn and still suppressed at the vanilla site.
+    UPROPERTY(SaveGame) int32 CapturedSatelliteCount = 0;
+
+    // Dealt destination for the CORE, before settling. Re-dealt (up to WellMaxGroupRedeals) when the
+    // yaw search and the nudge budget are both exhausted.
+    UPROPERTY(SaveGame) FVector DestCoreLocation = FVector::ZeroVector;
+    UPROPERTY(SaveGame) bool bDestDealt = false;
+
+    // The committed placement. PlacedCoreLocation carries the settled Z.
+    UPROPERTY(SaveGame) FVector PlacedCoreLocation = FVector::ZeroVector;
+    UPROPERTY(SaveGame) FRotator PlacedCoreRotation = FRotator::ZeroRotator;
+
+    // The group yaw (degrees) whose FULL satellite set validated, and how far through this group's
+    // seeded yaw permutation the search has got. Both persist: design §Q3a requires that a group
+    // deferred mid-search RESUMES rather than restarts, for the same reason OverlapNudges persists.
+    // The permutation itself is never stored -- it is recomputed from WellYawSeedFor(), a pure
+    // function of persisted state, so it is byte-identical every load. A yaw drawn from frame time or
+    // actor-iteration order would pass every test on the H2 list except the determinism one (T8).
+    UPROPERTY(SaveGame) float GroupYawDeg = 0.0f;
+    UPROPERTY(SaveGame) int32 YawCursor = 0;
+    UPROPERTY(SaveGame) uint8 GroupNudges = 0;
+    UPROPERTY(SaveGame) uint8 GroupRedeals = 0;
+
+    // The whole footprint validated and the group has been committed to these coordinates.
+    UPROPERTY(SaveGame) bool bGroupPlaced = false;
+
+    // Every budget exhausted. The well stays exactly where the level author put it, for good, and the
+    // roll never re-enrols it. Fail-safe to "untouched", never to "broken".
+    UPROPERTY(SaveGame) bool bRelocationFailed = false;
 };
 
 // Server-side brain of NodeShuffle.
@@ -1013,4 +1128,240 @@ private:
     // half-streamed world as the answer.
     int32 WellApplyPasses = 0;
     static constexpr int32 WellCensusScanPass = 6;
+
+    // ===================== Packet H2 (ns-wells-h2): RIGID WELL RELOCATION =====================
+    // Defined in NodeShuffleWellRelocateRoll.cpp (capture + deal), NodeShuffleWellRelocateApply.cpp
+    // (the yaw search, footprint validation and group-atomic spawn) and NodeShuffleWellLink.cpp (the
+    // mCore lifecycle). Members for the same reason H1's are: writing AFGResourceNodeBase's private
+    // mResourceClassOverride/mPurityOverride AND AFGResourceNodeFrackingSatellite's private mCore all
+    // depend on this class's AccessTransformers Friend grants, and friendship is class-to-class.
+
+    // Called from RollWellLayout's tail, on the SAME roll. Captures each eligible well's rigid body
+    // from the live actors and deals it a destination. Never captures a partially-streamed well.
+    void RollWellRelocation(int32 Seed, bool bIsReroll, bool bRelocationEnabled);
+
+    // Per-pass driver, called from ApplyLayout right after ApplyWellRetype. Spawn-on-discovery: a
+    // group is only searched/placed once a player is within SpawnRadiusCm of its dealt destination.
+    void ApplyWellRelocation(bool bWellShuffleEnabled, bool bRelocationEnabled, float SpawnRadiusCm);
+
+    // The §Q3a search for ONE group: settle the core, then walk the seeded yaw permutation from
+    // YawCursor (budgeted per pass), validating the FULL satellite footprint each time. Returns true
+    // only when the whole footprint validated and E's Placed* fields were committed.
+    bool TryPlaceWellGroup(FNodeShuffleWellEntry& E, UClass* ResourceClass);
+
+    // ns-review-h2 F3: the ONE escalation ladder -- nudge, then re-deal, then leave the well vanilla
+    // for good. It exists as a function because it used to exist as two inline copies and only one of
+    // them was complete: the core-rejection copy nudged, hit the cap, and then re-probed the identical
+    // rejected spot forever, with GroupNudges (a SaveGame uint8) wrapping at 256 to a zero-radius
+    // nudge. A well dealt into a lake was trapped permanently and the trap was saved.
+    // bHaveSettledCore: true when AnchorLoc is a genuinely settled point to spiral out from; false
+    // when it is only the last (rejected) probe, in which case the dealt destination is used.
+    void EscalateWellPlacement(FNodeShuffleWellEntry& E, const FVector& AnchorLoc, bool bHaveSettledCore,
+                               const TCHAR* Why);
+
+    // ns-review-h2 F8: a void (unstreamed) probe is a legitimate defer that spends no budget -- but an
+    // UNBOUNDED, Verbose-only defer is indistinguishable from a working feature nobody has walked to.
+    // Counted per group, named once at WellVoidDeferNoticeAt, and escalated at WellVoidDeferEscalateAt.
+    void NoteWellVoidDefer(FNodeShuffleWellEntry& E, const TCHAR* Which, const FVector& Probe,
+                           const TCHAR* Who, bool bDiag);
+    TMap<FString, int32> WellVoidDefers;             // core path -> consecutive void probes (session only)
+    static constexpr int32 WellVoidDeferNoticeAt = 20;
+    static constexpr int32 WellVoidDeferEscalateAt = 60;
+
+    // One member's terrain test at a candidate XY: settle, water, slope, resource-node overlap and
+    // buildable overlap. OutReason is filled with a short token for the rejection log.
+    bool ValidateWellMemberSpot(const FVector& ProbeXY, float StartZ, FVector& OutLoc, FRotator& OutRot,
+                                FString& OutReason) const;
+
+    // Group-atomic spawn (design Q1's decision): core deferred-spawned first, then EVERY satellite
+    // deferred-spawned with mCore pre-set, then all finished -- so a core can never exist without its
+    // satellites, and BeginPlay does the registration.
+    //
+    // ns-review-h2 F7 (HIGH): returns true ONLY when the group is COMPLETE (every captured satellite
+    // live, none failed). It used to return "did anything spawn at all", so one satellite out of ten
+    // flipped bGroupPlaced and SuppressVanillaWellGroup then hid the entire vanilla group -- a short
+    // well with no visible original, which is precisely the partial-well state this packet claims not
+    // to have. The claim was true of VALIDATION and false of SPAWN; now it is true of both.
+    bool SpawnWellGroup(FNodeShuffleWellEntry& E, UClass* ResourceClass);
+
+    // ns-review-h3 H1 (BLOCKING): the counterpart the packet was missing entirely. Nothing in H2 ever
+    // destroyed a spawned well actor -- the two runtime maps were only ever Add/FindRef/Contains -- so
+    // every path that MOVED a group (a re-search after a partial spawn, a re-roll re-enrolment, the
+    // give-up branch) left the previous actors alive at the abandoned coordinates. Called at all three
+    // of those sites, BEFORE any destination is rewritten.
+    //
+    // DESPAWN-ON-MOVE, deliberately NOT SetActorLocationAndRotation: a teleported AFGResourceNode may
+    // not update its paired mesh actor, its scanner representation or its manager entry, and all three
+    // of those paths are closed-source, so the move-in-place version could only be hoped correct.
+    //
+    // Occupied members are NEVER destroyed -- destroying an actor under a player's machine would be
+    // worse than the duplicate it prevents. Such a group is abandoned in place, its vanilla twin stays
+    // suppressed, and it is logged loudly. Returns false when anything was refused for occupancy.
+    bool DespawnWellGroup(FNodeShuffleWellEntry& E, const TCHAR* Why);
+
+    // Drops any runtime handle whose actor is no longer at the coordinate the entry now names.
+    // ns-review-h4 F3: RETURNS the count it could NOT clear (the member is in use), and SpawnWellGroup
+    // requires that to be zero before calling a group COMPLETE. That moves the drift check from
+    // DETECTION to PREVENTION -- suppression of the vanilla well is the irreversible half, and it must
+    // not happen while a counted member is somewhere else entirely.
+    int32 DespawnStaleWellMembers(FNodeShuffleWellEntry& E);
+
+    // ns-review-h4 F2 (BLOCKING): the teardown driven by the HANDLE SET rather than by call sites.
+    // RollWellRelocation's despawn is reached only after an entry survives six earlier `continue`s,
+    // each of which clears bRelocate and touches neither map -- so an entry that becomes pinned (or
+    // unstreamed, or non-finite, or count-mismatched, or geometry-refused) after an INCOMPLETE spawn
+    // strands its actors permanently, in the maps and invisible to an audit that walks bGroupPlaced
+    // only. Anything in either map with no corresponding placed group is an orphan REGARDLESS of the
+    // route that produced it, which is what makes this structurally immune to the next new route as
+    // well as to these six.
+    // ns-review-h5 F-1 (HIGH, silent): pass A is handle-driven and is therefore blind to an abandoned
+    // ACTOR THAT HOLDS NO HANDLE -- reachable by saving inside an INCOMPLETE spawn window, because our
+    // well actors are save-collected but AdoptRestoredWellGroups skips non-placed entries, so both maps
+    // come back empty for that group and nothing in the packet can see its actors again. Pass B is a
+    // LOCATION-driven backstop over the actor iterators, run at the SETTLED phase only.
+    // ns-review-h5 F-2: an entry also owns a handle whose actor is at its CURRENTLY COMMITTED
+    // coordinate, so a group mid-assembly is not torn down by the sweep that runs later in the same pass.
+    void SweepOrphanedWellActors(const TCHAR* Phase);
+    static constexpr int32 WellOrphanSweepCadence = 12; // ~1 min at one apply pass per ~5 s
+    bool bWellOrphanInUseLogged = false;                // F-4: permanent state, said once per roll
+
+    // ns-review-h5 judgement call (2): a group that VALIDATES a footprint and then fails to ASSEMBLE
+    // retries the same placement forever -- TryPlaceWellGroup neither advances YawCursor nor spends
+    // nudge/redeal budget on that path -- and it was the one repeating condition here with no bounded,
+    // audible counter. DIAGNOSIS ONLY: it never stops the retry, because incomplete spawns are usually
+    // transient under spawn-on-discovery and a latch would retire wells for a mistimed flyby.
+    void NoteWellIncompleteSpawn(const FNodeShuffleWellEntry& E);
+    TMap<FString, int32> WellIncompleteSpawnCounts;      // core path -> consecutive failures (session)
+    static constexpr int32 WellIncompleteSpawnNoticeAt = 20;
+    static constexpr int32 WellIncompleteSpawnWarnAt = 60;
+
+    // ns-review-h4 F1 + F4: the ONE gate and the ONE teardown sequence for a single well member,
+    // shared by every despawn path. The two paths previously used different sequences (only one was
+    // complete) and a weaker occupancy test than this mod's own pin logic. Returns true when the actor
+    // is gone; on a refusal OutWhy names WHICH occupancy signal fired. A member function because
+    // DeregisterNodeFromManager is private and rides this class's Friend grant.
+    bool DestroyWellMemberIfUnused(class AFGResourceNodeBase* Member, const TCHAR*& OutWhy);
+
+    // ns-review-h4 F7: stale-but-in-use records already warned about. That state never self-clears
+    // (the player's machine stays built), so an unthrottled warning is a line every ~5 s forever.
+    TSet<FString> WellStaleInUseLogged;
+    // ns-review-h4 F1: vanilla members skipped by the suppression because they are in use -- also a
+    // non-self-clearing state, so also throttled per record per session.
+    TSet<FString> WellSuppressSkipLogged;
+
+    // THE mCore LIFECYCLE (design R1 -- the packet's highest risk). Sets mCore if it is not already
+    // this core, then registers the satellite ONLY IF the core's mSatellites does not already contain
+    // it. The Contains() guard is what makes calling this safe on BOTH paths: after a spawn (where
+    // BeginPlay already registered) it is a no-op that MEASURES the design's assumption, and after a
+    // reload (where BeginPlay ran with mCore null and registered NOTHING) it is the repair. Returns
+    // an FNodeShuffleWellLinkResult so the caller can log what actually happened.
+    struct FWellLinkOutcome
+    {
+        // ns-review-h2 F11: DID THE FUNNEL ACTUALLY RUN? It early-returns on !IsValid(Core/Sat), and
+        // the caller counted every such early return as "registered by BeginPlay, as designed" -- i.e.
+        // it reported THE PACKET'S CENTRAL ASSUMPTION AS MEASURED on the exact path where nothing was
+        // measured at all. Anything that observes a link must first be able to say it looked.
+        bool bRan = false;
+        bool bCoreWasAlreadySet = false;
+        bool bCoreWritten = false;
+        bool bWasAlreadyRegistered = false;
+        bool bRegisteredNow = false;
+        int32 RegistrationsBefore = 0;   // occurrences of THIS satellite in mSatellites before we acted
+        int32 StaleWeakEntries = 0;      // dead weak pointers seen in mSatellites (diagnostic only)
+        int32 ArraySizeAfter = 0;
+    };
+    void EnsureSatelliteLinked(class AFGResourceNodeFrackingCore* Core,
+                              class AFGResourceNodeFrackingSatellite* Sat,
+                              const TCHAR* Phase, FWellLinkOutcome& Out);
+
+    // Once per session, at first apply: re-match our spawned well actors (which carry NO SaveGame
+    // identity of ours -- they are stock BP_FrackingCore_C / BP_FrackingSatellite_C) back to their
+    // layout entries BY LOCATION, exactly as AdoptRestoredSpawnedNodes re-matches a real-class node,
+    // then re-establish every mCore link. THIS IS THE FUNCTION THAT STOPS A RELOCATED WELL DYING
+    // SILENTLY ON RELOAD: mCore is EditInstanceOnly, not SaveGame and not replicated, so a restored
+    // satellite comes back unlinked and the pressurizer reports zero satellites with no crash and no
+    // error of any kind.
+    void AdoptRestoredWellGroups();
+    bool bAdoptedRestoredWells = false;
+
+    // ns-review-h2 fix B / F5: LAZY adoption, swept immediately before every spawn. AdoptRestoredWellGroups
+    // is single-shot at first apply, so a group whose actors had not streamed by then was never adopted
+    // and the spawn would put a DUPLICATE inside the existing actor. Both helpers refuse level actors
+    // and refuse anything another entry has already claimed.
+    class AFGResourceNodeFrackingCore* FindExistingRuntimeWellCoreAt(const FVector& At);
+    class AFGResourceNodeFrackingSatellite* FindExistingRuntimeWellSatelliteAt(const FVector& At);
+
+    // ns-review-h2 F2/F7: satellites this group actually relocated (i.e. bCaptured). Records appended
+    // to an already-placed well have no rigid body, are never spawned, and must not count as missing --
+    // otherwise a correct group reports broken forever and the acceptance gate degenerates into noise.
+    static int32 ExpectedRelocatedSatelliteCount(const FNodeShuffleWellEntry& E);
+
+    // Satellites already reported as uncaptured-and-refused, so the warning is once per record, not
+    // once per ~5 s pass.
+    TSet<FString> WellUncapturedLogged;
+
+    // Emitted for every placed group, every session, at both ends of the lifecycle:
+    //   WELL guid=<core> core=<name> res=<r> yaw=<deg> satellites=<expected>/<spawned>/<registered>
+    // A shrunk or unlinked well must be impossible to miss in one log read (design §Q3 point 5).
+    void AuditWellGroupLinks(const TCHAR* Phase);
+    // ns-review-h2 F12: one group, audited on demand -- called the instant a group is placed. The
+    // fixed-pass sweep fires ~40 s after load, but relocation is spawn-on-discovery, so the wells a
+    // tester actually flies to are placed long afterwards and were never audited by it.
+    //
+    // It RETURNS its verdict so the sweep can total without re-deriving the health rule. The first
+    // version had the sweep recompute everything, which is two copies of the one rule that decides
+    // whether this packet's silent failure is visible -- the same shape as the two-ladders bug.
+    struct FWellAuditVerdict
+    {
+        bool bHealthy = false;
+        bool bRateInflated = false;
+        bool bScattered = false;
+        bool bShortByDesign = false;
+        bool bNoCore = false;
+    };
+    FWellAuditVerdict AuditOneWellGroup(const FNodeShuffleWellEntry& E, const TCHAR* Phase);
+    int32 WellAuditPasses = 0;
+    static constexpr int32 WellLinkAuditPass = 8;
+    // Slow repeating sweep after the settled one, so a group placed at minute 40 is still covered.
+    static constexpr int32 WellLinkAuditCadence = 60; // ~5 min at one apply pass per ~5 s
+
+    // Hide the VANILLA core, its satellites and their paired mesh actors once the group has been
+    // relocated -- otherwise the world holds the well twice. Narrow and self-contained: it never
+    // touches OriginalNodeRecord or SuppressOriginalNodes' machinery.
+    void SuppressVanillaWellGroup(FNodeShuffleWellEntry& E);
+
+    // Runtime handles for the relocated group, rebuilt each session (spawn or adopt). Keyed by the
+    // layout entry's CorePath. UPROPERTY so the spawned actors are strongly referenced, mirroring
+    // SpawnedNodes.
+    UPROPERTY() TMap<FString, class AFGResourceNodeFrackingCore*> SpawnedWellCores;
+    UPROPERTY() TMap<FString, class AFGResourceNodeFrackingSatellite*> SpawnedWellSatellites; // key: SatellitePath
+    // Session log throttles -- the relocation pass runs every ~5 s like every other apply.
+    TSet<FString> WellRelocLogged;
+    TSet<FString> WellRelocFailLogged;
+    TSet<FString> WellSuppressLogged;
+    bool bWellRelocDisabledLogged = false;
+    int32 WellGroupsPlacedThisSession = 0;
+
+    // §Q3a: K IS MEASURED, NOT CHOSEN. H0's run gives a mean bounding radius of 4587 cm; a yaw step
+    // that moves an outer satellite less than the 800 cm reject radius needs 800/4587 ~= 10 deg, and
+    // the smallest measured angular gap between neighbouring satellites is 9.6 deg. Two independent
+    // routes to ~10 deg is the confirmation. K=12 (30 deg) moves an outer satellite ~20 m per attempt
+    // and would skip valid pockets wholesale.
+    static constexpr int32 WellYawSteps = 36;
+    // The footprint test early-outs on the FIRST failing satellite, so a bad yaw usually dies after
+    // one or two traces. Still budgeted per pass and resumed via YawCursor rather than burning the
+    // whole 36-yaw search in one frame.
+    static constexpr int32 WellYawAttemptsPerPass = 6;
+    static constexpr uint8 WellMaxGroupNudges = 8;
+    static constexpr uint8 WellMaxGroupRedeals = 3;
+    static constexpr int32 WellRedealTries = 24;
+    // H0 measured satsPerWell min 4 / mean 6.75 / max 10 over 20 wells. A well reporting fewer than
+    // this at capture time is almost certainly PARTIALLY STREAMED, and relocating it would shrink it
+    // permanently. Refuse, log, and retry on a later roll.
+    static constexpr int32 WellMinSatellitesForRelocation = 4;
+    // H0 measured minimum inter-satellite distance 1818.8 cm over 401 pairs, against the 800 cm
+    // reject radius -- which is WHY H2 needs no same-group overlap exemption. That measurement is
+    // ASSERTED at capture, not assumed: a well whose own members sit closer than this could never
+    // validate its own footprint, so it is refused with a loud line rather than looping forever.
+    static constexpr float WellSelfOverlapFloorCm = 800.0f;
 };

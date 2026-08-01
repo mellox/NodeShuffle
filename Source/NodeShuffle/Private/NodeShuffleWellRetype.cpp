@@ -21,11 +21,16 @@
 //     reach that rebuild without depending on an exported symbol.
 // That is the PREDICTION, not the claim -- the import table is MEASURED after every build.
 
+// UBT's IWYU rule requires Foo.cpp to include Foo.h FIRST. This file had NodeShuffleSubsystem.h first
+// and got away with it only while adaptive unity happened to fold it into a shared translation unit;
+// the moment it was compiled standalone (ns-review-h3 round, when NodeShuffleSubsystem.h changed) the
+// check fired. Latent since H1, not caused by H2 -- fixed here because it blocks the build.
+#include "NodeShuffleWellRetype.h" // the shared pure helpers -- MUST be first (IWYU)
+
 #include "NodeShuffleSubsystem.h"
 
 #include "NodeShuffle.h"
 #include "NodeShuffleWellCensus.h" // AFGResourceNodeFrackingCore / ...Satellite
-#include "NodeShuffleWellRetype.h" // the shared pure helpers
 #include "EngineUtils.h"           // TActorIterator, for the once-per-session live-vs-layout census
 #include "Resources/FGResourceDescriptor.h"
 // Completeness for the TWeakObjectPtr<T> returned BY VALUE from GetActivator(). Include only.
