@@ -55,6 +55,15 @@ public:
     // ore node) are FALSE -> native rules stand so a normal miner is rejected and only its own extractor binds.
     bool bForceAccept = false;
 
+    // H2b-identity (2026-08-08): TRUE when this component was stamped on a RELOCATED RESOURCE-WELL member
+    // (fracking core or satellite) by AttachIdentityOnly. Such a component carries NO EntryGuid (well
+    // identity lives in FNodeShuffleWellEntry, keyed by CorePath -- there is no per-member GUID) and NO
+    // fallback RockMesh/OilDecal (a well member is dressed by its own captured NodeShuffleWellMesh_* pieces;
+    // a second rock would double-render). It exists so `Find()` recognises a well member as OURS -- which is
+    // what compFound=0 in the HOLOGRAMHOOK TrySnapToActor log meant, and what kept the ACCEPTANCE /
+    // ACCEPT-NODE / ACCEPT-EXT diagnostics dark on the one actor class that needed them.
+    bool bWellMember = false;
+
     // Fallback visual, owned by the node actor (see class comment). Created lazily by EnsureVisuals().
     UPROPERTY()
     TObjectPtr<UStaticMeshComponent> RockMesh;
@@ -95,4 +104,20 @@ public:
     // Returns the component (existing one if already present — idempotent on adopt).
     static UNodeShuffleNodeComponent* Attach(AFGResourceNode* Owner, const FGuid& Guid, bool bVanillaOrigin,
                                              bool bForceAccept);
+
+    // H2b-identity: IDENTITY ONLY -- no fallback visuals, no force-accept. For RELOCATED WELL MEMBERS.
+    //
+    // WHY A SECOND ENTRY POINT AND NOT A CALL TO Attach(): Attach() takes AFGResourceNode*, and a fracking
+    // CORE is an AFGResourceNodeFrackingCore, which derives from AFGResourceNodeBase and is NOT an
+    // AFGResourceNode. The call does not compile for a core -- the identity component could never have
+    // reached one. (Satellites ARE AFGResourceNode and could have; nothing ever called it for them either.)
+    // This is the same AFGResourceNode-typed blind spot that has now bitten this packet three times; the
+    // parameter is AActor* deliberately so no node type can fall out of it again, and because every use
+    // inside is AActor-level (NewObject outer + FindComponentByClass) -- zero new engine symbol.
+    //
+    // bForceAccept is HARD-CODED FALSE and is not a parameter. A well member must keep its NATIVE
+    // acceptance rules: with bForceAccept=false the force-accept lambda in NodeShuffle.cpp returns exactly
+    // what it returned before this component existed (false), so ordinary Miners are still natively rejected
+    // by a fracking satellite and the shipped fracking crash guard is neither touched nor relied upon here.
+    static UNodeShuffleNodeComponent* AttachIdentityOnly(AActor* Owner);
 };

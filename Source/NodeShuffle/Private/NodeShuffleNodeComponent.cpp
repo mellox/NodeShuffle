@@ -47,6 +47,70 @@ UNodeShuffleNodeComponent* UNodeShuffleNodeComponent::Attach(AFGResourceNode* Ow
     return Comp;
 }
 
+UNodeShuffleNodeComponent* UNodeShuffleNodeComponent::AttachIdentityOnly(AActor* Owner)
+{
+    if (!IsValid(Owner))
+    {
+        return nullptr;
+    }
+    UNodeShuffleNodeComponent* Comp = Owner->FindComponentByClass<UNodeShuffleNodeComponent>();
+    const bool bCreated = (Comp == nullptr);
+    if (!Comp)
+    {
+        Comp = NewObject<UNodeShuffleNodeComponent>(Owner, TEXT("NodeShuffleNodeComp"));
+        if (!Comp)
+        {
+            UE_LOG(LogNodeShuffle, Warning,
+                TEXT("WELLH2C-IDENTITY actor='%s': NewObject FAILED -- this well member stays UNRECOGNISED ")
+                TEXT("(HOLOGRAMHOOK ... compFound=0) and its acceptance diagnostics stay dark."),
+                *Owner->GetName());
+            return nullptr;
+        }
+        Comp->RegisterComponent();
+    }
+    // Deliberately NOT set: EntryGuid (wells are keyed by CorePath, not a per-member GUID) and
+    // bForceAccept (must stay false -- see the header). EnsureVisuals is deliberately NOT called: the
+    // member is dressed by its own NodeShuffleWellMesh_* pieces and a fallback rock would double-render
+    // AND would hand the portable-miner dispenser hook a rock surface a well member must not have.
+    // GUARDED (ns-review-h2c F-2): only stamp a component we CREATED, or one already marked as a well
+    // member. The previous form wrote these three unconditionally on any component it FOUND, every pass,
+    // and the log below only fires on bCreated -- so if this ever ran against an ORDINARY node's
+    // component (one carrying an EntryGuid, bVanillaOrigin, or a legitimately-true bForceAccept) it
+    // would silently overwrite that node's identity with well-member identity, once per pass, invisibly.
+    // Unreachable today because only well members reach this call; that is exactly the kind of
+    // "unreachable by construction, unwritten, one refactor from live" trap this packet has already
+    // paid for three times.
+    if (bCreated || Comp->bWellMember)
+    {
+        Comp->bVanillaOrigin = false;
+        Comp->bForceAccept = false;
+        Comp->bWellMember = true;
+    }
+    else
+    {
+        UE_LOG(LogNodeShuffle, Warning,
+            TEXT("WELLH2C-IDENTITY actor='%s' class='%s': REFUSED to stamp -- this actor already carries ")
+            TEXT("a NodeShuffleNodeComponent that is NOT a well member (vanillaOrigin=%d forceAccept=%d). ")
+            TEXT("Left untouched. A well member and an ordinary managed node have collided on one actor; ")
+            TEXT("that should be impossible, so report this line rather than working around it."),
+            *Owner->GetName(), *Owner->GetClass()->GetName(),
+            Comp->bVanillaOrigin ? 1 : 0, Comp->bForceAccept ? 1 : 0);
+        return Comp;
+    }
+    // Once per actor per session by construction (bCreated), so this is not gated behind the diagnostics
+    // flag -- it is the single line that proves the identity half of H2b-identity actually ran, and the
+    // WELLH2B-* lines beside it in this same flow are ungated for the same reason.
+    if (bCreated)
+    {
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("WELLH2C-IDENTITY actor='%s' class='%s': stamped UNodeShuffleNodeComponent ")
+            TEXT("(wellMember=1 forceAccept=0 rockMesh=<none>) -- HOLOGRAMHOOK TrySnapToActor will now ")
+            TEXT("read compFound=1 on this actor and emit ACCEPTANCE / ACCEPT-NODE / ACCEPT-EXT."),
+            *Owner->GetName(), *Owner->GetClass()->GetName());
+    }
+    return Comp;
+}
+
 void UNodeShuffleNodeComponent::EnsureVisuals()
 {
     AActor* Owner = GetOwner();

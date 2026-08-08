@@ -18,10 +18,13 @@
 
 #include "NodeShuffle.h"
 #include "NodeShuffleWellRetype.h"   // WellShort
+#include "NodeShuffleNodeComponent.h"      // H2b-identity: AttachIdentityOnly
 
 #include "Engine/StaticMesh.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/BoxComponent.h"       // H2b-identity: the "Resource" snap collider
 #include "Materials/MaterialInterface.h"
+#include "Resources/FGResourceNodeBase.h"  // H2b-identity: mBoxComponent (friend-granted)
 
 namespace
 {
@@ -107,6 +110,179 @@ void ANodeShuffleSubsystem::ConfigureWellMeshCollision(UStaticMeshComponent* Com
 }
 
 // ------------------------------------------------------------------------------------------------
+// H2b-identity -- MAKE THE OFF-CENTRE HIT RESOLVE TO THE NODE
+// ------------------------------------------------------------------------------------------------
+// THE MEASUREMENT THIS EXISTS FOR (2026-08-08, marker 2026-08-08-h2b-2):
+//     HOLOGRAMHOOK IsValidHitResult -> 1 ... hitComp='NodeShuffleWellMesh_2' ... BuildGun=Block
+//     HOLOGRAMHOOK TrySnapToActor  -> 0 ... hitComp='NodeShuffleWellMesh_2' compFound=0
+// H2b's collision half works: the trace HITS us. The snap one step later does not.
+//
+// THIS IS NOT A NEW DIAGNOSIS. It is the SAME failure, on a class the existing fix could not reach.
+// NodeShuffleSubsystem.cpp's EnsureNodeUseBox already records it, MEASURED, for ordinary nodes:
+//     "acceptance ALL passes (CanOccupy=1, IsAllowed=1, nodeIsA=1, hasAnyResources=1) yet
+//      TrySnapToActor->0 -- because the build-gun trace lands on our laterally-offset rock
+//      (NodeShuffleRockMesh_Rt) and the game's snap can't resolve that off-center hit to the node
+//      without a large 'Resource' collider (mBoxComponent) covering it."
+// Swap "NodeShuffleRockMesh_Rt" for "NodeShuffleWellMesh_2" and that paragraph is this bug verbatim.
+// A well member's pieces are offset FURTHER than an ordinary rock ever is -- NodeShuffleWellVisuals.cpp
+// records a crack graphic sitting 940 cm from its core -- so it needs the fix MORE, not less.
+//
+// WHY IT NEVER GOT IT: `void ANodeShuffleSubsystem::EnsureNodeUseBox(AFGResourceNode* Node)`. A fracking
+// CORE is an AFGResourceNodeFrackingCore : AFGResourceNodeBase and is NOT an AFGResourceNode, so that call
+// does not compile for one and no well path ever made it. Its non-legacy branch needs only
+// AFGResourceNodeBase. The typed-signature blind spot, again, in a second function.
+//
+// SIZED, NOT HARD-CODED, AND CLAMPED AGAINST A MEASURED NUMBER. EnsureNodeUseBox uses a flat 650 cm,
+// which does not cover a 940 cm crack piece. This measures the actual lateral reach of the member's own
+// pieces and clamps it to [650, 900]. The 900 ceiling is half of H0's MEASURED minimum inter-satellite
+// spacing (1818.8 cm over 401 pairs), so two members' boxes can never overlap and steal each other's
+// snap. When a piece reaches past the ceiling the log says clamped=1 and prints the raw reach -- the
+// case is then visible rather than silently mis-sized.
+//
+// PARITY, AND WHY THIS IS A NO-OP WHEN IT IS NOT NEEDED. Re-pointing mBoxComponent replaces what the
+// node's USE (E-key) bounds and its native highlight resolve against. So this only acts when the
+// member's EXISTING box does NOT already cover the pieces; when it does, nothing is created, nothing is
+// re-pointed, and the log says why. It also never SHRINKS a box: the wanted extent is max'd against
+// whatever the member already had.
+//
+// NOT PROVABLE HERE, AND GRADED ACCORDINGLY: that a covering mBoxComponent is what the Pressurizer's
+// snap actually resolves against runs entirely through closed-source hologram code. ASSUMED. It is test
+// step 1 of the runtime script, not a footnote -- and the identity half above is what makes the log
+// answer the question either way, because HOLOGRAMHOOK ACCEPTANCE / ACCEPT-NODE / ACCEPT-EXT only print
+// when compFound=1.
+void ANodeShuffleSubsystem::EnsureWellMemberSnapBox(AActor* Actor)
+{
+    if (!IsValid(Actor)) { return; }
+    AFGResourceNodeBase* Base = Cast<AFGResourceNodeBase>(Actor);
+    USceneComponent* Root = Actor->GetRootComponent();
+    if (!Base || !Root) { return; }
+
+    // Lateral/vertical reach of OUR pieces, measured from the actor origin in world-axis terms. World
+    // bounds (not relative location) so a piece's own mesh size counts, which is the whole point -- a
+    // hit lands on the far EDGE of a piece, not on its pivot.
+    const FVector ActorLoc = Actor->GetActorLocation();
+    // DOUBLE, not float, deliberately: FVector is double-precision in UE5 and FMath::Max/Clamp deduce a
+    // SINGLE template type -- mixing a float accumulator with a double FVector component is a compile
+    // error, not a silent narrowing. Every scalar in this function is double for that one reason.
+    double RawXY = 0.0;
+    double RawZ = 0.0;
+    int32 Pieces = 0;
+    TInlineComponentArray<UStaticMeshComponent*> Meshes(Actor);
+    for (UStaticMeshComponent* M : Meshes)
+    {
+        if (!IsValid(M) || !M->GetName().StartsWith(TEXT("NodeShuffleWellMesh"))) { continue; }
+        ++Pieces;
+        const FBoxSphereBounds B = M->Bounds;
+        const FVector D = B.Origin - ActorLoc;
+        RawXY = FMath::Max(RawXY, FMath::Max(FMath::Abs(D.X) + B.BoxExtent.X, FMath::Abs(D.Y) + B.BoxExtent.Y));
+        RawZ = FMath::Max(RawZ, FMath::Abs(D.Z) + B.BoxExtent.Z);
+    }
+    if (Pieces == 0) { return; } // undressed member: nothing to cover, and nothing to snap to either
+
+    static constexpr double SnapBoxMinXY = 650.0; // EnsureNodeUseBox's proven ordinary-node extent
+    static constexpr double SnapBoxMaxXY = 900.0; // half the MEASURED 1818.8 cm min inter-satellite spacing
+    static constexpr double SnapBoxMinZ = 180.0;  // EnsureNodeUseBox's proven ordinary-node half-height
+    static constexpr double SnapBoxMaxZ = 600.0;
+    // What WE want, before the never-shrink floor: the piece reach, clamped to the ceiling.
+    const double DesiredXY = FMath::Clamp(RawXY, SnapBoxMinXY, SnapBoxMaxXY);
+    const double DesiredZ  = FMath::Clamp(RawZ,  SnapBoxMinZ,  SnapBoxMaxZ);
+
+    // Does the member's EXISTING collider already cover the pieces? If so this whole fix is a no-op.
+    UBoxComponent* Existing = Base->mBoxComponent;
+    const FVector ExistingExtent = IsValid(Existing) ? Existing->GetUnscaledBoxExtent() : FVector::ZeroVector;
+    const bool bExistingCovers = IsValid(Existing)
+        && ExistingExtent.X >= RawXY && ExistingExtent.Y >= RawXY && ExistingExtent.Z >= RawZ;
+
+    // Never SHRINK: whatever the member already had is a floor, so no native bound gets smaller.
+    // PER-AXIS, deliberately (ns-review-h2c F-1). The previous form was
+    //   WantXY = Max(WantXY, Max(ExistingExtent.X, ExistingExtent.Y))
+    // which fed ONE value to both axes, so an anisotropic native box of (1200,400,200) came out
+    // 1200x1200 -- Y grew 3x for no reason, and the growth came from the OTHER axis, not from any
+    // piece. Growing an axis is only ever justified by that axis's own floor or our own reach.
+    const double WantX = FMath::Max(DesiredXY, ExistingExtent.X);
+    const double WantY = FMath::Max(DesiredXY, ExistingExtent.Y);
+    const double WantZ = FMath::Max(DesiredZ,  ExistingExtent.Z);
+
+    // bClamped is computed from the FINAL extent, not from RawXY (ns-review-h2c F-1). The old form
+    // latched `RawXY > SnapBoxMaxXY` BEFORE the never-shrink max, so a box pushed past the ceiling by
+    // an existing native bound printed clamped=0 -- the one field the test script tells the tester to
+    // watch, reporting SAFE in exactly the unsafe case. It now means what it says: this box is not
+    // fully within the 900 cm ceiling, whatever put it there.
+    const bool bClamped = (RawXY > SnapBoxMaxXY) || (WantX > SnapBoxMaxXY) || (WantY > SnapBoxMaxXY);
+
+    static TSet<FString> SnapBoxLogged;
+    const FString LogKey = FString::Printf(TEXT("%s|%d|%d|%d|%d"), *Actor->GetPathName(), Pieces,
+                                           FMath::RoundToInt(WantX), FMath::RoundToInt(WantY),
+                                           bExistingCovers ? 1 : 0);
+    const bool bSayIt = !SnapBoxLogged.Contains(LogKey);
+    if (bSayIt) { SnapBoxLogged.Add(LogKey); }
+
+    if (bExistingCovers)
+    {
+        if (bSayIt)
+        {
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("WELLH2C-SNAPBOX actor='%s' class='%s' pieces=%d reach=(xy=%.0f z=%.0f): NO-OP -- the ")
+                TEXT("member's own mBoxComponent '%s' extent=%s ALREADY covers every piece, so nothing was ")
+                TEXT("created and mBoxComponent was NOT re-pointed. If the snap still fails, the collider is ")
+                TEXT("not the gate -- read HOLOGRAMHOOK ACCEPTANCE / ACCEPT-NODE / ACCEPT-EXT for this actor."),
+                *Actor->GetName(), *Actor->GetClass()->GetName(), Pieces, RawXY, RawZ,
+                *Existing->GetName(), *ExistingExtent.ToCompactString());
+        }
+        return;
+    }
+
+    UBoxComponent* Box = nullptr;
+    TInlineComponentArray<UBoxComponent*> Boxes(Actor);
+    for (UBoxComponent* B : Boxes)
+    {
+        if (IsValid(B) && B->GetFName() == FName(TEXT("NodeShuffleWellUseBox_Rt"))) { Box = B; break; }
+    }
+    const bool bCreated = (Box == nullptr);
+    if (!Box)
+    {
+        Box = NewObject<UBoxComponent>(Actor, TEXT("NodeShuffleWellUseBox_Rt"));
+        if (!Box)
+        {
+            UE_LOG(LogNodeShuffle, Warning,
+                TEXT("WELLH2C-SNAPBOX actor='%s': NewObject FAILED -- the off-centre build-gun hit on this ")
+                TEXT("member cannot resolve to the node and the snap will keep returning 0."),
+                *Actor->GetName());
+            return;
+        }
+        Box->SetupAttachment(Root);
+        Box->RegisterComponent();
+        if (Box->GetAttachParent() != Root)
+        {
+            Box->AttachToComponent(Root, FAttachmentTransformRules::KeepRelativeTransform);
+        }
+    }
+    // The NAMED profile, with no per-channel overrides -- EnsureNodeUseBox's own comment records that an
+    // added BuildGun override flipped the profile to 'Custom' and broke the very snap it was meant to fix.
+    if (Box->GetCollisionProfileName() != FName(TEXT("Resource")))
+    {
+        Box->SetCollisionProfileName(TEXT("Resource"));
+    }
+    const FVector WantExtent(WantX, WantY, WantZ);
+    if (!Box->GetUnscaledBoxExtent().Equals(WantExtent, 1.0f)) { Box->SetBoxExtent(WantExtent); }
+    const FString PrevName = IsValid(Existing) ? Existing->GetName() : FString(TEXT("<null>"));
+    Base->mBoxComponent = Box; // the resource collider the snap resolves against
+
+    if (bSayIt)
+    {
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("WELLH2C-SNAPBOX actor='%s' class='%s' pieces=%d reach=(xy=%.0f z=%.0f) clamped=%d: ")
+            TEXT("%s 'NodeShuffleWellUseBox_Rt' profile='Resource' extent=%s; mBoxComponent re-pointed ")
+            TEXT("'%s' extent=%s -> ours. This is what an off-centre hit on a NodeShuffleWellMesh_* piece ")
+            TEXT("now resolves against. clamped=1 means a piece reaches past the 900 cm ceiling (half the ")
+            TEXT("measured 1818.8 cm min inter-satellite spacing) and is NOT fully covered."),
+            *Actor->GetName(), *Actor->GetClass()->GetName(), Pieces, RawXY, RawZ, bClamped ? 1 : 0,
+            bCreated ? TEXT("created") : TEXT("re-asserted"), *WantExtent.ToCompactString(),
+            *PrevName, *ExistingExtent.ToCompactString());
+    }
+}
+
+// ------------------------------------------------------------------------------------------------
 // APPLY -- dress the RELOCATED actors, and give them something to hit
 // ------------------------------------------------------------------------------------------------
 int32 ANodeShuffleSubsystem::DressWellActor(AActor* Actor, const TArray<FNodeShuffleWellVisual>& Visuals,
@@ -180,6 +356,20 @@ int32 ANodeShuffleSubsystem::DressWellActor(AActor* Actor, const TArray<FNodeShu
     }
     if (Actor->IsHidden()) { Actor->SetActorHiddenInGame(false); }
     if (!Actor->GetActorEnableCollision()) { Actor->SetActorEnableCollision(true); }
+
+    // H2b-identity, BOTH HALVES, RE-ASSERTED EVERY PASS for the same reason the collision above is: a
+    // streaming/significance round trip must not be able to quietly take either of them away.
+    //   1. IDENTITY. Without it UNodeShuffleNodeComponent::Find() returns null on a well member, which is
+    //      literally what `compFound=0` in the H2b-2 measurement means -- and it is what kept the
+    //      HOLOGRAMHOOK ACCEPTANCE / ACCEPT-NODE / ACCEPT-EXT dump dark, because that dump is gated on
+    //      bOurs, and bOurs is (legacy-class OR component-found OR a component name starting
+    //      "NodeShuffleRockMesh") -- and our well pieces are named NodeShuffleWellMesh, so not one of the
+    //      three legs could ever fire for a well member. Force-accept behaviour is UNCHANGED: the stamped
+    //      component carries bForceAccept=false, so the force-accept lambda returns false exactly as it
+    //      did when the component was absent. The shipped fracking crash guard is not touched.
+    //   2. THE SNAP COLLIDER. See EnsureWellMemberSnapBox above.
+    UNodeShuffleNodeComponent::AttachIdentityOnly(Actor);
+    ANodeShuffleSubsystem::EnsureWellMemberSnapBox(Actor);
     return Created;
 }
 

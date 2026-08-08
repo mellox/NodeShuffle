@@ -1672,6 +1672,14 @@ private:
     static int32 DressWellActor(AActor* Actor, const TArray<FNodeShuffleWellVisual>& Visuals,
                                 int32& OutPieces);
 
+    // H2b-identity (2026-08-08): give a relocated well member a "Resource" collider that COVERS its own
+    // NodeShuffleWellMesh_* pieces, and wire it as AFGResourceNodeBase::mBoxComponent -- the SAME recipe
+    // EnsureNodeUseBox already applies to ordinary relocated nodes, which could never reach a fracking core
+    // because that function is typed AFGResourceNode*. Member (not free) function because it writes
+    // mBoxComponent, which needs this class's AccessTransformers Friend grant on AFGResourceNodeBase.
+    // NO-OP when the member's existing box already covers the pieces -- see the definition.
+    static void EnsureWellMemberSnapBox(AActor* Actor);
+
     // vanilla member path -> its look. Transient; rebuilt at most once per apply pass.
     TMap<FString, TArray<TWeakObjectPtr<class UStaticMeshComponent>>> WellMeshIndex;
     int32 WellMeshIndexPass = -1;
