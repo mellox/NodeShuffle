@@ -1780,10 +1780,18 @@ void ANodeShuffleSubsystem::EmitRollCensus(int32 Seed, bool bIsReroll, int32 Poo
     //    "Remove the now-detached inactive originals"). So `inactive` here is new-location entries only.
     TMap<FString, int32> ActiveByResource;
     int32 ActiveEntries = 0, InactiveEntries = 0, ActiveWithNoResource = 0;
+    // CAVE PLACEMENT DENOMINATOR (item 3). Counted in this same loop, one iteration, so it can never
+    // drift from the numerator's population: the numerator is CountUndergroundEntries(), whose predicate
+    // is `bIsNewNode && bActive && bUnderground` -- this is the same predicate minus bUnderground, i.e.
+    // a provable superset. Cave placement demonstrably works (the user's save reported 14 underground
+    // entries, then 27 after a re-roll) but until now the ONLY way to see it was to type
+    // NodeShuffle.Here in the console.
+    int32 ActiveNewNodeEntries = 0;
     for (const FNodeShuffleEntry& E : Layout)
     {
         if (!E.bActive) { ++InactiveEntries; continue; }
         ++ActiveEntries;
+        if (E.bIsNewNode) { ++ActiveNewNodeEntries; }
         if (E.AssignedResourceClassPath.IsEmpty()) { ++ActiveWithNoResource; continue; }
         ActiveByResource.FindOrAdd(E.AssignedResourceClassPath)++;
     }
@@ -1830,11 +1838,25 @@ void ANodeShuffleSubsystem::EmitRollCensus(int32 Seed, bool bIsReroll, int32 Poo
              "| LAYOUT AFTER DRAW+DEAL: entries=%d active=%d inactive=%d activeWithNoResourceYet=%d "
              "[inactive ORIGINALS are NOT in these counts -- they were removed from the layout as hide-only "
              "records at the Hide & Replace step; read 'Hide & Replace conversion' for those] "
+             "| CAVE PLACEMENT: undergroundActiveNewNodes=%d of %d active new-location entries "
+             "(cave store as known at census time: %d cell(s), %d seed(s)) "
+             "[numerator = CountUndergroundEntries(), i.e. bIsNewNode && bActive && bUnderground -- the "
+             "SAME predicate NodeShuffle.Here prints; denominator counted in this function's own layout "
+             "loop as that predicate minus bUnderground. READING A ZERO: 0 over a 0-cell cave store means "
+             "no cave cell was LOADED at census time -- which is either \"none exist\" or "
+             "\"EnsureCaveStoreLoaded had not run yet\", and this line CANNOT tell them apart "
+             "(GenerateNewLocations early-returns before the load when NewNodeCount is 0). Type "
+             "NodeShuffle.Here to force the load and read its cave-store line to separate them; "
+             "0 over a NON-ZERO cave store means cells were "
+             "known and none were drawn into an active entry on this roll. The flag is the value AS "
+             "ROLLED -- the apply path can clear it later when a spot fails, and this line does not see "
+             "that] "
              "| ACTIVE PER RESOURCE (active/originalsInPool): %s"),
         Seed, bIsReroll ? 1 : 0, LiveFracking,
         LiveTotal, LiveOurs, LiveLevelPlaced, LiveRuntimeOther,
         OriginalsCaptured, PoolCountsByResource.Num(), NewLocationCount, PoolSize, TargetActive,
         Layout.Num(), ActiveEntries, InactiveEntries, ActiveWithNoResource,
+        CountUndergroundEntries(), ActiveNewNodeEntries, CaveFloors.Num(), CaveSeedCount,
         PerResource.IsEmpty() ? TEXT("<none>") : *PerResource);
 
     // 3. THE ZERO-ACTIVE ALARM. Both 2026-08-08 investigations independently asked for exactly this
@@ -4439,6 +4461,46 @@ bool ANodeShuffleSubsystem::IsLocationNearAnyPlayer(const FVector& Loc, float Ra
 // RollLayout's Hide & Replace conversion (see the "Build OriginalNodeRecord here" comment there),
 // which is also where Rec.bModdedOrigin is actually stamped.
 
+// ------------------------------------------------------------------------------------------------
+// T4 (docs/TECH-DEBT.md) -- MESH-HIDE LATENCY, MEASURED
+// ------------------------------------------------------------------------------------------------
+// WHAT IS UNOBSERVABLE TODAY. The user confirmed 2026-08-08 that after a shuffle a hidden original's
+// ROCK stays visible on arrival -- long enough to fly to it and try two miners -- while the NODE hide is
+// already correct (neither miner snapped, so the actor is out of mResourceNodes). Only the mesh actor
+// lags. The one always-on funnel line covering the hide is emitted ONCE PER LOAD and reports nothing
+// about mesh actors, so the duration is a stopwatch guess and nothing in the log can confirm or deny it.
+//
+// THE POPULATION THAT CAN LAG, AND WHY IT IS SMALL. The node hide (below) hides the paired
+// AFGNodeMeshActor in the same statement -- but only if FindMeshActorForNode resolves at that instant.
+// If it does not, the record is then marked SteadyHiddenOriginals and the loop skips it on every later
+// pass, so nothing ever retries the pairing. So "records whose mesh actor was unresolvable at node-hide
+// time" is exactly the set that can go dark later, and it is the only set this tracks. That is the
+// cheaper design the packet asked for in place of a per-pass sweep over all 630 records.
+//
+// THIS PACKET HIDES NOTHING NEW. The watch sweep re-resolves and REPORTS; it does not hide the mesh
+// actor it finds. Behaviour is byte-for-byte what it was.
+//
+// MODULE-STATIC, NOT A MEMBER, because this packet may not edit NodeShuffleSubsystem.h. Reset whenever
+// the UWorld pointer changes: GetTimeSeconds restarts with the world, so a second save load in one
+// process must not inherit the previous world's timestamps.
+namespace NodeShuffleMeshHideLatency
+{
+    struct FWatch
+    {
+        FVector NodeLoc = FVector::ZeroVector;
+        float HideTimeSeconds = 0.0f;
+        int32 HidePass = 0;
+    };
+    static TMap<FString, FWatch> Watch;         // keyed by VanillaNodePath, same key as SteadyHiddenOriginals
+    static const void* WatchWorld = nullptr;
+    static int32 PassIndex = 0;                 // passes of SuppressOriginalNodes that processed records
+    static int32 ResolvedLaterTotal = 0;
+    static int32 StillVisibleWhenResolvedTotal = 0;
+    static float MaxDelaySeconds = -1.0f;       // -1 = no delay has ever been measured this session
+    static float LastDelaySeconds = -1.0f;
+    static int32 LastSummary[8] = { -1, -1, -1, -1, -1, -1, -1, -1 };
+}
+
 void ANodeShuffleSubsystem::SuppressOriginalNodes()
 {
     SuppressChangesLastPass = 0; // coexist-1 §2: per-pass change tally (feeds "pass: 0 changes")
@@ -4480,6 +4542,65 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
     int32 DbgNear = 0, DbgFoundPath = 0, DbgAlreadyHidden = 0, DbgOcc = 0, DbgMissedPath = 0;
     int32 DbgCapturePending = 0; // dirtdress-1: originals held out of steady, awaiting a capture source
     int32 DbgRematched = 0; // rehide-1: stale records resolved THIS pass by location+class+resource re-match
+
+    // ---- T4 BOOKKEEPING (docs/TECH-DEBT.md T4) ----
+    const UWorld* MeshHideWorld = GetWorld();
+    if (NodeShuffleMeshHideLatency::WatchWorld != MeshHideWorld)
+    {
+        NodeShuffleMeshHideLatency::WatchWorld = MeshHideWorld;
+        NodeShuffleMeshHideLatency::Watch.Reset();
+        NodeShuffleMeshHideLatency::PassIndex = 0;
+        NodeShuffleMeshHideLatency::ResolvedLaterTotal = 0;
+        NodeShuffleMeshHideLatency::StillVisibleWhenResolvedTotal = 0;
+        NodeShuffleMeshHideLatency::MaxDelaySeconds = -1.0f;
+        NodeShuffleMeshHideLatency::LastDelaySeconds = -1.0f;
+        for (int32 i = 0; i < 8; i++) { NodeShuffleMeshHideLatency::LastSummary[i] = -1; }
+    }
+    const int32 MeshHidePass = ++NodeShuffleMeshHideLatency::PassIndex;
+    const float MeshHideNow = MeshHideWorld ? MeshHideWorld->GetTimeSeconds() : 0.0f;
+    // THE DENOMINATORS for the latency summary, both counted in the same loop iteration as the hide they
+    // describe: of the nodes hidden this pass, how many had a resolvable mesh actor at that instant.
+    int32 MeshResolvedAtHide = 0, MeshUnresolvedAtHide = 0, MeshActorNeverAssigned = 0;
+    int32 ResolvedLaterThisPass = 0, StillVisibleThisPass = 0, RocksHiddenNearWatched = 0;
+    // ONE reporting path for "this record's rock mesh actor became resolvable on a LATER pass than the
+    // node hide", called from the two places that can observe it (the main loop, for a record not yet
+    // steady; and the post-loop watch sweep, which is the only route open to one that already went
+    // steady) so both produce the same numbers from the same code.
+    // `Route`: "cache" = its AFGNodeMeshActor became resolvable (main loop or watch sweep);
+    // "backstop" = the stray-rock backstop hid a rock at this record's node location. BOTH are
+    // observations of "this rock went dark LATER than its node", which is the quantity T4 needs, so
+    // both MUST feed the same delay fields -- a delay measured on one route and reported as -1 on the
+    // other is the "zero with no denominator" defect this packet exists to avoid.
+    const auto ReportMeshResolvedLater =
+        [&](const FString& Path, const NodeShuffleMeshHideLatency::FWatch& W, bool bMeshVisibleNow,
+            const TCHAR* Route) -> void
+    {
+        const float Delay = MeshHideNow - W.HideTimeSeconds;
+        const int32 PassDelay = MeshHidePass - W.HidePass;
+        ResolvedLaterThisPass++;
+        NodeShuffleMeshHideLatency::ResolvedLaterTotal++;
+        if (bMeshVisibleNow)
+        {
+            StillVisibleThisPass++;
+            NodeShuffleMeshHideLatency::StillVisibleWhenResolvedTotal++;
+        }
+        NodeShuffleMeshHideLatency::LastDelaySeconds = Delay;
+        NodeShuffleMeshHideLatency::MaxDelaySeconds =
+            FMath::Max(NodeShuffleMeshHideLatency::MaxDelaySeconds, Delay);
+        if (bDiagHide)
+        {
+            UE_LOG(LogNodeShuffle, Verbose,
+                TEXT("[route=%s] ")
+                TEXT("MESHHIDE-LATENCY record='%s': its AFGNodeMeshActor was NOT resolvable when the node ")
+                TEXT("was hidden on hide-pass %d, and IS resolvable now on hide-pass %d -- %.1f s and %d ")
+                TEXT("pass(es) later. meshVisibleAtThisMoment=%d (1 = the rock was still drawn this long ")
+                TEXT("after the node stopped accepting a miner; 0 = something had already hidden it). ")
+                TEXT("MEASURED: pairing resolvability, the mesh actor's hidden flag, and world time ")
+                TEXT("between the two events. NOT MEASURED: why the pairing was missing, and what hid ")
+                TEXT("the rock. Said once per record."),
+                Route, *Path, W.HidePass, MeshHidePass, Delay, PassDelay, bMeshVisibleNow ? 1 : 0);
+        }
+    };
 
     int32 NodesHidden = 0;
     // Real locations of the originals we processed near the player this pass (resolved by path). The stray-
@@ -4584,10 +4705,52 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
                 bool bChanged = false;
                 if (Node->GetActorEnableCollision()) { Node->SetActorEnableCollision(false); bChanged = true; }
                 if (!Node->IsHidden()) { Node->SetActorHiddenInGame(true); bChanged = true; }
-                if (AFGNodeMeshActor* MeshActor = FindMeshActorForNode(Node))
+                // T4: SAME BEHAVIOUR, NOW MEASURED. The `if` below is the entire mesh-hide this mod
+                // performs on the ordinary-node path; when FindMeshActorForNode returns null nothing
+                // hides the rock here and the record is about to go steady, so this branch decides
+                // whether the rock can lag at all. The counters record which branch ran; the watch map
+                // records the records that took the null branch, and NOTHING here hides anything extra.
+                AFGNodeMeshActor* MeshActor = FindMeshActorForNode(Node);
+                if (MeshActor)
                 {
+                    const bool bMeshWasVisible = !MeshActor->IsHidden();
                     MeshActor->SetActorHiddenInGame(true);
                     MeshActor->SetActorEnableCollision(false);
+                    MeshResolvedAtHide++;
+                    if (const NodeShuffleMeshHideLatency::FWatch* W =
+                            NodeShuffleMeshHideLatency::Watch.Find(Rec.VanillaNodePath))
+                    {
+                        ReportMeshResolvedLater(Rec.VanillaNodePath, *W, bMeshWasVisible, TEXT("cache"));
+                        NodeShuffleMeshHideLatency::Watch.Remove(Rec.VanillaNodePath);
+                    }
+                }
+                else
+                {
+                    // T4, THE POPULATION SPLIT. "FindMeshActorForNode returned null" is TWO different
+                    // worlds and only one of them can lag:
+                    //   mMeshActor.IsNull()  -> this node was never AUTHORED a separate mesh actor. Its
+                    //      rock (if any) is not an AFGNodeMeshActor, hiding the node actor is the whole
+                    //      story here, and nothing will EVER resolve. Enrolling these drowns the real
+                    //      population ~9:1 on the live save (96 mesh actors vs 1087 streamed ordinary
+                    //      nodes, MESHTYPE-CENSUS 2026-08-08) and pins the watch list open forever.
+                    //   !IsNull() but unresolved -> a mesh actor IS assigned and is not loaded/paired
+                    //      right now. THIS is the set whose rock can go dark later.
+                    // Friend access to the private soft pointer: Config/AccessTransformers.ini grants
+                    // ANodeShuffleSubsystem friendship on AFGResourceNodeBase. GetMeshActor() is NOT a
+                    // substitute -- it returns .Get(), which is null in both worlds.
+                    MeshUnresolvedAtHide++;
+                    if (Node->mMeshActor.IsNull())
+                    {
+                        MeshActorNeverAssigned++;
+                    }
+                    else if (!NodeShuffleMeshHideLatency::Watch.Contains(Rec.VanillaNodePath))
+                    {
+                        NodeShuffleMeshHideLatency::FWatch W;
+                        W.NodeLoc = NodeLoc;
+                        W.HideTimeSeconds = MeshHideNow;
+                        W.HidePass = MeshHidePass;
+                        NodeShuffleMeshHideLatency::Watch.Add(Rec.VanillaNodePath, W);
+                    }
                 }
                 // redesign-3 BUG C: SetActorHiddenInGame hides the rock but does NOT remove the node from
                 // the resource-map / scanner registry, so emptied originals still PING the scanner.
@@ -4646,6 +4809,25 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
                 if (!bCapturePending) { SteadyHiddenOriginals.Add(Rec.VanillaNodePath, Node); }
             }
         }
+    }
+
+    // T4: THE WATCH SWEEP. Only records whose mesh actor was UNRESOLVABLE at node-hide time are in this
+    // map, so this is O(watched) two-cache-lookup work, not O(all records) -- and a record leaves the map
+    // the first time it is reported. A record that already went steady never re-enters the loop above, so
+    // this is the ONLY route by which its rock can be measured at all. IT HIDES NOTHING: measurement only.
+    if (NodeShuffleMeshHideLatency::Watch.Num() > 0)
+    {
+        TArray<FString> ReportedNow;
+        for (const TPair<FString, NodeShuffleMeshHideLatency::FWatch>& Pair : NodeShuffleMeshHideLatency::Watch)
+        {
+            AFGResourceNodeBase* WatchedNode = FindOriginalBaseByPath(Pair.Key);
+            if (!WatchedNode) { continue; }
+            AFGNodeMeshActor* WatchedMesh = FindMeshActorForNode(WatchedNode);
+            if (!WatchedMesh) { continue; }
+            ReportMeshResolvedLater(Pair.Key, Pair.Value, !WatchedMesh->IsHidden(), TEXT("cache"));
+            ReportedNow.Add(Pair.Key);
+        }
+        for (const FString& K : ReportedNow) { NodeShuffleMeshHideLatency::Watch.Remove(K); }
     }
 
     // dirtdress-1 (cold review): capture retry-budget bookkeeping. Each resource that reported
@@ -4718,6 +4900,24 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
             Smc->SetVisibility(false, true);
             Smc->SetCollisionEnabled(ECollisionEnabled::NoCollision);
             RocksHidden++;
+            // T4, THE SECOND OBSERVATION ROUTE. On this save it is the ONLY one that fires: the
+            // mesh-actor cache pairs ~6% of streamed ordinary nodes, so a watched record's
+            // AFGNodeMeshActor mostly never becomes resolvable and the watch sweep never reports.
+            // The rock still goes dark -- here, via the backstop -- and that delay IS the number T4
+            // has never had. It therefore feeds the SAME delay fields as the cache route.
+            // MEASURED: both timestamps and the 2-D distance. NOT MEASURED / NOT CLAIMED: that this
+            // rock belongs to that record -- the backstop matches on proximity alone, and so does this.
+            FString BackstopHitKey;
+            for (const TPair<FString, NodeShuffleMeshHideLatency::FWatch>& WPair : NodeShuffleMeshHideLatency::Watch)
+            {
+                if (FVector::DistSquared2D(WPair.Value.NodeLoc, Loc) >= FMath::Square(RockOwnRange)) { continue; }
+                RocksHiddenNearWatched++;
+                ReportMeshResolvedLater(WPair.Key, WPair.Value, /*bMeshVisibleNow=*/true, TEXT("backstop"));
+                BackstopHitKey = WPair.Key;
+                break;
+            }
+            // Removed AFTER the range-for, never during it.
+            if (!BackstopHitKey.IsEmpty()) { NodeShuffleMeshHideLatency::Watch.Remove(BackstopHitKey); }
         }
     }
     } // if (bRunBackstop)
@@ -4751,6 +4951,66 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
             OriginalNodeRecord.Num(), DbgNear, NodesHidden, DbgAlreadyHidden, DbgOcc, DbgMissedPath,
             DbgCapturePending, DbgRematched);
     }
+    // T4 (docs/TECH-DEBT.md): MESH-HIDE LATENCY SUMMARY. Always-on and SUMMARY ONLY -- per-record detail
+    // is the Verbose MESHHIDE-LATENCY lines above, behind the diagnostics flag. Delta-gated on its own
+    // fields (same idiom as LastHideFunnel), so a settled world stops printing it entirely.
+    {
+        const int32 Summary[8] = {
+            NodesHidden, MeshResolvedAtHide, MeshUnresolvedAtHide, MeshActorNeverAssigned,
+            NodeShuffleMeshHideLatency::Watch.Num(),
+            NodeShuffleMeshHideLatency::ResolvedLaterTotal,
+            NodeShuffleMeshHideLatency::StillVisibleWhenResolvedTotal,
+            RocksHiddenNearWatched };
+        bool bLatencyChanged = false;
+        for (int32 i = 0; i < 8; i++)
+        {
+            if (Summary[i] != NodeShuffleMeshHideLatency::LastSummary[i])
+            {
+                bLatencyChanged = true;
+                NodeShuffleMeshHideLatency::LastSummary[i] = Summary[i];
+            }
+        }
+        if (bLatencyChanged && (NodesHidden > 0 || NodeShuffleMeshHideLatency::Watch.Num() > 0
+                                || NodeShuffleMeshHideLatency::ResolvedLaterTotal > 0))
+        {
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("MESHHIDE-LATENCY hide-pass %d: hid %d original node(s) this pass; of those %d had a ")
+                TEXT("resolvable AFGNodeMeshActor AT THE MOMENT OF THE HIDE (their rock went dark on the ")
+                TEXT("SAME pass) and %d did NOT (this mod hid no rock for them on this pass). ")
+                TEXT("Of the %d that did NOT, %d had NO mesh actor assigned at all (mMeshActor is null -- the node's ")
+                TEXT("rock is not a separate AFGNodeMeshActor, nothing can lag through this mechanism, and these are ")
+                TEXT("NOT watched); the remainder have one assigned but unresolved and ARE watched. ")
+                TEXT("WATCH LIST ")
+                TEXT("(records whose mesh actor was unresolvable at node-hide time -- the only population ")
+                TEXT("that can lag): %d still open. RESOLVED LATER, session totals: %d record(s), of which ")
+                TEXT("%d still had a VISIBLE mesh actor at the moment it became resolvable; %d of them ")
+                TEXT("were reported this pass, %d still visible this pass. Delay last=%.1f s worst=%.1f s ")
+                TEXT("(-1 = no delay has ever been measured this session). STRAY-ROCK BACKSTOP: %d rock(s) ")
+                TEXT("hidden this pass within %.0f cm of a watched record. HOW TO READ A ZERO: 'resolved ")
+                TEXT("later=0' WITH 'watch list=0' means every node hidden so far had its mesh actor ")
+                TEXT("paired at hide time and nothing could lag; 'resolved later=0' with a NON-ZERO watch ")
+                TEXT("list means the lag population exists and none of it has been observed going dark ")
+                TEXT("yet -- that is not evidence the rocks vanished instantly. MEASURED: pairing ")
+                TEXT("resolvability, the hidden flag, and world time. NOT MEASURED: why a pairing was ")
+                TEXT("missing, what eventually hides a rock this line never reports, and anything about ")
+                TEXT("render-state catch-up after SetActorHiddenInGame.")
+                TEXT(" BACKSTOP CADENCE: the stray-rock backstop runs on any pass that newly hid a node, else on a ")
+                TEXT("%.0f s cooldown; %.1f s have elapsed since it last ran. That cooldown is an UPPER BOUND this ")
+                TEXT("mod itself imposes on how late a rock can go dark -- it is a measured constant from this run, ")
+                TEXT("not an explanation of any particular delay above."),
+                MeshHidePass, NodesHidden, MeshResolvedAtHide, MeshUnresolvedAtHide,
+                MeshUnresolvedAtHide, MeshActorNeverAssigned,
+                NodeShuffleMeshHideLatency::Watch.Num(),
+                NodeShuffleMeshHideLatency::ResolvedLaterTotal,
+                NodeShuffleMeshHideLatency::StillVisibleWhenResolvedTotal,
+                ResolvedLaterThisPass, StillVisibleThisPass,
+                NodeShuffleMeshHideLatency::LastDelaySeconds,
+                NodeShuffleMeshHideLatency::MaxDelaySeconds,
+                RocksHiddenNearWatched, RockOwnRange,
+                RockBackstopCooldownSeconds, NowSeconds - LastRockBackstopSeconds);
+        }
+    }
+
     if (bDiagHide && (DbgNear > 0 || DbgMissedPath > 0))
     {
         // Hide funnel: of all records — how many resolved to a LOADED actor (scanner-1: every loaded original
@@ -6365,6 +6625,60 @@ void ANodeShuffleSubsystem::LogHereCensus() const
             ResCls ? *ResCls->GetName() : TEXT("<base-only>"), Decay, bEmitter ? 1 : 0);
         OrigShown++;
     }
+    // NEAREST RELOCATED WELL (item 4). Finding one previously meant reading WELLH2-PLACED out of the log
+    // and computing distances by hand. The well layout is right here and the player's position is
+    // already known, so the command can answer it directly. Only a group that is actually PLACED is
+    // reported: bGroupPlaced && bPlacementClaimLive (invariant A3 binds the second to a non-zero
+    // PlacedCoreLocation, and the third test below is that invariant asserted rather than trusted). A
+    // group merely flagged bRelocate has no destination a player can walk to, so printing a distance for
+    // it would be a fiction.
+    {
+        const int32 WellsTotal = WellLayout.Num();
+        int32 WellsRelocateFlagged = 0, WellsPlaced = 0;
+        const FNodeShuffleWellEntry* NearestWell = nullptr;
+        double NearestWellD2 = 0.0;
+        for (const FNodeShuffleWellEntry& W : WellLayout)
+        {
+            if (W.bRelocate) { WellsRelocateFlagged++; }
+            if (!W.bGroupPlaced || !W.bPlacementClaimLive || W.PlacedCoreLocation.IsNearlyZero()) { continue; }
+            WellsPlaced++;
+            const double D2 = FVector::DistSquared2D(W.PlacedCoreLocation, P);
+            if (!NearestWell || D2 < NearestWellD2) { NearestWell = &W; NearestWellD2 = D2; }
+        }
+        if (!NearestWell)
+        {
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("HERE: nearest relocated well — NONE. %d well group(s) in the layout, %d flagged for ")
+                TEXT("relocation, %d actually PLACED (bGroupPlaced && bPlacementClaimLive && a non-zero ")
+                TEXT("PlacedCoreLocation). With 0 placed there is no relocated well ANYWHERE in this save, ")
+                TEXT("which is a different statement from one being far away — that is why this prints a ")
+                TEXT("sentence instead of a distance of 0."),
+                WellsTotal, WellsRelocateFlagged, WellsPlaced);
+        }
+        else
+        {
+            const FVector D = NearestWell->PlacedCoreLocation - P;
+            // Turn-from-current-facing rather than a compass heading: the map's north convention is not
+            // something this code can verify, and a wrong compass word is worse than none. Yaw and the
+            // world delta are both measured.
+            const double Turn = FRotator::NormalizeAxis(
+                FMath::RadiansToDegrees(FMath::Atan2(D.Y, D.X)) - Pawn->GetActorRotation().Yaw);
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("HERE: nearest relocated well = '%s' res=%s at %s — %.0f m away, dz=%+.0f m, world ")
+                TEXT("delta dX=%+.0f m dY=%+.0f m; from where you are standing and facing, turn %+.0f deg ")
+                TEXT("and go. %d of %d well group(s) in the layout are PLACED (%d flagged for relocation); ")
+                TEXT("this group has %d captured satellite(s) of %d. MEASURED: the saved ")
+                TEXT("PlacedCoreLocation, your pawn's location and yaw. NOT MEASURED: whether that ")
+                TEXT("group's actors are streamed in, dressed, or buildable right now — WELLH2B-APPLY and ")
+                TEXT("WELLH2B-COLLISION are the lines for that."),
+                *ShortName(NearestWell->CorePath), *ShortName(NearestWell->AssignedResourceClassPath),
+                *NearestWell->PlacedCoreLocation.ToCompactString(),
+                FMath::Sqrt(NearestWellD2) / 100.0, D.Z / 100.0, D.X / 100.0, D.Y / 100.0, Turn,
+                WellsPlaced, WellsTotal, WellsRelocateFlagged,
+                NearestWell->CapturedSatelliteCount, NearestWell->Satellites.Num());
+        }
+    }
+
     UE_LOG(LogNodeShuffle, Display, TEXT("HERE: census done — %d layout entries + %d streamed originals within %dm"),
         Shown, OrigShown, CensusRadiusCm / 100);
 }

@@ -3,12 +3,12 @@
 # Regenerate / diff: see tools\capture-imports-baseline.ps1, which also explains why this exists
 # alongside check_imports.ps1 (that one asks 'does every import RESOLVE?'; this one records WHICH).
 #
-# CAPTURED AT MARKER : 2026-08-08-t1t2-1
+# CAPTURED AT MARKER : 2026-08-08-t1t2-2
 # CAPTURED ON        : 2026-08-08
 # SOURCE DLL         : C:\Program Files (x86)\Steam\steamapps\common\Satisfactory\FactoryGame\Mods\NodeShuffle\Binaries\Win64\FactoryGameSteam-NodeShuffle-Win64-Shipping.dll
 #
-# TOTAL IMPORTS                  : 815
-# ... of which FactoryGameSteam-* : 765   <-- THIS is the number check_imports.ps1 reports.
+# TOTAL IMPORTS                  : 816
+# ... of which FactoryGameSteam-* : 766   <-- THIS is the number check_imports.ps1 reports.
 #     The remainder are CRT / KERNEL32 imports, which check_imports.ps1 does not verify (they are
 #     guaranteed by the platform, not by the game build) but which are recorded here anyway: a new
 #     one is still a new entry point and should be noticed rather than silently absorbed.
@@ -18,7 +18,7 @@
 #   api-ms-win-crt-math-l1-1-0.dll                    4
 #   api-ms-win-crt-runtime-l1-1-0.dll                11
 #   api-ms-win-crt-string-l1-1-0.dll                  2
-#   FactoryGameSteam-Core-Win64-Shipping.dll        151
+#   FactoryGameSteam-Core-Win64-Shipping.dll        152
 #   FactoryGameSteam-CoreUObject-Win64-Shipping.dll  101
 #   FactoryGameSteam-Engine-Win64-Shipping.dll      317
 #   FactoryGameSteam-FactoryGame-Win64-Shipping.dll  117
@@ -111,6 +111,7 @@ FactoryGameSteam-Core-Win64-Shipping.dll	?Extend@?$TStringBuilderBase@_W@@IEAAX_
 FactoryGameSteam-Core-Win64-Shipping.dll	?FileExists@FPaths@@SA_NAEBVFString@@@Z
 FactoryGameSteam-Core-Win64-Shipping.dll	?Find@FString@@QEBAHPEB_WHW4Type@ESearchCase@@W42ESearchDir@@H@Z
 FactoryGameSteam-Core-Win64-Shipping.dll	?FindBetweenNormals@?$TQuat@N@Math@UE@@SA?AU123@AEBU?$TVector@N@23@0@Z
+FactoryGameSteam-Core-Win64-Shipping.dll	?Fmod@FGenericPlatformMath@@SANNN@Z
 FactoryGameSteam-Core-Win64-Shipping.dll	?Free@FMemory@@SAXPEAX@Z
 FactoryGameSteam-Core-Win64-Shipping.dll	?FromString@FText@@SA?AV1@$$QEAVFString@@@Z
 FactoryGameSteam-Core-Win64-Shipping.dll	?FromString@FText@@SA?AV1@AEBVFString@@@Z

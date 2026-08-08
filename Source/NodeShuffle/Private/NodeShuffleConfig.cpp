@@ -182,7 +182,7 @@ void UNodeShuffleConfig::PostInitProperties()
         // TODO(2026-08-08, pre-release): this tooltip says nothing is gated by this flag. Both
         // TODO(pre-release) sites in NodeShuffleAutoAllowExtractors.cpp plan to gate on it -- update
         // this string in the same commit that does.
-        TEXT("A separate developer gate — it is NOT what the word EXPERIMENTAL means in other options' names. Nothing in this version is gated by this switch, so leaving it off changes nothing. A feature marked EXPERIMENTAL elsewhere in this list carries its own toggle and is not controlled from here. (Cave node placement graduated to always-on: it fixes a real issue where the shuffle emptied caves and never put nodes back in them.)"));
+        TEXT("A separate developer gate — it is NOT what the word EXPERIMENTAL means in other options' names. Nothing in this version is gated by this switch, so leaving it off changes nothing. A feature marked EXPERIMENTAL elsewhere in this list carries its own toggle and is not controlled from here."));
 
     RootSection = Root;
 }

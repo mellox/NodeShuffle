@@ -180,6 +180,14 @@ maintained relocated group.** F-3 was an argument from *absence of a restore pat
 unverified premise that a re-roll un-relocates a placed well. No log records the vanish; the test
 script's "step 10 EXPECTED TO FAIL" is a prediction that was never run.
 
+**CONFIRMED AT RUNTIME 2026-08-08**, build `2026-08-08-t1t2-1`, on the user's live save: a re-roll was
+performed (`ROLLCENSUS: seed=1223222528 reroll=1`), 22 wells placed, and **zero** abandonment events —
+the only occurrence of `WELLH2-ABANDON` in the whole log is inside the sentence that *documents* the
+grep. The invariant now has runtime backing, not only a static read, so the hedge below is satisfied
+for the re-roll case specifically. *(Note the near-miss: a naive `grep -c "re-enrolled by a new roll"`
+returns **1** and looks like a violation. The hit is the diagnostic's own explanatory text. Count the
+EVENT tag, never the prose that describes it — the same trap as the `(5 of 6 groups…)` constant.)*
+
 **The real, reachable gap it was standing in front of:** a well is enrolled with the satellites
 loaded at that moment (`NodeShuffleWellRoll.cpp:176-177`). A satellite that streams in later is
 appended to the entry by the merge, then **refused at the destination**
@@ -336,8 +344,39 @@ coverage question.
 Pre-existing in the long-shipped ordinary-node path; **not** an H2b regression. Cosmetic
 and self-resolving.
 
+**BEHAVIOURAL HALF CONFIRMED BY THE USER 2026-08-08**, build `2026-08-08-t1t2-1`, after a re-roll.
+Flying to coal originals near a `NodeShuffle.Here` marker: the rocks were **visible**, and **neither a
+Mk8 nor a Mk3-class miner would snap to them**; they disappeared after a wait. So the *node* hide is
+correct — the actor is out of `mResourceNodes`, which is exactly the guard that stops a player snapping
+a miner onto a ghost original — and **only the mesh actor lags**. This upgrades the entry from "we
+cannot distinguish a late mesh hide from a render-state catch-up" to: *the node is functionally gone
+immediately; the visual is what persists.*
+
+⚠ **The duration was UNMEASURED and the user's "30 seconds" was explicitly an estimate.** Then the
+instrumentation review found the likely reason that estimate was *good*:
+**`RockBackstopCooldownSeconds = 30.0f`** (`NodeShuffleSubsystem.cpp:4856`). The rocks go dark when the
+**stray-rock backstop** sweeps, and that backstop runs on any pass that newly hid a node, else on a
+30-second cooldown. It had already fired **30 times** in the user's session log
+(`hid 0 original nodes and N stray original rocks`, N = 1..8). So the cooldown is an **upper bound this
+mod imposes on itself** for how late a rock can go dark, and the user was very likely reading it off
+the screen.
+*Stated as the strongest available explanation, NOT as proven cause* — nothing has yet correlated an
+individual rock's hide to an individual backstop sweep. That is what the new instrumentation measures.
+
+**Newly understood mechanism candidate, NOT confirmed:** the `Hide-originals funnel` line is emitted
+**once per load** (`(first pass this load)` — exactly one such line in the whole session log) and
+covers records resident at that moment. A rock that streams in later, when the player arrives, was
+never in that pass's population. What eventually hides it is unidentified. *Stated as a hypothesis on
+purpose; it fits the evidence and has not been tested.*
+
+**Player-facing consequence, small but real:** a player sees a node, flies to it, fails to build on it,
+and concludes the mod is broken. Harmless, but it reads as a bug.
+
 > **Pre-scoped fix:** instrument mesh-hide latency before attempting any behaviour change.
-> There is nothing to fix until there is something to measure.
+> There is nothing to fix until there is something to measure. Concretely: count rocks hidden on a
+> **later** pass than their node, and report the delay, so the duration above stops being a stopwatch
+> guess. Additive and diagnostics-only — but note this project's record that even additive counters
+> ship with a defect when the zero has no denominator ([[lessons-zero-needs-a-denominator]]).
 
 ### ~~T5. `MT_Crack` capture counter is structurally blind~~ — FALSIFIED 2026-08-08
 **This entry was wrong, and it was wrong in a way that nearly cost a packet.** It claimed
@@ -387,7 +426,26 @@ has exercised it.
 
 ## P4 — structural
 
-### T7. Seven source files breach the 500-line rule
+### T7. Source files breaching the 500-line rule — now NINE, and two of them are this session's doing
+**Updated 2026-08-08.** The instrumentation packet pushed two more files over, and reported it rather
+than trimming diagnostics to buy headroom — the right call, recorded so it is not mistaken for drift:
+`NodeShuffleWellVisuals.cpp` 497 → **658**, `NodeShuffleWellVisualsApply.cpp` 432 → **549**.
+`NodeShuffleSubsystem.cpp` reached **8076**.
+
+**The splits were deferred deliberately and the reason has now expired.** Through the H2/T1/T2 arc,
+splitting mid-review would have re-staled every `file:line` a reviewer had just verified — six review
+reports now cite these files. **That constraint is gone once the current round is committed**, so the
+split is the natural next packet, and it should happen *before* any further additions.
+
+Proposed seams, both confirmed sound by review: move `WellMeshOwnerRadiusCm` / `EnsureWellMeshIndex` /
+`RebuildWellMeshIndex` out of `NodeShuffleWellVisuals.cpp` (residual ≈ 287); the `WellVisualsApply`
+seam is in the instrumentation handoff. **Ask the splitting packet for two things:** a key-family table
+on `WellVisualCaptureLogged`'s declaration (it now spans three TUs with six key families), and
+promotion of the two module-static accessor blocks to members — they exist only because
+`NodeShuffleSubsystem.h` was barred to avoid a collision, and one of them
+(`NodeShuffleWellSnapBoxDiag`) has **no world-change reset** where its sibling does.
+
+### ~~T7 (original entry). Seven source files breach the 500-line rule~~
 Splits **proposed, not performed** — deferred deliberately during the H2 arc because
 splitting mid-review re-stales every `file:line` reference a reviewer just verified.
 

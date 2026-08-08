@@ -69,6 +69,42 @@ namespace
 }
 
 // ------------------------------------------------------------------------------------------------
+// T3 (docs/TECH-DEBT.md) -- THE BYSTANDER SNAPSHOT, HANDED ACROSS TWO TRANSLATION UNITS
+// ------------------------------------------------------------------------------------------------
+// WHY THIS EXISTS AT ALL. T3 says a well member's snap box (measured up to ~900 cm) plus an ordinary
+// node's 650 cm EnsureNodeUseBox can provably intersect, and that the reason it has NEVER been observed
+// is that NOTHING MEASURES IT -- closing the item today needs a player to stumble onto the geometry.
+// The measurement needs one number this function does not have: the distance to the nearest ordinary
+// (non-fracking) resource node. RebuildWellMeshIndex (NodeShuffleWellVisuals.cpp) ALREADY builds exactly
+// that array for route 3's bystander contest, so this hands it over instead of adding a second world
+// sweep on a per-member path.
+//
+// WHY A CROSS-TU ACCESSOR RATHER THAN A MEMBER. The packet that added this may not edit
+// NodeShuffleSubsystem.h. A named namespace gives external linkage without a header, and the two
+// function-local statics are plain value types (no UObject, no GC interaction). Game thread only: both
+// the writer (RebuildWellMeshIndex) and the reader (EnsureWellMemberSnapBox) run inside ApplyLayout.
+//
+// FRESHNESS IS PRINTED, NEVER ASSUMED. The pass the snapshot was taken on travels with it, so a reader
+// can see a stale or absent snapshot instead of reading a -1 as "nothing nearby". EnsureWellMemberSnapBox
+// is a STATIC member and cannot see WellAuditPasses, which is the whole reason the pass rides along here.
+namespace NodeShuffleWellSnapBoxDiag
+{
+    TArray<FVector>& BystanderLocations() { static TArray<FVector> Locs; return Locs; }
+    // -1 = never built in this process. Compare against the pass number on the WELLH2B-INDEX line.
+    int32& BystanderPass() { static int32 Pass = -1; return Pass; }
+    // The T3 hazard population, NARROWER than Bystanders. Bystanders is route 3's contest set and
+    // includes AFGResourceDeposit, which never carries EnsureNodeUseBox's 650 cm box -- a deposit
+    // 200 cm away would report an overlap that no Miner can ever be blocked by, while a REAL node
+    // 800 cm away that DOES overlap is never named (the scan reports only the nearest). Do not
+    // filter Bystanders itself: it is load-bearing for the contest.
+    TArray<FVector>& UseBoxNodeLocations() { static TArray<FVector> Locs; return Locs; }
+    // The pass number AS OF THE CALL, so a reader can compute snapshot AGE from one line instead of
+    // hunting a matching WELLH2B-INDEX line in a 110k-line log. Written by ApplyWellGroupVisuals,
+    // which is a member and can see WellAuditPasses; EnsureWellMemberSnapBox is static and cannot.
+    int32& CurrentAuditPass() { static int32 Cur = -1; return Cur; }
+}
+
+// ------------------------------------------------------------------------------------------------
 // THE COLLISION RECIPE -- THE ACCEPTANCE CRITERION, IN ONE PLACE
 // ------------------------------------------------------------------------------------------------
 // Channel by channel, and every choice here is a previously-paid-for lesson rather than a preference:
@@ -210,12 +246,58 @@ void ANodeShuffleSubsystem::EnsureWellMemberSnapBox(AActor* Actor)
     // fully within the 900 cm ceiling, whatever put it there.
     const bool bClamped = (RawXY > SnapBoxMaxXY) || (WantX > SnapBoxMaxXY) || (WantY > SnapBoxMaxXY);
 
+    // ---- T3: SNAP-BOX OVERLAP, MEASURED INSTEAD OF HUNTED (docs/TECH-DEBT.md T3) ----
+    // The ordinary-node box this is compared against is EnsureNodeUseBox's, which sets
+    // FVector(650, 650, 180) at NodeShuffleSubsystem.cpp:3312 and :3331. Named here rather than
+    // borrowed from a previous run's log.
+    static constexpr double OrdinaryUseBoxXY = 650.0;
+    static constexpr double OrdinaryUseBoxZ = 180.0;
+    const TArray<FVector>& ByLocs = NodeShuffleWellSnapBoxDiag::UseBoxNodeLocations();
+    const int32 BystanderCount = ByLocs.Num();          // THE DENOMINATOR: nodes actually considered
+    const int32 BystanderFromPass = NodeShuffleWellSnapBoxDiag::BystanderPass();
+
     static TSet<FString> SnapBoxLogged;
-    const FString LogKey = FString::Printf(TEXT("%s|%d|%d|%d|%d"), *Actor->GetPathName(), Pieces,
+    // The snapshot's PRESENCE is in the key (not its contents) so that a member first dressed before
+    // RebuildWellMeshIndex ever ran -- which prints "not measured" -- says it again ONCE the snapshot
+    // exists. Without that bit the only line a reader ever gets could be the unmeasured one. The
+    // contents are deliberately NOT in the key: they change as the world streams, and this line is not
+    // a stream monitor.
+    const FString LogKey = FString::Printf(TEXT("%s|%d|%d|%d|%d|%d"), *Actor->GetPathName(), Pieces,
                                            FMath::RoundToInt(WantX), FMath::RoundToInt(WantY),
-                                           bExistingCovers ? 1 : 0);
+                                           bExistingCovers ? 1 : 0, BystanderCount > 0 ? 1 : 0);
     const bool bSayIt = !SnapBoxLogged.Contains(LogKey);
     if (bSayIt) { SnapBoxLogged.Add(LogKey); }
+
+    // The FINAL extent this member ends up with, which is what an overlap test has to use: the existing
+    // native box in the no-op branch, ours in the re-point branch. Computed for both so the two log
+    // lines below report the same quantity.
+    const FVector FinalExtent = bExistingCovers ? ExistingExtent : FVector(WantX, WantY, WantZ);
+    double NearestNonWellCm = -1.0;                     // -1 = NOT MEASURED, never "nothing nearby"
+    double NearestDX = -1.0, NearestDY = -1.0, NearestDZ = -1.0;
+    int32 bProvableOverlap = 0;
+    // Cost: the O(bystanders) scan runs ONLY on a pass that will actually print -- once per member per
+    // distinct (pieces, extent, snapshot-present) tuple for the whole session, not once per apply pass.
+    if (bSayIt && BystanderCount > 0)
+    {
+        // Seeded from element 0 rather than from a sentinel maximum: the branch is already guarded on
+        // BystanderCount > 0, and this needs no numeric-limits header in this translation unit.
+        double BestSq = FVector::DistSquared(ByLocs[0], ActorLoc);
+        FVector NearestLoc = ByLocs[0];
+        for (int32 i = 1; i < BystanderCount; i++)
+        {
+            const double DSq = FVector::DistSquared(ByLocs[i], ActorLoc);
+            if (DSq < BestSq) { BestSq = DSq; NearestLoc = ByLocs[i]; }
+        }
+        NearestNonWellCm = FMath::Sqrt(BestSq);
+        NearestDX = FMath::Abs(NearestLoc.X - ActorLoc.X);
+        NearestDY = FMath::Abs(NearestLoc.Y - ActorLoc.Y);
+        NearestDZ = FMath::Abs(NearestLoc.Z - ActorLoc.Z);
+        // Per-axis AABB test, not the scalar "extent + 650 > distance" shorthand: two axis-aligned
+        // boxes intersect only if they overlap on ALL THREE axes, and the scalar form over-reports.
+        bProvableOverlap = (NearestDX < FinalExtent.X + OrdinaryUseBoxXY
+                            && NearestDY < FinalExtent.Y + OrdinaryUseBoxXY
+                            && NearestDZ < FinalExtent.Z + OrdinaryUseBoxZ) ? 1 : 0;
+    }
 
     if (bExistingCovers)
     {
@@ -225,9 +307,26 @@ void ANodeShuffleSubsystem::EnsureWellMemberSnapBox(AActor* Actor)
                 TEXT("WELLH2C-SNAPBOX actor='%s' class='%s' pieces=%d reach=(xy=%.0f z=%.0f): NO-OP -- the ")
                 TEXT("member's own mBoxComponent '%s' extent=%s ALREADY covers every piece, so nothing was ")
                 TEXT("created and mBoxComponent was NOT re-pointed. If the snap still fails, the collider is ")
-                TEXT("not the gate -- read HOLOGRAMHOOK ACCEPTANCE / ACCEPT-NODE / ACCEPT-EXT for this actor."),
+                TEXT("not the gate -- read HOLOGRAMHOOK ACCEPTANCE / ACCEPT-NODE / ACCEPT-EXT for this actor. ")
+                TEXT("|| T3 OVERLAP: finalExtent=%s; nearest ordinary MINEABLE node (AFGResourceNode; ")
+                TEXT("DEPOSITS EXCLUDED -- only this class ever carries EnsureNodeUseBox's 650 cm box) ")
+                TEXT("is %.0f cm away, per-axis |dx|/|dy|/|dz| = %.0f/%.0f/%.0f cm, measured against a ")
+                TEXT("snapshot of %d such node(s) taken on WELLH2B-INDEX pass %d, and it is now pass %d ")
+                TEXT("(age = %d pass(es); a snapshot older than 0 passes may MISS nodes that streamed in ")
+                TEXT("since, which reports the distance TOO LARGE and can print a FALSE ")
+                TEXT("provableOverlap=0); provableOverlap=%d. A -1 distance with nodes=0 / pass=-1 means ")
+                TEXT("NOT MEASURED (RebuildWellMeshIndex had not run in this process yet). A -1 distance ")
+                TEXT("with nodes=0 and a pass >= 0 means the snapshot WAS built and contained no candidate ")
+                TEXT("at all -- also not a measurement of \"nothing nearby\", just an empty population. ")
+                TEXT("Neither means nothing is nearby. provableOverlap=1 means the two ")
+                TEXT("axis-aligned boxes overlap on ALL THREE axes IF that node carries EnsureNodeUseBox's ")
+                TEXT("standard 650/650/180 cm box. NOT MEASURED here: whether that node actually has that ")
+                TEXT("box, and whether a Miner then refuses to place on it -- both are runtime tests."),
                 *Actor->GetName(), *Actor->GetClass()->GetName(), Pieces, RawXY, RawZ,
-                *Existing->GetName(), *ExistingExtent.ToCompactString());
+                *Existing->GetName(), *ExistingExtent.ToCompactString(),
+                *FinalExtent.ToCompactString(), NearestNonWellCm, NearestDX, NearestDY, NearestDZ,
+                BystanderCount, BystanderFromPass, NodeShuffleWellSnapBoxDiag::CurrentAuditPass(),
+                NodeShuffleWellSnapBoxDiag::CurrentAuditPass() - BystanderFromPass, bProvableOverlap);
         }
         return;
     }
@@ -275,10 +374,27 @@ void ANodeShuffleSubsystem::EnsureWellMemberSnapBox(AActor* Actor)
             TEXT("%s 'NodeShuffleWellUseBox_Rt' profile='Resource' extent=%s; mBoxComponent re-pointed ")
             TEXT("'%s' extent=%s -> ours. This is what an off-centre hit on a NodeShuffleWellMesh_* piece ")
             TEXT("now resolves against. clamped=1 means a piece reaches past the 900 cm ceiling (half the ")
-            TEXT("measured 1818.8 cm min inter-satellite spacing) and is NOT fully covered."),
+            TEXT("measured 1818.8 cm min inter-satellite spacing) and is NOT fully covered. ")
+            TEXT("|| T3 OVERLAP: finalExtent=%s; nearest ordinary MINEABLE node (AFGResourceNode; ")
+            TEXT("DEPOSITS EXCLUDED -- only this class ever carries EnsureNodeUseBox's 650 cm box) ")
+            TEXT("is %.0f cm away, per-axis |dx|/|dy|/|dz| = %.0f/%.0f/%.0f cm, measured against a ")
+            TEXT("snapshot of %d such node(s) taken on WELLH2B-INDEX pass %d, and it is now pass %d ")
+            TEXT("(age = %d pass(es); a snapshot older than 0 passes may MISS nodes that streamed in ")
+            TEXT("since, which reports the distance TOO LARGE and can print a FALSE ")
+            TEXT("provableOverlap=0); provableOverlap=%d. A -1 distance with nodes=0 / pass=-1 means ")
+            TEXT("NOT MEASURED (RebuildWellMeshIndex had not run in this process yet). A -1 distance ")
+            TEXT("with nodes=0 and a pass >= 0 means the snapshot WAS built and contained no candidate ")
+            TEXT("at all -- also not a measurement of \"nothing nearby\", just an empty population. ")
+            TEXT("Neither means nothing is nearby. provableOverlap=1 means the two ")
+            TEXT("axis-aligned boxes overlap on ALL THREE axes IF that node carries EnsureNodeUseBox's ")
+            TEXT("standard 650/650/180 cm box. NOT MEASURED here: whether that node actually has that ")
+            TEXT("box, and whether a Miner then refuses to place on it -- both are runtime tests."),
             *Actor->GetName(), *Actor->GetClass()->GetName(), Pieces, RawXY, RawZ, bClamped ? 1 : 0,
             bCreated ? TEXT("created") : TEXT("re-asserted"), *WantExtent.ToCompactString(),
-            *PrevName, *ExistingExtent.ToCompactString());
+            *PrevName, *ExistingExtent.ToCompactString(),
+            *FinalExtent.ToCompactString(), NearestNonWellCm, NearestDX, NearestDY, NearestDZ,
+            BystanderCount, BystanderFromPass, NodeShuffleWellSnapBoxDiag::CurrentAuditPass(),
+            NodeShuffleWellSnapBoxDiag::CurrentAuditPass() - BystanderFromPass, bProvableOverlap);
     }
 }
 
@@ -375,6 +491,7 @@ int32 ANodeShuffleSubsystem::DressWellActor(AActor* Actor, const TArray<FNodeShu
 
 void ANodeShuffleSubsystem::ApplyWellGroupVisuals(FNodeShuffleWellEntry& E)
 {
+    NodeShuffleWellSnapBoxDiag::CurrentAuditPass() = WellAuditPasses;
     int32 Created = 0, Pieces = 0, Members = 0, FromTemplate = 0, NoVisual = 0;
 
     const auto DressOne = [&](AActor* Actor, const TArray<FNodeShuffleWellVisual>& Own,

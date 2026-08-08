@@ -330,7 +330,17 @@ void ANodeShuffleSubsystem::ApplyWellRetype(bool bWellShuffleEnabled)
             if (bOurs) { ++UnknownOurs; }
             const bool bLevelPlaced = It->IsNetStartupActor();
             if (bLevelPlaced) { ++UnknownLevelPlaced; }
-            UE_LOG(LogNodeShuffle, Warning,
+            // ns-t1t2 (user-observed 2026-08-08): SEVERITY NOW MATCHES THE MEASUREMENT. This fired
+            // Warning 14 times in one session, every one of them nodeShuffleSpawned=1 -- the case the
+            // line's own text calls "nothing is wrong". A warning on the healthy steady state trains a
+            // reader to skip warnings, which is how a real one gets missed. The text is unchanged and
+            // still says exactly what it measured; only the level is now derived from the discriminator
+            // the line ALREADY computes. bOurs => Display (routine, still greppable), NOT ours =>
+            // Warning (genuinely unexplained: an unmanaged core absent from the layout).
+            // The text is built ONCE and then logged at one of two levels. It cannot be a ternary in
+            // the UE_LOG verbosity slot -- that argument is token-pasted (ELogVerbosity::##Verbosity),
+            // so it must be a bare identifier; a ternary there does not compile.
+            const FString UnknownMsg = FString::Printf(
                 TEXT("WELLH1-UNKNOWN core='%s' is loaded but is NOT in the rolled well layout. "
                      "MEASURED: nodeShuffleSpawned=%d (test: FNodeShuffleModule::IsManagedSpawnedNode -- "
                      "the SAME registry the roll's skippedOurSpawned filter uses, so 1 means WE spawned "
@@ -340,6 +350,14 @@ void ANodeShuffleSubsystem::ApplyWellRetype(bool bWellShuffleEnabled)
                      "anything else, and must never name one. OBSERVED EFFECT either way: LEFT VANILLA; a "
                      "re-roll re-scans live and would enrol it. path='%s'"),
                 *It->GetName(), bOurs ? 1 : 0, bLevelPlaced ? 1 : 0, *Path);
+            if (bOurs)
+            {
+                UE_LOG(LogNodeShuffle, Display, TEXT("%s"), *UnknownMsg);
+            }
+            else
+            {
+                UE_LOG(LogNodeShuffle, Warning, TEXT("%s"), *UnknownMsg);
+            }
         }
         // The caveat is IN THE LINE, not only in this comment (ns-review-h1): it is a SNAPSHOT at one
         // instant, so a core that ENTERS THE WORLD later is never counted, and a player who loaded far

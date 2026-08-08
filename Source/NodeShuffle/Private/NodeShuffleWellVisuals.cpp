@@ -124,6 +124,17 @@ namespace
 
 }
 
+// T3 (docs/TECH-DEBT.md): DEFINED in NodeShuffleWellVisualsApply.cpp, next to its only reader
+// (EnsureWellMemberSnapBox), which is a STATIC member and so cannot reach any subsystem field. This
+// file is the only WRITER: the bystander array below is built here for route 3's contest and is handed
+// over unchanged, so the snap-box overlap measurement costs no second world sweep. Declared rather than
+// headered because this packet may not edit NodeShuffleSubsystem.h.
+namespace NodeShuffleWellSnapBoxDiag
+{
+    TArray<FVector>& BystanderLocations();
+    int32& BystanderPass();
+    TArray<FVector>& UseBoxNodeLocations();
+}
 
 // ------------------------------------------------------------------------------------------------
 // THE INDEX: vanilla well member -> the static-mesh pieces that ARE its look
@@ -160,14 +171,29 @@ void ANodeShuffleSubsystem::RebuildWellMeshIndex()
     struct FMemberRec { FVector Loc; AFGResourceNodeBase* Node; FString Path; };
     TArray<FMemberRec> Members;
     TArray<FVector> Bystanders;   // every NON-well resource node's location; contest losers, never owners
+    TArray<FVector> UseBoxNodes;  // T3 (§6.3): the NARROWER subset that can carry a 650 cm use box
     for (TActorIterator<AFGResourceNodeBase> It(World); It; ++It)
     {
         AFGResourceNodeBase* N = *It;
         if (!IsValid(N) || Ours.Contains(N)) { continue; }
         if (IsFrackingActor(N)) { Members.Add({ N->GetActorLocation(), N, WellPathOf(N) }); }
-        else { Bystanders.Add(N->GetActorLocation()); }
+        else
+        {
+            Bystanders.Add(N->GetActorLocation());
+            // AFGResourceNode is the type EnsureNodeUseBox takes; deposits are AFGResourceNodeBase
+            // but never AFGResourceNode, so this Cast IS the "carries a 650 cm box" filter.
+            if (Cast<AFGResourceNode>(N)) { UseBoxNodes.Add(N->GetActorLocation()); }
+        }
     }
     WellMeshIndexMembers = Members.Num();
+    // T3: hand the bystander set (and the pass it was taken on) to EnsureWellMemberSnapBox. One array
+    // copy per index rebuild -- once per apply pass, not per member -- and the copy is what lets the
+    // snap-box measurement run with NO second TActorIterator on a per-member path. The pass number
+    // travels with it so a stale or never-built snapshot is visible in the log instead of being read as
+    // "no ordinary node nearby".
+    NodeShuffleWellSnapBoxDiag::BystanderLocations() = Bystanders;
+    NodeShuffleWellSnapBoxDiag::UseBoxNodeLocations() = UseBoxNodes;
+    NodeShuffleWellSnapBoxDiag::BystanderPass() = WellAuditPasses;
 
     TSet<UStaticMeshComponent*> Claimed;
     int32 ByOwn = 0, ByLink = 0, BySpatial = 0, RejectedBystander = 0, NarrowedByType = 0, WidenedByType = 0;
