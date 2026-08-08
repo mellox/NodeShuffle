@@ -201,6 +201,7 @@ void ANodeShuffleSubsystem::RunWellLocationBackstop(const TCHAR* Phase, int32& O
     int32 Iterated = 0, LevelActorOnly = 0, KnownPathOnly = 0, BothGates = 0;
     int32 Examined = 0, Unaccounted = 0, InUse = 0;
     int32 HeldByUs = 0, StrandedAtOurClaim = 0;
+    int32 ProvenOursNoHandle = 0; // ROUND 9 §3b-B: unaccounted AND in the spawn-time registry
     int32 LiveCores = 0, LiveSats = 0;
     FString Detail;
 
@@ -262,6 +263,17 @@ void ANodeShuffleSubsystem::RunWellLocationBackstop(const TCHAR* Phase, int32& O
         ++Unaccounted;                        // <-- the RT-6 number. Both sub-cases count.
         if (bAtOurClaim) { ++StrandedAtOurClaim; }
 
+        // ==========================================================================================
+        // ns-review-h2-r4 ROUND 9 §3b-B -- THE SPAWN-TIME REGISTRY, THE ONLY SOUND POSITIVE HERE.
+        // ==========================================================================================
+        // Every other field on this line is either a distance to a coordinate or `level=`, and round 9
+        // established that the whole ladder can FALSIFY "ours" soundly but cannot AUTHORISE it: the
+        // positive rests on "CSS authors every fracking well into a streaming sublevel", a fact about
+        // somebody else's map. This one bit rests on our own SpawnActorDeferred call and nothing else.
+        // TWeakObjectPtr, so a destroyed-and-recycled address can never answer true by accident.
+        const bool bSpawnedByUs = WellActorsSpawnedThisSession.Contains(A);
+        if (bSpawnedByUs) { ++ProvenOursNoHandle; }
+
         const TCHAR* Why = TEXT("");
         const bool bInUse = IsWellMemberInUse(A, Why);
         if (bInUse) { ++InUse; }
@@ -308,18 +320,27 @@ void ANodeShuffleSubsystem::RunWellLocationBackstop(const TCHAR* Phase, int32& O
             // than silently resolving to one of them: an actor that is on our claim AND in a streaming
             // sublevel is a CONTRADICTION, and naming it as one is strictly more informative than
             // either branch alone.
+            //
+            // ns-review-h2-r4 ROUND 9 §3b-B -- `bSpawnedByUs` IS TESTED FIRST, AND IT IS THE ONLY
+            // BRANCH HERE THAT IS PROOF RATHER THAN EVIDENCE. It is above the contradiction branch
+            // deliberately: if the registry says we spawned this actor, then a `persistentLevel=0`
+            // reading is not a contradiction to puzzle over -- it is a MEASURED gate-1/level-premise
+            // failure, and that is a strictly more useful thing to print than "CONTRADICTION".
             const TCHAR* Verdict =
-                  (bAtOurClaim && !bPersistent)    ? TEXT("OURS-STRANDED-BUT-NOT-PERSISTENT (*** CONTRADICTION: standing on a LIVE claim of ours AND authored into a streaming sublevel. Ours spawn with no OverrideLevel, so this is a gate-1 FALSE NEGATIVE over a vanilla well, NOT the h5 F-1 class -- do NOT arm pass B and do NOT count this as evidence for the identity component ***)")
+                  (bSpawnedByUs && !bPersistent)   ? TEXT("OURS-PROVEN-AND-NOT-PERSISTENT (*** WE SPAWNED THIS ACTOR THIS SESSION (spawn-time registry) AND IT READS AS NOT IN THE PERSISTENT LEVEL. The registry is proof; `level=` is a premise. So the LEVEL PREMISE IS FALSIFIED -- persistentLevel=0 does NOT imply vanilla. Every VANILLA-SUSPECT verdict in this session is now UNSAFE and pass B must never be armed on `level=` ***)")
+                : bSpawnedByUs                     ? TEXT("OURS-PROVEN (we spawned this actor THIS SESSION and then dropped the handle -- the h5 F-1 stranded class, PROVED from our own spawn call with no engine premise, no distance threshold and no save round-trip. This is authorising evidence for the SaveGame identity component; ns-review-h2-r4 round 9 alternative 3b-B)")
+                : (bAtOurClaim && !bPersistent)    ? TEXT("OURS-STRANDED-BUT-NOT-PERSISTENT (*** CONTRADICTION: standing on a LIVE claim of ours AND authored into a streaming sublevel. Ours spawn with no OverrideLevel, so this is a gate-1 FALSE NEGATIVE over a vanilla well, NOT the h5 F-1 class -- do NOT arm pass B and do NOT count this as evidence for the identity component ***)")
                 : !bPersistent                     ? TEXT("VANILLA-SUSPECT (not in the persistent level -- gate 1 FALSE NEGATIVE, do not arm pass B)")
-                : bAtOurClaim                      ? TEXT("OURS-STRANDED (no handle, standing on a LIVE claim of ours, and IN THE PERSISTENT LEVEL where ours spawn -- the h5 F-1 class, MEASURED)")
+                : bAtOurClaim                      ? TEXT("OURS-STRANDED-CROSS-RELOAD-SUSPECT (no handle, standing on a LIVE claim of ours, IN THE PERSISTENT LEVEL where ours spawn -- BUT THE SPAWN-TIME REGISTRY DOES NOT KNOW IT, which is PROOF it was not spawned this session. So it is either ours from a PREVIOUS session -- the cross-reload half only the SaveGame identity component can settle -- or a vanilla well the level premise mis-sorts. NOT sufficient on its own to authorise the identity component; ns-review-h2-r4 round 9 P-20)")
                 : (DDst >= 0.0 && DDst < Radius)   ? TEXT("OURS-ABANDONED (within the adopt radius of a dealt or WITHDRAWN destination -- core AND satellite coordinates since ns-review-h2-r4 F-5)")
                 : (DVan >= 0.0 && DVan < Radius)   ? TEXT("VANILLA-SUSPECT (sitting on a vanilla position the layout knows)")
                 :                                    TEXT("AMBIGUOUS (read level= and path= by hand; neither distance is inside the adopt radius)");
 
             Detail += FString::Printf(
-                TEXT(" [%s VERDICT=%s path='%s' @%s level='%s' persistentLevel=%d ")
+                TEXT(" [%s VERDICT=%s path='%s' @%s level='%s' persistentLevel=%d spawnedThisSession=%d ")
                 TEXT("nearestVanillaXY=%s nearestDealtXY=%s adoptRadius=%.0fcm%s%s]"),
                 *A->GetName(), Verdict, *Path, *Loc.ToCompactString(), *LevelName, bPersistent ? 1 : 0,
+                bSpawnedByUs ? 1 : 0,
                 DVan < 0.0 ? TEXT("n/a") : *FString::Printf(TEXT("%.0fcm"), DVan),
                 DDst < 0.0 ? TEXT("n/a") : *FString::Printf(TEXT("%.0fcm"), DDst), Radius,
                 bInUse ? TEXT(" IN-USE:") : TEXT(""), bInUse ? Why : TEXT(""));
@@ -363,7 +384,12 @@ void ANodeShuffleSubsystem::RunWellLocationBackstop(const TCHAR* Phase, int32& O
         TEXT("ours and provable), %d by BOTH. Passed both gates: %d examined -> %d HELD BY US (a handle ")
         TEXT("points at it) + %d UNACCOUNTED (%d of those are STRANDED ON A LIVE CLAIM OF OURS -- ")
         TEXT("ns-review-h2-r3 F-1: these used to be silently counted as accounted-for and are the whole ")
-        TEXT("RT-6 class; %d in use by a player). Sums: gates %d vs iterated %d (%s); ")
+        TEXT("RT-6 class; %d in use by a player). SPAWN-TIME REGISTRY (ns-review-h2-r4 round 9 3b-B): ")
+        TEXT("%d actor(s) recorded as spawned by us THIS SESSION, of which %d are among the unaccounted ")
+        TEXT("and therefore PROVABLY OURS with no engine premise. IF THAT FIRST NUMBER IS 0, the ")
+        TEXT("registry has recorded nothing and `spawnedThisSession=0` on the verdict lines below ")
+        TEXT("proves NOTHING -- check whether any group spawned this session before reading it as ")
+        TEXT("'not ours'. Sums: gates %d vs iterated %d (%s); ")
         TEXT("liveCores+liveSats %d vs iterated %d (%s). Layout coverage: %d entry(ies), %d known path(s) vs %d live ")
         TEXT("core(s) in the world -- gate 2 can only cover wells the layout has ever seen, so a ")
         TEXT("shortfall here is the exact window gate 1 is suspect in. NOTHING WAS DESTROYED. ")
@@ -373,6 +399,7 @@ void ANodeShuffleSubsystem::RunWellLocationBackstop(const TCHAR* Phase, int32& O
         Phase, Iterated, LiveCores, LiveSats,
         LevelActorOnly, KnownPathOnly, BothGates,
         Examined, HeldByUs, Unaccounted, StrandedAtOurClaim, InUse,
+        WellActorsSpawnedThisSession.Num(), ProvenOursNoHandle,
         BucketSum, Iterated, (BucketSum == Iterated) ? TEXT("by construction, DECORATION not a check -- ns-review-h2-r4 F-8") : TEXT("*** MISMATCH: a population is uncounted ***"),
         IterSum, Iterated, (IterSum == Iterated) ? TEXT("OK") : TEXT("*** MISMATCH: an ITERATED ACTOR FAILED IsValid -- the class counts and the examined count disagree ***"),
         WellLayout.Num(), KnownLayoutPaths.Num(), LiveCores);
@@ -400,11 +427,15 @@ void ANodeShuffleSubsystem::RunWellLocationBackstop(const TCHAR* Phase, int32& O
             TEXT("claims -- ns-review-h2-r3 F-1, these were previously absorbed into 'accounted for' and ")
             TEXT("are the exact class RT-6 exists to count; %d in use by a player). NOTHING WAS ")
             TEXT("DESTROYED -- this backstop reports only (WIP 2026-08-07, ns-review-h5 F1). EACH ACTOR ")
-            TEXT("BELOW CARRIES A COMPUTED VERDICT: OURS-STRANDED / OURS-ABANDONED => the stranded class ")
-            TEXT("is real and the SaveGame identity component is warranted; VANILLA-SUSPECT => gate 1 ")
-            TEXT("mis-classified a vanilla well and PASS B MUST NEVER BE ARMED AS DESIGNED; AMBIGUOUS ")
-            TEXT("=> read level= and path= by hand (a level-placed actor and a runtime-spawned one are ")
-            TEXT("distinguishable there, and that is the only field here that is never dead). First %d:%s"),
+            TEXT("BELOW CARRIES A COMPUTED VERDICT. READ THEM ASYMMETRICALLY (ns-review-h2-r4 round 9 ")
+            TEXT("P-20): the NEGATIVES are sound and the POSITIVES mostly are not. OURS-PROVEN / ")
+            TEXT("OURS-PROVEN-AND-NOT-PERSISTENT => the spawn-time registry says WE SPAWNED IT; this is ")
+            TEXT("PROOF, and it is the only authorising evidence on this line for the SaveGame identity ")
+            TEXT("component. OURS-STRANDED-CROSS-RELOAD-SUSPECT / OURS-ABANDONED => suggestive only, ")
+            TEXT("because both rest on 'CSS authors wells into sublevels', which is unverifiable from ")
+            TEXT("our headers. VANILLA-SUSPECT => gate 1 mis-classified a vanilla well and PASS B MUST ")
+            TEXT("NEVER BE ARMED AS DESIGNED (a sound NEGATIVE, full confidence). AMBIGUOUS => read ")
+            TEXT("level=, path= and spawnedThisSession= by hand. First %d:%s"),
             Phase, Unaccounted, StrandedAtOurClaim, InUse, FMath::Min(Unaccounted, 5), *Detail);
     }
     else if (!bWellBackstopLogOnlyLogged)

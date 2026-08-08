@@ -352,9 +352,20 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll, bool 
         E.bGroupPlaced = false;
 
         // ns-review-h2-r2 F-A (BLOCKING) -- AND WITHDRAW THE CLAIM, WHICH THIS BRANCH RESET EVERYTHING
-        // ELSE EXCEPT. :300 above already zeroes every satellite's PlacedLocation; PlacedCoreLocation
-        // was left naming the destination this entry has just walked away from, while bRelocate stayed
-        // true and bRelocationFailed false. That combination defeats BOTH of F2's layers -- the roll
+        // ELSE EXCEPT.
+        //
+        // ns-review-h2-r4 ROUND 9 R-3 -- THIS PARAGRAPH USED TO SAY ":300 above already zeroes every
+        // satellite's PlacedLocation". IT NO LONGER DOES, AND MUST NOT: F-5 DELETED THAT ZEROING 55
+        // LINES ABOVE, on purpose, because it destroyed every satellite coordinate ~60 lines BEFORE
+        // ClearAbandonedWellPlacement could record it into AbandonedWellClaimCoords -- leaving pass B's
+        // discriminator dead for the class that outnumbers cores 4-8:1. The clearer below zeroes the
+        // satellites ITSELF, after recording them. If you are here to "restore" the zeroing above so
+        // that a comment becomes true again: DON'T. You would be undoing F-5 to satisfy a sentence
+        // F-5 should have rewritten.
+        //
+        // So, on entry to this line: PlacedCoreLocation AND every satellite PlacedLocation are still
+        // NON-ZERO. PlacedCoreLocation was left naming the destination this entry has just walked away
+        // from, while bRelocate stayed true and bRelocationFailed false. That combination defeats BOTH of F2's layers -- the roll
         // tail below and the sweep's reconciliation both skip on `bRelocate && !failed`, and
         // the sweep's since-retired EntryIsMidAssembly() lambda returned true (A3 replaced that whole
         // derivation with bPlacementClaimLive) -- so an occupied core DespawnWellGroup had just REFUSED to

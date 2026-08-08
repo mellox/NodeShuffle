@@ -341,6 +341,13 @@ void ANodeShuffleSubsystem::ApplyWellRelocation(bool bWellShuffleEnabled, bool b
     // resolving anything, so the entry's AssignedResourceClassPath is not being maintained.
     const bool bOn = bWellShuffleEnabled && bRelocationEnabled;
 
+    // ns-review-h2-r4 ROUND 9 R-1 -- DIAGNOSTICS ONLY (full rationale on the header declarations).
+    // ReconcileAbandonedWellClaims reads these to label each mid-assembly tick OFF / AWAY / RETRY.
+    // NOTHING BEHAVIOURAL READS EITHER FIELD; a stale value changes no decision, only a log line.
+    // Cached rather than passed down because the reconciliation also runs from the roll tail.
+    bWellLastApplyRelocationOn = bOn;
+    WellLastApplySpawnRadiusCm = SpawnRadiusCm;
+
     // Once per session, BEFORE anything else touches a group: re-match our spawned well actors back to
     // their layout entries and re-establish every mCore link. This runs even when the toggles are off,
     // because a save that ALREADY holds relocated wells must keep them linked no matter what the

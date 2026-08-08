@@ -342,11 +342,27 @@ struct FNodeShuffleWellEntry
     // The generator is the DERIVATION. This field turns it off: the claim is WRITTEN when it becomes
     // true and CLEARED when it becomes false, and readers ASK instead of inferring.
     //
-    // EXACTLY ONE WRITER OF EACH POLARITY. Do not add a third.
-    //   set true  : NodeShuffleWellRelocateApply.cpp, beside `E.PlacedCoreLocation = CoreLoc;` --
-    //               the ONLY non-zero write of PlacedCoreLocation in the packet.
-    //   set false : ClearAbandonedWellPlacement (NodeShuffleWellSweep.cpp) -- the ONLY function that
-    //               zeroes Placed*. All three abandonment events route through it.
+    // THE COMPLETE WRITER CENSUS. Do not add another without editing this block AND both
+    // *** CLAIM INVARIANT VIOLATED *** strings, which send the debugger straight here.
+    // (ns-review-h2-r4 round 9 R-4: this block used to name ONE true-setter and the migration was the
+    // unnamed second one, so every violation line pointed the reader AWAY from the writer that had most
+    // likely produced the state. ns-review-h2-r4 round 9 R-5: it also still pointed the clearer at
+    // NodeShuffleWellSweep.cpp, which is now READERS ONLY -- the clearer moved to
+    // NodeShuffleWellClaim.cpp in h2-9 and this was the one surviving stale pointer, in the packet's
+    // single most-read block.)
+    //   set true  (1 of 2, THE STEADY-STATE SETTER) : NodeShuffleWellRelocateApply.cpp:180, beside
+    //               `E.PlacedCoreLocation = CoreLoc;` -- the ONLY non-zero write of PlacedCoreLocation
+    //               in the packet. This is the writer in every normal session.
+    //   set true  (2 of 2, VERSION-GATED, AT MOST ONCE PER SAVE) : MigratePreA3PlacementClaimsOnce,
+    //               NodeShuffleWellClaim.cpp:356. It asserts the claim back from a non-zero Placed*,
+    //               i.e. it IS the pre-A3 derivation. It can only run while WellClaimMigrationVersion
+    //               reads below WellClaimMigrationCurrentVersion. IF `WELLH2-CLAIM [backfill]` printed
+    //               `version 0 -> 1` THIS SESSION, SUSPECT THIS ONE FIRST -- and if it prints that on
+    //               every load, WellClaimMigrationVersion is not surviving the save round trip (P-15)
+    //               and this migration, not the commit, is the writer producing the state you are
+    //               looking at.
+    //   set false (1 of 1) : ClearAbandonedWellPlacement (NodeShuffleWellClaim.cpp) -- the ONLY
+    //               function that zeroes Placed*. All three abandonment events route through it.
     // INVARIANT A3 (enforced in the log, not just asserted in prose):
     //   bPlacementClaimLive == false  <=>  PlacedCoreLocation.IsNearlyZero()
     //   and, in the one direction that can actually arrive (ns-review-h2-r4 F-7):
@@ -1373,6 +1389,35 @@ private:
     // of 2076 cm against a 300 cm adopt radius and satellites outnumber cores ~4-8:1, so a core-only
     // memory left the discriminator dead for the more numerous class.
     TArray<FVector> AbandonedWellClaimCoords;
+
+    // ================================================================================================
+    // ns-review-h2-r4 ROUND 9 §3b-B -- THE SPAWN-TIME REGISTRY. THE ONE PART OF RT-6's ANSWER THAT
+    // RESTS ON NOTHING BUT OUR OWN CODE.
+    // ================================================================================================
+    // Three review rounds have produced a stranded-actor discriminator that can FALSIFY "this actor is
+    // ours" soundly and CANNOT AUTHORISE it: `persistentLevel=1 && standing on a live claim of ours`
+    // still rests on "Satisfactory authors every fracking well into a streaming sublevel", which is a
+    // fact about somebody else's map and is unverifiable from our headers. That asymmetry is why RT-6
+    // cannot currently produce the positive evidence the deferred SaveGame identity component is gated
+    // on -- a circle: the component waits on RT-6, and RT-6 waits on the component's premise.
+    //
+    // THIS BREAKS THE CIRCLE FOR HALF THE CLASS, at zero engine premise. Every actor SpawnWellGroup
+    // creates is recorded here, and nothing ever removes it. So:
+    //   * registry KNOWS the actor  => WE SPAWNED IT. Provable, from our own SpawnActorDeferred call.
+    //     No level premise, no distance threshold, no serialization surface.
+    //   * registry does NOT know it => it was NOT spawned in THIS session. Either vanilla, or ours
+    //     from a PREVIOUS session (the cross-reload half, which only the identity component can settle).
+    // It is deliberately NOT saved and NOT a UPROPERTY: a weak pointer is meaningless across a reload,
+    // and A3-5 already has one unproven serialization surface in flight. Session-scoped is the whole
+    // claim -- see the `spawnedThisSession=` field on the RT-6 verdict line.
+    //
+    // TWeakObjectPtr, never a raw pointer: entries go stale when actors are destroyed and a stale weak
+    // pointer compares unequal to a fresh actor, so a recycled address can never be mis-claimed as ours.
+    // NOTHING DESTRUCTIVE READS THIS. It is evidence for a human reading a log, exactly like `level=`.
+    // TODO (2026-08-07, WIP): unbounded in principle -- one entry per well member ever spawned this
+    // session, ~20 groups x ~8 members. If a real session ever makes this large, cap it the way
+    // AbandonedWellClaimCoords is capped and say so in the log, LOUDLY (F-6's lesson).
+    TSet<TWeakObjectPtr<AActor>> WellActorsSpawnedThisSession;
     static constexpr int32 WellAbandonedClaimCoordCap = 512; // pathological-loop guard, not a budget
     bool bWellClaimCoordCapLogged = false; // F-6: saturation was SILENT, and silently un-fixes F-2
 
@@ -1392,6 +1437,31 @@ private:
     // so this is ~20 minutes of NO PROGRESS, plus one tick per re-roll. Generous on purpose: expiring
     // a group a player is actively assembling would cost a destroy/respawn round-trip.
     static constexpr int32 WellClaimMidAssemblyMaxPasses = 20;
+
+    // ================================================================================================
+    // ns-review-h2-r4 ROUND 9 R-1 -- THE COUNTER ABOVE WAS PRINTED NOWHERE EXCEPT AT EXPIRY, WHICH MADE
+    // RT-11'S NEGATIVE HALF A STEP THAT COULD NOT FAIL.
+    // ================================================================================================
+    // The claim "an actively-assembling group can never expire, because the footprint commit resets the
+    // counter" is the single most load-bearing claim in D-2. The only observation that could falsify it
+    // was `*** MID-ASSEMBLY CLAIM EXPIRED ***` -- which needs 20 reconciliation passes (~20 minutes) to
+    // appear, while every step that was supposed to watch for it runs for minutes. So the step reported
+    // GREEN under ANY behaviour of the counter: a vacuous pass, the class round 9 named
+    // ("THE ACCEPTANCE GATE CANNOT FAIL").
+    //
+    // The fix is diagnostics, not a redesign: print the counter EVERY pass it is non-empty, name the
+    // entry holding the maximum, and say WHICH of the three conditions caused the tick. The tester then
+    // stands next to an assembling group and watches the max pin at 0-1, then walks away and watches it
+    // climb -- a number that MOVES, in one minute, instead of a 20-minute absence.
+    //
+    // The two fields below are the cheapest way to make the third question answerable from inside the
+    // reconciliation, which has no idea why the apply pass did not reach the commit. They are written
+    // ONCE per ApplyWellRelocation pass and READ ONLY BY DIAGNOSTICS -- nothing behavioural reads them,
+    // and no decision changes if they are stale. At the roll tail they may be one pass old (the roll
+    // tail's reconciliation can run before the first apply pass of the session, in which case the
+    // radius is still -1 and the reason is reported as UNKNOWN rather than guessed).
+    bool  bWellLastApplyRelocationOn   = false; // the `bOn` the last apply pass computed
+    float WellLastApplySpawnRadiusCm   = -1.0f; // <0 => ApplyWellRelocation has not run yet this session
 
     // ns-review-h5 judgement call (2): a group that VALIDATES a footprint and then fails to ASSEMBLE
     // retries the same placement forever -- TryPlaceWellGroup neither advances YawCursor nor spends

@@ -171,6 +171,13 @@ bool ANodeShuffleSubsystem::SpawnWellGroup(FNodeShuffleWellEntry& E, UClass* Res
         FNodeShuffleModule::RegisterManagedNode(Core); // coexist-veto-1: spawned = managed
         Core->SetActorHiddenInGame(false);
         SpawnedWellCores.Add(E.CorePath, Core);
+        // ns-review-h2-r4 ROUND 9 §3b-B -- THE ONE PROVABLE FACT ABOUT ACTOR IDENTITY.
+        // SpawnedWellCores is a HANDLE and it is dropped on every path that strands an actor -- which
+        // is precisely why RT-6's class exists. This registry is never removed from, so an actor we
+        // spawned stays provably ours for the whole session even after the handle is gone. Read only by
+        // the backstop's verdict line; nothing destructive touches it. See the header block on
+        // WellActorsSpawnedThisSession.
+        WellActorsSpawnedThisSession.Add(Core);
         UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH2-SPAWN core='%s': spawned '%s' at %s yaw=%.1f res='%s'."),
             *WellShort(E.CorePath), *Core->GetName(), *E.PlacedCoreLocation.ToCompactString(),
@@ -290,6 +297,9 @@ bool ANodeShuffleSubsystem::SpawnWellGroup(FNodeShuffleWellEntry& E, UClass* Res
             FNodeShuffleModule::RegisterManagedNode(Sat);
             Sat->SetActorHiddenInGame(false);
             SpawnedWellSatellites.Add(S.SatellitePath, Sat);
+            // ROUND 9 §3b-B, same reasoning as the core above -- and satellites are the MORE NUMEROUS
+            // half of the stranded class (4-8:1), so omitting them here would repeat F-5's shape.
+            WellActorsSpawnedThisSession.Add(Sat);
             S.bPlaced = true;
             ++SpawnedSats;
         }

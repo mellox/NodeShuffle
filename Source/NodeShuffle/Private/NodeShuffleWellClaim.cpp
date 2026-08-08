@@ -118,8 +118,13 @@ bool ANodeShuffleSubsystem::ClearAbandonedWellPlacement(FNodeShuffleWellEntry& E
             TEXT("the coordinate outlives the entry that owned it, and until ns-review-h2-r4 F-2 NOTHING ")
             TEXT("repaired it -- A3 short-circuited the only repair on the very bool that had gone wrong. ")
             TEXT("Zeroing it now, which is what the pre-A3 code did by reading the coordinate instead of ")
-            TEXT("a flag. FIND THE WRITER: the ONLY setter is NodeShuffleWellRelocateApply.cpp's commit ")
-            TEXT("and the ONLY clearer is this function. flags: placed=%d relocate=%d failed=%d."),
+            TEXT("a flag. FIND THE WRITER -- THERE ARE TWO SETTERS (round 9 R-4; this line used to name ")
+            TEXT("only the first and point the debugger AWAY from the more likely one): (1) ")
+            TEXT("NodeShuffleWellRelocateApply.cpp:180, the steady-state footprint commit; (2) ")
+            TEXT("MigratePreA3PlacementClaimsOnce, NodeShuffleWellClaim.cpp:356, the version-gated pre-A3 ")
+            TEXT("migration -- IF `WELLH2-CLAIM [backfill]` PRINTED `version 0 -> 1` THIS SESSION, ")
+            TEXT("SUSPECT THAT ONE FIRST. The ONLY clearer is this function. ")
+            TEXT("flags: placed=%d relocate=%d failed=%d."),
             *WellShort(E.CorePath), Why, *E.PlacedCoreLocation.ToCompactString(),
             E.bGroupPlaced ? 1 : 0, E.bRelocate ? 1 : 0, E.bRelocationFailed ? 1 : 0);
         // fall through to the zeroing
@@ -241,9 +246,14 @@ int32 ANodeShuffleSubsystem::ValidateWellClaimInvariant(const TCHAR* Where)
                     TEXT("WELLH2-CLAIM [%s] core='%s': *** CLAIM INVARIANT VIOLATED *** claimLive=%d but ")
                     TEXT("PlacedCoreLocation=%s (%s). INVARIANT A3 is `claimLive == false <=> the ")
                     TEXT("coordinate is zero`, and every ownership reader in the sweep and the backstop ")
-                    TEXT("now trusts it. %s VOID THIS SESSION'S SWEEP NUMBERS and find the writer: the ")
-                    TEXT("ONLY setter is NodeShuffleWellRelocateApply.cpp's commit and the ONLY clearer ")
-                    TEXT("is ClearAbandonedWellPlacement. flags: placed=%d relocate=%d failed=%d."),
+                    TEXT("now trusts it. %s VOID THIS SESSION'S SWEEP NUMBERS and find the writer -- ")
+                    TEXT("THERE ARE TWO SETTERS (round 9 R-4): (1) NodeShuffleWellRelocateApply.cpp:180, ")
+                    TEXT("the steady-state footprint commit; (2) MigratePreA3PlacementClaimsOnce, ")
+                    TEXT("NodeShuffleWellClaim.cpp:356, the version-gated pre-A3 migration -- IF ")
+                    TEXT("`WELLH2-CLAIM [backfill]` PRINTED `version 0 -> 1` THIS SESSION, SUSPECT THAT ")
+                    TEXT("ONE FIRST (it asserts claimLive=1 from a non-zero Placed* on entries whose ")
+                    TEXT("ownership is unknown, which is exactly this state). The ONLY clearer is ")
+                    TEXT("ClearAbandonedWellPlacement. flags: placed=%d relocate=%d failed=%d."),
                     Where, *WellShort(E.CorePath), E.bPlacementClaimLive ? 1 : 0,
                     *E.PlacedCoreLocation.ToCompactString(), bCoordZero ? TEXT("zero") : TEXT("non-zero"),
                     E.bPlacementClaimLive
@@ -396,6 +406,13 @@ int32 ANodeShuffleSubsystem::MigratePreA3PlacementClaimsOnce()
 int32 ANodeShuffleSubsystem::ReconcileAbandonedWellClaims(const TCHAR* Why)
 {
     int32 Withdrawn = 0, Expired = 0, MidAssembly = 0, Repaired = 0;
+    // ROUND 9 R-1: the observability half of D-2. See the header block on
+    // bWellLastApplyRelocationOn. TickOff/TickAway/TickRetry is a census of WHY each mid-assembly
+    // entry ticked this pass; MaxPasses/MaxPath/MaxWhy name the entry closest to expiring.
+    int32 TickOff = 0, TickAway = 0, TickRetry = 0, TickUnknown = 0;
+    int32 MaxPasses = 0;
+    FString MaxPath;
+    const TCHAR* MaxWhy = TEXT("n/a");
     for (FNodeShuffleWellEntry& E : WellLayout)
     {
         // F-2: ask the COORDINATES, not the flag. `claim dead AND nothing named` is the only genuinely
@@ -456,6 +473,46 @@ int32 ANodeShuffleSubsystem::ReconcileAbandonedWellClaims(const TCHAR* Why)
             ++MidAssembly;
             int32& Passes = WellClaimMidAssemblyPasses.FindOrAdd(E.CorePath);
             ++Passes;
+
+            // ========================================================================================
+            // ns-review-h2-r4 ROUND 9 R-1 -- WHY DID THIS ENTRY TICK? (the observability half of D-2)
+            // ========================================================================================
+            // Round 8's rejected alternative D was "tick only when no player is near DestCoreLocation",
+            // which would have made RT-11's negative half true BY CONSTRUCTION instead of measurable.
+            // We kept design A and adopted D's OBSERVATION instead: name which of the three conditions
+            // stopped the apply pass from reaching the footprint commit that resets this counter.
+            //   OFF     -- relocation is disabled, so ApplyWellRelocation's per-entry gate `continue`s
+            //              past this entry every pass. Route (a) in the block above. EXPECTED to tick.
+            //   AWAY    -- no player within the spawn radius of DestCoreLocation, so spawn-on-discovery
+            //              deferred it. Route (b). EXPECTED to tick.
+            //   RETRY   -- relocation IS on AND a player IS near, and the counter still advanced. That
+            //              means the commit was NOT reached or NOT reset: either the footprint failed to
+            //              re-validate, or the reset itself is broken. THIS IS THE BUG CASE, and it is
+            //              the observation RT-11's negative half actually needs -- an entry sitting at
+            //              RETRY with a climbing count while the player stands next to it falsifies
+            //              "an actively-assembling group can never expire" in ONE MINUTE rather than 20.
+            //   UNKNOWN -- ApplyWellRelocation has not run yet this session (roll-tail reconciliation
+            //              before the first apply pass). Reported, never guessed.
+            const TCHAR* TickWhy;
+            if (WellLastApplySpawnRadiusCm <= 0.0f)
+            {
+                TickWhy = TEXT("UNKNOWN(no apply pass yet this session)"); ++TickUnknown;
+            }
+            else if (!bWellLastApplyRelocationOn)
+            {
+                TickWhy = TEXT("OFF(relocation disabled -- the apply gate skips this entry)"); ++TickOff;
+            }
+            else if (!IsLocationNearAnyPlayer(E.DestCoreLocation, WellLastApplySpawnRadiusCm))
+            {
+                TickWhy = TEXT("AWAY(no player within the spawn radius of DestCoreLocation)"); ++TickAway;
+            }
+            else
+            {
+                TickWhy = TEXT("RETRY(*** player IS near and relocation IS on, yet no fresh commit reset this counter -- footprint failed to re-validate, or the commit reset is broken. THIS IS THE CASE RT-11's NEGATIVE HALF EXISTS TO CATCH ***)");
+                ++TickRetry;
+            }
+            if (Passes > MaxPasses) { MaxPasses = Passes; MaxPath = E.CorePath; MaxWhy = TickWhy; }
+
             if (Passes < WellClaimMidAssemblyMaxPasses) { continue; }
 
             UE_LOG(LogNodeShuffle, Warning,
@@ -483,6 +540,29 @@ int32 ANodeShuffleSubsystem::ReconcileAbandonedWellClaims(const TCHAR* Why)
         // Not placed and not searching: this entry has abandoned whatever it names.
         if (!E.bPlacementClaimLive) { ++Repaired; } // F-2's self-heal is what is about to run
         if (ClearAbandonedWellPlacement(E, Why)) { ++Withdrawn; }
+    }
+
+    // ================================================================================================
+    // ns-review-h2-r4 ROUND 9 R-1 -- THE COUNTER, PRINTED EVERY PASS IT IS NON-EMPTY.
+    // ================================================================================================
+    // THIS LINE IS THE ACCEPTANCE GATE FOR D-2's LOAD-BEARING CLAIM, and it exists because the previous
+    // gate could not fail. Grep `MID-ASSEMBLY CENSUS`. Stand next to an assembling group: max must pin
+    // at 0-1 with why=RETRY absent or non-climbing. Walk away: max climbs by 1 per pass with why=AWAY.
+    // A climbing max with why=RETRY while you are standing there is the FAILURE, and it is visible in
+    // one minute instead of twenty. Emitted at Display because a mid-assembly group is normal; the
+    // Warning below is reserved for a withdrawal actually happening.
+    if (MidAssembly > 0)
+    {
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("WELLH2-CLAIM [%s]: MID-ASSEMBLY CENSUS -- %d entry(ies) hold a live claim while still ")
+            TEXT("assembling. Tick reasons this pass: %d OFF, %d AWAY, %d RETRY, %d UNKNOWN. Highest ")
+            TEXT("counter: %d of %d passes on core='%s', why=%s. (ns-review-h2-r4 round 9 R-1: this ")
+            TEXT("counter used to be printed NOWHERE except at expiry, ~20 minutes away, so every step ")
+            TEXT("that watched for the expiry reported PASS under any behaviour of the counter. A ")
+            TEXT("number that MOVES is the measurement; an absence is not.)"),
+            Why, MidAssembly, TickOff, TickAway, TickRetry, TickUnknown,
+            MaxPasses, WellClaimMidAssemblyMaxPasses,
+            MaxPath.IsEmpty() ? TEXT("<none>") : *WellShort(MaxPath), MaxWhy);
     }
 
     if (Expired > 0 || Repaired > 0)
