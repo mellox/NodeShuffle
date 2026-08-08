@@ -294,10 +294,25 @@ void ANodeShuffleSubsystem::RunWellLocationBackstop(const TCHAR* Phase, int32& O
             const bool bPersistent = (Lvl != nullptr && Lvl == PersistentLevel);
             const FString LevelName = Lvl ? Lvl->GetOutermost()->GetName() : FString(TEXT("<none>"));
 
+            // ns-review-h2-r4 F-4 -- ORDERING. h2-8 tested `bAtOurClaim` FIRST and `!bPersistent`
+            // THIRD, i.e. it put the only field the code itself calls "never dead" behind two distance
+            // tests. A vanilla well that was not streamed when the census ran is not in the layout, so
+            // a destination can be validated on top of it; it then passes gate 2 (unknown path) and, if
+            // IsNetStartupActor returns false for it, gate 1 -- and being within 300 cm of a live claim
+            // of ours it was reported `OURS-STRANDED (... MEASURED)`. Step 8 tells the tester that
+            // verdict means "real evidence, build the identity component". What they actually found is
+            // the gate-1 false negative that means PASS B MUST NEVER BE ARMED. Opposite conclusions
+            // from one line, and that line is the deliverable two rounds have failed to produce.
+            //
+            // So `!bPersistent` is hoisted, AND the both-true case gets its own compound verdict rather
+            // than silently resolving to one of them: an actor that is on our claim AND in a streaming
+            // sublevel is a CONTRADICTION, and naming it as one is strictly more informative than
+            // either branch alone.
             const TCHAR* Verdict =
-                  bAtOurClaim                      ? TEXT("OURS-STRANDED (no handle, standing on a LIVE claim of ours -- the h5 F-1 class, MEASURED)")
-                : (DDst >= 0.0 && DDst < Radius)   ? TEXT("OURS-ABANDONED (within the adopt radius of a dealt or WITHDRAWN destination)")
+                  (bAtOurClaim && !bPersistent)    ? TEXT("OURS-STRANDED-BUT-NOT-PERSISTENT (*** CONTRADICTION: standing on a LIVE claim of ours AND authored into a streaming sublevel. Ours spawn with no OverrideLevel, so this is a gate-1 FALSE NEGATIVE over a vanilla well, NOT the h5 F-1 class -- do NOT arm pass B and do NOT count this as evidence for the identity component ***)")
                 : !bPersistent                     ? TEXT("VANILLA-SUSPECT (not in the persistent level -- gate 1 FALSE NEGATIVE, do not arm pass B)")
+                : bAtOurClaim                      ? TEXT("OURS-STRANDED (no handle, standing on a LIVE claim of ours, and IN THE PERSISTENT LEVEL where ours spawn -- the h5 F-1 class, MEASURED)")
+                : (DDst >= 0.0 && DDst < Radius)   ? TEXT("OURS-ABANDONED (within the adopt radius of a dealt or WITHDRAWN destination -- core AND satellite coordinates since ns-review-h2-r4 F-5)")
                 : (DVan >= 0.0 && DVan < Radius)   ? TEXT("VANILLA-SUSPECT (sitting on a vanilla position the layout knows)")
                 :                                    TEXT("AMBIGUOUS (read level= and path= by hand; neither distance is inside the adopt radius)");
 
@@ -322,7 +337,24 @@ void ANodeShuffleSubsystem::RunWellLocationBackstop(const TCHAR* Phase, int32& O
     // per session and threw the numbers away for every later pass. Throttled only in the sense that the
     // pass itself runs at the settled phase.
     const int32 BucketSum = LevelActorOnly + KnownPathOnly + BothGates + Examined;
-    const int32 ExaminedSum = HeldByUs + Unaccounted; // F-1: the SECOND sum, and the one that was wrong
+    // ================================================================================================
+    // ns-review-h2-r4 F-8 -- THE SECOND SUM WAS VACUOUS. THIS ONE CAN ACTUALLY FAIL.
+    // ================================================================================================
+    // h2-8 asserted `Examined == HeldByUs + Unaccounted` and the commit message called it a guard
+    // against "a future edit that drops an actor into no bucket". It was neither: `++Examined` is
+    // followed immediately by exactly one of `++HeldByUs` / `++Unaccounted` on every path, so the
+    // equality held BY CONSTRUCTION and was arithmetically incapable of failing. (`BucketSum ==
+    // Iterated` is by-construction in the same way -- one `++Iterated`, then exactly one bucket. It is
+    // kept because it is pre-existing and cheap, but it is decoration, not a check, and the line below
+    // now says so rather than presenting three equal-weight verdicts.)
+    //
+    // THE ONE THAT CAN DIVERGE was sitting right there unwritten: LiveCores / LiveSats are incremented
+    // by the two TActorIterator loops BEFORE Examine() runs, while Iterated is incremented INSIDE
+    // Examine AFTER its `if (!IsValid(A)) return;`. So any iterated actor that fails IsValid makes
+    // LiveCores + LiveSats EXCEED Iterated -- a real, reachable divergence that nothing asserted,
+    // while the census line printed "Iterated %d ... (%d core(s) + %d satellite(s))" as though the
+    // three numbers agreed. They are not the same measurement and now the log says which is which.
+    const int32 IterSum = LiveCores + LiveSats;
     UE_LOG(LogNodeShuffle, Display,
         TEXT("WELLH2-BACKSTOP [%s]: GATE CENSUS (ns-review-h2-r2 F-C -- this line is the ONLY evidence ")
         TEXT("that IsNetStartupActor works, and RT-3/RT-6 are unreadable without it). Iterated %d live ")
@@ -331,15 +363,18 @@ void ANodeShuffleSubsystem::RunWellLocationBackstop(const TCHAR* Phase, int32& O
         TEXT("ours and provable), %d by BOTH. Passed both gates: %d examined -> %d HELD BY US (a handle ")
         TEXT("points at it) + %d UNACCOUNTED (%d of those are STRANDED ON A LIVE CLAIM OF OURS -- ")
         TEXT("ns-review-h2-r3 F-1: these used to be silently counted as accounted-for and are the whole ")
-        TEXT("RT-6 class; %d in use by a player). Sums: gates %d vs iterated %d (%s); examined %d vs ")
-        TEXT("held+unaccounted %d (%s). Layout coverage: %d entry(ies), %d known path(s) vs %d live ")
+        TEXT("RT-6 class; %d in use by a player). Sums: gates %d vs iterated %d (%s); ")
+        TEXT("liveCores+liveSats %d vs iterated %d (%s). Layout coverage: %d entry(ies), %d known path(s) vs %d live ")
         TEXT("core(s) in the world -- gate 2 can only cover wells the layout has ever seen, so a ")
-        TEXT("shortfall here is the exact window gate 1 is suspect in. NOTHING WAS DESTROYED."),
+        TEXT("shortfall here is the exact window gate 1 is suspect in. NOTHING WAS DESTROYED. ")
+        TEXT("(ns-review-h2-r4 F-8: the old `examined vs held+unaccounted` sum was VACUOUS and has been ")
+        TEXT("REPLACED by `liveCores+liveSats vs iterated`, which genuinely diverges when an iterated ")
+        TEXT("actor fails IsValid.)"),
         Phase, Iterated, LiveCores, LiveSats,
         LevelActorOnly, KnownPathOnly, BothGates,
         Examined, HeldByUs, Unaccounted, StrandedAtOurClaim, InUse,
-        BucketSum, Iterated, (BucketSum == Iterated) ? TEXT("OK") : TEXT("*** MISMATCH: a population is uncounted ***"),
-        Examined, ExaminedSum, (Examined == ExaminedSum) ? TEXT("OK") : TEXT("*** MISMATCH: a population is uncounted ***"),
+        BucketSum, Iterated, (BucketSum == Iterated) ? TEXT("by construction, DECORATION not a check -- ns-review-h2-r4 F-8") : TEXT("*** MISMATCH: a population is uncounted ***"),
+        IterSum, Iterated, (IterSum == Iterated) ? TEXT("OK") : TEXT("*** MISMATCH: an ITERATED ACTOR FAILED IsValid -- the class counts and the examined count disagree ***"),
         WellLayout.Num(), KnownLayoutPaths.Num(), LiveCores);
 
     // GATE 1 FALSE NEGATIVE, CALLED OUT BY NAME. If gate 2 alone excluded an actor, then gate 1 said

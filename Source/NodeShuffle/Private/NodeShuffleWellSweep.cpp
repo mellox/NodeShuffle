@@ -30,23 +30,19 @@
 // entry therefore also owns a handle whose actor stands at the entry's CURRENTLY COMMITTED coordinate.
 //
 // ================================================================================================
-// A3 (ns-review-h2-r3 §6) -- OWNERSHIP IS NOW A STORED FACT, NOT A DERIVED PREDICATE.
+// A3 (ns-review-h2-r3 §6) -- OWNERSHIP IS A STORED FACT, NOT A DERIVED PREDICATE.
 // ================================================================================================
-// Seven review rounds each closed every prior finding and each found a NEW instance of ONE failure:
-// "this entry has abandoned its coordinate" was INFERRED, independently at every reader, from a
-// conjunction of bGroupPlaced / bRelocate / bRelocationFailed / Placed*-being-non-zero -- and every
-// round found a new state tuple some reader mis-read. Patching instances is what kept failing.
-// FNodeShuffleWellEntry::bPlacementClaimLive replaces the inference: ONE setter (the footprint commit
-// in NodeShuffleWellRelocateApply.cpp), ONE clearer (ClearAbandonedWellPlacement, below), and every
-// reader asks. ValidateWellClaimInvariant() checks `claim == false <=> coordinate is zero` at the top
-// of every sweep so that a future edit desynchronising them shows up in the log instead of in round 9.
+// THE CLAIM ITSELF NOW LIVES IN NodeShuffleWellClaim.cpp (ns-review-h2-r4 §4C + the 500-line rule):
+// ClearAbandonedWellPlacement (the ONE clearer), ValidateWellClaimInvariant (the enforcement),
+// MigratePreA3PlacementClaimsOnce (the labelled, version-gated pre-A3 migration) and
+// ReconcileAbandonedWellClaims (the ONE remaining derived predicate, which WRITES the fact). That
+// seam is the distinction A3 introduced: the CLAIM vs THE SWEEP THAT READS IT -- and round 8's
+// amendment is why the reconciliation went with them rather than staying here among the readers.
+// THIS FILE IS NOW READERS ONLY. Do not add a claim writer to it.
 //
-// WHAT A3 DOES NOT DO, stated here so nobody expects it to: it does not decide WHEN a claim ends.
-// Three sites do that (the escalation ladder, re-enrolment, and ReconcileAbandonedWellClaims below),
-// and the last of those is still a predicate over the lifecycle flags -- on purpose, because its job
-// is to NOTICE an abandonment nobody instrumented. The win is that it WRITES the fact once instead of
-// every reader re-deriving it. Nor does it say anything about actor IDENTITY ("is this actor ours"),
-// which is what pass B, IsNetStartupActor and the deferred SaveGame identity component are about.
+// WHAT A3 DOES NOT DO, stated here so nobody expects it to: it does not say anything about actor
+// IDENTITY ("is this actor ours"), which is what pass B, IsNetStartupActor and the deferred SaveGame
+// identity component are about.
 
 #include "NodeShuffleSubsystem.h"
 
@@ -94,215 +90,6 @@
 // so it would tear down exactly the wells the packet exists to preserve. ns-review-h5 judgement call
 // (1) is the right version of that idea and is taken: the sweep is called at the roll's TAIL, after
 // every entry's fate is decided, where there is no ordering hazard at all.
-// ------------------------------------------------------------------------------------------------
-// ns-review-h5 F2 -- DROP A PLACEMENT THE ENTRY NO LONGER OWNS  (the ROOT-CAUSE half)
-// ------------------------------------------------------------------------------------------------
-// PlacedCoreLocation / PlacedLocation are the entry's claim on a coordinate. Nothing ever WITHDREW that
-// claim: the roll's ten refusal `continue`s clear bRelocate and leave the coordinates behind, and the
-// escalation ladder rewrites DestCoreLocation while leaving Placed* pointing at the destination it just
-// abandoned. So IsAtTarget() -- the sweep's "this group is mid-assembly, leave it alone" test -- kept
-// answering true for pinned, permanently-failed and refused entries FOREVER, and the sweep reported
-// their stranded actors as "mid-assembly: OWNED, not orphaned". That is a confident falsehood produced
-// by the one function in the packet whose job is to disbelieve the others.
-//
-// The one-line alternative (widen the predicate to `bRelocate && !bRelocationFailed`) is ALSO taken, in
-// SweepOrphanedWellActors below -- not instead of this. They fail differently and neither subsumes the
-// other: the predicate covers a route that never calls this, and this covers a route whose flags do not
-// distinguish it (an escalating entry keeps bRelocate true and bRelocationFailed false while its old
-// coordinates go stale). Same argument as pass A vs pass B one level up.
-//
-// A PLACED GROUP IS NEVER TOUCHED. bGroupPlaced true means the entry owns those coordinates and
-// SpawnWellGroup, AdoptRestoredWellGroups, EnsureSatelliteLinked, DespawnStaleWellMembers and
-// SuppressVanillaWellGroup all read them; clearing there would strand a working well instantly.
-//
-// A3 (ns-review-h2-r3 §6) -- THIS IS NOW THE SINGLE CLEARER OF bPlacementClaimLive, and the only
-// function in the packet that zeroes Placed*. Readers no longer re-derive abandonment; they read the
-// flag this function writes. See FNodeShuffleWellEntry::bPlacementClaimLive for the full argument.
-bool ANodeShuffleSubsystem::ClearAbandonedWellPlacement(FNodeShuffleWellEntry& E, const TCHAR* Why)
-{
-    // THE ONE SAFETY GATE, kept: a placed group owns its coordinates and the spawn/adopt/link/suppress
-    // paths all read them; clearing here would strand a working well instantly.
-    //
-    // ns-review-h2-r3 F-6: this used to be a SILENT `return false`, which made an ordering mistake at a
-    // call site indistinguishable from "nothing to do". Both existing call sites are correct only
-    // because bGroupPlaced happens to be false by the time they run -- the roll's by an explicit
-    // `E.bGroupPlaced = false` three lines earlier, the escalation's by a caller-side precondition
-    // three call frames up. Neither is enforced by anything. So the no-op is now LOUD: if a future
-    // "re-validate a placed group" feature calls the escalation from the maintenance branch, the log
-    // says so instead of silently reinstating h2-7 F-A at the escalation site.
-    if (E.bGroupPlaced)
-    {
-        UE_LOG(LogNodeShuffle, Warning,
-            TEXT("WELLH2-ABANDON core='%s' (%s): *** CLAIM WITHDRAWAL REFUSED -- ORDERING BUG *** This ")
-            TEXT("entry is still bGroupPlaced, so its coordinates are OWNED and must not be dropped, and ")
-            TEXT("the caller's withdrawal has silently done NOTHING. Every caller must clear bGroupPlaced ")
-            TEXT("FIRST (ns-review-h2-r2 F-A's ordering trap, ns-review-h2-r3 F-6). If you are reading ")
-            TEXT("this line, a stale claim is about to outlive the entry that made it -- claimLive=%d, ")
-            TEXT("core=%s."),
-            *WellShort(E.CorePath), Why, E.bPlacementClaimLive ? 1 : 0,
-            *E.PlacedCoreLocation.ToCompactString());
-        return false;
-    }
-
-    // A3: the claim itself decides, not `Placed*` being non-zero. Identical outcome today (INVARIANT A3
-    // makes them equivalent) but it is now ONE fact rather than a coordinate re-interpreted as a fact.
-    if (!E.bPlacementClaimLive) { return false; } // nothing claimed -- idempotent, silent, no-op
-
-    const FVector WasCore = E.PlacedCoreLocation;
-    int32 SatsCleared = 0;
-    for (FNodeShuffleWellSatellite& S : E.Satellites)
-    {
-        if (S.PlacedLocation.IsNearlyZero()) { continue; }
-        S.PlacedLocation = FVector::ZeroVector;
-        S.PlacedRotation = FRotator::ZeroRotator;
-        ++SatsCleared;
-    }
-
-    // ns-review-h2-r3 F-2 (evidence integrity) -- REMEMBER THE COORDINATE INSTEAD OF ONLY DELETING IT.
-    // The three fields pass B's discriminator is built from (PlacedCoreLocation, PlacedLocation,
-    // DestCoreLocation) are ALL zeroed by the events that strand an actor -- this function zeroes the
-    // first two and re-enrolment zeroes the third -- so at the exact instant an actor becomes strandable
-    // the only coordinate that could identify it as OURS has just been deleted, and `nearestDealtXY`
-    // then measured the distance to some unrelated destination. Session-scoped and capped; pass B folds
-    // it into DestinationPoints. Costs 12 bytes per withdrawal and destroys nothing.
-    if (!WasCore.IsNearlyZero() && AbandonedWellClaimCoords.Num() < WellAbandonedClaimCoordCap)
-    {
-        AbandonedWellClaimCoords.Add(WasCore);
-    }
-
-    E.PlacedCoreLocation = FVector::ZeroVector;
-    E.PlacedCoreRotation = FRotator::ZeroRotator;
-    E.bPlacementClaimLive = false; // A3: THE ONLY PLACE THIS IS EVER SET FALSE
-
-    UE_LOG(LogNodeShuffle, Display,
-        TEXT("WELLH2-ABANDON core='%s' (%s): dropped this entry's claim on its committed placement -- ")
-        TEXT("core was %s, %d satellite coordinate(s) cleared, claimLive 1 -> 0 (relocate=%d failed=%d ")
-        TEXT("placed=%d). Until this existed the stale claim made the orphan sweep report any actor ")
-        TEXT("still standing there as 'mid-assembly: OWNED, not orphaned' forever (ns-review-h5 F2). ")
-        TEXT("The coordinate is REMEMBERED for this session (%d recorded) so pass B can still tell a ")
-        TEXT("stranded actor of ours from a mis-classified vanilla well (ns-review-h2-r3 F-2)."),
-        *WellShort(E.CorePath), Why, *WasCore.ToCompactString(), SatsCleared,
-        E.bRelocate ? 1 : 0, E.bRelocationFailed ? 1 : 0, E.bGroupPlaced ? 1 : 0,
-        AbandonedWellClaimCoords.Num());
-    return true;
-}
-
-// ================================================================================================
-// A3 -- INVARIANT A3, ENFORCED IN THE LOG RATHER THAN ASSERTED IN PROSE.
-// ================================================================================================
-//   bPlacementClaimLive == false  <=>  PlacedCoreLocation.IsNearlyZero()
-// This packet has TWICE written an invariant into a comment as "holds by construction" and then had a
-// later change erode it silently (h2-6 added three ZeroVector writers to the convention
-// DespawnStaleWellMembers rests on; h2-7 added a fourth). A3's whole value is that the claim is ONE
-// fact -- which is worth nothing if a future edit can desynchronise it from the coordinate without
-// anybody noticing. So it is CHECKED, every sweep, over ~20 entries.
-//
-// BOTH directions matter and they fail differently:
-//   claim live + zero coordinate  -> a reader protects an actor standing at the WORLD ORIGIN, or
-//                                    SpawnWellGroup spawns a live snappable node there (h3 H10).
-//   claim dead + non-zero coord   -> exactly h2-7 F-A: the coordinate outlives the entry that owned it
-//                                    and the sweep reports its actors as OWNED forever.
-// It only ever LOGS -- it repairs nothing. A silent auto-repair would hide the edit that broke it,
-// which is the failure mode this whole packet is parked on.
-int32 ANodeShuffleSubsystem::ValidateWellClaimInvariant(const TCHAR* Where)
-{
-    int32 Violations = 0;
-    for (const FNodeShuffleWellEntry& E : WellLayout)
-    {
-        const bool bCoordZero = E.PlacedCoreLocation.IsNearlyZero();
-        if (E.bPlacementClaimLive == bCoordZero) // biconditional broken either way
-        {
-            ++Violations;
-            if (Violations <= 5)
-            {
-                UE_LOG(LogNodeShuffle, Warning,
-                    TEXT("WELLH2-CLAIM [%s] core='%s': *** CLAIM INVARIANT VIOLATED *** claimLive=%d but ")
-                    TEXT("PlacedCoreLocation=%s (%s). INVARIANT A3 is `claimLive == false <=> the ")
-                    TEXT("coordinate is zero`, and every ownership reader in the sweep and the backstop ")
-                    TEXT("now trusts it. %s VOID THIS SESSION'S SWEEP NUMBERS and find the writer: the ")
-                    TEXT("ONLY setter is NodeShuffleWellRelocateApply.cpp's commit and the ONLY clearer ")
-                    TEXT("is ClearAbandonedWellPlacement. flags: placed=%d relocate=%d failed=%d."),
-                    Where, *WellShort(E.CorePath), E.bPlacementClaimLive ? 1 : 0,
-                    *E.PlacedCoreLocation.ToCompactString(), bCoordZero ? TEXT("zero") : TEXT("non-zero"),
-                    E.bPlacementClaimLive
-                        ? TEXT("A LIVE CLAIM ON A ZERO COORDINATE protects actors at the WORLD ORIGIN and ")
-                          TEXT("can make SpawnWellGroup materialise a snappable node there (h3 H10).")
-                        : TEXT("A DEAD CLAIM ON A REAL COORDINATE is h2-7 F-A exactly: the coordinate ")
-                          TEXT("outlives the entry that owned it."),
-                    E.bGroupPlaced ? 1 : 0, E.bRelocate ? 1 : 0, E.bRelocationFailed ? 1 : 0);
-            }
-        }
-    }
-    if (Violations == 0 && !bWellClaimInvariantOkLogged)
-    {
-        bWellClaimInvariantOkLogged = true;
-        UE_LOG(LogNodeShuffle, Display,
-            TEXT("WELLH2-CLAIM [%s]: INVARIANT A3 HOLDS -- %d layout entry(ies) checked, 0 violations. ")
-            TEXT("This line proves the check RAN; its absence means it did not, and every ownership ")
-            TEXT("number below is then only as good as the old derived predicate. Said once per session; ")
-            TEXT("a violation is logged EVERY time."), Where, WellLayout.Num());
-    }
-    else if (Violations > 0)
-    {
-        UE_LOG(LogNodeShuffle, Warning,
-            TEXT("WELLH2-CLAIM [%s]: *** %d of %d entry(ies) VIOLATE INVARIANT A3 *** (first %d named ")
-            TEXT("above). A3 exists to stop abandonment being re-derived at every reader; a violation ")
-            TEXT("means the single source has desynchronised and the derivation is back, unowned."),
-            Where, Violations, WellLayout.Num(), FMath::Min(Violations, 5));
-    }
-    return Violations;
-}
-
-// A3 MIGRATION. See the header. One-shot, called from AdoptRestoredWellGroups before any reader runs.
-int32 ANodeShuffleSubsystem::BackfillWellPlacementClaims()
-{
-    int32 Backfilled = 0;
-    for (FNodeShuffleWellEntry& E : WellLayout)
-    {
-        if (E.bPlacementClaimLive) { continue; }
-        if (E.PlacedCoreLocation.IsNearlyZero()) { continue; }
-        E.bPlacementClaimLive = true;
-        ++Backfilled;
-    }
-    if (Backfilled > 0)
-    {
-        UE_LOG(LogNodeShuffle, Display,
-            TEXT("WELLH2-CLAIM [backfill]: %d of %d entry(ies) named a committed coordinate with ")
-            TEXT("claimLive=0 and were BACKFILLED to 1. Expected exactly once, on the first load of a ")
-            TEXT("save written before A3 existed (the field deserialises false). If this line appears on ")
-            TEXT("a save that has ALREADY been loaded by an A3 build, the claim is being lost across the ")
-            TEXT("save round-trip -- the SaveGame serialization of bPlacementClaimLive is the suspect, ")
-            TEXT("and that is the one thing about A3 no static reading can prove."),
-            Backfilled, WellLayout.Num());
-    }
-    return Backfilled;
-}
-
-// ns-review-h2-r2 F-A -- THE SINGLE COPY OF THE CLAIM-WITHDRAWAL RULE.
-// It existed twice (the roll tail and the sweep) with identical bodies, which is the duplicate-rule
-// shape this packet has been bitten by three times already. The rule: an entry that is NOT placed and
-// is NOT still searching has abandoned whatever coordinate it names, so the claim is withdrawn.
-// Deliberately UNGATED at both call sites -- it destroys nothing, and gating it would leave stale
-// claims in the save exactly when the sweep is least able to notice them.
-// A3, AND THE ONE HONEST LIMIT OF IT. This function is the LAST derived predicate over the lifecycle
-// flags in the packet, and it stays one ON PURPOSE. A3 removes the derivation from every READER; it
-// cannot remove the need to decide WHEN a claim ends. Three sites know that directly (the escalation
-// ladder, re-enrolment, and this) -- and this one exists precisely to catch a route the other two do
-// not know about, including routes that do not exist yet. So it is a BACKSTOP that WRITES the fact,
-// not a reader that infers it, and that distinction is the whole of A3: derive once, at the one place
-// whose job is to notice, and let everything downstream read.
-int32 ANodeShuffleSubsystem::ReconcileAbandonedWellClaims(const TCHAR* Why)
-{
-    int32 Withdrawn = 0;
-    for (FNodeShuffleWellEntry& E : WellLayout)
-    {
-        if (!E.bPlacementClaimLive) { continue; }               // A3: nothing claimed, nothing to do
-        if (E.bGroupPlaced) { continue; }                      // a placed group OWNS its coordinates
-        if (E.bRelocate && !E.bRelocationFailed) { continue; } // mid-search: the claim is live
-        if (ClearAbandonedWellPlacement(E, Why)) { ++Withdrawn; }
-    }
-    return Withdrawn;
-}
 
 void ANodeShuffleSubsystem::SweepOrphanedWellActors(const TCHAR* Phase, bool bRelocationOn)
 {
@@ -390,11 +177,16 @@ void ANodeShuffleSubsystem::SweepOrphanedWellActors(const TCHAR* Phase, bool bRe
     // `NoLongerProtected` was ALREADY structurally zero -- a counter for a state the reconciliation had
     // just made unreachable. Now the same fact is read from one boolean instead of inferred from three.
     //
-    // THE COUNTER THAT REPLACES IT IS NOT THE SAME COUNTER. `NoLongerProtected` measured a state that
-    // could not happen; `ClaimDeadAtCoord` measures INVARIANT A3 BEING BROKEN -- a handle standing at a
-    // non-zero PlacedCoreLocation of an entry whose claim is dead. That is h2-7 F-A's exact signature,
-    // and under A3 it is impossible, so a non-zero value here is a real defect report rather than noise.
-    int32 Destroyed = 0, RefusedInUse = 0, AlreadyGone = 0, Retrying = 0, ClaimDeadAtCoord = 0;
+    // ns-review-h2-r4 -- AND ITS REPLACEMENT `ClaimDeadAtCoord` IS DELETED RATHER THAN KEPT.
+    // h2-8 replaced `NoLongerProtected` with `ClaimDeadAtCoord` and argued it "counts a different
+    // thing". Round 8 agreed only in a narrow sense and it was right to: for CORES the counter was
+    // strictly a subset of what ValidateWellClaimInvariant already reports, so it was a second, weaker
+    // detector of one state -- and this packet's own history says two views of one rule drift apart.
+    // Its ONE non-redundant case was SATELLITES, which the checker did not cover. So the choice made
+    // here is the one that leaves ONE detector rather than two: the checker was EXTENDED to bCaptured
+    // satellites (F-7, in NodeShuffleWellClaim.cpp) and this counter is GONE. The state it named is
+    // now reported by name AND repaired by the single clearer (F-2) instead of being tallied.
+    int32 Destroyed = 0, RefusedInUse = 0, AlreadyGone = 0, Retrying = 0;
     FString InUseDetail;
 
     // ---- PASS A: handles no entry owns ----
@@ -408,13 +200,9 @@ void ANodeShuffleSubsystem::SweepOrphanedWellActors(const TCHAR* Phase, bool bRe
         {
             ++Retrying; continue;               // A3: the entry OWNS this coordinate. One read, one fact.
         }
-        // A3 leak detector, not a behaviour branch: a dead claim must mean a zero coordinate, so this
-        // cannot fire unless INVARIANT A3 has broken. WELLH2-CLAIM names the entry.
-        if (E && !E->bPlacementClaimLive && !E->PlacedCoreLocation.IsNearlyZero()
-            && IsAtTarget(P.Value, E->PlacedCoreLocation))
-        {
-            ++ClaimDeadAtCoord;
-        }
+        // (ns-review-h2-r4: the `ClaimDeadAtCoord` tally that sat here is deleted -- see the block
+        // above. A dead claim on a live coordinate is now NAMED by ValidateWellClaimInvariant and
+        // REPAIRED by ClearAbandonedWellPlacement, which is strictly more than a counter did.)
         OrphanCoreKeys.Add(P.Key);
     }
     for (const TPair<FString, AFGResourceNodeFrackingSatellite*>& P : SpawnedWellSatellites)
@@ -432,11 +220,10 @@ void ANodeShuffleSubsystem::SweepOrphanedWellActors(const TCHAR* Phase, bool bRe
         {
             ++Retrying; continue;
         }
-        if (E && S && !E->bPlacementClaimLive && !S->PlacedLocation.IsNearlyZero()
-            && IsAtTarget(P.Value, S->PlacedLocation))
-        {
-            ++ClaimDeadAtCoord;
-        }
+        // (ns-review-h2-r4: `ClaimDeadAtCoord`'s satellite tally is deleted here too -- and THIS is the
+        // case that used to be its only non-redundant contribution. ValidateWellClaimInvariant now
+        // covers bCaptured satellites (F-7), so the state is named by the same detector that names the
+        // core's, instead of being counted by a second one that could drift away from it.)
         OrphanSatKeys.Add(P.Key);
     }
 
@@ -545,7 +332,7 @@ void ANodeShuffleSubsystem::SweepOrphanedWellActors(const TCHAR* Phase, bool bRe
             HandleOrphans, Destroyed, Reconciled);
     }
 
-    if (HandleOrphans == 0 && AlreadyGone == 0 && Reconciled == 0 && ClaimDeadAtCoord == 0
+    if (HandleOrphans == 0 && AlreadyGone == 0 && Reconciled == 0
         && ClaimViolations == 0 && BackstopSeen == 0)
     {
         return;
@@ -553,16 +340,16 @@ void ANodeShuffleSubsystem::SweepOrphanedWellActors(const TCHAR* Phase, bool bRe
 
     UE_LOG(LogNodeShuffle, Display,
         TEXT("WELLH2-ORPHAN [%s]: pass A ran (ALWAYS -- never gated, ns-review-h2-r2 F-B); pass B gates ")
-        TEXT("relocationOn=%d placedGroups=%d -> %s. A3 claim state: %d invariant violation(s), %d ")
-        TEXT("abandoned claim(s) reconciled before reading ownership, %d handle(s) standing at a ")
-        TEXT("coordinate whose claim is DEAD (must be 0 under A3 -- any other value is h2-7 F-A's ")
-        TEXT("signature; grep WELLH2-CLAIM). Handles -- %d unowned (destroyed %d of a %d cap, %d ")
+        TEXT("relocationOn=%d placedGroups=%d -> %s. A3 claim state: %d invariant violation(s) (cores ")
+        TEXT("AND bCaptured satellites since ns-review-h2-r4 F-7 -- MUST be 0; any other value is ")
+        TEXT("h2-7 F-A's signature, grep WELLH2-CLAIM for the named entry), %d abandoned claim(s) ")
+        TEXT("reconciled before reading ownership. Handles -- %d unowned (destroyed %d of a %d cap, %d ")
         TEXT("deferred by the cap, refused %d in use, %d already gone), %d protected by a LIVE CLAIM ")
         TEXT("(the entry owns that coordinate: OWNED, not orphaned). Backstop -- %d runtime fracking ")
         TEXT("actor(s) examined, %d unaccounted, 0 destroyed (LOG-ONLY).%s%s"),
         Phase, bRelocationOn ? 1 : 0, PlacedGroups,
         bSettledPhase ? (bPassBGatesPass ? TEXT("RAN") : TEXT("SKIPPED")) : TEXT("not this phase"),
-        ClaimViolations, Reconciled, ClaimDeadAtCoord,
+        ClaimViolations, Reconciled,
         HandleOrphans, Destroyed, WellSweepMaxDestroysPerPass, CapDeferred, RefusedInUse, AlreadyGone,
         Retrying, BackstopSeen, BackstopUnaccounted,
         InUseDetail.IsEmpty() ? TEXT("") : TEXT(" In use:"), *InUseDetail);
@@ -602,6 +389,29 @@ void ANodeShuffleSubsystem::FinishWellRollTeardown(bool bRelocationEnabled)
     // Rationale + the independent one-line second layer: NodeShuffleWellSweep.cpp.
     // ns-review-h2-r2 F-A: ONE copy of the rule, shared with the sweep's reconciliation. It was written
     // out twice with identical bodies, which is the drift shape this packet keeps being bitten by.
+    // ================================================================================================
+    // ns-review-h2-r4 F-1 (HIGH) -- CHECK THE INVARIANT *HERE*, BEFORE THE RECONCILIATION REPAIRS IT.
+    // ================================================================================================
+    // SweepOrphanedWellActors states the rule ("checking after a repair would be repaired-then-
+    // verified, which verifies nothing") and honours it -- but this function called the reconciliation
+    // FIRST and the sweep (which runs the check) SECOND, so at the post-roll sweep the guarantee was
+    // INVERTED and nothing said so. That is the worst place for it to be inverted: the post-roll sweep
+    // is the first sweep after twelve roll exits, i.e. the single sweep most likely to be looking at a
+    // desynchronised claim.
+    //
+    // THE DIRECTION IT MASKED IS THE DANGEROUS ONE. `claim=true, coordinate=zero` (a future edit that
+    // sets the flag on an error path without writing a coordinate) is repaired by the reconciliation
+    // below -- ClearAbandonedWellPlacement sets claim=false on an already-zero coordinate -- so the
+    // biconditional is restored before the checker ever looks, and the log then prints
+    // `INVARIANT A3 HOLDS ... 0 violations` over a session in which a live claim on a ZERO coordinate
+    // existed. That claim protects actors at the WORLD ORIGIN and can make SpawnWellGroup materialise
+    // a snappable node there (h3 H10) -- the worst outcome in this packet's history.
+    //
+    // The in-sweep call is NOT removed: two calls cost ~20 comparisons each and they cover different
+    // instants. The "INVARIANT A3 HOLDS" line is throttled once per session, so whichever call gets
+    // there first names itself in the [tag]; both tags are valid evidence that the check ran.
+    ValidateWellClaimInvariant(TEXT("post-roll pre-reconcile"));
+
     const int32 ClaimsWithdrawn = ReconcileAbandonedWellClaims(TEXT("abandoned by this roll"));
     // ns-review-h5 F1: the sweep refuses to look at the world unless relocation is on for this pass, and
     // bRelocationEnabled ALONE IS NOT that condition -- ApplyWellRelocation's gate is bWellShuffle &&

@@ -297,7 +297,18 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll, bool 
             S.LocalYawDeg = Rec->Value;
             S.bPlaced = false;
             S.bCaptured = true; // ns-review-h2 F2: the ONLY place this is ever set true
-            S.PlacedLocation = FVector::ZeroVector;
+            // ns-review-h2-r4 F-5 -- THE SATELLITE ZEROING THAT USED TO SIT HERE IS DELETED.
+            // It ran 62 lines BEFORE ClearAbandonedWellPlacement (:362 below), which is the function
+            // that now RECORDS a withdrawn coordinate into AbandonedWellClaimCoords so pass B can tell
+            // one of our stranded actors from a mis-classified vanilla well. Zeroing here destroyed
+            // every satellite coordinate before the clearer could see it -- and with a measured minimum
+            // core->satellite distance of 2076 cm against a 300 cm adopt radius, and satellites
+            // outnumbering cores ~4-8:1, that left the discriminator DEAD FOR THE MORE NUMEROUS CLASS.
+            // It was also redundant: the clearer zeroes every satellite itself. The two exits between
+            // here and :362 are both covered -- `Written != Num` clears bRelocate and is picked up by
+            // the roll tail's reconciliation, and the success path falls through to :362 directly.
+            // A second benefit: DespawnWellGroup's *** ABANDONED IN PLACE *** line at :330 can now name
+            // where it left occupied SATELLITES, for the same reason it already named the core.
             ++Written;
         }
         if (Written != E.Satellites.Num())

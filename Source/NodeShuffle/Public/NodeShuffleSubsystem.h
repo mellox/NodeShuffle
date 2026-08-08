@@ -349,8 +349,19 @@ struct FNodeShuffleWellEntry
     //               zeroes Placed*. All three abandonment events route through it.
     // INVARIANT A3 (enforced in the log, not just asserted in prose):
     //   bPlacementClaimLive == false  <=>  PlacedCoreLocation.IsNearlyZero()
-    // ValidateWellClaimInvariant() checks it every sweep and logs *** CLAIM INVARIANT VIOLATED *** if a
-    // future edit breaks it. That line is the thing to grep before believing any sweep number.
+    //   and, in the one direction that can actually arrive (ns-review-h2-r4 F-7):
+    //   bPlacementClaimLive == false  =>   no bCaptured satellite names a PlacedLocation either.
+    // ValidateWellClaimInvariant() checks BOTH every sweep and logs *** CLAIM INVARIANT VIOLATED *** if
+    // a future edit breaks either. That line is the thing to grep before believing any sweep number.
+    // The mirror ("claim live => every bCaptured satellite names one") is deliberately NOT enforced:
+    // the only state that produced it was the roll zeroing satellites ahead of its commit-refusal
+    // exit, removed in ns-review-h2-r4 F-5. Do not widen this definition without widening the check --
+    // the two disagreeing IS the erosion mechanism A3 exists to stop.
+    //
+    // A LIVE CLAIM IS NOT ETERNAL (ns-review-h2-r4 D-2). An entry that holds a live claim while
+    // mid-assembly and makes NO fresh footprint commit for WellClaimMidAssemblyMaxPasses consecutive
+    // reconciliation passes has its claim withdrawn, loudly. Before that bound existed, disabling the
+    // feature mid-spawn left the claim live for the life of the save.
     //
     // NOT the same idea as the SaveGame identity COMPONENT (ns-review-h2-r3 §5). This answers
     // "does this ENTRY still own the coordinate it names" (our save struct). The component would answer
@@ -1322,31 +1333,65 @@ private:
     //
     // A3: this is now the SINGLE CLEARER of FNodeShuffleWellEntry::bPlacementClaimLive. It no longer
     // decides ANYTHING from the four lifecycle flags except the one safety gate below.
+    // ns-review-h2-r4 F-2: it also REPAIRS the dead-claim-on-a-live-coordinate desync, LOUDLY -- the
+    // pre-A3 self-heal A3 removed without a parity row. Lives in NodeShuffleWellClaim.cpp since the
+    // ns-review-h2-r4 split (the CLAIM, separated from the SWEEP THAT READS IT).
     bool ClearAbandonedWellPlacement(FNodeShuffleWellEntry& E, const TCHAR* Why);
 
     // A3, THE ENFORCEMENT. INVARIANT A3 is `bPlacementClaimLive == false <=> PlacedCoreLocation is
-    // zero`. Prose invariants in this packet have been silently eroded three times (h2-6 added three
+    // zero`, plus (ns-review-h2-r4 F-7) `claim dead => no bCaptured satellite names a coordinate`.
+    // Prose invariants in this packet have been silently eroded three times (h2-6 added three
     // ZeroVector writers to one that "held by construction"; h2-7 added a fourth). This walks the
     // layout every sweep -- ~20 entries, free -- and logs loudly on either direction of violation.
     // SILENT ON PASS except one "checked N, 0 violations" line per session, so the log proves it ran.
-    // Returns the number of violations found.
+    // It LOGS ONLY; the repair lives in the single clearer (ns-review-h2-r4 F-2). Returns violations.
+    // ns-review-h2-r4 F-1: it must be called BEFORE any repair at EVERY site that repairs -- which
+    // includes FinishWellRollTeardown, where the reconciliation used to run first and erase the
+    // violation before the check ever looked at it.
     int32 ValidateWellClaimInvariant(const TCHAR* Where);
     bool bWellClaimInvariantOkLogged = false;
 
-    // A3 migration. A save written before bPlacementClaimLive existed deserialises it as false while
-    // Placed* still names a real coordinate -- INVARIANT A3 violated on every entry, and every reader
-    // converted below would then treat a live, working, built-on well as claiming nothing. Run ONCE
-    // per session at the load-time adopt, before anything reads the flag. Returns entries backfilled.
-    int32 BackfillWellPlacementClaims();
+    // A3 migration -- and ns-review-h2-r4 D-1 calls it what it is: the OLD `Placed*-non-zero-means-
+    // ownership` DERIVATION, kept only because a save written before bPlacementClaimLive existed
+    // deserialises it false while Placed* still names a real, built-on, producing well. h2-8 ran it
+    // unconditionally on every load forever with no version gate; it is now one-shot PER SAVE via
+    // WellClaimMigrationVersion, logs on BOTH branches (F-3), and is named for what it is. Returns
+    // entries backfilled. Called once per session from AdoptRestoredWellGroups, before any reader.
+    int32 MigratePreA3PlacementClaimsOnce();
+    // The save's claim-migration version. 0 = written before A3 (or by h2-8, which had no gate).
+    // FAILS OPEN: if this int does not survive the round trip either, it reads 0 and the migration
+    // simply runs again -- exactly h2-8's behaviour, never worse.
+    UPROPERTY(SaveGame) int32 WellClaimMigrationVersion = 0;
+    static constexpr int32 WellClaimMigrationCurrentVersion = 1;
 
     // A3 / ns-review-h2-r3 F-2. Session-scoped, NOT saved: the coordinates ClearAbandonedWellPlacement
     // has zeroed this session. The withdrawal deletes the ONLY field that could identify a stranded
     // actor as ours, at the exact instant the actor becomes strandable -- so pass B's "is this actor
     // ours or a mis-classified vanilla well" discriminator measured the distance to an unrelated
     // destination and could never fire. Remembering the coordinate costs 12 bytes and makes it fire.
-    // Bounded: a re-roll of a 30-well map withdraws at most ~30 claims, and it resets per session.
+    // ns-review-h2-r4 F-5: SATELLITES ARE RECORDED TOO. H0 measured a minimum core->satellite distance
+    // of 2076 cm against a 300 cm adopt radius and satellites outnumber cores ~4-8:1, so a core-only
+    // memory left the discriminator dead for the more numerous class.
     TArray<FVector> AbandonedWellClaimCoords;
     static constexpr int32 WellAbandonedClaimCoordCap = 512; // pathological-loop guard, not a budget
+    bool bWellClaimCoordCapLogged = false; // F-6: saturation was SILENT, and silently un-fixes F-2
+
+    // ns-review-h2-r4 D-2 -- THE BOUND ON MID-ASSEMBLY, i.e. round 8's predicted round-9 finding,
+    // fixed in advance. `(placed=false, relocate=true, failed=false, claim=live)` was skipped by the
+    // reconciliation as "mid-search" with NO EXPIRY: spawn INCOMPLETE and then disable the feature (or
+    // simply never return to the destination) and pass A protected those actors forever, pass B
+    // reported them OURS-STRANDED forever, and the claim persisted in the save forever.
+    // Core path -> consecutive reconciliation passes seen mid-assembly WITHOUT a fresh footprint
+    // commit. The commit (NodeShuffleWellRelocateApply.cpp, beside the one setter) RESETS it, so a
+    // group that is genuinely retrying can never expire and this cannot become the h5 F-2
+    // destroy/respawn cycle. DELIBERATELY NOT a UPROPERTY(SaveGame): round 8 advised against a second
+    // unproven serialization surface while A3-5 is still ungraded, so the bound is per-session --
+    // which still converts "forever" into "bounded", the property being bought.
+    TMap<FString, int32> WellClaimMidAssemblyPasses;
+    // ~20 reconciliations. The sweep's cadence is one per WellOrphanSweepCadence apply passes (~60 s),
+    // so this is ~20 minutes of NO PROGRESS, plus one tick per re-roll. Generous on purpose: expiring
+    // a group a player is actively assembling would cost a destroy/respawn round-trip.
+    static constexpr int32 WellClaimMidAssemblyMaxPasses = 20;
 
     // ns-review-h5 judgement call (2): a group that VALIDATES a footprint and then fails to ASSEMBLE
     // retries the same placement forever -- TryPlaceWellGroup neither advances YawCursor nor spends

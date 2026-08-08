@@ -178,6 +178,17 @@ bool ANodeShuffleSubsystem::TryPlaceWellGroup(FNodeShuffleWellEntry& E, UClass* 
             // exactly these coordinates with bGroupPlaced still false. That window is the h5 F-1 /
             // RT-6 stranded-actor class, and it is precisely the window the claim must cover.
             E.bPlacementClaimLive = true;
+            // ns-review-h2-r4 D-2 -- THE COMMIT IS THE PROGRESS SIGNAL THAT RESETS THE EXPIRY CLOCK.
+            // ReconcileAbandonedWellClaims now counts consecutive passes an entry spends "mid-search,
+            // the claim is live" and withdraws the claim at WellClaimMidAssemblyMaxPasses, because
+            // that state previously had NO expiry at all (spawn INCOMPLETE, then disable relocation or
+            // never return, and the claim was live for the life of the save). A group that is actually
+            // being assembled re-reaches THIS line every pass a player is near it -- TryPlaceWellGroup
+            // does not advance the yaw cursor on the INCOMPLETE-spawn path, so the same footprint is
+            // re-validated and re-committed -- so resetting here is what makes the bound apply ONLY to
+            // entries making no progress. Without this reset the bound would expire a group a player
+            // is standing next to, and pass A would then destroy and respawn it: h5 F-2's cycle.
+            WellClaimMidAssemblyPasses.Remove(E.CorePath);
             // ns-review-h3 H10: MemberLocs/MemberRots hold ONLY the captured members now, so the commit
             // walks its own cursor rather than indexing E.Satellites -- indexing would misalign the
             // moment any record is uncaptured, and would write a coordinate into a record that must

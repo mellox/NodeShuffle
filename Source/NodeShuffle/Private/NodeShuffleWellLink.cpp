@@ -244,7 +244,12 @@ void ANodeShuffleSubsystem::AdoptRestoredWellGroups()
     // NOTE it is ABOVE the `ExpectedGroups == 0` early return on purpose: an entry can hold a claim
     // without being bGroupPlaced (an INCOMPLETE spawn), and that entry is exactly the one whose claim
     // matters most -- returning first would leave it un-backfilled forever.
-    BackfillWellPlacementClaims();
+    // ns-review-h2-r4 D-1: RENAMED, because "backfill" hid what it is -- the old
+    // `Placed*-non-zero-means-ownership` DERIVATION, the very generator A3 exists to switch off. It is
+    // now VERSION-GATED (one-shot per save, not per session) and it LOGS ON BOTH BRANCHES so its
+    // absence can never be read as a pass (F-3). The log tag is still `[backfill]` so existing greps
+    // and every earlier test script keep working.
+    MigratePreA3PlacementClaimsOnce();
 
     int32 ExpectedGroups = 0, ExpectedSats = 0;
     for (const FNodeShuffleWellEntry& E : WellLayout)
