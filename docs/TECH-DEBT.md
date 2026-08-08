@@ -264,12 +264,15 @@ resolve so far to **hidden originals, never an active node** (see the correction
 node cannot be built on regardless of any box. There is no confirmed hazard, only a confirmed
 *instrument* defect.
 
-> **One cheap thing left, opportunistic only:** the `IsHidden()` filter described below should be added
-> **whenever `NodeShuffleWellVisuals.cpp`'s sweep is next open anyway** (the T7 split packet touches
-> exactly that loop) — not as work in its own right. Reason: the instrument as shipped will keep
-> printing overlap counts dominated by hidden nodes, and a future reader who greps `provableOverlap=1`
-> without reading this entry will re-panic. Two lines, riding an edit already happening. **If it does
-> not fit that packet cleanly, leave it and rely on this entry.**
+> **The `IsHidden()` filter LANDED 2026-08-08**, riding the T7 split as intended — it was the only
+> intended behaviour change in that packet, scoped to this diagnostic alone (`Bystanders` untouched, so
+> no node is claimed, hidden or de-collided differently). Both counts now print: `activeMineable=` and
+> `hiddenOriginal=`, rather than the population silently shrinking.
+>
+> ⚠ **THE "8 PROVABLE OVERLAPS" FIGURE BELOW IS NOW HISTORICAL AND MUST NOT BE RE-QUOTED.** It was
+> measured against the unfiltered population. **No hazard count exists until a fresh load re-measures**
+> against `activeMineable` only. If that number comes back 0 — which the evidence below predicts,
+> since every overlap resolved so far was a hidden original — T3 closes as a non-issue.
 
 ### T3 (evidence as measured 2026-08-08 — hazard status: none confirmed)
 
@@ -528,7 +531,37 @@ has exercised it.
 
 ## P4 — structural
 
-### T7. Source files breaching the 500-line rule — now NINE, and two of them are this session's doing
+### T7. Source files breaching the 500-line rule — **the four well files are SPLIT and under 500 (2026-08-08)**
+
+**Done for the well subsystem.** The split landed once its deferral reason expired (six review reports
+had been citing `file:line` in these files; those reviews are now committed and historical).
+
+| file | before → after |
+|---|---|
+| `NodeShuffleWellVisuals.cpp` | 658 → **248** (capture + origin-side hide) |
+| `NodeShuffleWellMeshIndex.cpp` *(new)* | — → **480** (radius constant, `EnsureWellMeshIndex`, `RebuildWellMeshIndex`) |
+| `NodeShuffleWellVisualsApply.cpp` | 549 → **243** (dump + dress + apply) |
+| `NodeShuffleWellSnapBox.cpp` *(new)* | — → **399** (collision recipe, snap box, promoted T3 state) |
+
+Also landed: the two module-static accessor blocks were **promoted to members** (they only ever existed
+because the header was barred to the packet that wrote them), `NodeShuffleWellSnapBoxDiag` gained the
+world-change reset its sibling already had, and `WellVisualCaptureLogged` got its key-family table.
+
+**Verified by measurement, not by eye:** each moved region was `git show`n from HEAD and `diff -u`'d
+against its new home — six functions byte-identical. Build clean. **Import set SET-IDENTICAL** to the
+pre-split baseline (816/766, 0 missing), which was the packet's prediction and is the check that
+matters, since a split can shift inlining and therefore the import table.
+
+**Still open:** `NodeShuffleSubsystem.cpp` remains **8069 lines** and was deliberately out of scope —
+it is a much larger job than the well files and needs its own packet and its own seam analysis.
+
+> **One deviation from the proposed seam, and it was right.** The prior handoff said
+> `DumpWellActorCollision` should move to the snap-box file. It cannot: it is an anonymous-namespace
+> static whose only caller (`ApplyWellGroupVisuals`) stays behind, so moving it yields an unreferenced
+> static in one file and an undefined symbol in the other. The packet reported this instead of
+> following the spec into a link error — the intended behaviour when a spec meets the tree and loses.
+
+### ~~T7 (previous revision). Source files breaching the 500-line rule — nine files~~
 **Updated 2026-08-08.** The instrumentation packet pushed two more files over, and reported it rather
 than trimming diagnostics to buy headroom — the right call, recorded so it is not mistaken for drift:
 `NodeShuffleWellVisuals.cpp` 497 → **658**, `NodeShuffleWellVisualsApply.cpp` 432 → **549**.

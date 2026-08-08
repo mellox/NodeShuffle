@@ -17,6 +17,24 @@ class AFGResourceNodeFrackingCore;
 class AFGResourceNodeFrackingSatellite;
 class UFGResourceDescriptor; // scanregen-1: TSubclassOf<> member below only needs the forward decl
 
+// T4 (docs/TECH-DEBT.md) -- ONE WATCHED ORIGINAL: a record whose AFGNodeMeshActor was NOT resolvable
+// at the instant its node was hidden, i.e. exactly the set whose rock can go dark LATER.
+// Deliberately a PLAIN struct, not a USTRUCT: it holds no UObject, is never replicated, never saved,
+// and lives only in a transient TMap. Declared at file scope (not nested in the UCLASS) so UHT never
+// has to parse it as class content.
+//
+// ns-t7-split: this and the members that use it were module-statics in NodeShuffleSubsystem.cpp
+// (`namespace NodeShuffleMeshHideLatency`) ONLY because the packet that wrote them was barred from
+// this header. Promoted verbatim -- same fields, same initial values, and the world-change reset that
+// guarded them is KEPT AS-IS at its original call site, so the promotion cannot change behaviour
+// whether or not the subsystem instance itself survives a world change.
+struct FNodeShuffleMeshHideWatch
+{
+    FVector NodeLoc = FVector::ZeroVector;
+    float HideTimeSeconds = 0.0f;
+    int32 HidePass = 0;
+};
+
 // One node-pool entry of the per-save layout. The layout is rolled exactly
 // once per save (seeded) and afterwards only ever *applied*; it is the single
 // source of truth for which nodes exist, are active, and what they carry.
@@ -1127,6 +1145,22 @@ private:
     int32 LastHideFunnel[8] = { -1, -1, -1, -1, -1, -1, -1, -1 }; // dirtdress-1: +capturePending slot; rehide-1: +rematched slot
     int32 SuppressChangesLastPass = 0;
     float LastRockBackstopSeconds = 0.f; // stray-rock backstop cooldown (forced when a node newly hides)
+    // ---- T4 MESH-HIDE LATENCY (docs/TECH-DEBT.md T4) ----
+    // Promoted from `namespace NodeShuffleMeshHideLatency` in NodeShuffleSubsystem.cpp by ns-t7-split.
+    // Read and written ONLY by SuppressOriginalNodes; every field keeps its original name suffix and
+    // its original initial value. THE WORLD-CHANGE RESET AT THE TOP OF SuppressOriginalNodes IS KEPT:
+    // GetTimeSeconds restarts with the world, so a second save load in one process must not inherit
+    // the previous world's timestamps -- and keeping the guard is what makes this promotion provably
+    // behaviour-identical, because it fires on a fresh instance (MeshHideLatencyWatchWorld == nullptr)
+    // exactly as it fired on fresh module statics.
+    TMap<FString, FNodeShuffleMeshHideWatch> MeshHideLatencyWatch; // keyed by VanillaNodePath, same key as SteadyHiddenOriginals
+    const void* MeshHideLatencyWatchWorld = nullptr;
+    int32 MeshHideLatencyPassIndex = 0;          // passes of SuppressOriginalNodes that processed records
+    int32 MeshHideLatencyResolvedLaterTotal = 0;
+    int32 MeshHideLatencyStillVisibleWhenResolvedTotal = 0;
+    float MeshHideLatencyMaxDelaySeconds = -1.0f; // -1 = no delay has ever been measured this session
+    float MeshHideLatencyLastDelaySeconds = -1.0f;
+    int32 MeshHideLatencyLastSummary[8] = { -1, -1, -1, -1, -1, -1, -1, -1 };
     // playtest-fixes-1 (ghost radiation): resolve the radioactivity subsystem via the GameState's
     // public inline getter (AFGRadioactivitySubsystem::Get is a static whose export is not trusted —
     // same LNK2019 class of problem as AFGResourceNodeManager::Get).
@@ -1652,8 +1686,15 @@ private:
     void SuppressVanillaWellGroup(FNodeShuffleWellEntry& E);
 
     // ======================= Packet H2b: GROUP VISUALS + COLLISION =======================
-    // All defined in NodeShuffleWellVisuals.cpp. The file header there carries the full rationale;
-    // what matters at the declaration is WHY this exists as a separate mechanism at all:
+    // ns-t7-split (2026-08-08): these live in FOUR files now, split along the seams the reviews named.
+    //   NodeShuffleWellMeshIndex.cpp   -- EnsureWellMeshIndex / RebuildWellMeshIndex (which vanilla
+    //                                     mesh pieces ARE a given well member: the three pairing routes)
+    //   NodeShuffleWellVisuals.cpp     -- CaptureWellGroupVisuals / HideWellMemberMeshes (ORIGIN side)
+    //   NodeShuffleWellVisualsApply.cpp-- DressWellActor / ApplyWellGroupVisuals (DESTINATION side)
+    //   NodeShuffleWellSnapBox.cpp     -- ConfigureWellMeshCollision / EnsureWellMemberSnapBox (the
+    //                                     collision recipe + the "Resource" collider the snap resolves against)
+    // The file headers there carry the full rationale; what matters at the declaration is WHY this
+    // exists as a separate mechanism at all:
     //
     // A runtime-spawned fracking core/satellite has NO engine AFGNodeMeshActor and no rock of its own,
     // so a relocated well was not merely invisible -- it had NOTHING FOR THE BUILD GUN TRACE TO HIT.
@@ -1712,12 +1753,76 @@ private:
     TArray<FNodeShuffleWellVisual> WellVisualTemplateCore;
     TArray<FNodeShuffleWellVisual> WellVisualTemplateSatellite;
     TSet<FString> WellVisualLogged;        // per-group apply summary, said once
+    // ONE session-wide log-throttle set, SHARED BY THREE TRANSLATION UNITS AND SEVEN KEY FAMILIES.
+    // ns-t7-split asked for this table because the split scattered the writers: before it, a reader
+    // could see every key by scrolling one file; now nothing but this comment documents the namespace.
+    // NO COLLISION IS POSSIBLE TODAY and the table exists so that stays checkable, not because a
+    // collision was found: the three prefixed families are disjoint by prefix, the two suffixed
+    // families end in a literal that a bare path cannot end in, and a bare path can never contain '|'
+    // (UObject path names use '/' , '.' and ':' -- never '|'), which is why the suffixed and prefixed
+    // families can never be confused with it. ADD A KEY FAMILY -> ADD A ROW, and keep '|' out of any
+    // bare-path key.
+    //
+    //   key family                                  | written by                        | said once per
+    //   --------------------------------------------+-----------------------------------+---------------------------
+    //   "narrowed|<smaPath>|<meshName>"              | NodeShuffleWellMeshIndex.cpp      | mesh the type gate DROPPED
+    //   "widened|<smaPath>|<meshName>"               | NodeShuffleWellMeshIndex.cpp      | mesh the type gate ADDED
+    //   "bystander|<smaPath>|<meshName>"             | NodeShuffleWellMeshIndex.cpp      | mesh A2's contest refused
+    //   "<corePath>|adopt"                           | NodeShuffleWellVisuals.cpp        | well group, at first look
+    //   "<corePath>|grp"                             | NodeShuffleWellVisuals.cpp        | well group capture summary
+    //   "<memberPath>"           (BARE, no suffix)   | NodeShuffleWellVisuals.cpp        | member that captured nothing
+    //   "meshtypecensus|%d|%d|%d|%d"                 | NodeShuffleSubsystem.cpp          | distinct MESHTYPE-CENSUS tuple
+    //
+    // NOT in this set (separate members, listed so nobody adds them here by mistake):
+    // WellVisualLogged (apply summary), WellVisualCompDumped (component dump), SnapBoxLogged (T3).
     TSet<FString> WellVisualCaptureLogged; // per-member capture failure / adopt state / bystander reject
     // ns-review-h2b F-2: keyed "<actorPath>|<pieceCount>", NOT the actor path alone. A path-only key
     // froze the dump at the first pass, which for an unstreamed origin is an actor with zero pieces.
     TSet<FString> WellVisualCompDumped;    // per-actor component dump, re-fires when the piece count changes
     int32 WellMeshIndexMembers = 0;        // diagnostics: members indexed on the last rebuild
     int32 WellMeshIndexPieces = 0;         // diagnostics: pieces indexed on the last rebuild
+
+    // ---- T3 SNAP-BOX OVERLAP DIAGNOSTIC (docs/TECH-DEBT.md T3, PARKED/watch-only) ----
+    // Promoted by ns-t7-split from `namespace NodeShuffleWellSnapBoxDiag` (function-local statics
+    // behind accessors in NodeShuffleWellVisualsApply.cpp), which existed ONLY because the packet that
+    // wrote it was barred from this header. Defined in NodeShuffleWellSnapBox.cpp.
+    //
+    // STATIC, NOT PER-INSTANCE, AND THAT IS FORCED: the reader is EnsureWellMemberSnapBox, a STATIC
+    // member function (it is static because DressWellActor is), so it has no `this` to read an
+    // instance field through. Making it non-static would change two public signatures and every call
+    // site -- out of scope for a behaviour-identity packet. STORAGE DURATION IS SIMILAR, NOT IDENTICAL,
+    // and the difference is stated rather than glossed: the previous function-local statics were
+    // initialised LAZILY on first use; these are dynamically initialised at DLL load, unordered against
+    // other TUs. That is safe HERE only because nothing in this module's static initialisation touches
+    // them -- every reader runs at gameplay time. If a file-scope object in this module ever calls into
+    // EnsureWellMemberSnapBox or ResetWellSnapBoxDiagForWorld from its constructor, that stops being true.
+    //
+    // WRITER  = RebuildWellMeshIndex (NodeShuffleWellMeshIndex.cpp), once per apply pass.
+    // READER  = EnsureWellMemberSnapBox (NodeShuffleWellSnapBox.cpp), per dressed member.
+    // Game thread only; both run inside ApplyLayout. No UObject is held, so no GC interaction.
+    //
+    // THE DEFECT THIS PROMOTION FIXES (recorded in the T1/T2 cold review §8): the namespace had NO
+    // world-change reset where its T4 sibling did, so on a SECOND save load in one process the
+    // snapshot, its pass number and the log-throttle set all survived while WellAuditPasses restarted
+    // at 0 -- printing a stale distance and a NEGATIVE snapshot age. ResetWellSnapBoxDiagForWorld()
+    // below is the fix; see its definition for exactly what it clears.
+    static TArray<FVector> SnapBoxUseBoxNodes;   // ACTIVE (non-hidden) mineable AFGResourceNode locations
+    static int32 SnapBoxHiddenOriginalNodes;     // T3 correction: hidden originals EXCLUDED from the array, counted here
+    static int32 SnapBoxSnapshotPass;            // -1 = never built in this process/world
+    static int32 SnapBoxCurrentAuditPass;        // WellAuditPasses as of the current apply pass; -1 = unset
+    // WEAK, NOT A RAW ADDRESS, AND THAT IS THE WHOLE POINT. A freed UWorld's GUObjectArray slot is
+    // recycled, so the NEXT world can be allocated at the SAME address -- a raw pointer compare would
+    // then report "same world", skip the reset, and reinstate the negative age this reset exists to
+    // remove, WHILE ALSO suppressing the log line that would show it. TWeakObjectPtr compares
+    // index+serial, so a recycled slot is detected. It still holds no strong reference: no GC interaction.
+    static TWeakObjectPtr<const UWorld> SnapBoxDiagWorld;
+    static TSet<FString> SnapBoxLogged;          // T3 per-member log throttle (NOT WellVisualCaptureLogged)
+
+    // Drop the T3 snapshot when the UWorld changes. Idempotent and cheap (one pointer compare), so it
+    // is called at the top of BOTH writers -- whichever runs first in a new world resets, the other
+    // then sees a matching pointer and does nothing. Calling it from only one of them would let that
+    // one wipe a snapshot the other had just built in the same new world.
+    static void ResetWellSnapBoxDiagForWorld(const class UWorld* World);
 
     // Runtime handles for the relocated group, rebuilt each session (spawn or adopt). Keyed by the
     // layout entry's CorePath. UPROPERTY so the spawned actors are strongly referenced, mirroring

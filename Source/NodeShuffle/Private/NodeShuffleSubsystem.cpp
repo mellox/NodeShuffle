@@ -4480,26 +4480,19 @@ bool ANodeShuffleSubsystem::IsLocationNearAnyPlayer(const FVector& Loc, float Ra
 // THIS PACKET HIDES NOTHING NEW. The watch sweep re-resolves and REPORTS; it does not hide the mesh
 // actor it finds. Behaviour is byte-for-byte what it was.
 //
-// MODULE-STATIC, NOT A MEMBER, because this packet may not edit NodeShuffleSubsystem.h. Reset whenever
-// the UWorld pointer changes: GetTimeSeconds restarts with the world, so a second save load in one
-// process must not inherit the previous world's timestamps.
-namespace NodeShuffleMeshHideLatency
-{
-    struct FWatch
-    {
-        FVector NodeLoc = FVector::ZeroVector;
-        float HideTimeSeconds = 0.0f;
-        int32 HidePass = 0;
-    };
-    static TMap<FString, FWatch> Watch;         // keyed by VanillaNodePath, same key as SteadyHiddenOriginals
-    static const void* WatchWorld = nullptr;
-    static int32 PassIndex = 0;                 // passes of SuppressOriginalNodes that processed records
-    static int32 ResolvedLaterTotal = 0;
-    static int32 StillVisibleWhenResolvedTotal = 0;
-    static float MaxDelaySeconds = -1.0f;       // -1 = no delay has ever been measured this session
-    static float LastDelaySeconds = -1.0f;
-    static int32 LastSummary[8] = { -1, -1, -1, -1, -1, -1, -1, -1 };
-}
+// ns-t7-split (2026-08-08): THIS WAS `namespace NodeShuffleMeshHideLatency`, a block of module statics
+// that existed ONLY because the packet that wrote it may not edit NodeShuffleSubsystem.h. The header is
+// no longer barred, so the state is now MEMBERS (MeshHideLatency* in NodeShuffleSubsystem.h, with
+// FNodeShuffleMeshHideWatch declared at file scope there). Same fields, same names after the prefix,
+// same initial values, same read/write sites.
+//
+// THE WORLD-CHANGE RESET BELOW IS DELIBERATELY KEPT rather than "made redundant by member lifetime".
+// GetTimeSeconds restarts with the world, so a second save load in one process must not inherit the
+// previous world's timestamps -- and keeping the guard is what makes this promotion provably
+// behaviour-identical: on a fresh subsystem instance MeshHideLatencyWatchWorld is nullptr and the guard
+// fires exactly as it fired on fresh module statics, while on an instance that somehow outlives a world
+// it still fires. Deleting it would have made correctness depend on an actor-lifetime assumption this
+// packet cannot compile, let alone measure.
 
 void ANodeShuffleSubsystem::SuppressOriginalNodes()
 {
@@ -4545,18 +4538,18 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
 
     // ---- T4 BOOKKEEPING (docs/TECH-DEBT.md T4) ----
     const UWorld* MeshHideWorld = GetWorld();
-    if (NodeShuffleMeshHideLatency::WatchWorld != MeshHideWorld)
+    if (MeshHideLatencyWatchWorld != MeshHideWorld)
     {
-        NodeShuffleMeshHideLatency::WatchWorld = MeshHideWorld;
-        NodeShuffleMeshHideLatency::Watch.Reset();
-        NodeShuffleMeshHideLatency::PassIndex = 0;
-        NodeShuffleMeshHideLatency::ResolvedLaterTotal = 0;
-        NodeShuffleMeshHideLatency::StillVisibleWhenResolvedTotal = 0;
-        NodeShuffleMeshHideLatency::MaxDelaySeconds = -1.0f;
-        NodeShuffleMeshHideLatency::LastDelaySeconds = -1.0f;
-        for (int32 i = 0; i < 8; i++) { NodeShuffleMeshHideLatency::LastSummary[i] = -1; }
+        MeshHideLatencyWatchWorld = MeshHideWorld;
+        MeshHideLatencyWatch.Reset();
+        MeshHideLatencyPassIndex = 0;
+        MeshHideLatencyResolvedLaterTotal = 0;
+        MeshHideLatencyStillVisibleWhenResolvedTotal = 0;
+        MeshHideLatencyMaxDelaySeconds = -1.0f;
+        MeshHideLatencyLastDelaySeconds = -1.0f;
+        for (int32 i = 0; i < 8; i++) { MeshHideLatencyLastSummary[i] = -1; }
     }
-    const int32 MeshHidePass = ++NodeShuffleMeshHideLatency::PassIndex;
+    const int32 MeshHidePass = ++MeshHideLatencyPassIndex;
     const float MeshHideNow = MeshHideWorld ? MeshHideWorld->GetTimeSeconds() : 0.0f;
     // THE DENOMINATORS for the latency summary, both counted in the same loop iteration as the hide they
     // describe: of the nodes hidden this pass, how many had a resolvable mesh actor at that instant.
@@ -4572,21 +4565,21 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
     // both MUST feed the same delay fields -- a delay measured on one route and reported as -1 on the
     // other is the "zero with no denominator" defect this packet exists to avoid.
     const auto ReportMeshResolvedLater =
-        [&](const FString& Path, const NodeShuffleMeshHideLatency::FWatch& W, bool bMeshVisibleNow,
+        [&](const FString& Path, const FNodeShuffleMeshHideWatch& W, bool bMeshVisibleNow,
             const TCHAR* Route) -> void
     {
         const float Delay = MeshHideNow - W.HideTimeSeconds;
         const int32 PassDelay = MeshHidePass - W.HidePass;
         ResolvedLaterThisPass++;
-        NodeShuffleMeshHideLatency::ResolvedLaterTotal++;
+        MeshHideLatencyResolvedLaterTotal++;
         if (bMeshVisibleNow)
         {
             StillVisibleThisPass++;
-            NodeShuffleMeshHideLatency::StillVisibleWhenResolvedTotal++;
+            MeshHideLatencyStillVisibleWhenResolvedTotal++;
         }
-        NodeShuffleMeshHideLatency::LastDelaySeconds = Delay;
-        NodeShuffleMeshHideLatency::MaxDelaySeconds =
-            FMath::Max(NodeShuffleMeshHideLatency::MaxDelaySeconds, Delay);
+        MeshHideLatencyLastDelaySeconds = Delay;
+        MeshHideLatencyMaxDelaySeconds =
+            FMath::Max(MeshHideLatencyMaxDelaySeconds, Delay);
         if (bDiagHide)
         {
             UE_LOG(LogNodeShuffle, Verbose,
@@ -4717,11 +4710,11 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
                     MeshActor->SetActorHiddenInGame(true);
                     MeshActor->SetActorEnableCollision(false);
                     MeshResolvedAtHide++;
-                    if (const NodeShuffleMeshHideLatency::FWatch* W =
-                            NodeShuffleMeshHideLatency::Watch.Find(Rec.VanillaNodePath))
+                    if (const FNodeShuffleMeshHideWatch* W =
+                            MeshHideLatencyWatch.Find(Rec.VanillaNodePath))
                     {
                         ReportMeshResolvedLater(Rec.VanillaNodePath, *W, bMeshWasVisible, TEXT("cache"));
-                        NodeShuffleMeshHideLatency::Watch.Remove(Rec.VanillaNodePath);
+                        MeshHideLatencyWatch.Remove(Rec.VanillaNodePath);
                     }
                 }
                 else
@@ -4743,13 +4736,13 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
                     {
                         MeshActorNeverAssigned++;
                     }
-                    else if (!NodeShuffleMeshHideLatency::Watch.Contains(Rec.VanillaNodePath))
+                    else if (!MeshHideLatencyWatch.Contains(Rec.VanillaNodePath))
                     {
-                        NodeShuffleMeshHideLatency::FWatch W;
+                        FNodeShuffleMeshHideWatch W;
                         W.NodeLoc = NodeLoc;
                         W.HideTimeSeconds = MeshHideNow;
                         W.HidePass = MeshHidePass;
-                        NodeShuffleMeshHideLatency::Watch.Add(Rec.VanillaNodePath, W);
+                        MeshHideLatencyWatch.Add(Rec.VanillaNodePath, W);
                     }
                 }
                 // redesign-3 BUG C: SetActorHiddenInGame hides the rock but does NOT remove the node from
@@ -4815,10 +4808,10 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
     // map, so this is O(watched) two-cache-lookup work, not O(all records) -- and a record leaves the map
     // the first time it is reported. A record that already went steady never re-enters the loop above, so
     // this is the ONLY route by which its rock can be measured at all. IT HIDES NOTHING: measurement only.
-    if (NodeShuffleMeshHideLatency::Watch.Num() > 0)
+    if (MeshHideLatencyWatch.Num() > 0)
     {
         TArray<FString> ReportedNow;
-        for (const TPair<FString, NodeShuffleMeshHideLatency::FWatch>& Pair : NodeShuffleMeshHideLatency::Watch)
+        for (const TPair<FString, FNodeShuffleMeshHideWatch>& Pair : MeshHideLatencyWatch)
         {
             AFGResourceNodeBase* WatchedNode = FindOriginalBaseByPath(Pair.Key);
             if (!WatchedNode) { continue; }
@@ -4827,7 +4820,7 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
             ReportMeshResolvedLater(Pair.Key, Pair.Value, !WatchedMesh->IsHidden(), TEXT("cache"));
             ReportedNow.Add(Pair.Key);
         }
-        for (const FString& K : ReportedNow) { NodeShuffleMeshHideLatency::Watch.Remove(K); }
+        for (const FString& K : ReportedNow) { MeshHideLatencyWatch.Remove(K); }
     }
 
     // dirtdress-1 (cold review): capture retry-budget bookkeeping. Each resource that reported
@@ -4908,7 +4901,7 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
             // MEASURED: both timestamps and the 2-D distance. NOT MEASURED / NOT CLAIMED: that this
             // rock belongs to that record -- the backstop matches on proximity alone, and so does this.
             FString BackstopHitKey;
-            for (const TPair<FString, NodeShuffleMeshHideLatency::FWatch>& WPair : NodeShuffleMeshHideLatency::Watch)
+            for (const TPair<FString, FNodeShuffleMeshHideWatch>& WPair : MeshHideLatencyWatch)
             {
                 if (FVector::DistSquared2D(WPair.Value.NodeLoc, Loc) >= FMath::Square(RockOwnRange)) { continue; }
                 RocksHiddenNearWatched++;
@@ -4917,7 +4910,7 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
                 break;
             }
             // Removed AFTER the range-for, never during it.
-            if (!BackstopHitKey.IsEmpty()) { NodeShuffleMeshHideLatency::Watch.Remove(BackstopHitKey); }
+            if (!BackstopHitKey.IsEmpty()) { MeshHideLatencyWatch.Remove(BackstopHitKey); }
         }
     }
     } // if (bRunBackstop)
@@ -4957,21 +4950,21 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
     {
         const int32 Summary[8] = {
             NodesHidden, MeshResolvedAtHide, MeshUnresolvedAtHide, MeshActorNeverAssigned,
-            NodeShuffleMeshHideLatency::Watch.Num(),
-            NodeShuffleMeshHideLatency::ResolvedLaterTotal,
-            NodeShuffleMeshHideLatency::StillVisibleWhenResolvedTotal,
+            MeshHideLatencyWatch.Num(),
+            MeshHideLatencyResolvedLaterTotal,
+            MeshHideLatencyStillVisibleWhenResolvedTotal,
             RocksHiddenNearWatched };
         bool bLatencyChanged = false;
         for (int32 i = 0; i < 8; i++)
         {
-            if (Summary[i] != NodeShuffleMeshHideLatency::LastSummary[i])
+            if (Summary[i] != MeshHideLatencyLastSummary[i])
             {
                 bLatencyChanged = true;
-                NodeShuffleMeshHideLatency::LastSummary[i] = Summary[i];
+                MeshHideLatencyLastSummary[i] = Summary[i];
             }
         }
-        if (bLatencyChanged && (NodesHidden > 0 || NodeShuffleMeshHideLatency::Watch.Num() > 0
-                                || NodeShuffleMeshHideLatency::ResolvedLaterTotal > 0))
+        if (bLatencyChanged && (NodesHidden > 0 || MeshHideLatencyWatch.Num() > 0
+                                || MeshHideLatencyResolvedLaterTotal > 0))
         {
             UE_LOG(LogNodeShuffle, Display,
                 TEXT("MESHHIDE-LATENCY hide-pass %d: hid %d original node(s) this pass; of those %d had a ")
@@ -5000,12 +4993,12 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
                 TEXT("not an explanation of any particular delay above."),
                 MeshHidePass, NodesHidden, MeshResolvedAtHide, MeshUnresolvedAtHide,
                 MeshUnresolvedAtHide, MeshActorNeverAssigned,
-                NodeShuffleMeshHideLatency::Watch.Num(),
-                NodeShuffleMeshHideLatency::ResolvedLaterTotal,
-                NodeShuffleMeshHideLatency::StillVisibleWhenResolvedTotal,
+                MeshHideLatencyWatch.Num(),
+                MeshHideLatencyResolvedLaterTotal,
+                MeshHideLatencyStillVisibleWhenResolvedTotal,
                 ResolvedLaterThisPass, StillVisibleThisPass,
-                NodeShuffleMeshHideLatency::LastDelaySeconds,
-                NodeShuffleMeshHideLatency::MaxDelaySeconds,
+                MeshHideLatencyLastDelaySeconds,
+                MeshHideLatencyMaxDelaySeconds,
                 RocksHiddenNearWatched, RockOwnRange,
                 RockBackstopCooldownSeconds, NowSeconds - LastRockBackstopSeconds);
         }
