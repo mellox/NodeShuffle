@@ -46,6 +46,12 @@ after the roll yields two wells.
 
 **Errs in the player's favour** — we never hide or delete a well someone has built on.
 
+> **Pre-scoped fix if ever revisited:** re-test occupancy immediately before spawning and
+> abandon the relocation, returning the dealt card to the deck so the resource assignment
+> does not drift by one. Machinery exists (`ClearAbandonedWellPlacement`).
+> ⚠ **Verify the absence first.** The "nothing re-checks" claim is five greps and one read,
+> not a cold review. *"I could not find a check"* is weaker evidence than *"there is no check"*.
+
 ### D2. Third-party node-manager mods still list/ping the original node locations
 **Added here 2026-08-08. Previously tracked only in GitHub issue #1, item 4** — which is
 exactly the failure mode this file exists to prevent, so it lives here now.
@@ -64,12 +70,6 @@ original.
 > destroys instead of hides — which forfeits restore-on-disable — or a plain compatibility
 > note in the README. Do **not** widen the scanner fix to cover third-party scanners; they do
 > not go through `GenerateNodeClusters`.
-
-> **Pre-scoped fix if ever revisited:** re-test occupancy immediately before spawning and
-> abandon the relocation, returning the dealt card to the deck so the resource assignment
-> does not drift by one. Machinery exists (`ClearAbandonedWellPlacement`).
-> ⚠ **Verify the absence first.** The "nothing re-checks" claim is five greps and one read,
-> not a cold review. *"I could not find a check"* is weaker evidence than *"there is no check"*.
 
 ---
 
@@ -92,11 +92,13 @@ deployed binary would not drift from the reviewed one.*
 (`_team/nodeshuffle-followups/lithium-extractor-investigation.md` §2). **Not fixed — the fix
 is a separate, user-gated packet. Do not fix it as a side effect of anything else.**
 
-The quota builder (`NodeShuffleSubsystem.cpp:1201-1255`) floors **every** resource kind at
+The quota builder (`NodeShuffleSubsystem.cpp:1223-1287`, re-derived against this commit's tree
+2026-08-08 — earlier revisions of this entry cited parent-commit numbering) floors **every** resource kind at
 `MinNodesPerResource` / `MinNodesPerModdedResource` and budgets `TargetActive` to cover every
 one of those floors. The deck builder then does this:
 
 ```cpp
+// NodeShuffleSubsystem.cpp:1352
 if (IsGasResourcePath(Kind)) { continue; }   // gas: relocate-only, never enters a deal deck
 ```
 
@@ -130,8 +132,13 @@ happens. That is diagnostics, not a fix.
 > (B) Stop budgeting a floor the deck cannot deliver: exclude gas from `Quota`/`TargetActive`
 > — makes the arithmetic honest but does **not** protect the resource. (C) A + B.
 > (D) Treat a relocate-only resource as non-disappearable outright — one condition at
-> `:1264`; the smallest correct statement of intent, since `AllowVanillaDisappear` is a
-> *shuffle* knob and gas is not shuffled. **The investigation's recommendation was D.**
+> **`:1296`**, the active-set predicate
+> `if (E.bPinned || (!E.bIsNewNode && !Config.AllowVanillaDisappear))`; the smallest correct
+> statement of intent, since `AllowVanillaDisappear` is a *shuffle* knob and gas is not
+> shuffled. **The investigation's recommendation was D.**
+> *(Line numbers in this entry were re-derived against the current tree 2026-08-08. `:1264` —
+> cited by an earlier revision — is a `{` inside the quota loop, not a predicate. If they have
+> drifted again, find (D) by the predicate text, not the number.)*
 > **Explicitly not a fix: changing auto-allow.** When the resource really is absent, `SKIP`
 > is the correct answer and must stay.
 
@@ -199,19 +206,40 @@ A hidden ordinary node's **rock stays visible for a while** after the node itsel
 — it will not highlight or mine, but you can still see it. Observed in the desert,
 2026-08-08.
 
-Node hiding is **not** the lag: `Hide-originals funnel (first pass this load): records=630
-loaded=630 newlyHidden=630 … notStreamed=0 pathMissed=0` — all hidden on pass one. The mesh
-actor is a separate object and **the funnel reports nothing about it**. So we cannot
-currently distinguish "the mesh hides a pass or two late" from "the mesh hides immediately
-and the render state catches up".
+Node hiding is **not** the lag. The evidence is the always-on `Hide-originals funnel (first pass
+this load):` line (`NodeShuffleSubsystem.cpp:4742`), which on the 2026-08-08 load reported
+**`records=630`, `loaded=630`, `newlyHidden=630`** and a zero in the path-resolution field.
+*Not quoted verbatim here* — an earlier revision of this entry presented a **splice of two
+different log lines** as a quotation (it included `pathMissed`, which the `Hide-originals funnel`
+format string does not emit; that field belongs to the gated `HIDEDIAG funnel` at `:4760`). Named
+fields and their values, above, are what is attested; grep the line yourself for the rest.
 
-**Framing corrected 2026-08-08.** The first revision of this entry treated that
-`630 / 630 / notStreamed=0` line as a local footnote about one funnel. It is not — it is a
-**whole-map census, taken in a single frame, reproduced in three independent boots**, and it
-is the measurement that falsified this project's streaming model outright. Read it that way:
-**the hide pass is not partial and never was**, so any explanation of a visible-rock symptom
-that reaches for "it had not streamed in yet" is contradicted by this project's own log. That
-leaves exactly one open question here, and it is a *mesh* question, not a coverage question.
+**Field rename, 2026-08-08 (truthdiag-fixes).** `notStreamed` in that line is now printed as
+**`pathUnresolved`** — nothing in it ever tested streaming; the counter is `DbgMissedPath`
+("this record's path did not resolve to a live actor this pass"). Logs from before that build
+carry the old token; grep for both. The separate diagnostics-gated `HIDEDIAG funnel` line
+prints the *same* counter under a *third* name, `pathMissed`.
+
+The load-bearing number is **`newlyHidden=630` equalling `records=630`** — a direct count of
+hides performed — i.e. all hidden on pass one. The mesh actor is a separate object and **the
+funnel reports nothing about it**. So we cannot currently distinguish "the mesh hides a pass or
+two late" from "the mesh hides immediately and the render state catches up".
+
+**Framing corrected 2026-08-08, and corrected again the same day.** The first revision treated
+this line as a local footnote about one funnel. The second over-corrected and credited it with
+falsifying this project's streaming model — **which is circular**: `records` is
+`OriginalNodeRecord.Num()`, the originals *the roll itself captured*. Had the roll missed 200
+nodes, the funnel would read `records=430 loaded=430` and look exactly as clean. This line
+proves only that everything the roll saw was still live at hide time.
+
+**What actually falsified the streaming model is elsewhere and is cited here so no one has to
+re-find it:** `_team/nodeshuffle-followups/node-enumeration-investigation.md` — the per-resource
+whole-map totals matching known counts (line 69: Uranium 8, Bauxite 23, SAM 23, Quartz 23,
+Coal 82, Copper 72) and the 6-minute set-diff showing **zero** level-placed nodes arriving late
+(line 76). With *that* as the premise, the funnel line's honest reading follows: **the hide pass
+is not partial**, so any explanation of a visible-rock symptom reaching for "it had not streamed
+in yet" is contradicted. One open question remains here, and it is a *mesh* question, not a
+coverage question.
 
 Pre-existing in the long-shipped ordinary-node path; **not** an H2b regression. Cosmetic
 and self-resolving.

@@ -523,8 +523,13 @@ private:
     void RefreshTick();
 
     // ---- roll ----
-    // Strict gate for the INITIAL roll: requires 50+ pristine /Game/ vanilla
-    // nodes streamed in, proving the world is fully loaded before a first shuffle.
+    // Strict gate for the INITIAL roll: requires 50+ pristine /Game/ vanilla nodes to be
+    // live before a first shuffle. That is a cheap floor proving a POPULATED WORLD EXISTS.
+    // (truthdiag-fixes F1: this used to say "proving the world is fully loaded". It does not
+    // test that, and the premise behind it is false — every level-placed vanilla node is
+    // already live at load. See MinVanillaNodesForRoll and IsWorldReadyForRoll's own comment
+    // in NodeShuffleSubsystem.cpp for the measurement. Do NOT raise the threshold from 50;
+    // it is deliberate and would treat a non-problem.)
     bool IsWorldReadyForRoll() const;
     // Shuffle-aware gate for the RE-ROLL path. A shuffled save has most of its
     // originally-vanilla nodes retyped (no longer /Game/) or destroyed, so the
@@ -545,14 +550,20 @@ private:
     // redesign-1: before a re-roll, UN-HIDE every previously-suppressed original node (and its
     // mesh actor) that is streamed in, so the world returns to its pristine state before the new
     // layout re-hides per the new roll. Nothing was ever destroyed (whole-actor hide is reversible),
-    // so this is a clean restore. The reroll pool itself is rebuilt from the saved Layout's stored
-    // ORIGINAL resources (streaming-independent), not from a live rescan.
+    // so this is a clean restore. The reroll pool is SEEDED from the saved Layout's stored ORIGINAL
+    // resources ("Re-roll pool" log line) and is then AUGMENTED BY TWO LIVE SCANS of the world — the
+    // "Non-solid augment" and "Full re-scan augment" lines — so it is NOT streaming-independent.
+    // (truthdiag-fixes F1: this used to claim "(streaming-independent), not from a live rescan". Both
+    // augments exist and both scan live actors; the seed step is the only streaming-independent half.)
     void RestoreOriginalsForReroll();
     // Map-wide spread: distribute new locations across the bounding box of the
     // full known-node set (whole playable map) rather than clustered around the
     // currently-loaded vanilla nodes, so the initial roll is not bunched at the
-    // player's load point. Streaming-independent on reroll (saved locations span
-    // the map).
+    // player's load point. The bounding box spans the whole map on BOTH paths: on the
+    // initial roll because every level-placed vanilla node is already live at load
+    // (MEASURED — see MinVanillaNodesForRoll), and on re-roll because the saved
+    // locations span it. (truthdiag-fixes F1: this used to say "Streaming-independent
+    // on reroll", which implied the initial roll was streaming-GATED. It never was.)
     // VanillaLocations defines the map bounding box; AvoidLocations is the full
     // union of occupied/kept/original/pinned locations new nodes must be spaced
     // away from (FIX 2 overlap guard).

@@ -4738,8 +4738,16 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
     if (!bLoadFunnelLogged && (DbgNear > 0 || DbgMissedPath > 0))
     {
         bLoadFunnelLogged = true;
+        // truthdiag-fixes: the sixth field was named `notStreamed` until 2026-08-08. NOTHING HERE TESTS
+        // STREAMING. The counter is DbgMissedPath: FindOriginalBaseByPath returned null (a TWeakObjectPtr
+        // cache lookup behind an IsValid() gate — it never loads anything) AND TryRematchStaleRecord
+        // failed. So the honest name is `pathUnresolved`: "this record's path did not resolve to a live
+        // actor this pass." The old name was a LABEL asserting a cause, which is worse than prose doing
+        // it — a label is what makes a reader stop looking. Its complement (`loaded`, DbgNear) is still a
+        // genuine residency measurement, which is why this is a rename and not a re-measurement.
+        // Grepping logs from before this build needs the OLD token `notStreamed=` (same number, same slot).
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("Hide-originals funnel (first pass this load): records=%d loaded=%d newlyHidden=%d alreadyHidden=%d occupied=%d notStreamed=%d capturePending=%d rematched=%d"),
+            TEXT("Hide-originals funnel (first pass this load): records=%d loaded=%d newlyHidden=%d alreadyHidden=%d occupied=%d pathUnresolved=%d capturePending=%d rematched=%d"),
             OriginalNodeRecord.Num(), DbgNear, NodesHidden, DbgAlreadyHidden, DbgOcc, DbgMissedPath,
             DbgCapturePending, DbgRematched);
     }
