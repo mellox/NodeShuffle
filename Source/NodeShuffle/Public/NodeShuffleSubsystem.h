@@ -154,6 +154,49 @@ struct FNodeShuffleManagedGroup
     int32 Count = 0; // number of ACTIVE layout entries in this group -- loaded or not
 };
 
+// Packet H2b (ns-wells-h2b): one captured mesh piece of a well member's look. See below the struct
+// for FNodeShuffleWellSatellite, which owns an array of these.
+USTRUCT()
+struct FNodeShuffleWellVisual
+{
+    GENERATED_BODY()
+
+    // Packet H2b: ONE captured static-mesh piece of a vanilla well member's look, stored by ASSET PATH
+    // rather than by pointer so it survives a save round trip AND so a relocated well can be dressed
+    // when its ORIGINAL site is not streamed. That second property is the reason this is SaveGame at
+    // all: relocation is spawn-on-discovery at the DESTINATION, and the origin can be kilometres away
+    // and never loaded again in that session. A capture held only in RAM would leave exactly the wells
+    // a tester flies to invisible.
+    //
+    // Design §2.4 named the paired AFGNodeMeshActor as capture "source 1". H2's measured reality is
+    // that the engine link is set for roughly one well group in six (see NodeShuffleWellVisuals.cpp),
+    // so this is populated from whichever route found the component; RouteTag records WHICH, so the
+    // log can say why a member captured nothing without anyone having to guess.
+    UPROPERTY(SaveGame) FString MeshPath;
+
+    // Per-slot materials AS THEY WERE ON THE LIVE COMPONENT (a slot the component did not override
+    // records an empty string, and the mesh's own default is used at apply time -- never back-filled
+    // with the previous slot's material, which is the flat-colour bug memory:nodeshuffle-rock-miner-polish
+    // records against DressRock).
+    UPROPERTY(SaveGame) TArray<FString> MaterialPaths;
+
+    // The piece's transform RELATIVE TO ITS MEMBER ACTOR. Relative, not world, is the whole trick:
+    // re-applying it on the relocated actor reproduces the look already rotated by the group yaw and
+    // already tilted by the destination's own terrain settle, with no separate rotation maths and no
+    // way for the two to disagree.
+    UPROPERTY(SaveGame) FVector RelLocation = FVector::ZeroVector;
+    UPROPERTY(SaveGame) FRotator RelRotation = FRotator::ZeroRotator;
+    UPROPERTY(SaveGame) FVector RelScale = FVector::OneVector;
+
+    // ENodeMeshType as reported by a paired AFGNodeMeshActor (255 = unknown / not a node mesh actor).
+    // Recorded for diagnostics only -- nothing branches on it. MT_Crack is the piece design §2.4 warns
+    // is most likely to be forgotten, so the apply log names how many cracks it re-applied.
+    UPROPERTY(SaveGame) uint8 MeshType = 255;
+
+    // "own" / "link" / "spatial" -- which of the three pairing routes produced this piece.
+    UPROPERTY(SaveGame) FString RouteTag;
+};
+
 // Packet H1 (ns-wells-h1): ONE SATELLITE of a managed resource well. Purity is recorded and NEVER
 // written back -- H0 measured that vanilla wells MIX purities across their satellites (design §Q2),
 // so there is no shared purity to normalise and normalising one would be a silent balance change.
@@ -214,6 +257,14 @@ struct FNodeShuffleWellSatellite
     // place. An UNCAPTURED satellite is never spawned, but it is still SUPPRESSED with the rest of
     // the vanilla group -- otherwise it would be left visible at the abandoned original site.
     UPROPERTY(SaveGame) bool bCaptured = false;
+
+    // ---- Packet H2b: this satellite's captured LOOK (see FNodeShuffleWellVisual) ----
+    // Separate from bCaptured on purpose. bCaptured is about the RIGID BODY and gates whether the
+    // satellite may be SPAWNED AT ALL; this is about appearance and gates nothing -- a well with no
+    // captured visual is still a working well, it is only an ugly one, and refusing to spawn it would
+    // trade a real feature for a cosmetic one.
+    UPROPERTY(SaveGame) TArray<FNodeShuffleWellVisual> Visuals;
+    UPROPERTY(SaveGame) bool bVisualsCaptured = false;
 };
 
 // Packet H1: one resource well (fracking core + its satellites) as a unit of the per-save layout.
@@ -387,6 +438,18 @@ struct FNodeShuffleWellEntry
     // Every budget exhausted. The well stays exactly where the level author put it, for good, and the
     // roll never re-enrols it. Fail-safe to "untouched", never to "broken".
     UPROPERTY(SaveGame) bool bRelocationFailed = false;
+
+    // ---- Packet H2b: the CORE's captured look, and the group-level capture verdict ----
+    // The core is the member that carries MT_Core plus the MT_Crack ground graphic, and the crack is
+    // both the piece design §2.4 says is most often forgotten and the one a player noticed left behind
+    // at the abandoned original site.
+    UPROPERTY(SaveGame) TArray<FNodeShuffleWellVisual> CoreVisuals;
+    UPROPERTY(SaveGame) bool bCoreVisualsCaptured = false;
+
+    // Every member (core + every CAPTURED satellite) has at least one visual piece recorded. Once true
+    // the capture pass is skipped entirely, so a group whose original site never streams again keeps
+    // whatever it already has instead of re-scanning the world every ~5 s forever.
+    UPROPERTY(SaveGame) bool bGroupVisualsComplete = false;
 };
 
 // Server-side brain of NodeShuffle.
@@ -1567,6 +1630,64 @@ private:
     // relocated -- otherwise the world holds the well twice. Narrow and self-contained: it never
     // touches OriginalNodeRecord or SuppressOriginalNodes' machinery.
     void SuppressVanillaWellGroup(FNodeShuffleWellEntry& E);
+
+    // ======================= Packet H2b: GROUP VISUALS + COLLISION =======================
+    // All defined in NodeShuffleWellVisuals.cpp. The file header there carries the full rationale;
+    // what matters at the declaration is WHY this exists as a separate mechanism at all:
+    //
+    // A runtime-spawned fracking core/satellite has NO engine AFGNodeMeshActor and no rock of its own,
+    // so a relocated well was not merely invisible -- it had NOTHING FOR THE BUILD GUN TRACE TO HIT.
+    // Measured in-game 2026-08-07 from our own hologram hook on two independent relocated wells:
+    //     HOLOGRAMHOOK IsValidHitResult -> 1 | hitActor='LandscapeStreamingProxy_...'
+    //     HOLOGRAMHOOK TrySnapToActor  -> 0 | hitActor='LandscapeStreamingProxy_...'
+    // The trace went straight through our spawned node actors and landed on terrain. So COLLISION, not
+    // appearance, is this packet's acceptance criterion, and the mesh that carries the look is the same
+    // mesh that carries the collision -- one object, so the two can never drift apart.
+
+    // Rebuild WellMeshIndex (vanilla well member path -> the static-mesh components that ARE its look).
+    // At most once per apply pass; call EnsureWellMeshIndex rather than this.
+    void RebuildWellMeshIndex();
+    void EnsureWellMeshIndex();
+
+    // Capture the group's look from the LIVE VANILLA actors, before anything is hidden. Returns true
+    // when the group is now completely captured. Idempotent and skipped once bGroupVisualsComplete.
+    bool CaptureWellGroupVisuals(FNodeShuffleWellEntry& E);
+
+    // Hide every static-mesh piece paired to this vanilla member. THE ORIGIN-SIDE HALF of the same
+    // pairing problem: SuppressVanillaWellGroup used to call FindMeshActorForNode, whose cache is built
+    // by a sweep that skips fracking actors outright, so five well groups out of six hid ZERO mesh
+    // actors while reporting nothing pending. Returns the number of pieces newly hidden.
+    int32 HideWellMemberMeshes(class AFGResourceNodeBase* Node, int32& OutAlreadyHidden);
+
+    // Dress the RELOCATED actors: re-apply the captured pieces as static-mesh components on our spawned
+    // core/satellites, with the collision recipe that makes them build-gun surfaces. Idempotent.
+    void ApplyWellGroupVisuals(FNodeShuffleWellEntry& E);
+
+    // The proven cosmetic-rock collision recipe, in ONE place so a well mesh and an ordinary node rock
+    // cannot drift apart. See the definition for the channel-by-channel reasoning.
+    static void ConfigureWellMeshCollision(class UStaticMeshComponent* Comp);
+
+    // Re-create/refresh one relocated member's mesh pieces. Returns how many components it had to
+    // create this pass; OutPieces accumulates how many are now dressed.
+    static int32 DressWellActor(AActor* Actor, const TArray<FNodeShuffleWellVisual>& Visuals,
+                                int32& OutPieces);
+
+    // vanilla member path -> its look. Transient; rebuilt at most once per apply pass.
+    TMap<FString, TArray<TWeakObjectPtr<class UStaticMeshComponent>>> WellMeshIndex;
+    int32 WellMeshIndexPass = -1;
+    // Session-wide LAST-RESORT templates, filled opportunistically from any well member we did manage
+    // to capture. Used only when a group's own origin never streamed. Deliberately a fallback and
+    // deliberately logged as one: all vanilla wells share a mesh vocabulary, but the DESERT variants
+    // (ENodeMeshType::MT_DesertCore / MT_DesertCrack / MT_DesertSatellite) do not match the grassland
+    // ones, so a template can dress a well in the wrong biome's rock. An ugly well beats an invisible,
+    // unbuildable one; a SILENT ugly well does not, hence the log line.
+    TArray<FNodeShuffleWellVisual> WellVisualTemplateCore;
+    TArray<FNodeShuffleWellVisual> WellVisualTemplateSatellite;
+    TSet<FString> WellVisualLogged;        // per-group apply summary, said once
+    TSet<FString> WellVisualCaptureLogged; // per-member capture failure, said once
+    TSet<FString> WellVisualCompDumped;    // per-actor component dump, said once
+    int32 WellMeshIndexMembers = 0;        // diagnostics: members indexed on the last rebuild
+    int32 WellMeshIndexPieces = 0;         // diagnostics: pieces indexed on the last rebuild
 
     // Runtime handles for the relocated group, rebuilt each session (spawn or adopt). Keyed by the
     // layout entry's CorePath. UPROPERTY so the spawned actors are strongly referenced, mirroring

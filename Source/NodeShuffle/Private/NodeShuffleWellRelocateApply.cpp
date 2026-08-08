@@ -56,6 +56,7 @@
 #include "NodeShuffleWellRelocate.h" // the H2 pure helpers
 
 #include "Resources/FGResourceDescriptor.h"
+#include "Components/StaticMeshComponent.h" // H2b: WellMeshIndex holds mesh-component weak pointers
 
 // The reject radii live in NodeShuffleWellFootprint.cpp with the test that uses them; the nudge/redeal
 // constants live in NodeShuffleWellEscalate.cpp with the ladder that uses them. Nothing this file does
@@ -263,7 +264,25 @@ bool ANodeShuffleSubsystem::TryPlaceWellGroup(FNodeShuffleWellEntry& E, UClass* 
 // Re-asserted every pass because a level actor streams back in un-hidden.
 void ANodeShuffleSubsystem::SuppressVanillaWellGroup(FNodeShuffleWellEntry& E)
 {
-    int32 Hidden = 0, MeshesHidden = 0, Occupied = 0, Unstreamed = 0;
+    int32 Hidden = 0, MeshesHidden = 0, MeshesAlready = 0, Occupied = 0, Unstreamed = 0;
+
+    // H2b -- THE INDEX FIRST, THEN CAPTURE, THEN HIDE, IN THAT ORDER AND FOR THAT REASON.
+    //
+    // Everything this function hides is the last copy of the look we are about to need at the
+    // destination, so the capture has to happen while the originals are still standing. Design 2.4
+    // says it in one line ("Capture before hiding the original") and this is the only site that can
+    // honour it: the roll runs where the well is loaded, but a group can be re-enrolled, re-dealt and
+    // re-placed long afterwards, and the suppression pass is the one that provably runs with the
+    // vanilla member live (it is what hides it).
+    //
+    // The index also REPLACES FindMeshActorForNode below. That call is why five well groups out of six
+    // reported "hid N vanilla member(s) + 0 mesh actor(s)" next to "0 not streamed yet" on 2026-08-07:
+    // MeshActorCache's forward-link sweep iterates AFGResourceNode and skips fracking actors outright,
+    // and a fracking CORE is an AFGResourceNodeBase that iterator never visits -- so only the rarely
+    // set engine back-link could ever pair a well member, and it happened to be set for exactly one
+    // group. The meshes were never missing; nothing was looking for them.
+    EnsureWellMeshIndex();
+    CaptureWellGroupVisuals(E);
 
     const auto HideOne = [&](AFGResourceNodeBase* Node) -> void
     {
@@ -288,15 +307,12 @@ void ANodeShuffleSubsystem::SuppressVanillaWellGroup(FNodeShuffleWellEntry& E)
         bool bChanged = false;
         if (Node->GetActorEnableCollision()) { Node->SetActorEnableCollision(false); bChanged = true; }
         if (!Node->IsHidden()) { Node->SetActorHiddenInGame(true); bChanged = true; }
-        if (AFGNodeMeshActor* MeshActor = FindMeshActorForNode(Node))
-        {
-            if (!MeshActor->IsHidden())
-            {
-                MeshActor->SetActorHiddenInGame(true);
-                MeshActor->SetActorEnableCollision(false);
-                ++MeshesHidden;
-            }
-        }
+        // H2b: every mesh piece paired to this member by ANY of the three routes (own / engine link /
+        // spatial), hidden at COMPONENT level with its collision -- a hidden rock that still blocks the
+        // build gun is a ghost you can build on. The player-visible symptom this fixes is the core's
+        // cracked-ground graphic still sitting at the original site after the well moved, with the
+        // satellites correctly gone.
+        MeshesHidden += HideWellMemberMeshes(Node, MeshesAlready);
         if (bChanged) { ++Hidden; }
         // Take the hidden original out of the scanner and the node manager, once, so it cannot ping an
         // empty map spot or accept an extractor snap as an invisible ghost. Same idiom, same reasons,
@@ -318,14 +334,43 @@ void ANodeShuffleSubsystem::SuppressVanillaWellGroup(FNodeShuffleWellEntry& E)
         HideOne(FindOriginalBaseByPath(S.SatellitePath));
     }
 
-    if ((Hidden > 0 || MeshesHidden > 0 || Occupied > 0) && !WellSuppressLogged.Contains(E.CorePath))
+    // H2b -- THE THROTTLE IS KEYED ON THE COUNTS, NOT ON THE CORE PATH.
+    // Keyed on the path alone, this line printed ONCE per group per session, so the first pass's
+    // numbers were the only numbers anyone ever saw -- and on 2026-08-07 that first pass reported
+    // "0 mesh actor(s)" for five groups and the line never came back to say otherwise. A key that
+    // includes the counts re-prints whenever the picture actually changes (a member streams in, a
+    // piece is finally paired) and stays silent when it does not.
+    //
+    // meshesAlreadyHidden and indexedPieces are printed for one specific reason: a ZERO must now be
+    // explicable from the line itself. "0 hidden, 0 already hidden, 0 indexed" says nothing was
+    // paired; "0 hidden, 8 already hidden" says the work was done on an earlier pass. The old line
+    // could not tell those apart, and printed the first next to "0 not streamed yet".
+    const FString SuppressKey = FString::Printf(TEXT("%s|%d|%d|%d|%d|%d"), *E.CorePath, Hidden,
+                                                MeshesHidden, MeshesAlready, Occupied, Unstreamed);
+    if ((Hidden > 0 || MeshesHidden > 0 || Occupied > 0 || Unstreamed > 0)
+        && !WellSuppressLogged.Contains(SuppressKey))
     {
-        WellSuppressLogged.Add(E.CorePath);
+        WellSuppressLogged.Add(SuppressKey);
+        int32 IndexedPieces = 0;
+        if (const TArray<TWeakObjectPtr<UStaticMeshComponent>>* P = WellMeshIndex.Find(E.CorePath))
+        {
+            IndexedPieces += P->Num();
+        }
+        for (const FNodeShuffleWellSatellite& S : E.Satellites)
+        {
+            if (const TArray<TWeakObjectPtr<UStaticMeshComponent>>* P = WellMeshIndex.Find(S.SatellitePath))
+            {
+                IndexedPieces += P->Num();
+            }
+        }
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("WELLH2-SUPPRESS core='%s': hid %d vanilla member(s) + %d mesh actor(s); %d occupied ")
-            TEXT("(left alone), %d not streamed yet (retried every pass). The relocated group now lives ")
-            TEXT("at %s."),
-            *WellShort(E.CorePath), Hidden, MeshesHidden, Occupied, Unstreamed,
+            TEXT("WELLH2-SUPPRESS core='%s': hid %d vanilla member(s) + %d mesh piece(s) (%d were already ")
+            TEXT("hidden; %d piece(s) indexed for this group across all %d indexed member(s) world-wide); ")
+            TEXT("%d occupied (left alone), %d not streamed yet (retried every pass). Visuals captured: ")
+            TEXT("core=%d, group=%s. The relocated group now lives at %s."),
+            *WellShort(E.CorePath), Hidden, MeshesHidden, MeshesAlready, IndexedPieces,
+            WellMeshIndexMembers, Occupied, Unstreamed, E.bCoreVisualsCaptured ? 1 : 0,
+            E.bGroupVisualsComplete ? TEXT("COMPLETE") : TEXT("INCOMPLETE"),
             *E.PlacedCoreLocation.ToCompactString());
     }
 }
@@ -426,6 +471,14 @@ void ANodeShuffleSubsystem::ApplyWellRelocation(bool bWellShuffleEnabled, bool b
                 ++WellGroupsPlacedThisSession;
                 WellIncompleteSpawnCounts.Remove(E.CorePath); // assembled -- the counter starts fresh
                 SuppressVanillaWellGroup(E);
+                // H2b: dress the group IN THE SAME PASS it is suppressed, not on the next one.
+                // SuppressVanillaWellGroup has just captured the look from the originals it hid, so
+                // this is the first moment the capture exists -- and deferring it by a pass would put
+                // a live, unmarked, unbuildable well in front of a player for ~5 s. Ordering matters
+                // the other way too: suppression must run FIRST, or the capture would read a look we
+                // had already hidden. Visuals are cosmetic-plus-collision and NEVER gate placement --
+                // a group that cannot be dressed is still a placed group (design 2.4 vs Q3).
+                ApplyWellGroupVisuals(E);
                 // ns-review-h2 F12: audit THIS group the moment it is placed. The fixed-pass audit
                 // fires ~40 s after load, but relocation is spawn-on-discovery -- so the wells a
                 // tester actually flies to are placed LONG after pass 8 and were never audited at all.
@@ -450,6 +503,14 @@ void ANodeShuffleSubsystem::ApplyWellRelocation(bool bWellShuffleEnabled, bool b
             if (SpawnWellGroup(E, ResourceClass)) { ++Spawned; }
         }
         SuppressVanillaWellGroup(E);
+        // H2b: re-assert the dressing every maintenance pass, for the same reason the link funnel
+        // re-asserts every pass rather than once. A significance/streaming round trip, another mod, or
+        // a reload can take a component's visibility or its collision response away, and the collision
+        // is the acceptance criterion -- a well that silently stops being buildable is precisely the
+        // failure this packet exists to remove. Idempotent: a dressed member costs a few pointer
+        // compares. This is also the path that dresses a group RESTORED from a save, whose actors are
+        // adopted rather than spawned.
+        ApplyWellGroupVisuals(E);
     }
 
     // THE LINK AUDIT -- design §Q3 point 5's "log at both ends every session".
