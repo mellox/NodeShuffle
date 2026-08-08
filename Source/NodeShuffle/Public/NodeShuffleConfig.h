@@ -113,12 +113,17 @@ struct NODESHUFFLE_API FNodeShuffleConfigStruct
     // moving it are different promises. Relocation additionally REQUIRES ShuffleResourceWells (a
     // well NodeShuffle does not manage is not one it may move), so the two together are the gate.
     //
-    // STAGE WARNING, and it is in the in-game tooltip too, not only here: H2 stage 1 ships the
-    // relocation ENGINE -- placement, the yaw search, the group-atomic spawn and the mCore lifecycle
-    // -- but NOT the group VISUALS (design §2.4: a runtime-spawned node gets no engine
-    // AFGNodeMeshActor, and wells have their own MT_Core / MT_Crack / MT_Satellite mesh vocabulary).
-    // A relocated well is therefore functional but INVISIBLE until stage H2b lands. Deliberately
-    // deferred rather than half-done; see the packet report.
+    // STAGE: H2 shipped the relocation ENGINE (placement, the yaw search, the group-atomic spawn and
+    // the mCore lifecycle); H2b then shipped the group VISUALS, which the engine does not provide for
+    // us (design §2.4: a runtime-spawned node gets no engine AFGNodeMeshActor, and wells have their
+    // own MT_Core / MT_Crack / MT_Satellite mesh vocabulary, so we re-create them ourselves).
+    //
+    // MEASURED 2026-08-08, in game, on a fresh save: a relocated well is dressed and BUILDABLE --
+    // TrySnapToActor -> 1 with bForceAccept=0 onto our own core, and the user confirmed the
+    // pressurizer producing water. Still flagged EXPERIMENTAL in the tooltip because two edges are
+    // unverified rather than known-good: desert-biome mesh names (docs/TECH-DEBT.md T2) and snap-box
+    // overlap with ordinary nodes within ~15 m (T3). Do NOT re-word this into "invisible" -- that
+    // claim was true only before H2b and outlived its truth in three places.
     UPROPERTY(BlueprintReadWrite)
     bool RelocateResourceWells{false};
 

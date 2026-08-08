@@ -170,25 +170,48 @@ void ANodeShuffleSubsystem::RebuildWellMeshIndex()
     WellMeshIndexMembers = Members.Num();
 
     TSet<UStaticMeshComponent*> Claimed;
-    int32 ByOwn = 0, ByLink = 0, BySpatial = 0, RejectedBystander = 0;
+    int32 ByOwn = 0, ByLink = 0, BySpatial = 0, RejectedBystander = 0, NarrowedByType = 0, WidenedByType = 0;
+    // F-3 denominators: the candidate populations each of the two gate counters is measured against.
+    int32 NameCandidates = 0, NameCandidatesInRadius = 0, TypeCandidates = 0, TypeCandidatesInRadius = 0;
 
-    // The fracking family by name (SM_FrackingNode_Crack_01 / _Mid_01 / _Small_01 and friends). Name
-    // matching decides ONLY "could this be a well piece at all" -- WHICH member it belongs to is decided
-    // by DISTANCE, never by name (memory:nodeshuffle-descriptor-visuals: pairing by a mesh-name/resource
-    // key decays to nothing once the shuffle has retyped the world).
+    // T2 (ns-t2-meshtype): "COULD THIS BE A WELL PIECE AT ALL" IS NOW ASKED OF THE ENGINE'S OWN TYPE,
+    // NOT OF THE MESH NAME. AFGNodeMeshActor derives from AStaticMeshActor (FGResourceNodeBase.h:61), so
+    // route 3's TActorIterator<AStaticMeshActor> already visits every node mesh actor, and
+    // ENodeMeshType mNodeMeshType (FGResourceNodeBase.h:71) states core / crack / satellite INCLUDING
+    // the MT_Desert* variants. MT_Node is the ordinary-node value, so "owner is a node mesh actor AND
+    // its type is not MT_Node" is the exact type-level statement of "this is well geometry".
+    // WHICH member a piece belongs to is still decided by DISTANCE alone, never by name or by type
+    // (memory:nodeshuffle-descriptor-visuals).
     //
-    // ns-review-h2b F-1 (A3): THIS USED TO ALSO ACCEPT IsNodeRockMeshName(), WHICH MATCHES EVERY
-    // ORDINARY NODE ROCK IN THE GAME (ResourceNode* / CoalResource* / SulfurResource* / Resource_* /
-    // SAM_* / SM_*Node*). Route 3 therefore offered a bystander's rock to a well-members-only contest it
-    // could not lose. Narrowed to "Frack" alone. The cost of being wrong now runs the SAFE way: a
-    // fracking piece whose mesh is named without "Frack" is simply not captured, so the destination well
-    // is under-dressed but still buildable (routes 1 and 2 are unaffected and do not consult this at
-    // all), whereas the old failure mode stranded an unrelated node in the player's save. If a well
-    // origin is ever seen with rock left standing, the WELLH2B-INDEX spatial REJECT line names the mesh.
-    const auto IsWellPieceMeshName = [](const FString& MeshName) -> bool
-    {
-        return MeshName.Contains(TEXT("Frack"));
-    };
+    // THAT THE TYPE IS READABLE HERE IS MEASURED, NOT ASSUMED. TECH-DEBT T5 and H2b-fixes-handoff §4 both
+    // state route 3's owner "is an AStaticMeshActor -> never counted", which conflates the ITERATOR'S
+    // DECLARED TYPE with the RUNTIME CLASS. Falsified by arithmetic in
+    // FactoryGame-backup-2026.08.08-15.53.04.log: group BP_FrackingCore15 captured 18 pieces of which 10
+    // were MT_Crack while receiving 10 spatial and only 8 link pieces, and MT_Crack is counted only
+    // inside Cast<AFGNodeMeshActor>(C->GetOwner()) (CaptureWellGroupVisuals below). 10 > 8, so spatial
+    // pieces DO cast. NOT proven: that EVERY spatial piece casts. Full working in
+    // _team/nodeshuffle-followups/T2-meshtype-handoff.md.
+    //
+    // WHERE F-1's PROTECTION ACTUALLY LIVES (corrected by cold review 2026-08-08, F-1 -- the earlier
+    // wording here was WRONG and said the cast does the work). THE FIRST TEST, THE CAST, REJECTS NOTHING
+    // AMONG ORDINARY NODES: AFGNodeMeshActor is "a Static Mesh Actor that should be used for ALL node
+    // meshes in the world" (FGResourceNodeBase.h:59), and this mod's own back-link sweep pairs those
+    // actors to ORDINARY nodes (NodeShuffleSubsystem.cpp:7269). An ordinary node's rock therefore PASSES
+    // the cast. 100% of the protection against it rests on the SECOND test, mNodeMeshType != MT_Node --
+    // a UPROPERTY(EditInstanceOnly) per-instance value baked into cooked .uassets that no static read
+    // here can see. That ordinary nodes carry MT_Node is therefore ASSUMED, NOT PROVEN, and it is
+    // MEASURED rather than asserted: RebuildMeshActorCache (NodeShuffleSubsystem.cpp) emits
+    // MESHTYPE-CENSUS at load, a histogram of mNodeMeshType split paired-to-fracking /
+    // paired-to-ordinary / unpaired. A non-zero "pairedToOrdinaryNode ... non-MT_Node" there falsifies
+    // this gate. F-1's only STRUCTURAL lock is A2, the bystander contest below.
+    //
+    // WHAT IT CANNOT SEE, REPORTED rather than assumed away: a well piece whose owner is a plain
+    // AStaticMeshActor (cast fails) or whose mNodeMeshType was left at its MT_Node default. The old name
+    // test took those when Frack-named. Every one inside the radius is printed by the WELLH2B-INDEX
+    // spatial NARROWED line below -- and every piece this gate ADMITS that the name test would have
+    // refused is printed by the WIDENED line. Those two lines plus their candidate denominators in the
+    // pass summary are the whole measurement of what this change cost, in BOTH directions.
+    // No new import: the Cast and mNodeMeshType are both already reached in this file.
 
     const auto AddPiece = [&](const FString& Path, UStaticMeshComponent* C) -> bool
     {
@@ -244,7 +267,22 @@ void ANodeShuffleSubsystem::RebuildWellMeshIndex()
         {
             if (!IsUsableMesh(C) || Claimed.Contains(C)) { continue; }
             const FString MeshName = C->GetStaticMesh()->GetName();
-            if (!IsWellPieceMeshName(MeshName)) { continue; }
+            // Read the owner through the SAME expression CaptureWellGroupVisuals uses to classify the
+            // piece, so the gate and the capture can never disagree about what owns a component.
+            const AFGNodeMeshActor* MeshOwner = Cast<AFGNodeMeshActor>(C->GetOwner());
+            const ENodeMeshType MeshType = MeshOwner ? MeshOwner->mNodeMeshType : ENodeMeshType::MT_Node;
+            const bool bTypeSaysWellPiece = MeshOwner != nullptr && MeshType != ENodeMeshType::MT_Node;
+            // The predicate T2 replaced. Evaluated ONLY to measure what the type gate drops -- it is
+            // never an accept path, so route 3 admits nothing it did not admit before plus well-typed
+            // pieces. Do not turn this into an OR without reading the F-1 note above.
+            const bool bNameSaysWellPiece = MeshName.Contains(TEXT("Frack"));
+            // F-3 DENOMINATORS. "0 narrowed-by-type" cannot distinguish "the gate dropped nothing" from
+            // "nothing was ever a candidate to drop" -- TECH-DEBT T5, post-mortemed in this repo the same
+            // day: a ratio whose numerator is structurally zero is not evidence. Counted over EVERY
+            // component route 3 visits, so each gate count is read against a population.
+            if (bNameSaysWellPiece) { ++NameCandidates; }
+            if (bTypeSaysWellPiece) { ++TypeCandidates; }
+            if (!bTypeSaysWellPiece && !bNameSaysWellPiece) { continue; }
             const FVector Loc = C->GetComponentLocation();
             const FMemberRec* Best = nullptr;
             float BestSq = TNumericLimits<float>::Max(), NextSq = TNumericLimits<float>::Max();
@@ -253,6 +291,46 @@ void ANodeShuffleSubsystem::RebuildWellMeshIndex()
                 const float D = FVector::DistSquared(M.Loc, Loc);
                 if (D < BestSq) { NextSq = BestSq; BestSq = D; Best = &M; }
                 else if (D < NextSq) { NextSq = D; }
+            }
+            const bool bInRadius = Best != nullptr && BestSq < FMath::Square(WellMeshOwnerRadiusCm);
+            if (bInRadius)
+            {
+                if (bNameSaysWellPiece) { ++NameCandidatesInRadius; }
+                if (bTypeSaysWellPiece) { ++TypeCandidatesInRadius; }
+            }
+            // F-2: THE DANGEROUS DIRECTION, COUNTED. NarrowedByType counts what the type gate LOST (safe
+            // -- a lost piece is merely left undressed). This counts what it newly ADMITS: a piece the
+            // old Contains("Frack") test refused and this build may claim, capture and hide. That is the
+            // direction that produced ns-review-h2b F-1, and it had no counter at all. Superset of the
+            // truly-gained set in the same conservative way NarrowedByType is (the bystander contest is
+            // not applied), so widened == 0 proves nothing new was admitted.
+            const bool bWidenedByType = bTypeSaysWellPiece && !bNameSaysWellPiece && bInRadius;
+            if (bWidenedByType) { ++WidenedByType; }
+            // T2: A NAME-ONLY CANDIDATE. The old Contains("Frack") predicate would have considered this
+            // component; the mNodeMeshType gate does not. Reported, never claimed. Every field below is
+            // something this pass MEASURED -- no reason for the mismatch is stated, because none was
+            // tested ([[lessons-log-asserted-a-cause]]).
+            if (!bTypeSaysWellPiece)
+            {
+                if (bInRadius)
+                {
+                    ++NarrowedByType;
+                    const FString NKey = FString::Printf(TEXT("narrowed|%s|%s"), *SMA->GetPathName(), *MeshName);
+                    if (bDiag && !WellVisualCaptureLogged.Contains(NKey))
+                    {
+                        WellVisualCaptureLogged.Add(NKey);
+                        UE_LOG(LogNodeShuffle, Display,
+                            TEXT("WELLH2B-INDEX spatial NARROWED: '%s' on '%s' at %s is %.0f cm from well ")
+                            TEXT("member '%s' (inside the %.0f cm radius) and its name contains 'Frack', but ")
+                            TEXT("meshActorOwner=%s nodeMeshType=%d -- NOT claimed by the mNodeMeshType gate. ")
+                            TEXT("This line is the measured cost of T2's gate: it names every piece the old ")
+                            TEXT("name test would have taken and this one does not. Said once per mesh."),
+                            *MeshName, *SMA->GetName(), *Loc.ToCompactString(), FMath::Sqrt(BestSq),
+                            *WellShort(Best->Path), WellMeshOwnerRadiusCm,
+                            MeshOwner ? TEXT("AFGNodeMeshActor") : TEXT("NONE"), static_cast<int32>(MeshType));
+                    }
+                }
+                continue;
             }
             // ns-review-h2b F-1 (A2): THE BYSTANDER CONTEST. Nearest well member is not enough -- ask
             // whether ANY ordinary resource node is nearer. No radius on this half deliberately: the
@@ -265,8 +343,44 @@ void ANodeShuffleSubsystem::RebuildWellMeshIndex()
                 const float D = FVector::DistSquared(B, Loc);
                 if (D < ByStSq) { ByStSq = D; }
             }
-            const bool bInRadius = Best != nullptr && BestSq < FMath::Square(WellMeshOwnerRadiusCm);
             const bool bBystanderWins = bInRadius && !(BestSq < ByStSq);
+            // Same shape and the same DISPLAY verbosity as NARROWED (F-4: a Verbose line is invisible at
+            // the runtime default, and this is the direction that can strand a node in a live save).
+            // Emitted whether or not A2 then vetoed the piece -- "newly admitted and vetoed" and "newly
+            // admitted and claimed" are different facts. Measured fields only, no stated reason for the
+            // name/type mismatch, because none was tested ([[lessons-log-asserted-a-cause]]).
+            if (bWidenedByType)
+            {
+                const FString WKey = FString::Printf(TEXT("widened|%s|%s"), *SMA->GetPathName(), *MeshName);
+                if (bDiag && !WellVisualCaptureLogged.Contains(WKey))
+                {
+                    WellVisualCaptureLogged.Add(WKey);
+                    // THE FIELD THAT CLASSIFIES THIS LINE. A widened piece back-linked to a FRACKING
+                    // node is T2 working; back-linked to nothing is the desert hypothesis; back-linked
+                    // to an ORDINARY node is an ns-review-h2b F-1 recurrence. Without this the reader
+                    // must go stand at the world location to tell them apart. mNodeActor is public
+                    // (FGResourceNodeBase.h:70) -- no access transformer, no new import.
+                    const AFGResourceNodeBase* WPaired = MeshOwner->mNodeActor.Get();
+                    const FString WPairedName = WPaired ? WPaired->GetName() : FString(TEXT("NONE"));
+                    UE_LOG(LogNodeShuffle, Display,
+                        TEXT("WELLH2B-INDEX spatial WIDENED: '%s' on '%s' at %s is %.0f cm from well ")
+                        TEXT("member '%s' (inside the %.0f cm radius); its name does NOT contain 'Frack' ")
+                        TEXT("but meshActorOwner=AFGNodeMeshActor nodeMeshType=%d, so the mNodeMeshType ")
+                        TEXT("gate admits it and the old name test did not. Nearest ordinary resource node ")
+                        TEXT("is %.0f cm away; bystanderWins=%d (1 = A2 refused it, 0 = this pass may claim, ")
+                        TEXT("capture and hide it). This mesh actor's own mNodeActor back-link is '%s' ")
+                        TEXT("(frackingOwner=%d; 'NONE' = unset, which is the expected state for an ")
+                        TEXT("unpaired well piece). A back-link to an ORDINARY node here is the ")
+                        TEXT("stop-ship case. This line is T2's gate cost in the direction that can ")
+                        TEXT("hide a node; NARROWED is the safe one. Said once per mesh."),
+                        *MeshName, *SMA->GetName(), *Loc.ToCompactString(), FMath::Sqrt(BestSq),
+                        *WellShort(Best->Path), WellMeshOwnerRadiusCm, static_cast<int32>(MeshType),
+                        ByStSq < TNumericLimits<float>::Max() ? FMath::Sqrt(ByStSq) : -1.0f,
+                        bBystanderWins ? 1 : 0,
+                        *WPairedName,
+                        (WPaired && IsFrackingActor(WPaired)) ? 1 : 0);
+                }
+            }
             if (bBystanderWins)
             {
                 ++RejectedBystander;
@@ -297,10 +411,13 @@ void ANodeShuffleSubsystem::RebuildWellMeshIndex()
                 if (bDiag)
                 {
                     UE_LOG(LogNodeShuffle, Verbose,
-                        TEXT("WELLH2B-INDEX spatial: '%s' on actor '%s' at %s -> member '%s' at %.0f cm ")
-                        TEXT("(runner-up %.0f cm, radius %.0f cm). Nearest-wins; a runner-up close to the ")
-                        TEXT("winner means the H0 spacing measurement no longer holds."),
-                        *MeshName, *SMA->GetName(), *Loc.ToCompactString(), *WellShort(Best->Path),
+                        TEXT("WELLH2B-INDEX spatial: '%s' (nodeMeshType=%d) on actor '%s' at %s -> member ")
+                        TEXT("'%s' at %.0f cm (runner-up %.0f cm, radius %.0f cm). Nearest-wins; a runner-up ")
+                        TEXT("close to the winner means the H0 spacing measurement no longer holds. ")
+                        TEXT("nodeMeshType is ENodeMeshType: 1=MT_Core 2=MT_Crack 3=MT_Satellite ")
+                        TEXT("4=MT_DesertCore 5=MT_DesertCrack 6=MT_DesertSatellite."),
+                        *MeshName, static_cast<int32>(MeshType), *SMA->GetName(), *Loc.ToCompactString(),
+                        *WellShort(Best->Path),
                         FMath::Sqrt(BestSq), NextSq < TNumericLimits<float>::Max() ? FMath::Sqrt(NextSq) : -1.0f,
                         WellMeshOwnerRadiusCm);
                 }
@@ -308,25 +425,43 @@ void ANodeShuffleSubsystem::RebuildWellMeshIndex()
             else if (bDiag && Best != nullptr)
             {
                 UE_LOG(LogNodeShuffle, Verbose,
-                    TEXT("WELLH2B-INDEX spatial REJECT: '%s' on '%s' at %s -- nearest well member '%s' is ")
-                    TEXT("%.0f cm away, outside the %.0f cm radius. If well pieces are being missed, THIS ")
-                    TEXT("line is where to see it."),
-                    *MeshName, *SMA->GetName(), *Loc.ToCompactString(), *WellShort(Best->Path),
-                    FMath::Sqrt(BestSq), WellMeshOwnerRadiusCm);
+                    TEXT("WELLH2B-INDEX spatial REJECT: '%s' (nodeMeshType=%d) on '%s' at %s -- nearest well ")
+                    TEXT("member '%s' is %.0f cm away, radius is %.0f cm, inRadius=%d. The type gate ")
+                    TEXT("accepted this piece and this pass did not claim it; the fields above are what ")
+                    TEXT("was measured, classify from them. A piece the TYPE gate rejected appears on a ")
+                    TEXT("NARROWED line instead, one it newly ADMITTED on a WIDENED line. If well pieces ")
+                    TEXT("are being missed, read all three."),
+                    *MeshName, static_cast<int32>(MeshType), *SMA->GetName(), *Loc.ToCompactString(),
+                    *WellShort(Best->Path), FMath::Sqrt(BestSq), WellMeshOwnerRadiusCm, bInRadius ? 1 : 0);
             }
         }
     }
 
     UE_LOG(LogNodeShuffle, Display,
         TEXT("WELLH2B-INDEX pass %d: %d vanilla well member(s) indexed, %d mesh piece(s) paired ")
-        TEXT("(%d own, %d via engine link, %d spatial), %d bystander reject(s), %d non-well node(s) in the ")
+        TEXT("(%d own, %d via engine link, %d spatial), %d bystander reject(s), ")
+        TEXT("%d narrowed-by-type of %d name-matching candidate(s) (%d of them in radius), ")
+        TEXT("%d widened-by-type of %d type-matching candidate(s) (%d of them in radius), ")
+        TEXT("%d non-well node(s) in the ")
         TEXT("contest, %d member(s) with at least one piece. The link route is the one design 2.4 assumed; ")
-        TEXT("a low 'via engine link' count next to a high 'spatial' count IS the suppression bug measured ")
-        TEXT("on the previous build (5 of 6 groups hid 0 mesh actors). 'bystander reject' is ns-review-h2b ")
-        TEXT("F-1's guard firing: a Frack-named mesh that was closer to an ORDINARY resource node than to ")
-        TEXT("any well member, left alone. A non-zero count is correct behaviour, not an error."),
+        TEXT("a low 'via engine link' count next to a high 'spatial' count is the shape of the ")
+        TEXT("suppression bug this index exists to make visible; compare the two numbers PRINTED ABOVE ")
+        TEXT("ON THIS LINE against each other and against 'member(s) with at least one piece' -- no ")
+        TEXT("constant from a previous build is cited here on purpose, because the one that used to be ")
+        TEXT("was not re-derivable from the log it named. 'bystander reject' is ns-review-h2b ")
+        TEXT("F-1's guard firing: a mesh that was closer to an ORDINARY resource node than to ")
+        TEXT("any well member, left alone. A non-zero count is correct behaviour, not an error. ")
+        TEXT("'narrowed-by-type' is T2's gate cost in the SAFE direction: in-radius pieces the old ")
+        TEXT("Contains(\"Frack\") test would have taken whose owner is not an AFGNodeMeshActor or whose ")
+        TEXT("mNodeMeshType is MT_Node, each named by a NARROWED line. 'widened-by-type' is the UNSAFE ")
+        TEXT("direction: in-radius pieces this gate takes and the name test would not, each named by a ")
+        TEXT("WIDENED line -- that is the direction that can hide an ordinary node's rock. READ EACH ")
+        TEXT("COUNT AGAINST ITS CANDIDATE DENOMINATOR: a zero next to a zero denominator means nothing ")
+        TEXT("was ever in range to be dropped or added on this save, which is not the same measurement ")
+        TEXT("as the two gates agreeing."),
         WellAuditPasses, WellMeshIndexMembers, WellMeshIndexPieces, ByOwn, ByLink, BySpatial,
-        RejectedBystander, Bystanders.Num(), WellMeshIndex.Num());
+        RejectedBystander, NarrowedByType, NameCandidates, NameCandidatesInRadius,
+        WidenedByType, TypeCandidates, TypeCandidatesInRadius, Bystanders.Num(), WellMeshIndex.Num());
 }
 
 // ------------------------------------------------------------------------------------------------

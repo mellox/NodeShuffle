@@ -167,8 +167,8 @@ void UNodeShuffleConfig::PostInitProperties()
     // and a player who accepted "my nitrogen well now makes water" has not thereby accepted "my
     // nitrogen well is now 4 km away". This one also carries a stage warning the other does not.
     AddBool(TEXT("RelocateResourceWells"), false,
-        TEXT("Relocate Resource Wells (INCOMPLETE - stage H2)"),
-        TEXT("OFF by default, and NOT yet finished — leave it off for normal play.\n\nWhen ON, a whole resource well (its core and every satellite) is MOVED to a new place as a rigid body: the satellites keep their exact spacing and pattern relative to the core, and the whole group is rotated together to find an orientation that fits the terrain. A well is moved all-or-nothing — if the full footprint cannot be placed, the well is left exactly where it was.\n\nWHAT IS NOT DONE YET (stage H2 of 2): a relocated well has NO VISUAL — the rocks, cracks and satellite meshes are not yet re-created at the new site, so the well is functional but INVISIBLE, and you will need the log line 'WELLH2-PLACED' to find it. Requires 'Shuffle Resource Wells' to be on as well, and applies at ROLL time — turn both on, then use 'Re-roll Layout'."));
+        TEXT("Relocate Resource Wells (EXPERIMENTAL)"),
+        TEXT("OFF by default and still experimental — leave it off if you want a quiet save.\n\nWhen ON, a whole resource well (its core and every satellite) is MOVED to a new place as a rigid body: the satellites keep their exact spacing and pattern relative to the core, and the whole group is rotated together to find an orientation that fits the terrain. A well is moved all-or-nothing — if the full footprint cannot be placed, the well is left exactly where it was.\n\nA relocated well is DRESSED AND BUILDABLE: its rocks and cracks are re-created at the new site, and a Resource Well Pressurizer and its Extractors snap to it and produce.\n\nKNOWN LIMITS:\n- A well cannot actually move until you travel to its destination and the terrain loads. If you build on one while it is still waiting, you can end up with two wells — we never hide a well you have built on (see the mod's README).\n- Re-rolling does NOT move a well that has already moved — it keeps its new spot. Only wells that have not moved yet are dealt a new destination.\n- A well moves with the satellites that had loaded when it was enrolled. If more of its satellites load later, they are left out of the moved well permanently — the well is smaller, and produces less, until you reload the save.\n- A relocated well claims a large build area, and that has not been tested against ordinary resource nodes closer than about 15 m. If a Miner will not place on an ordinary node right beside a relocated well, please report it — that case is untested. (For a Miner that will not place anywhere near a well, see the note at the top of this panel.)\n- Desert-biome wells are unverified and may arrive without their rock graphics.\n\nRequires 'Shuffle Resource Wells' to be on as well, and applies at ROLL time — turn both on, then use 'Re-roll Layout'."));
 
     // ns-h1b-notice, anti-nag rule 7: the opt-out. Default TRUE deliberately -- see the struct comment.
     AddBool(TEXT("ShowCompatibilityNotices"), true,
@@ -179,7 +179,10 @@ void UNodeShuffleConfig::PostInitProperties()
 
     AddBool(TEXT("EnableExperimentalFeatures"), false,
         TEXT("Enable Experimental Features"),
-        TEXT("THIS VERSION HAS NO EXPERIMENTAL FEATURES, so this option currently does nothing — leave it off. (Cave node placement graduated to always-on: it fixes a real issue where the shuffle emptied caves and never put nodes back in them.)"));
+        // TODO(2026-08-08, pre-release): this tooltip says nothing is gated by this flag. Both
+        // TODO(pre-release) sites in NodeShuffleAutoAllowExtractors.cpp plan to gate on it -- update
+        // this string in the same commit that does.
+        TEXT("A separate developer gate — it is NOT what the word EXPERIMENTAL means in other options' names. Nothing in this version is gated by this switch, so leaving it off changes nothing. A feature marked EXPERIMENTAL elsewhere in this list carries its own toggle and is not controlled from here. (Cave node placement graduated to always-on: it fixes a real issue where the shuffle emptied caves and never put nodes back in them.)"));
 
     RootSection = Root;
 }

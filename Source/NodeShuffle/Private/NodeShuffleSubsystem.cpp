@@ -7279,6 +7279,9 @@ void ANodeShuffleSubsystem::RebuildMeshActorCache()
     //    us read the private soft pointer directly. Cast the target to AFGNodeMeshActor;
     //    only that class exposes OverrideMeshAndMaterials. Skip our own transient spawns
     //    (they are cached at spawn time) and fracking (left vanilla).
+    // MESHTYPE-CENSUS coverage denominator: how many ordinary nodes were streamed in at all, so the
+    // census below can print "N of M paired" rather than a bare N whose population is unknown.
+    int32 OrdinaryNodesSeen = 0;
     for (TActorIterator<AFGResourceNode> It(GetWorld()); It; ++It)
     {
         AFGResourceNode* Node = *It;
@@ -7286,6 +7289,7 @@ void ANodeShuffleSubsystem::RebuildMeshActorCache()
         {
             continue;
         }
+        ++OrdinaryNodesSeen;
         if (MeshActorCache.Contains(Node))
         {
             continue; // already paired via the back-link
@@ -7310,6 +7314,90 @@ void ANodeShuffleSubsystem::RebuildMeshActorCache()
         UE_LOG(LogNodeShuffle, Verbose,
             TEXT("Mesh-actor cache: %d paired (%d via mesh-actor back-link, %d via node->mMeshActor forward link)"),
             MeshActorCache.Num(), FromBackLink, FromForwardLink);
+    }
+
+    // MESHTYPE-CENSUS (cold review 2026-08-08, Alternative F). THE BOOT-TIME MEASUREMENT OF THE ONE
+    // ASSUMPTION T2's WELL-PIECE GATE RESTS ON. That gate (NodeShuffleWellVisuals.cpp, route 3) treats
+    // "owner casts to AFGNodeMeshActor AND mNodeMeshType != MT_Node" as "this is well geometry, not an
+    // ordinary node's rock". The cast half protects nothing -- AFGNodeMeshActor carries ALL node meshes
+    // (FGResourceNodeBase.h:59), ordinary ones included -- so the whole guard is the enum value, and that
+    // value is EditInstanceOnly level data baked into cooked assets that no static read can reach.
+    // Previously it could only be checked by walking the map and looking at nodes. This sweep ALREADY
+    // visits every AFGNodeMeshActor, so the histogram is nearly free. SCOPE, STATED HONESTLY: a
+    // TActorIterator sees only STREAMED-IN actors, so one line is a snapshot of the player's
+    // neighbourhood, NOT a world census -- read the series across a session. It runs AFTER the forward
+    // sweep above, so back-links that sweep repaired are counted as paired (and are reported separately,
+    // because they are OUR write, not level authoring).
+    // Reported, never explained: this says what was counted, not why any value is what it is.
+    if (FNodeShuffleModule::AreDiagnosticsEnabled())
+    {
+        int32 Total = 0, OrdinaryMTNode = 0, OrdinaryNonNode = 0, FrackMTNode = 0, FrackNonNode = 0;
+        int32 Unpaired = 0, UnpairedNonNode = 0;
+        int32 ByType[7] = { 0, 0, 0, 0, 0, 0, 0 };
+        for (TActorIterator<AFGNodeMeshActor> It(GetWorld()); It; ++It)
+        {
+            AFGNodeMeshActor* MA = *It;
+            if (!IsValid(MA)) { continue; }
+            ++Total;
+            const int32 TypeIdx = static_cast<int32>(MA->mNodeMeshType);
+            if (TypeIdx >= 0 && TypeIdx < 7) { ++ByType[TypeIdx]; }
+            const bool bNonNode = MA->mNodeMeshType != ENodeMeshType::MT_Node;
+            const AFGResourceNodeBase* Paired = MA->mNodeActor.Get();
+            if (!Paired)
+            {
+                ++Unpaired;
+                if (bNonNode) { ++UnpairedNonNode; }
+            }
+            else if (IsFrackingActor(Paired))
+            {
+                if (bNonNode) { ++FrackNonNode; } else { ++FrackMTNode; }
+            }
+            else
+            {
+                if (bNonNode) { ++OrdinaryNonNode; } else { ++OrdinaryMTNode; }
+            }
+        }
+        // The three buckets partition the measured total, so every count here carries its own
+        // denominator and no zero can be read without one (TECH-DEBT T5). Re-emitted only when the
+        // measurement itself changes, so a repeating apply pass does not spam an unchanged census.
+        const FString Census = FString::Printf(
+            TEXT("meshActors=%d STREAMED-IN (not world) | pairedToOrdinaryNode: %d MT_Node + %d ")
+            TEXT("non-MT_Node | pairedToFracking: %d MT_Node + %d non-MT_Node | unpaired(mNodeActor ")
+            TEXT("unset): %d, of which %d non-MT_Node | coverage: %d of %d streamed ordinary node(s) ")
+            TEXT("paired (%d engine back-link, %d back-links repaired by THIS pass) | mNodeMeshType ")
+            TEXT("histogram 0..6 = %d/%d/%d/%d/%d/%d/%d"),
+            Total, OrdinaryMTNode, OrdinaryNonNode, FrackMTNode, FrackNonNode, Unpaired, UnpairedNonNode,
+            OrdinaryMTNode + OrdinaryNonNode, OrdinaryNodesSeen, FromBackLink, FromForwardLink,
+            ByType[0], ByType[1], ByType[2], ByType[3], ByType[4], ByType[5], ByType[6]);
+        // Key on the DECISION-RELEVANT subset, not the whole payload. Total, unpaired and all seven
+        // histogram bins move whenever any node mesh actor streams in or out, so keying on the full
+        // string re-prints a ~900-char Display line on nearly every apply pass while nothing the
+        // reader is asked to act on has changed. The four numbers below are what R-1 reads.
+        const FString CensusKey = FString::Printf(
+            TEXT("meshtypecensus|%d|%d|%d|%d"),
+            OrdinaryMTNode, OrdinaryNonNode, FrackNonNode, UnpairedNonNode);
+        if (!WellVisualCaptureLogged.Contains(CensusKey))
+        {
+            WellVisualCaptureLogged.Add(CensusKey);
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("MESHTYPE-CENSUS (wellAuditPasses=%d as of the START of this apply pass; the ")
+                TEXT("WELLH2B-INDEX line for the SAME tick reads pass %d): %s. ENodeMeshType: ")
+                TEXT("0=MT_Node 1=MT_Core 2=MT_Crack ")
+                TEXT("3=MT_Satellite 4=MT_DesertCore 5=MT_DesertCrack 6=MT_DesertSatellite. 'pairedTo*' ")
+                TEXT("reads this actor's mNodeActor back-link after this pass repaired it from the node ")
+                TEXT("side; 'unpaired' means that link was still unset when counted, NOT that the actor ")
+                TEXT("belongs to nothing. THE LOAD-BEARING NUMBER IS 'pairedToOrdinaryNode ... ")
+                TEXT("non-MT_Node': T2's well-piece gate in NodeShuffleWellVisuals.cpp is only correct ")
+                TEXT("while it is 0. READ IT AGAINST 'coverage': a 0 over a small coverage fraction ")
+                TEXT("says nothing about the nodes that were not paired. 'unpaired' is NOT a pass or a ")
+                TEXT("fail -- it holds every fracking well's own crack geometry (never paired here) ")
+                TEXT("mixed with any node whose mMeshActor link did not resolve, and this line cannot ")
+                TEXT("tell them apart. Counts cover STREAMED-IN actors only, so this number changes as ")
+                TEXT("you travel; read the SERIES of these lines across a session, not one line. ")
+                TEXT("'repaired by THIS pass' is pairing THIS MOD created seconds ago, not level ")
+                TEXT("authoring. Re-printed when the numbers change."),
+                WellAuditPasses, WellAuditPasses + 1, *Census);
+        }
     }
 }
 

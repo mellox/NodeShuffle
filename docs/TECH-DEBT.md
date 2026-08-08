@@ -75,17 +75,41 @@ original.
 
 ## P1 — player-visible, fix before more people use the feature
 
-### T1. The Relocate Resource Wells tooltip states the opposite of what the feature does
-`NodeShuffleConfig.cpp:171` still describes a relocated well as *"functional but INVISIBLE"*.
-That was true before H2b; relocated wells are now dressed and visible. **This is in the
-settings UI**, so it is the copy most likely to reach a player, and it currently tells them
-a working feature is broken.
+### ~~T1. The Relocate Resource Wells tooltip states the opposite of what the feature does~~ — FIXED 2026-08-08
+The settings UI described a relocated well as *"functional but INVISIBLE"* and labelled the
+toggle *"(INCOMPLETE - stage H2)"*. True before H2b; false since. Now reads EXPERIMENTAL, states
+that a relocated well is dressed and buildable, and names the limits a player can actually hit:
+presence-gated move ⇒ possible duplicate (D1); re-roll leaves an already-moved well where it is;
+a late-loading satellite is lost from a moved well (T15); untested build-area overlap with nearby
+ordinary nodes (T3); unverified desert meshes (T2).
 
-Twin: `NodeShuffleWellSpawn.cpp:393` carries the same stale claim in a log line (lower
-priority — log text, not UI).
+> **THIS FIX TOOK THREE DRAFTS AND EACH ONE FAILED DIFFERENTLY. That is the entry.**
+> 1. **Draft 1 under-disclosed.** It listed two limits and its own entry here claimed that was all of
+>    them. Both listed were cosmetic or in the player's favour; both omitted were *functional* — a
+>    disclosure asymmetry that reads as reassurance. The same review caught that the new
+>    `(EXPERIMENTAL)` label contradicted the `EnableExperimentalFeatures` tooltip elsewhere in the
+>    same panel. **A grep for the OLD claim cannot find a contradiction the NEW words create** — so
+>    after fixing stale copy, re-read the whole panel as a player sees it, not just the diff.
+> 2. **Draft 2 over-corrected into a NEW false claim** — it asserted a re-roll limitation that has no
+>    code path (see T15), sourced from a review finding that was itself an unverified premise.
+>    **Over-correcting a disclosure gap is the same defect class as the gap.** Verify a new limit
+>    against the code before writing it, exactly the way you verify a removed one. Draft 2 also
+>    asserted a *cause* for a Miner refusing to place — unmeasured, and it displaced a working remedy
+>    the same panel already gives for that symptom. Player copy is bound by the
+>    no-asserted-cause rule too ([[lessons-log-asserted-a-cause]]), for a sharper reason than a log
+>    is: the player acts on the wrong remedy.
+> 3. **Draft 3 is the reviewer's wording, applied verbatim.**
+>
+> **The pattern across all three rounds, which is why the workspace rule exists:** every edit a
+> reviewer specified *verbatim* landed clean; **every edit authored in response to a finding
+> introduced a defect.** Three for three, in a change that contains no logic at all.
 
-*Text-only. No rebuild logic, no risk. Deliberately not fixed during testing so the
-deployed binary would not drift from the reviewed one.*
+> **The entry itself was wrong, and that is the reusable part.** It listed two sites; there were
+> **three** — `NodeShuffleConfig.cpp:171` (UI), `NodeShuffleWellSpawn.cpp:393` (log), and
+> `NodeShuffleConfig.h:120` (the header comment, which is where the other two were copied from).
+> A stale claim propagates from the comment that justifies it, so **sweep by grepping the claim,
+> not by working the list**. The log line's stale NOTE was deleted rather than re-worded: it was
+> asserting a design fact, which is not what a diagnostic is for ([[lessons-log-asserted-a-cause]]).
 
 ### T12. A gas resource is budgeted a completability floor and then dropped from every deck — it can be erased from the map
 **Measured 2026-08-08 with an arithmetic proof, from the user's own logs**
@@ -142,6 +166,37 @@ happens. That is diagnostics, not a fix.
 > **Explicitly not a fix: changing auto-allow.** When the resource really is absent, `SKIP`
 > is the correct answer and must stay.
 
+### T15. A satellite that loads AFTER its well was relocated is hidden at the origin and refused at the destination
+**This entry replaces a first draft that was FALSE, and the falsehood is more instructive than the
+bug.** The first draft claimed re-rolling makes an already-relocated well vanish from the world
+until restart, sourced from H2b-review's "F-3, accepted limitation". A re-review disproved it
+statically: `SuppressVanillaWellGroup` has two call sites (`NodeShuffleWellRelocateApply.cpp:473`,
+`:505`), both requiring `bGroupPlaced == true`; `bGroupPlaced` is cleared at two sites and **both
+are unreachable for a placed group** — `NodeShuffleWellRelocateRoll.cpp:352` sits below the guard at
+`:152` (whose comment reads *"a player who has walked to a relocated well should not find it
+gone"*), and `NodeShuffleWellEscalate.cpp:235` is reachable only through `TryPlaceWellGroup`, called
+solely inside `if (!E.bGroupPlaced)`. **Invariant: a suppressed well origin always has a live,
+maintained relocated group.** F-3 was an argument from *absence of a restore path* — true — plus an
+unverified premise that a re-roll un-relocates a placed well. No log records the vanish; the test
+script's "step 10 EXPECTED TO FAIL" is a prediction that was never run.
+
+**The real, reachable gap it was standing in front of:** a well is enrolled with the satellites
+loaded at that moment (`NodeShuffleWellRoll.cpp:176-177`). A satellite that streams in later is
+appended to the entry by the merge, then **refused at the destination**
+(`NodeShuffleWellSpawn.cpp:201-205`) while still being **hidden at the origin**
+(`NodeShuffleWellRelocateApply.cpp:332-335`, which applies no `bCaptured` filter). It has no un-hide
+path. The well is permanently smaller — and produces less — than its vanilla counterpart.
+
+Player-facing as of the T1 copy fix, which now states this instead of the false claim.
+
+> **Pre-scoped fix: H2b-review B1, a per-group hidden-piece ledger**, so suppression can be undone
+> per piece rather than only per placed group. **Verify the absence before building it** — "there is
+> no un-hide path" rests on a reviewer's read, and this project has been burned by *"I could not
+> find a check"* being quoted forward as *"there is no check"*. That hedge was in the first draft
+> too; the headline violated it anyway, which is why it is repeated here.
+>
+> **"until you reload the save" is still ASSUMED** — the recovery half has not been observed.
+
 ---
 
 ## P2 — real unknowns, cheap to close
@@ -193,6 +248,43 @@ boxes provably intersect in the population H0 measured.
 **Not observed** — the well used for the 2026-08-08 test sat on a plateau with no ordinary
 nodes in range. **Measurement:** a Miner Mk1 on an ordinary node within ~15 m of a relocated
 well member must still snap.
+
+> **Why it has never been observed, found 2026-08-08: nothing measures it.** The 1400 cm figure
+> came from H0's separate analysis, not from a log line. Grepping the live `FactoryGame.log` for a
+> snap-box/nearest-neighbour diagnostic returns **nothing** — there is no `WELLH2B-SNAPBOX` line and
+> no "nearest non-well node" line anywhere. So this item cannot be closed by playing; it can only be
+> closed by *stumbling onto* the geometry and noticing a miner that will not place. That is the
+> P3 failure class one section down, in its purest form: **an item whose test is "get lucky".**
+>
+> **Pre-scoped fix — instrument before touching behaviour** (same doctrine as T4). In
+> `EnsureWellMemberSnapBox` (`NodeShuffleWellVisualsApply.cpp:153`), at box-creation time, log the
+> member, its final box extent, the distance to the nearest **non-same-well** resource node, and
+> whether the two boxes provably intersect (`extent + 650 > distance`). The contest sweep in
+> `NodeShuffleWellVisuals.cpp` already builds exactly the bystander-location array this needs, so
+> the data is in hand. Then the **existing save answers the question on the next load** with no
+> hunting. Report only the measurement — never a cause ([[lessons-log-asserted-a-cause]]).
+>
+> **The 14 relocated destinations in the user's current save**, extracted from `FactoryGame.log`
+> 2026-08-08, so a manual check does not have to start by finding the wells:
+>
+> | resource | core | destination |
+> |---|---|---|
+> | Gas_Chlor | `BP_FrackingCore10` | `X=138900.53, Y=240105.70, Z=-3828.89` |
+> | Gas_Chlor | `BP_FrackingCore17` | `X=-44403.44, Y=236471.64, Z=-3874.49` |
+> | LiquidOil | `BP_FrackingCore15` | `X=-20280.56, Y=60895.37, Z=22579.53` |
+> | LiquidOil | `BP_FrackingCore3` | `X=-144296.27, Y=-110723.30, Z=2164.50` |
+> | LiquidOil | `BaseNode_FrackingCore2_1` | `X=-197300.99, Y=-108281.73, Z=597.63` |
+> | NitrogenGas | `BP_FrackingCore11` | `X=102207.83, Y=160609.81, Z=1807.17` |
+> | NitrogenGas | `BP_FrackingCore13` | `X=149586.85, Y=263255.37, Z=-767.00` |
+> | NitrogenGas | `BP_FrackingCore2` | `X=-22410.94, Y=-86941.46, Z=3089.27` |
+> | NitrogenGas | `BP_FrackingCore9` | `X=281997.30, Y=-31236.98, Z=9806.94` |
+> | Water | `BP_FrackingCore12` | `X=-148481.47, Y=42995.02, Z=23669.52` |
+> | Water | `BP_FrackingCore18` | `X=124256.32, Y=142012.11, Z=8656.73` |
+> | Water | `BP_FrackingCore5` | `X=-6358.01, Y=-80721.03, Z=13624.39` |
+> | Water | `BP_FrackingCore6_UAID_...1961476789` | `X=-159925.11, Y=113053.53, Z=7629.70` |
+> | Water | `BaseNode_FrackingCore1_0` | `X=77127.81, Y=46452.60, Z=11494.30` |
+>
+> ⚠ These are **destinations dealt in that save's roll**, read from one log. A re-roll re-deals them.
 
 ---
 
@@ -247,13 +339,41 @@ and self-resolving.
 > **Pre-scoped fix:** instrument mesh-hide latency before attempting any behaviour change.
 > There is nothing to fix until there is something to measure.
 
-### T5. `MT_Crack` capture counter is structurally blind
-`(0 of them MT_Crack)` on nearly every `WELLH2B-CAPTURE` line is a **counter** defect, not a
-capture failure: `CrackPieces` only increments inside `Cast<AFGNodeMeshActor>(C->GetOwner())`,
-so the "own" and "spatial" routes — nearly every capture — can never be counted. Only
-route-2 groups ever report a non-zero.
+### ~~T5. `MT_Crack` capture counter is structurally blind~~ — FALSIFIED 2026-08-08
+**This entry was wrong, and it was wrong in a way that nearly cost a packet.** It claimed
+`CrackPieces` "can never be counted" on the own and spatial routes, so only route-2 groups report a
+non-zero. That claim was used as evidence that `mNodeMeshType` is unreachable on the spatial route,
+which would have sunk T2's pre-scoped fix before it was tried.
 
-Fix belongs in `NodeShuffleWellVisuals.cpp`, currently at 497 lines (see T7).
+**Measured against `FactoryGame-backup-2026.08.08-15.53.04.log`, and the arithmetic is decisive
+without needing any per-group route split:**
+
+| group | pieces | MT_Crack |
+|---|---|---|
+| `BP_FrackingCore15` | 18 | **10** |
+| `BP_FrackingCore17` | 17 | **9** |
+| `BaseNode_FrackingCore1_0` / `2_1` / `_2` | 8 + 5 + 7 = **20** | 0 |
+| every other group | 0 | 0 |
+
+Per-pass route totals are `(20 own, 17 via engine link, 18 spatial)`. The three `BaseNode_` groups
+hold exactly 20 pieces and report 0 cracks — matching `own` exactly — so **all 19 observed MT_Crack
+pieces belong to the two groups fed only by link + spatial**. The link route can supply at most
+**17**. `19 > 17`, so **at least two MT_Crack pieces were counted on the SPATIAL route**, and
+`CrackPieces` increments only where `Cast<AFGNodeMeshActor>(C->GetOwner())` is non-null. The spatial
+route therefore *does* reach an `AFGNodeMeshActor`. Confirmed independently of the T2 packet, which
+reached the same conclusion by a different route.
+
+> **How the entry went wrong, which is the reusable part.** `(0 of them MT_Crack)` really did appear
+> "on nearly every line" — but on lines where **`pieces=0`**. A group that captured nothing reports
+> zero cracks for the obvious reason. The observation was real; the inference that it revealed a
+> *counter* defect never controlled for the denominator. **A ratio read off lines whose numerator is
+> structurally zero is not evidence of anything.** Cousin of [[lessons-log-asserted-a-cause]]: not a
+> log asserting a cause, but a *reader* inferring one from a statistic the log never supported.
+>
+> **What remains genuinely open is narrower:** the *own* route has never been observed producing a
+> non-zero MT_Crack — but all 20 of its pieces are `BaseNode_` wells, which may simply have no crack
+> meshes. Route 1's countability is **unproven in both directions**, not blind. Do not restate it as
+> a defect without an own-route group that has cracks.
 
 ### T6. The spawn-time registry ships unvalidated
 `VERDICT=OURS-PROVEN` is unreachable by any scripted test: pass B runs once per session at

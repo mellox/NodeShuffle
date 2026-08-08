@@ -383,16 +383,15 @@ bool ANodeShuffleSubsystem::SpawnWellGroup(FNodeShuffleWellEntry& E, UClass* Res
     // ns-review-h4 F5: the throttle is keyed on (CorePath, PlacedCoreLocation), NOT on CorePath alone.
     // Keying on the path meant the FIRST call won -- including an INCOMPLETE one -- and every later
     // move of that group was silent for the rest of the roll, so the only coordinate a tester ever saw
-    // could be one the group had since been despawned from. With no visuals shipped, that sends them
-    // to empty ground and there is nothing there to reveal the mistake.
+    // could be one the group had since been despawned from -- sending a tester to empty ground with
+    // nothing there to reveal the mistake.
     const FString PlacedKey = E.CorePath + TEXT("@") + E.PlacedCoreLocation.ToCompactString();
     if (!WellRelocLogged.Contains(PlacedKey))
     {
         WellRelocLogged.Add(PlacedKey);
         UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH2-PLACED core='%s' res='%s' yaw=%.1f: vanilla %s -> RELOCATED TO %s (group %s this ")
-            TEXT("pass). NOTE: stage H2 ships NO VISUAL for a relocated well (design §2.4) -- fly to that ")
-            TEXT("coordinate to test it."),
+            TEXT("pass)."),
             *WellShort(E.CorePath), *WellShort(ResourceClass->GetPathName()), E.GroupYawDeg,
             *E.VanillaCoreLocation.ToCompactString(), *E.PlacedCoreLocation.ToCompactString(),
             bComplete ? TEXT("COMPLETE") : TEXT("INCOMPLETE -- retried next pass, nothing suppressed yet"));

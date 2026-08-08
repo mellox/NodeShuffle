@@ -3,12 +3,12 @@
 # Regenerate / diff: see tools\capture-imports-baseline.ps1, which also explains why this exists
 # alongside check_imports.ps1 (that one asks 'does every import RESOLVE?'; this one records WHICH).
 #
-# CAPTURED AT MARKER : 2026-07-31-h2-1
-# CAPTURED ON        : 2026-07-31
+# CAPTURED AT MARKER : 2026-08-08-t1t2-1
+# CAPTURED ON        : 2026-08-08
 # SOURCE DLL         : C:\Program Files (x86)\Steam\steamapps\common\Satisfactory\FactoryGame\Mods\NodeShuffle\Binaries\Win64\FactoryGameSteam-NodeShuffle-Win64-Shipping.dll
 #
-# TOTAL IMPORTS                  : 810
-# ... of which FactoryGameSteam-* : 760   <-- THIS is the number check_imports.ps1 reports.
+# TOTAL IMPORTS                  : 815
+# ... of which FactoryGameSteam-* : 765   <-- THIS is the number check_imports.ps1 reports.
 #     The remainder are CRT / KERNEL32 imports, which check_imports.ps1 does not verify (they are
 #     guaranteed by the platform, not by the game build) but which are recorded here anyway: a new
 #     one is still a new entry point and should be noticed rather than silently absorbed.
@@ -18,9 +18,9 @@
 #   api-ms-win-crt-math-l1-1-0.dll                    4
 #   api-ms-win-crt-runtime-l1-1-0.dll                11
 #   api-ms-win-crt-string-l1-1-0.dll                  2
-#   FactoryGameSteam-Core-Win64-Shipping.dll        148
-#   FactoryGameSteam-CoreUObject-Win64-Shipping.dll  100
-#   FactoryGameSteam-Engine-Win64-Shipping.dll      316
+#   FactoryGameSteam-Core-Win64-Shipping.dll        151
+#   FactoryGameSteam-CoreUObject-Win64-Shipping.dll  101
+#   FactoryGameSteam-Engine-Win64-Shipping.dll      317
 #   FactoryGameSteam-FactoryGame-Win64-Shipping.dll  117
 #   FactoryGameSteam-Json-Win64-Shipping.dll         34
 #   FactoryGameSteam-SML-Win64-Shipping.dll          45
@@ -128,8 +128,10 @@ FactoryGameSteam-Core-Win64-Shipping.dll	?GetConvertedLength@Private@Core@UE@@YA
 FactoryGameSteam-Core-Win64-Shipping.dll	?GetCustomVersions@FArchiveState@@UEBAAEBVFCustomVersionContainer@@XZ
 FactoryGameSteam-Core-Win64-Shipping.dll	?GetDestructionSentinelStackTls@FMRSWRecursiveAccessDetector@@CAAEAV?$TArray@PEAUFDestructionSentinel@FMRSWRecursiveAccessDetector@@V?$TSizedInlineAllocator@$03$0CA@V?$TSizedDefaultAllocator@$0CA@@@@@@@XZ
 FactoryGameSteam-Core-Win64-Shipping.dll	?GetReadersTls@FMRSWRecursiveAccessDetector@@CAAEAV?$TArray@UFReaderNum@FMRSWRecursiveAccessDetector@@V?$TSizedInlineAllocator@$03$0CA@V?$TSizedDefaultAllocator@$0CA@@@@@@@XZ
+FactoryGameSteam-Core-Win64-Shipping.dll	?GetRelativeTransform@?$TTransform@N@Math@UE@@QEBA?AU123@AEBU123@@Z
 FactoryGameSteam-Core-Win64-Shipping.dll	?GetTypeHash@@YAIUFNameEntryId@@@Z
 FactoryGameSteam-Core-Win64-Shipping.dll	?Identity@?$TQuat@N@Math@UE@@2U123@B
+FactoryGameSteam-Core-Win64-Shipping.dll	?Identity@?$TTransform@N@Math@UE@@2U123@B
 FactoryGameSteam-Core-Win64-Shipping.dll	?InlineCombineSurrogates@StringConv@@YAXAEAVFString@@@Z
 FactoryGameSteam-Core-Win64-Shipping.dll	?IsEmpty@FText@@QEBA_NXZ
 FactoryGameSteam-Core-Win64-Shipping.dll	?IsInAsyncLoadingThread@@3P6A_NXZEA
@@ -146,6 +148,7 @@ FactoryGameSteam-Core-Win64-Shipping.dll	?Malloc@FMemory@@SAPEAX_KI@Z
 FactoryGameSteam-Core-Win64-Shipping.dll	?Memcpy@FGenericPlatformString@@CAPEAXPEAXPEBX_K@Z
 FactoryGameSteam-Core-Win64-Shipping.dll	?NewGuid@FGuid@@SA?AU1@XZ
 FactoryGameSteam-Core-Win64-Shipping.dll	?Now@FDateTime@@SA?AU1@XZ
+FactoryGameSteam-Core-Win64-Shipping.dll	?OneVector@?$TVector@N@Math@UE@@2U123@B
 FactoryGameSteam-Core-Win64-Shipping.dll	?OnInvalidArrayNum@Private@Core@UE@@YAX_K@Z
 FactoryGameSteam-Core-Win64-Shipping.dll	?OnInvalidSetNum@Private@Core@UE@@YAX_K@Z
 FactoryGameSteam-Core-Win64-Shipping.dll	?Parse@FGuid@@SA_NAEBVFString@@AEAU1@@Z
@@ -234,6 +237,7 @@ FactoryGameSteam-CoreUObject-Win64-Shipping.dll	?GetFullName@UObjectBaseUtility@
 FactoryGameSteam-CoreUObject-Win64-Shipping.dll	?GetInterfaceAddress@UObjectBaseUtility@@QEAAPEAXPEAVUClass@@@Z
 FactoryGameSteam-CoreUObject-Win64-Shipping.dll	?GetLifetimeReplicatedProps@UObject@@UEBAXAEAV?$TArray@VFLifetimeProperty@@V?$TSizedDefaultAllocator@$0CA@@@@@@Z
 FactoryGameSteam-CoreUObject-Win64-Shipping.dll	?GetObjectsOfClass@@YAXPEBVUClass@@AEAV?$TArray@PEAVUObject@@V?$TSizedDefaultAllocator@$0CA@@@@@_NW4EObjectFlags@@W4EInternalObjectFlags@@@Z
+FactoryGameSteam-CoreUObject-Win64-Shipping.dll	?GetOutermost@UObjectBaseUtility@@QEBAPEAVUPackage@@XZ
 FactoryGameSteam-CoreUObject-Win64-Shipping.dll	?GetPathName@UObjectBaseUtility@@QEBA?AVFString@@PEBVUObject@@@Z
 FactoryGameSteam-CoreUObject-Win64-Shipping.dll	?GetPreloadDependencies@UObject@@UEAAXAEAV?$TArray@PEAVUObject@@V?$TSizedDefaultAllocator@$0CA@@@@@@Z
 FactoryGameSteam-CoreUObject-Win64-Shipping.dll	?GetPrimaryAssetId@UObject@@UEBA?AUFPrimaryAssetId@@XZ
@@ -601,6 +605,7 @@ FactoryGameSteam-Engine-Win64-Shipping.dll	?UnregisterAllComponents@AActor@@UEAA
 FactoryGameSteam-Engine-Win64-Shipping.dll	?ValidateGeneratedRepEnums@AActor@@UEBAXAEBV?$TArray@UFRepRecord@@V?$TSizedDefaultAllocator@$0CA@@@@@@Z
 FactoryGameSteam-Engine-Win64-Shipping.dll	?ValidateGeneratedRepEnums@UActorComponent@@UEBAXAEBV?$TArray@UFRepRecord@@V?$TSizedDefaultAllocator@$0CA@@@@@@Z
 FactoryGameSteam-Engine-Win64-Shipping.dll	?Z_Construct_UClass_AActor_NoRegister@@YAPEAVUClass@@XZ
+FactoryGameSteam-Engine-Win64-Shipping.dll	?Z_Construct_UClass_AStaticMeshActor_NoRegister@@YAPEAVUClass@@XZ
 FactoryGameSteam-Engine-Win64-Shipping.dll	?Z_Construct_UClass_AWorldSettings_NoRegister@@YAPEAVUClass@@XZ
 FactoryGameSteam-Engine-Win64-Shipping.dll	?Z_Construct_UClass_UActorComponent_NoRegister@@YAPEAVUClass@@XZ
 FactoryGameSteam-Engine-Win64-Shipping.dll	?Z_Construct_UClass_UActorComponent@@YAPEAVUClass@@XZ
