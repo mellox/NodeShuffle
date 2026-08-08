@@ -248,7 +248,30 @@ the population visible per roll.
 > would cement the false streaming model by looking like a fix) and building a node manifest
 > (strictly worse — it *loses* exactly this population).
 
-### T3. Snap-box overlap — 8 geometric overlaps measured, **HAZARD STATUS UNKNOWN (instrument defect)**
+### T3. Snap-box overlap — **PARKED 2026-08-08 by the mod author. Watch-only; do not schedule work.**
+
+**DECISION (author, 2026-08-08):** *"I don't think we should worry about well overlap a node. We can log
+as a possibility for tech debt to explore more or if I run across it."*
+
+**Do not open a packet for this.** It is now a **watch item**: if a Miner is ever refused on a visible,
+mineable node beside a relocated well in ordinary play, that observation reopens it — and the
+instrumentation to diagnose it already shipped (`2026-08-08-t1t2-2`), so the evidence will be in the log
+when it happens. Everything below is retained as the record of what was measured and what the numbers
+are worth.
+
+**Justification for parking, so it is not re-escalated on the raw numbers:** the 8 measured overlaps
+resolve so far to **hidden originals, never an active node** (see the correction below), and a hidden
+node cannot be built on regardless of any box. There is no confirmed hazard, only a confirmed
+*instrument* defect.
+
+> **One cheap thing left, opportunistic only:** the `IsHidden()` filter described below should be added
+> **whenever `NodeShuffleWellVisuals.cpp`'s sweep is next open anyway** (the T7 split packet touches
+> exactly that loop) — not as work in its own right. Reason: the instrument as shipped will keep
+> printing overlap counts dominated by hidden nodes, and a future reader who greps `provableOverlap=1`
+> without reading this entry will re-panic. Two lines, riding an edit already happening. **If it does
+> not fit that packet cleanly, leave it and rely on this entry.**
+
+### T3 (evidence as measured 2026-08-08 — hazard status: none confirmed)
 
 > ## ⚠ CORRECTION, same day, hours after the entry below was written and committed.
 > **The user asked: "are you sure the node is an active one and not a hidden vanilla?" It is not sure,
