@@ -248,7 +248,41 @@ the population visible per roll.
 > would cement the false streaming model by looking like a fix) and building a node manifest
 > (strictly worse — it *loses* exactly this population).
 
-### T3. Snap-box overlap — **OBSERVED 2026-08-08, 8 cases in a single load**
+### T3. Snap-box overlap — 8 geometric overlaps measured, **HAZARD STATUS UNKNOWN (instrument defect)**
+
+> ## ⚠ CORRECTION, same day, hours after the entry below was written and committed.
+> **The user asked: "are you sure the node is an active one and not a hidden vanilla?" It is not sure,
+> and the instrument cannot tell.** `RebuildWellMeshIndex`'s sweep
+> (`NodeShuffleWellVisuals.cpp`) filters only `!IsValid(N)` and `Ours.Contains(N)`:
+> ```cpp
+> if (Cast<AFGResourceNode>(N)) { UseBoxNodes.Add(N->GetActorLocation()); }
+> ```
+> **There is no `IsHidden()` test.** A hidden vanilla original is still an `AFGResourceNode`, still
+> passes the cast, and still enters the population. **658 originals were hidden at load in the very
+> session that produced these 8 results**, so hidden nodes plausibly dominate the 1227-node snapshot.
+>
+> **Why this matters:** T3's hazard is "a Miner is refused on a node the player could otherwise use."
+> A hidden original cannot be built on regardless of any box, so an overlap against one is **harmless
+> and should never have been counted**. The 8 numbers below are correct as geometry and **unproven as
+> hazards**. They may all be hidden originals.
+>
+> **This is a false-POSITIVE generator — the opposite direction from the reviewer's F-4 concern about
+> false negatives.** The packet did not catch it, the cold review did not catch it, and neither did I;
+> the mod author did, from the domain and not from the code. Recorded because the review process has a
+> demonstrated blind spot for *population* errors: every gate here checked the predicate's arithmetic,
+> and none asked whether the set being measured was the right set. Cousin of
+> [[lessons-test-subject-was-exempted]].
+>
+> **Pre-scoped fix:** add `IsHidden()` to the `UseBoxNodes` filter, and **print both counts**
+> (`activeMineable=` / `hiddenOriginal=`) rather than silently shrinking the population — a denominator
+> that quietly changes meaning is the defect this file keeps re-learning.
+> **Do not re-state any hazard count until that lands and a fresh load re-measures.**
+>
+> **The in-game test below is IMMUNE to this defect and is now the higher-value path:** if a visible,
+> mineable node sits ~8.7 m from that satellite and a Miner is refused, T3 is confirmed regardless of
+> what the instrument counted. If there is no visible node there, it was a hidden original.
+
+### T3 (geometry as measured 2026-08-08, hazard status pending the fix above)
 **The instrumentation worked on its first run.** Build `2026-08-08-t1t2-2`, one save load, no travel and
 no re-roll: **128 measurements, 8 provable overlaps**, against a snapshot of **1227** ordinary mineable
 nodes. Every verdict was audited against its own printed per-axis numbers — **zero mismatches**, so the
