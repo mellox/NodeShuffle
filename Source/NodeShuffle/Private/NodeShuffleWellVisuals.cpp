@@ -85,9 +85,28 @@
 #include "Materials/MaterialInterface.h"
 #include "Materials/MaterialInstanceDynamic.h"
 
-// 12 m. Deliberately the SAME constant the ordinary-node orphan sweep uses for "a real node owns this
-// rock" (OrphanOwnerRadius), because it is answering the same question about the same world, and two
-// different radii for one question is how the two passes would come to disagree about who owns a rock.
+// 12 m. The SAME numeric constant the ordinary-node orphan sweep uses for "a real node owns this rock"
+// (OrphanOwnerRadius).
+//
+// ns-review-h2b F-1 CORRECTION -- THE ORIGINAL RATIONALE HERE WAS FALSE AND IT COST A BLOCKER.
+// This comment used to claim the shared radius meant the two passes "answer the same question about
+// the same world" and so could not disagree about who owns a rock. Equal radii were never sufficient,
+// because the two passes had DIFFERENT OWNER SETS:
+//   * OrphanRockCleanup's owner set  = every AFGResourceNode (minus deposits) PLUS every fracking
+//     actor (NodeShuffleSubsystem.cpp, "FIX 3" and "FIX B").
+//   * this index's contest set (before this fix) = fracking well members ONLY.
+// So an ordinary coal node's rock 1100 cm from a fracking satellite was KEPT by the orphan sweep as
+// "owned by a live node" and simultaneously CLAIMED, captured and hidden-with-collision-off by this
+// index -- an invisible, un-minable coal node in the player's live save. Route 3 below now contests
+// against ALL resource nodes (A2) and only accepts Frack* meshes (A3), which is what actually makes
+// the "one question, one answer" claim true.
+//
+// The two passes still measure distance differently and this is DELIBERATE, not an oversight:
+// OrphanRockCleanup uses DistSquared2D (a rock and its node share a map spot but not an altitude, and
+// a 2-D test is the forgiving direction for "do not hide a live node's rock"), while this index uses
+// full 3-D DistSquared (the strict direction for "may I claim and hide this"). Where they differ, the
+// orphan sweep protects MORE rocks and this index claims FEWER -- both erring toward leaving a
+// bystander's rock alone, which is the only direction that is safe in a save the player keeps.
 static constexpr float WellMeshOwnerRadiusCm = 1200.0f;
 
 namespace
@@ -132,28 +151,43 @@ void ANodeShuffleSubsystem::RebuildWellMeshIndex()
     for (const auto& P : SpawnedWellCores) { if (IsValid(P.Value)) { Ours.Add(P.Value); } }
     for (const auto& P : SpawnedWellSatellites) { if (IsValid(P.Value)) { Ours.Add(P.Value); } }
 
+    // ns-review-h2b F-1 (A2): THE CONTEST SET IS EVERY RESOURCE NODE, NOT ONLY WELL MEMBERS.
+    // TActorIterator<AFGResourceNodeBase> visits ordinary nodes, deposits AND fracking cores/satellites
+    // (that is precisely the type-coverage fact this whole packet turns on). One sweep therefore fills
+    // both lists at no extra cost: Members drives routes 1-3, Bystanders exists only so route 3's
+    // nearest-wins contest can LOSE. Without it, a coal node's rock 1100 cm from a fracking satellite
+    // was claimed, captured, hidden and de-collided -- an invisible, un-minable node in a live save.
     struct FMemberRec { FVector Loc; AFGResourceNodeBase* Node; FString Path; };
     TArray<FMemberRec> Members;
+    TArray<FVector> Bystanders;   // every NON-well resource node's location; contest losers, never owners
     for (TActorIterator<AFGResourceNodeBase> It(World); It; ++It)
     {
         AFGResourceNodeBase* N = *It;
-        if (!IsValid(N) || !IsFrackingActor(N) || Ours.Contains(N)) { continue; }
-        Members.Add({ N->GetActorLocation(), N, WellPathOf(N) });
+        if (!IsValid(N) || Ours.Contains(N)) { continue; }
+        if (IsFrackingActor(N)) { Members.Add({ N->GetActorLocation(), N, WellPathOf(N) }); }
+        else { Bystanders.Add(N->GetActorLocation()); }
     }
     WellMeshIndexMembers = Members.Num();
 
     TSet<UStaticMeshComponent*> Claimed;
-    int32 ByOwn = 0, ByLink = 0, BySpatial = 0;
+    int32 ByOwn = 0, ByLink = 0, BySpatial = 0, RejectedBystander = 0;
 
-    // The fracking family by name (SM_FrackingNode_Crack_01 / _Mid_01 / _Small_01 and friends), plus
-    // anything the shared node-rock recogniser already accepts. Name matching decides ONLY "could this
-    // be a well piece at all" -- WHICH member it belongs to is decided by DISTANCE, never by name
-    // (memory:nodeshuffle-descriptor-visuals: pairing by a mesh-name/resource key decays to nothing
-    // once the shuffle has retyped the world). A lambda rather than a free function because
-    // IsNodeRockMeshName is a private member of this class.
+    // The fracking family by name (SM_FrackingNode_Crack_01 / _Mid_01 / _Small_01 and friends). Name
+    // matching decides ONLY "could this be a well piece at all" -- WHICH member it belongs to is decided
+    // by DISTANCE, never by name (memory:nodeshuffle-descriptor-visuals: pairing by a mesh-name/resource
+    // key decays to nothing once the shuffle has retyped the world).
+    //
+    // ns-review-h2b F-1 (A3): THIS USED TO ALSO ACCEPT IsNodeRockMeshName(), WHICH MATCHES EVERY
+    // ORDINARY NODE ROCK IN THE GAME (ResourceNode* / CoalResource* / SulfurResource* / Resource_* /
+    // SAM_* / SM_*Node*). Route 3 therefore offered a bystander's rock to a well-members-only contest it
+    // could not lose. Narrowed to "Frack" alone. The cost of being wrong now runs the SAFE way: a
+    // fracking piece whose mesh is named without "Frack" is simply not captured, so the destination well
+    // is under-dressed but still buildable (routes 1 and 2 are unaffected and do not consult this at
+    // all), whereas the old failure mode stranded an unrelated node in the player's save. If a well
+    // origin is ever seen with rock left standing, the WELLH2B-INDEX spatial REJECT line names the mesh.
     const auto IsWellPieceMeshName = [](const FString& MeshName) -> bool
     {
-        return MeshName.Contains(TEXT("Frack")) || IsNodeRockMeshName(MeshName, TArray<FString>());
+        return MeshName.Contains(TEXT("Frack"));
     };
 
     const auto AddPiece = [&](const FString& Path, UStaticMeshComponent* C) -> bool
@@ -220,7 +254,43 @@ void ANodeShuffleSubsystem::RebuildWellMeshIndex()
                 if (D < BestSq) { NextSq = BestSq; BestSq = D; Best = &M; }
                 else if (D < NextSq) { NextSq = D; }
             }
-            const bool bOwned = Best != nullptr && BestSq < FMath::Square(WellMeshOwnerRadiusCm);
+            // ns-review-h2b F-1 (A2): THE BYSTANDER CONTEST. Nearest well member is not enough -- ask
+            // whether ANY ordinary resource node is nearer. No radius on this half deliberately: the
+            // question is not "is a node close" but "is the well member the closest thing that could own
+            // this rock". A tie loses, because leaving a well origin slightly under-suppressed is
+            // recoverable and stranding a bystander's node in the save is not.
+            float ByStSq = TNumericLimits<float>::Max();
+            for (const FVector& B : Bystanders)
+            {
+                const float D = FVector::DistSquared(B, Loc);
+                if (D < ByStSq) { ByStSq = D; }
+            }
+            const bool bInRadius = Best != nullptr && BestSq < FMath::Square(WellMeshOwnerRadiusCm);
+            const bool bBystanderWins = bInRadius && !(BestSq < ByStSq);
+            if (bBystanderWins)
+            {
+                ++RejectedBystander;
+                // Said once per (actor, mesh) for the session. Display, not Verbose, and gated only on
+                // the diagnostics flag: this line is the PROOF that F-1's guard fired, and F-4 showed a
+                // Verbose line is invisible at the runtime default verbosity, so the one line that says
+                // "a bystander was about to be hidden" must not need a console command to exist.
+                const FString Key = FString::Printf(TEXT("bystander|%s|%s"), *SMA->GetPathName(), *MeshName);
+                if (bDiag && !WellVisualCaptureLogged.Contains(Key))
+                {
+                    WellVisualCaptureLogged.Add(Key);
+                    UE_LOG(LogNodeShuffle, Display,
+                        TEXT("WELLH2B-INDEX spatial BYSTANDER: '%s' on '%s' at %s is %.0f cm from well ")
+                        TEXT("member '%s' (inside the %.0f cm radius) but only %.0f cm from an ordinary ")
+                        TEXT("resource node -- NOT claimed, NOT captured, NOT hidden. Before ns-review-h2b ")
+                        TEXT("F-1 this rock would have been hidden with its collision disabled, which is an ")
+                        TEXT("invisible un-minable node in a saved world. Said once per mesh."),
+                        *MeshName, *SMA->GetName(), *Loc.ToCompactString(), FMath::Sqrt(BestSq),
+                        *WellShort(Best->Path), WellMeshOwnerRadiusCm,
+                        ByStSq < TNumericLimits<float>::Max() ? FMath::Sqrt(ByStSq) : -1.0f);
+                }
+                continue;
+            }
+            const bool bOwned = bInRadius;
             if (bOwned && AddPiece(Best->Path, C))
             {
                 ++BySpatial;
@@ -249,11 +319,14 @@ void ANodeShuffleSubsystem::RebuildWellMeshIndex()
 
     UE_LOG(LogNodeShuffle, Display,
         TEXT("WELLH2B-INDEX pass %d: %d vanilla well member(s) indexed, %d mesh piece(s) paired ")
-        TEXT("(%d own, %d via engine link, %d spatial), %d member(s) with at least one piece. The link ")
-        TEXT("route is the one design 2.4 assumed; a low 'via engine link' count next to a high 'spatial' ")
-        TEXT("count IS the suppression bug measured on the previous build (5 of 6 groups hid 0 mesh actors)."),
+        TEXT("(%d own, %d via engine link, %d spatial), %d bystander reject(s), %d non-well node(s) in the ")
+        TEXT("contest, %d member(s) with at least one piece. The link route is the one design 2.4 assumed; ")
+        TEXT("a low 'via engine link' count next to a high 'spatial' count IS the suppression bug measured ")
+        TEXT("on the previous build (5 of 6 groups hid 0 mesh actors). 'bystander reject' is ns-review-h2b ")
+        TEXT("F-1's guard firing: a Frack-named mesh that was closer to an ORDINARY resource node than to ")
+        TEXT("any well member, left alone. A non-zero count is correct behaviour, not an error."),
         WellAuditPasses, WellMeshIndexMembers, WellMeshIndexPieces, ByOwn, ByLink, BySpatial,
-        WellMeshIndex.Num());
+        RejectedBystander, Bystanders.Num(), WellMeshIndex.Num());
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -261,6 +334,33 @@ void ANodeShuffleSubsystem::RebuildWellMeshIndex()
 // ------------------------------------------------------------------------------------------------
 bool ANodeShuffleSubsystem::CaptureWellGroupVisuals(FNodeShuffleWellEntry& E)
 {
+    // ns-review-h2b F-7: WHAT THE SAVE ACTUALLY HANDED BACK, SAID BEFORE ANY CAPTURE CAN REFILL IT.
+    // Test step 5 asks whether the SaveGame round trip preserved the captured visuals -- but the apply
+    // path falls back to the session template and the capture re-runs whenever bGroupVisualsComplete is
+    // false, so a well can be dressed correctly on a reload while the persisted fields are empty, and
+    // the test would pass with the thing it tests falsified. This line is emitted the FIRST time this
+    // session that any code looks at this group's visuals, which on a reload is before a single piece
+    // can have been re-captured. Non-zero piece counts here ARE the round trip; zeros with a dressed
+    // well afterwards mean the well was rebuilt from the world or the template, not from the save.
+    const FString AdoptKey = E.CorePath + TEXT("|adopt");
+    if (!WellVisualCaptureLogged.Contains(AdoptKey))
+    {
+        WellVisualCaptureLogged.Add(AdoptKey);
+        int32 SatPieces = 0, SatCaptured = 0;
+        for (const FNodeShuffleWellSatellite& S : E.Satellites)
+        {
+            SatPieces += S.Visuals.Num();
+            if (S.bVisualsCaptured) { ++SatCaptured; }
+        }
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("WELLH2B-ADOPT core='%s': as loaded, groupComplete=%d coreCaptured=%d corePieces=%d, ")
+            TEXT("%d/%d satellite(s) captured with %d piece(s) total. This is the state BEFORE any capture ")
+            TEXT("runs this session -- on a fresh roll it is all zeros, on a reload of an already-dressed ")
+            TEXT("well it must NOT be. Said once per group per session."),
+            *WellShort(E.CorePath), E.bGroupVisualsComplete ? 1 : 0, E.bCoreVisualsCaptured ? 1 : 0,
+            E.CoreVisuals.Num(), SatCaptured, E.Satellites.Num(), SatPieces);
+    }
+
     if (E.bGroupVisualsComplete) { return true; }
     EnsureWellMeshIndex();
 
@@ -359,18 +459,38 @@ int32 ANodeShuffleSubsystem::HideWellMemberMeshes(AFGResourceNodeBase* Node, int
     const FString Path = WellPathOf(Node);
     const TArray<TWeakObjectPtr<UStaticMeshComponent>>* Pieces = WellMeshIndex.Find(Path);
     if (!Pieces) { return 0; }
-    int32 HiddenNow = 0;
+    int32 HiddenNow = 0, DecolliedAlreadyHidden = 0;
     for (const TWeakObjectPtr<UStaticMeshComponent>& Weak : *Pieces)
     {
         UStaticMeshComponent* C = Weak.Get();
         if (!IsValid(C)) { continue; }
-        if (!C->IsVisible()) { ++OutAlreadyHidden; continue; }
+        // ns-review-h2b F-5: COLLISION FIRST, AND UNCONDITIONALLY.
+        // This used to `continue` on an already-invisible piece BEFORE touching collision. The origin
+        // site is by construction far from the player (the player is at the destination) and
+        // AFGResourceNodeBase implements IFGSignificanceInterface, so "already invisible" is the COMMON
+        // case here, not the rare one -- every such piece was counted as done while keeping the
+        // build-gun response that makes it an invisible snappable ghost. That is strictly worse than the
+        // bug this packet fixes, and it is exactly what the comment below claims to prevent.
+        const bool bWasVisible = C->IsVisible();
+        if (C->GetCollisionEnabled() != ECollisionEnabled::NoCollision)
+        {
+            C->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+            if (!bWasVisible) { ++DecolliedAlreadyHidden; }
+        }
+        if (!bWasVisible) { ++OutAlreadyHidden; continue; }
         // Component-level, exactly as the ordinary-node orphan sweep does it -- a piece can be one of
         // several on a shared actor, so hiding the whole actor is not always right. Collision goes with
         // it: a hidden rock that still blocks the build gun is a ghost you can build on.
         C->SetVisibility(false, true);
-        C->SetCollisionEnabled(ECollisionEnabled::NoCollision);
         ++HiddenNow;
+    }
+    if (DecolliedAlreadyHidden > 0 && FNodeShuffleModule::AreDiagnosticsEnabled())
+    {
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("WELLH2-SUPPRESS member='%s': %d already-invisible piece(s) still had collision and have ")
+            TEXT("just been de-collided (ns-review-h2b F-5). Before this fix each of these was an INVISIBLE ")
+            TEXT("SNAPPABLE GHOST at the abandoned origin, reported as 'already hidden' and never revisited."),
+            *WellShort(Path), DecolliedAlreadyHidden);
     }
     return HiddenNow;
 }

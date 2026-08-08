@@ -26,10 +26,13 @@
 namespace
 {
     // Every primitive on one of our spawned well actors, with the ONE channel that decides whether the
-    // build gun can hit it. Said once per actor. This is the diagnostic that makes a failed T1/T2
-    // explicable without another build: if the snap still fails, this line already names every surface
-    // the trace could have landed on and what each one does with ECC_GameTraceChannel5.
-    void DumpWellActorCollision(AActor* Actor, const TCHAR* Tag)
+    // build gun can hit it. This is the diagnostic that makes a failed T1/T2 explicable without another
+    // build: if the snap still fails, this line already names every surface the trace could have landed
+    // on and what each one does with ECC_GameTraceChannel5.
+    //
+    // Said once per actor PER PIECE COUNT, not once per actor -- see the F-2 note at the call site. The
+    // piece count is printed so a stale-looking dump can be told from a current one at a glance.
+    void DumpWellActorCollision(AActor* Actor, const TCHAR* Tag, int32 PiecesThisPass)
     {
         if (!IsValid(Actor)) { return; }
         TInlineComponentArray<UPrimitiveComponent*> Prims(Actor);
@@ -47,13 +50,18 @@ namespace
                 P->IsVisible() ? 1 : 0);
         }
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("WELLH2B-COLLISION [%s] actor='%s' class='%s' at %s actorCollision=%d hidden=%d :: %s")
+            TEXT("WELLH2B-COLLISION [%s] actor='%s' class='%s' at %s actorCollision=%d hidden=%d ")
+            TEXT("dressedPieces=%d :: %s")
             TEXT("(response codes: 0=Ignore 1=Overlap 2=Block. The build gun aims on ECC_GameTraceChannel5 -- ")
             TEXT("if NOTHING here reports BuildGun=2 the trace will pass through this actor and land on terrain, ")
-            TEXT("which is the failure measured on the previous build and fixed here.)"),
+            TEXT("which is the failure measured on the previous build and fixed here. EXPECT profile='Custom' on ")
+            TEXT("our NodeShuffleWellMesh_* components: SetCollisionObjectType/SetCollisionResponseToChannel both ")
+            TEXT("switch FBodyInstance's profile name to Custom, so 'Custom' is the recipe HAVING BEEN APPLIED, ")
+            TEXT("not a failure -- objType and BuildGun are the authoritative fields. dressedPieces=0 means this ")
+            TEXT("actor had no visual to apply on the pass that produced this line.)"),
             Tag, *Actor->GetName(), *Actor->GetClass()->GetName(),
             *Actor->GetActorLocation().ToCompactString(),
-            Actor->GetActorEnableCollision() ? 1 : 0, Actor->IsHidden() ? 1 : 0, *Desc);
+            Actor->GetActorEnableCollision() ? 1 : 0, Actor->IsHidden() ? 1 : 0, PiecesThisPass, *Desc);
     }
 }
 
@@ -187,11 +195,23 @@ void ANodeShuffleSubsystem::ApplyWellGroupVisuals(FNodeShuffleWellEntry& E)
         const TArray<FNodeShuffleWellVisual>& Use = Own.Num() > 0 ? Own : Template;
         if (Use.Num() == 0) { ++NoVisual; }
         else if (Own.Num() == 0) { ++FromTemplate; }
+        const int32 PiecesBefore = Pieces;
         Created += DressWellActor(Actor, Use, Pieces);
-        if (!WellVisualCompDumped.Contains(Actor->GetPathName()))
+        const int32 MyPieces = Pieces - PiecesBefore;
+        // ns-review-h2b F-2: KEYED ON THE PATH **AND THE PIECE COUNT**, NOT THE PATH ALONE.
+        // Keyed on the path alone this dump fired once per actor per session -- which is the exact
+        // throttle bug the same commit fixed in WELLH2-SUPPRESS, re-introduced in a brand-new line. A
+        // group whose origin has not streamed dresses with zero pieces, and the dump then recorded an
+        // actor with NO NodeShuffleWellMesh_* components at all and never fired again; three passes
+        // later the origin streams and the actor is dressed properly, but the only dump anyone can grep
+        // still says "nothing here blocks BuildGun". That is the wrong diagnosis handed to a tester in
+        // precisely the case that needed the diagnostic. With the count in the key the dump re-fires the
+        // moment the actor gains (or loses) pieces, and stays silent while nothing changes.
+        const FString DumpKey = FString::Printf(TEXT("%s|%d"), *Actor->GetPathName(), MyPieces);
+        if (!WellVisualCompDumped.Contains(DumpKey))
         {
-            WellVisualCompDumped.Add(Actor->GetPathName());
-            DumpWellActorCollision(Actor, Tag);
+            WellVisualCompDumped.Add(DumpKey);
+            DumpWellActorCollision(Actor, Tag, MyPieces);
         }
     };
 

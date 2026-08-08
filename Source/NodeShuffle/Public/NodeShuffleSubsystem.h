@@ -1684,8 +1684,10 @@ private:
     TArray<FNodeShuffleWellVisual> WellVisualTemplateCore;
     TArray<FNodeShuffleWellVisual> WellVisualTemplateSatellite;
     TSet<FString> WellVisualLogged;        // per-group apply summary, said once
-    TSet<FString> WellVisualCaptureLogged; // per-member capture failure, said once
-    TSet<FString> WellVisualCompDumped;    // per-actor component dump, said once
+    TSet<FString> WellVisualCaptureLogged; // per-member capture failure / adopt state / bystander reject
+    // ns-review-h2b F-2: keyed "<actorPath>|<pieceCount>", NOT the actor path alone. A path-only key
+    // froze the dump at the first pass, which for an unstreamed origin is an actor with zero pieces.
+    TSet<FString> WellVisualCompDumped;    // per-actor component dump, re-fires when the piece count changes
     int32 WellMeshIndexMembers = 0;        // diagnostics: members indexed on the last rebuild
     int32 WellMeshIndexPieces = 0;         // diagnostics: pieces indexed on the last rebuild
 
