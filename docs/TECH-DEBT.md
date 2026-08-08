@@ -278,9 +278,24 @@ the population visible per roll.
 > that quietly changes meaning is the defect this file keeps re-learning.
 > **Do not re-state any hazard count until that lands and a fresh load re-measures.**
 >
-> **The in-game test below is IMMUNE to this defect and is now the higher-value path:** if a visible,
-> mineable node sits ~8.7 m from that satellite and a Miner is refused, T3 is confirmed regardless of
-> what the instrument counted. If there is no visible node there, it was a hidden original.
+> **RESOLVED BY EVIDENCE, same session — no in-game trip needed.** The author noted that the only node
+> visible near that well in their own screenshot was a Kerr crystal far too distant to matter. Back-
+> solving the satellite's world position against the overlap's per-axis deltas identified the culprit:
+>
+> ```
+> ORPHANDIAG: 'Resource_Stone_01' at V(X=-43336.21, Y=239568.84, Z=-3837.56)
+>             already hidden -> no action
+> ```
+>
+> A **hidden stone original**. Repeating for all five distinct members: **2 of 5 resolve to confirmed
+> hidden originals** (`Resource_Stone_01`, `SM_LithiumNode`), 3 could not be resolved from the log, and
+> **0 resolve to an active node.** So there is **no confirmed T3 hazard** — the measured overlaps are so
+> far entirely the artefact this correction predicted.
+>
+> **The author's eyes beat the instrument**, and that is the durable point: a screenshot answered in one
+> glance what 128 measurements got wrong, because the instrument was counting the wrong population and
+> could not know it. When a measurement disagrees with direct observation, suspect the population before
+> the arithmetic.
 
 ### T3 (geometry as measured 2026-08-08, hazard status pending the fix above)
 **The instrumentation worked on its first run.** Build `2026-08-08-t1t2-2`, one save load, no travel and
