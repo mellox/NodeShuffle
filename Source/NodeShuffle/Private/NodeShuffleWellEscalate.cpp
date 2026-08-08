@@ -169,6 +169,17 @@ void ANodeShuffleSubsystem::EscalateWellPlacement(FNodeShuffleWellEntry& E, cons
     // place -- see DespawnWellGroup, where that decision and its consequences are written down.
     DespawnWellGroup(E, Why);
 
+    // ns-review-h5 F2 -- AND DROP THE ENTRY'S CLAIM ON THOSE COORDINATES, immediately after the
+    // teardown and before either destination write. Every branch below abandons the committed placement:
+    // a nudge and a re-deal both move the group, and the give-up branch leaves it vanilla. Until this
+    // call existed, PlacedCoreLocation/PlacedLocation kept naming the ABANDONED destination forever, and
+    // the orphan sweep's IsAtTarget() ownership test therefore reported any actor still standing there
+    // -- the occupied members DespawnWellGroup just refused to destroy, in particular -- as "mid-assembly:
+    // OWNED, not orphaned". Ordered AFTER the despawn on purpose: DespawnWellGroup's *** ABANDONED IN
+    // PLACE *** line prints PlacedCoreLocation to say WHERE those actors were left, and that has to be
+    // the real coordinate, not a zero.
+    ClearAbandonedWellPlacement(E, Why);
+
     // A nudge always resets the yaw cursor: a new location deserves a fresh search, not the tail of
     // the old one. It also re-seeds the permutation (WellYawSeedFor folds GroupNudges in), so the new
     // spot is searched in a different -- but still fully deterministic -- order.

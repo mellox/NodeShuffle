@@ -91,6 +91,10 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll, bool 
     WellIncompleteSpawnCounts.Empty();  // h5 (2): a re-roll re-decides every placement
     bWellOrphanInUseLogged = false;     // h5 F-4
     bWellRelocDisabledLogged = false;
+    // h5 F1: the three new throttles reset too -- silencing a GATE line across a re-roll hides a gate.
+    bWellSweepGatedLogged = false;
+    bWellSweepCapLogged = false;
+    bWellBackstopLogOnlyLogged = false;
 
     FNodeShuffleWellCensus Census;
     CollectWellCensus(GetWorld(), Census);
@@ -453,15 +457,35 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll, bool 
         }
     }
 
-    // ns-review-h5 judgement call (1): SWEEP AT THE ROLL'S TAIL, after every entry's fate is decided.
-    // My earlier reasoning correctly rejected a guard at the loop TOP -- it would run before the
-    // bGroupPlaced branch and tear down the wells the packet exists to preserve -- but defended the
-    // weakest version of the idea by concluding "no roll-time sweep at all". Here there is no ordering
-    // hazard whatsoever, and it closes a real window: WellAuditPasses is NOT reset on a re-roll, so
-    // handles from wells refused by the six `continue`s above would otherwise survive up to ~60 s until
-    // the next cadence sweep -- and within that window SpawnWellGroup's lazy adoption can pick them
-    // straight back up. One call, strictly additive, no new state.
-    SweepOrphanedWellActors(TEXT("post-roll"));
+    // ns-review-h5 judgement call (1): SWEEP AT THE ROLL'S TAIL, after every entry's fate is decided. A
+    // guard at the loop TOP was correctly rejected (it would run before the bGroupPlaced branch and tear
+    // down the wells the packet exists to preserve), but "no roll-time sweep at all" was the weakest
+    // version of that idea. No ordering hazard here, and it closes a real window: WellAuditPasses is NOT
+    // reset on a re-roll, so handles from wells refused by the `continue`s above would otherwise survive
+    // ~60 s until the next cadence sweep, inside which SpawnWellGroup's lazy adoption can re-adopt them.
+    // ns-review-h5 F2 -- FIRST, WITHDRAW THE PLACEMENT CLAIM OF EVERY ENTRY THIS ROLL ABANDONED. Ten
+    // `continue`s above clear bRelocate and NOT ONE touched Placed*, so the sweep kept reporting their
+    // stranded actors as "mid-assembly: OWNED, not orphaned" forever. ONE state-driven loop, not a clear
+    // in each of the ten. UNCONDITIONAL, NOT under the sweep's gates below (it destroys nothing).
+    // Rationale + the independent one-line second layer: NodeShuffleWellSweep.cpp.
+    int32 ClaimsWithdrawn = 0;
+    for (FNodeShuffleWellEntry& E : WellLayout)
+    {
+        if (E.bGroupPlaced) { continue; }                       // a placed group OWNS its coordinates
+        if (E.bRelocate && !E.bRelocationFailed) { continue; }   // still searching: the claim is live
+        if (ClearAbandonedWellPlacement(E, TEXT("abandoned by this roll"))) { ++ClaimsWithdrawn; }
+    }
+    // ns-review-h5 F1: the sweep refuses to look at the world unless relocation is on for this pass, and
+    // bRelocationEnabled ALONE IS NOT that condition -- ApplyWellRelocation's gate is bWellShuffle &&
+    // bRelocation while this function receives RelocateResourceWells only. Passing `true` would re-open
+    // the blocker: a save with ShuffleResourceWells off but Relocate on reaches this line.
+    const bool bSweepOn = FNodeShuffleConfigStruct::GetActiveConfig(this).ShuffleResourceWells
+                       && bRelocationEnabled;
+    UE_LOG(LogNodeShuffle, Display,
+        TEXT("WELLH2-ROLL: withdrew the placement claim of %d of %d entry(ies) -- each refused by one of ")
+        TEXT("the ten branches above (h5 F2); post-roll sweep gate wellShuffle&&relocate=%d."),
+        ClaimsWithdrawn, WellLayout.Num(), bSweepOn ? 1 : 0);
+    SweepOrphanedWellActors(TEXT("post-roll"), bSweepOn);
 
     UE_LOG(LogNodeShuffle, Display,
         TEXT("WELLH2-ROLL: %s complete -- %d newly enrolled (%d destinations dealt, %d deal-failed), ")

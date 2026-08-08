@@ -443,10 +443,22 @@ void ANodeShuffleSubsystem::ApplyWellRelocation(bool bWellShuffleEnabled, bool b
     // routes nobody has written yet. Cadenced rather than per-pass because it is a set difference over
     // the whole layout; running it after the audit means a group placed THIS pass is already recorded
     // and can never be mistaken for an orphan.
+    //
+    // ns-review-h5 F1 (BLOCKING, the finding that parked this packet): bOn IS PASSED IN, and the sweep
+    // refuses to look at the world without it. The `!bOn` block above deliberately does not return --
+    // a save that already holds relocated wells must keep them spawned, linked and suppressed whatever
+    // the config now says -- so this call site was reached with BOTH toggles off, on every session, in
+    // saves that never enabled the feature. With an empty WellLayout the sweep's accounted-for set is
+    // empty, and its location backstop then classified every runtime fracking actor in the world as an
+    // orphan and destroyed it at pass 8, ~40 s in. That is the node-destroyer behaviour this mod ships
+    // a two-layer defence AGAINST (cookbook §20), and it had no opt-out of its own. The gate is a
+    // parameter rather than a config read inside the sweep so that it cannot disagree with the pass it
+    // belongs to, and the sweep re-checks "at least one group is actually placed" on its own.
     if (WellAuditPasses == WellLinkAuditPass
         || (WellAuditPasses > WellLinkAuditPass && (WellAuditPasses % WellOrphanSweepCadence) == 0))
     {
-        SweepOrphanedWellActors(WellAuditPasses == WellLinkAuditPass ? TEXT("settled") : TEXT("cadence"));
+        SweepOrphanedWellActors(WellAuditPasses == WellLinkAuditPass ? TEXT("settled") : TEXT("cadence"),
+                                bOn);
     }
 
     if (Searching > 0 || PlacedNow > 0 || Spawned > 0 || IncompleteSpawns > 0)

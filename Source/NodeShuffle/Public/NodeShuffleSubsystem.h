@@ -1221,9 +1221,40 @@ private:
     // LOCATION-driven backstop over the actor iterators, run at the SETTLED phase only.
     // ns-review-h5 F-2: an entry also owns a handle whose actor is at its CURRENTLY COMMITTED
     // coordinate, so a group mid-assembly is not torn down by the sweep that runs later in the same pass.
-    void SweepOrphanedWellActors(const TCHAR* Phase);
+    //
+    // ns-review-h5 F1 (BLOCKING, the finding that PARKED this packet) -- bRelocationOn IS NOT OPTIONAL.
+    // ApplyWellRelocation computes bOn = bWellShuffle && bRelocation and its `!bOn` block deliberately
+    // does NOT return (already-relocated wells in an existing save must keep being spawned, linked and
+    // suppressed whatever the config now says). The sweep therefore used to run with the feature OFF --
+    // and with an empty WellLayout both AccountedFor and Held are empty, so pass B classified EVERY
+    // runtime fracking core/satellite in the world as unaccounted and destroyed it at apply pass 8,
+    // ~40 s into every session, in saves where the player never enabled relocation. That would have made
+    // NodeShuffle the node-destroyer it already ships a two-layer defence against (cookbook §20), with
+    // no equivalent opt-out. The gate is now a PARAMETER rather than a read of config inside here, so a
+    // caller cannot forget it and cannot get a different answer than the pass it belongs to.
+    void SweepOrphanedWellActors(const TCHAR* Phase, bool bRelocationOn);
     static constexpr int32 WellOrphanSweepCadence = 12; // ~1 min at one apply pass per ~5 s
     bool bWellOrphanInUseLogged = false;                // F-4: permanent state, said once per roll
+
+    // ns-review-h5 F1: a DESTROY CAP on pass A. Pass A is provably ours (it only ever destroys actors
+    // whose handles WE put in SpawnedWellCores/SpawnedWellSatellites), so it stays destructive -- but a
+    // wrong ownership index should cost one group, not the world. 16 = one maximal well (1 core + H0's
+    // measured max of 10 satellites) plus headroom. Anything past the cap is deferred to the next sweep
+    // and said loudly.
+    static constexpr int32 WellSweepMaxDestroysPerPass = 16;
+    bool bWellSweepGatedLogged = false;      // "sweep skipped, and why" -- once per session
+    bool bWellSweepCapLogged = false;        // cap tripped -- once per session
+    bool bWellBackstopLogOnlyLogged = false; // pass B is LOG-ONLY -- once per session
+
+    // ns-review-h5 F2 (the ownership predicate's other half). E.PlacedCoreLocation / S.PlacedLocation
+    // were never cleared when an entry was ABANDONED, so IsAtTarget() kept protecting pinned, failed and
+    // refused entries forever and the sweep reported their stranded actors as "mid-assembly: OWNED, not
+    // orphaned" -- a confident falsehood at the exact spot built to prevent them. This is the ROOT-CAUSE
+    // half: the coordinates are dropped the moment the entry stops owning them. NEVER touches a placed
+    // group (bGroupPlaced true means the entry owns those coordinates and the spawn/adopt/link/suppress
+    // paths all read them).
+    // Returns true when it actually dropped something, so callers can count and report.
+    bool ClearAbandonedWellPlacement(FNodeShuffleWellEntry& E, const TCHAR* Why);
 
     // ns-review-h5 judgement call (2): a group that VALIDATES a footprint and then fails to ASSEMBLE
     // retries the same placement forever -- TryPlaceWellGroup neither advances YawCursor nor spends
