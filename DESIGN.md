@@ -80,6 +80,40 @@ enforces a per-resource active **floor** (`MinNodesPerResource`, and a separate
 floor for modded resources) — the completability guarantee. New SaveGame fields
 are additive with defaults, so older saves load unchanged.
 
+### What the roll covers — measured, 2026-08-08
+
+**The initial roll captures the whole map's vanilla node set, not a streamed subset.** This
+was believed the other way round until it was measured, and the belief produced two wrong
+investigations, so the evidence is recorded here rather than left as an assumption:
+
+- The roll's pool comes from a live `TActorIterator<AFGResourceNodeBase>`. That iterator sees
+  only resident actors — but **every level-placed resource node is resident from load**.
+  All **630** originals resolve and hide inside a **single 8–11 ms frame** at boot, in three
+  independent boots, including all 8 Uranium and all 23 Bauxite nodes in biomes tens of
+  kilometres apart. No streaming radius contains both.
+- `MinVanillaNodesForRoll = 50` is therefore **not** a streaming gate and never was. It is a
+  sanity floor ("a populated world exists"). Raising it fixes nothing and is explicitly
+  rejected — see `docs/TECH-DEBT.md`.
+- Corroboration from the game's own design: CSS built cook-time manifests
+  (`AFGWorldScannableDataGenerator`) for item pickups, drop pods and creature spawners —
+  precisely the things that *are* streamed — and built **none** for resource nodes. The Radar
+  Tower takes live `AFGResourceNodeBase*` pointers and has no registry behind it; it works for
+  the same reason our scan does.
+
+**Two things remain player-presence-gated, and both by physics, not by choice:** spawning a
+replacement node and probing a well destination each need a downward trace against resident
+terrain (`RaycastSettle`). Neither is affected by how the roll enumerates.
+
+**The one genuine discovery gap is other mods' nodes.** Nodes `SpawnActor`'d at runtime by
+other mods have been measured arriving minutes after boot (28 in one session) and are absent
+from the first roll's pool. A re-roll re-scans live and enrols them. See `docs/TECH-DEBT.md`
+T14.
+
+**Diagnostics:** every number above is emitted per roll on the `ROLLCENSUS:` line, including
+the live-node provenance split (ours / level-placed / runtime-spawned by other mods) and the
+per-resource active counts, with a `ROLLCENSUS ZERO-ACTIVE:` warning naming any managed
+resource that ends a roll with no active entries.
+
 ## Function hooks (SML)
 
 A small number of engine methods are hooked via `SUBSCRIBE_UOBJECT_METHOD`:

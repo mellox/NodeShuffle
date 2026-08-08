@@ -300,10 +300,24 @@ bool FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled(UWorld* World,
     int32 TotalActiveEntries = 0;
     int32 UnresolvedActiveEntries = 0;
     Subsystem->BuildManagedNodeGroupsFromLayout(NodeGroups, TotalActiveEntries, UnresolvedActiveEntries);
+    // ns-truth-diagnostics A2. The old text read "(streaming-independent -- does not depend on where the
+    // player loaded or what has streamed in)". That is true of THE DERIVATION and false of the reading
+    // every human takes, which is that the LAYOUT'S CONTENTS are streaming-independent. It demonstrably
+    // misled: an orchestrator quoted it to the user as "the whole map is dealt at once" (see
+    // _team/nodeshuffle-followups/lithium-extractor-investigation.md H3). Both halves are now explicit,
+    // and the one-word summary is gone so it cannot be quoted on its own.
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("AUTOALLOW: %d managed node group(s) derived from the ROLLED LAYOUT (streaming-independent -- ")
-        TEXT("does not depend on where the player loaded or what has streamed in). %d active layout ")
-        TEXT("entries considered, %d could not be resolved to a resource/node class and were skipped."),
+        TEXT("AUTOALLOW: %d managed node group(s) derived from the ROLLED LAYOUT. TWO SEPARATE CLAIMS, ")
+        TEXT("BOTH STATED: (1) THE DERIVATION is streaming-independent -- this pass reads Layout, never ")
+        TEXT("live actors, so it returns the SAME answer wherever the player is standing and whatever is ")
+        TEXT("loaded right now (that is what ns-review-g G1 fixed). (2) THE LAYOUT'S CONTENTS ARE NOT -- ")
+        TEXT("Layout was captured by a LIVE actor scan at ROLL time, so anything not in the world at that ")
+        TEXT("instant is not in it and contributes no group here, until a re-roll re-scans. MEASURED (see ")
+        TEXT("docs/TECH-DEBT.md): level-placed vanilla nodes ARE all present at that instant (630 of 630 resolved ")
+        TEXT("in one frame, three separate boots), while nodes RUNTIME-SPAWNED BY OTHER MODS have been ")
+        TEXT("observed arriving minutes after boot (28 of them) and were missed by the first roll. ")
+        TEXT("%d active layout entries considered, %d could not be resolved to a resource/node class and ")
+        TEXT("were skipped."),
         NodeGroups.Num(), TotalActiveEntries, UnresolvedActiveEntries);
     if (UnresolvedActiveEntries > 0)
     {

@@ -529,10 +529,19 @@ private:
     // Shuffle-aware gate for the RE-ROLL path. A shuffled save has most of its
     // originally-vanilla nodes retyped (no longer /Game/) or destroyed, so the
     // pristine-vanilla count never reaches 50 and the strict gate above can never
-    // pass on reload. Instead require enough loaded resource nodes of ANY kind to
-    // prove the world has streamed in, after a short post-load settle.
+    // pass on reload. Instead require enough loaded resource nodes of ANY kind,
+    // after a short post-load settle. (ns-truth-diagnostics: this used to say the
+    // check proves "the world has streamed in". It does not test that, and the
+    // premise is false — see MinVanillaNodesForRoll in NodeShuffleSubsystem.cpp.)
     bool IsWorldReadyForReroll() const;
     void RollLayout(int32 Seed, bool bIsReroll);
+    // ns-truth-diagnostics B: the once-per-roll `ROLLCENSUS:` truth line + the ZERO-ACTIVE alarm.
+    // DIAGNOSTICS ONLY -- reads Layout and does one read-only live actor pass; writes nothing.
+    // Every field it prints is a measurement and names its own test; nothing in it asserts a cause.
+    // See its definition in NodeShuffleSubsystem.cpp for the rule and why the rule exists.
+    void EmitRollCensus(int32 Seed, bool bIsReroll, int32 PoolSize, int32 TargetActive,
+                        int32 OriginalsCaptured, int32 NewLocationCount,
+                        const TMap<FString, int32>& PoolCountsByResource) const;
     // redesign-1: before a re-roll, UN-HIDE every previously-suppressed original node (and its
     // mesh actor) that is streamed in, so the world returns to its pristine state before the new
     // layout re-hides per the new roll. Nothing was ever destroyed (whole-actor hide is reversible),

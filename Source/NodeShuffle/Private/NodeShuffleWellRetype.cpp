@@ -310,7 +310,7 @@ void ANodeShuffleSubsystem::ApplyWellRetype(bool bWellShuffleEnabled)
     {
         TSet<FString> Known;
         for (const FNodeShuffleWellEntry& E : WellLayout) { Known.Add(E.CorePath); }
-        int32 LiveCores = 0, Unknown = 0;
+        int32 LiveCores = 0, Unknown = 0, UnknownOurs = 0, UnknownLevelPlaced = 0;
         for (TActorIterator<AFGResourceNodeFrackingCore> It(GetWorld()); It; ++It)
         {
             if (!IsValid(*It)) { continue; }
@@ -318,22 +318,46 @@ void ANodeShuffleSubsystem::ApplyWellRetype(bool bWellShuffleEnabled)
             const FString Path = It->GetPathName();
             if (Known.Contains(Path)) { continue; }
             ++Unknown;
+            // ns-truth-diagnostics A1 -- THE RULE THIS LINE EXISTS TO ENFORCE: a diagnostic may report
+            // what it MEASURED; it may not assert WHY. The old text ended "(it had not streamed in when
+            // the roll ran)" -- a CAUSE THIS CODE NEVER TESTED. Measured 2026-08-08 (17:19 boot): all 14
+            // cores that fired it were NodeShuffle's OWN relocated wells -- the very next roll printed
+            // "WELLH1-ROLL: skippedOurSpawned=14", i.e. the roll excluded them BY DESIGN (ns-review-h2
+            // F1). Two investigations quoted the invented explanation as evidence and the user was told
+            // it as fact. So print the two discriminators that ARE testable here and name the test for
+            // each, and say plainly that the remaining case is undetermined.
+            const bool bOurs = FNodeShuffleModule::IsManagedSpawnedNode(*It);
+            if (bOurs) { ++UnknownOurs; }
+            const bool bLevelPlaced = It->IsNetStartupActor();
+            if (bLevelPlaced) { ++UnknownLevelPlaced; }
             UE_LOG(LogNodeShuffle, Warning,
-                TEXT("WELLH1-UNKNOWN core='%s' is loaded but was NOT in the rolled well layout (it had not "
-                     "streamed in when the roll ran) -- LEFT VANILLA. Re-roll to bring it in. path='%s'"),
-                *It->GetName(), *Path);
+                TEXT("WELLH1-UNKNOWN core='%s' is loaded but is NOT in the rolled well layout. "
+                     "MEASURED: nodeShuffleSpawned=%d (test: FNodeShuffleModule::IsManagedSpawnedNode -- "
+                     "the SAME registry the roll's skippedOurSpawned filter uses, so 1 means WE spawned "
+                     "this core and the roll excluded it deliberately; nothing is wrong), levelPlaced=%d "
+                     "(test: AActor::IsNetStartupActor). NOT MEASURED: WHY an unmanaged level-placed core "
+                     "would be absent -- this line does not test streaming, load order, mod init order or "
+                     "anything else, and must never name one. OBSERVED EFFECT either way: LEFT VANILLA; a "
+                     "re-roll re-scans live and would enrol it. path='%s'"),
+                *It->GetName(), bOurs ? 1 : 0, bLevelPlaced ? 1 : 0, *Path);
         }
         // The caveat is IN THE LINE, not only in this comment (ns-review-h1): it is a SNAPSHOT at one
-        // instant, so a core that streams in later is never counted, and a player who loaded far from
-        // every well gets "0 loaded-but-unmanaged" purely because nothing was loaded to disagree with.
-        // Read alongside "cores loaded now" -- that number, not the zero, is what says whether the
+        // instant, so a core that ENTERS THE WORLD later is never counted, and a player who loaded far
+        // from every well gets "0 loaded-but-unmanaged" purely because nothing was loaded to disagree
+        // with. Read alongside "cores loaded now" -- that number, not the zero, is what says whether the
         // snapshot was worth anything.
+        // ns-truth-diagnostics A1: "streams in" was the only arrival mechanism the old wording admitted.
+        // The provenance split is now IN the line, so the reader never has to guess which population the
+        // unmanaged count is made of.
         UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH1-CENSUS (single snapshot at apply pass %d, ~%d s after load -- NOT a running total; "
-                 "cores that stream in after this instant are never counted, so '0 unmanaged' with a low "
-                 "'cores loaded now' means UNMEASURED, not clean): %d cores loaded now, %d wells in the "
-                 "layout, %d loaded-but-unmanaged."),
-            WellCensusScanPass, WellCensusScanPass * 5, LiveCores, WellLayout.Num(), Unknown);
+                 "cores that enter the world after this instant -- by any mechanism, including spawns by "
+                 "us or by another mod -- are never counted, so '0 unmanaged' with a low 'cores loaded "
+                 "now' means UNMEASURED, not clean): %d cores loaded now, %d wells in the layout, %d "
+                 "loaded-but-unmanaged (of those: %d are OUR OWN relocated spawns [expected, excluded by "
+                 "design], %d are level-placed [IsNetStartupActor], %d are neither -- cause untested)."),
+            WellCensusScanPass, WellCensusScanPass * 5, LiveCores, WellLayout.Num(), Unknown,
+            UnknownOurs, UnknownLevelPlaced, Unknown - UnknownOurs - UnknownLevelPlaced);
     }
 
     // Delta-driven summary only. On a steady world every well is already at its assigned resource, so

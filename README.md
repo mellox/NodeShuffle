@@ -107,6 +107,26 @@ per save from a seed**. A **global terrain map** (water/land and cave floors) is
 learned as you play and **shipped prebuilt** inside the mod. See
 [DESIGN.md](DESIGN.md) for more detail.
 
+### What needs you nearby, and what doesn't
+
+Two different things get confused here, so plainly:
+
+**Not gated on you at all.** Deciding *which resource goes where* and *hiding the original
+rock* cover the **whole map, at load** — every one of the game's resource nodes is already
+live the moment your save opens (measured: all 630 of them, in a single frame, across
+biomes tens of kilometres apart). You do not have to explore for the shuffle to reach a
+node, and exploring does not "unlock" more of it.
+
+**Genuinely gated on you.** *Spawning a replacement rock* and *moving a resource well* both
+need the ground itself to be loaded, because we place them with a downward trace and you
+cannot trace terrain that isn't there. So a dealt node materialises when you come within
+the Spawn-On-Discovery radius, and a well moves when you visit its destination.
+
+**One real exception.** Nodes added by **other mods** are picked up when they appear — and
+some mods spawn theirs minutes after the world loads, or only once you research something.
+Those can be **added after the first roll has already happened**, so they stay vanilla where
+they are until you re-roll. Re-rolling re-scans the live world and brings them in.
+
 ### Known behaviour: resource wells can duplicate if you build on one mid-move
 
 **This is a deliberate trade-off, not a bug — and it errs in your favour.**

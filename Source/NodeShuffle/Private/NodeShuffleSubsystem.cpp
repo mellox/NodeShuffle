@@ -74,7 +74,19 @@ namespace
     constexpr float ExtractorSnapDistance = 700.0f; // 7 m
     constexpr float PortableMinerSnapDistance = 1500.0f; // 15 m
     constexpr float MinNodeSpacing = 2500.0f;       // 25 m between pool locations
-    constexpr int32 MinVanillaNodesForRoll = 50;    // world considered streamed in
+    // ns-truth-diagnostics: DO NOT change this value, and do not restore the old comment.
+    // Old comment: "world considered streamed in". That was a CLAIM, never a derivation -- unchanged
+    // since a787752 (v1.0.0 initial release), with no measurement or design note behind the 50.
+    // MEASURED 2026-08-08 (three independent boots, user logs): level-placed vanilla resource nodes are
+    // NOT streamed at all. All 630 are live in a SINGLE frame at load (8-11 ms), spanning biomes tens of
+    // km apart (all 8 Uranium, all 23 Bauxite, in the same frame). So this gate has never delayed
+    // anything and there is nothing for it to wait for; raising it was explicitly REJECTED by
+    // _team/nodeshuffle-followups/node-enumeration-investigation.md Q3 because it treats a non-problem
+    // and would cement the false model. What the first roll genuinely misses is nodes RUNTIME-SPAWNED BY
+    // OTHER MODS, which have been observed arriving minutes after boot -- a count gate cannot fix that;
+    // only a re-scan can (that is a separate, user-gated packet).
+    // WHAT THIS CONSTANT ACTUALLY IS: a cheap "a world exists and has resource nodes in it" sanity floor.
+    constexpr int32 MinVanillaNodesForRoll = 50;
     constexpr float RockResweepCooldownSeconds = 10.0f; // min gap between rock re-sweeps
     constexpr float RockSearchRange = 30000.0f;         // 300 m: in-range rocks are streamed
     constexpr float DefaultSpawnRadiusCm = 60000.0f;    // 600 m: spawn-on-discovery default
@@ -283,8 +295,9 @@ void ANodeShuffleSubsystem::RefreshTick()
     }
     // LIVE / LOAD re-roll. Edge-triggered: fires on each OFF->ON transition of the Re-roll toggle, so it behaves
     // identically whether the user set it and reloaded (load-time) OR toggled it mid-session (LIVE, no reload).
-    // The world must have streamed in (the SHUFFLE-AWARE gate, not the strict pristine-vanilla one — a shuffled
-    // save never passes the strict 50+ /Game/ count). Occupied/pinned nodes are carried; the new locations
+    // Gated by the SHUFFLE-AWARE readiness check, not the strict pristine-vanilla one — a shuffled save never
+    // passes the strict 50+ /Game/ count. (ns-truth-diagnostics: this used to read "the world must have streamed
+    // in". It does not mean that and never tested it — see MinVanillaNodesForRoll.) Occupied/pinned nodes are carried; the new locations
     // reveal as the player explores near them (the same spawn-on-discovery behavior as a load-time re-roll).
     else if (Config.RerollNow && !bPrevRerollNow && IsWorldReadyForReroll())
     {
@@ -405,8 +418,11 @@ void ANodeShuffleSubsystem::RefreshTick()
 
 bool ANodeShuffleSubsystem::IsWorldReadyForRoll() const
 {
-    // Solid-only readiness check (no liquid): the strict gate just needs proof the
-    // world has streamed in, and solid nodes are the overwhelming majority.
+    // Solid-only readiness check (no liquid): a cheap floor proving a populated world exists before the
+    // one-time roll fires. Solid nodes are the overwhelming majority, so they are the cheapest probe.
+    // ns-truth-diagnostics: this comment used to say "just needs proof the world has streamed in". It
+    // does not prove that and never tried to — see MinVanillaNodesForRoll for the measurement that
+    // falsified the streaming model. Do not raise the threshold; it would treat a non-problem.
     int32 Count = 0;
     for (TActorIterator<AFGResourceNode> It(GetWorld()); It; ++It)
     {
@@ -422,8 +438,9 @@ bool ANodeShuffleSubsystem::IsWorldReadyForReroll() const
 {
     // A shuffled save's originally-vanilla nodes are mostly retyped (no longer
     // /Game/) or destroyed, so the pristine-vanilla count is unreliable here.
-    // Gate instead on having streamed in enough loaded resource nodes of ANY
-    // kind, after a short post-load settle so the level has time to stream.
+    // Gate instead on enough LOADED resource nodes of ANY kind, after a short post-load settle.
+    // (ns-truth-diagnostics: the settle is a cheap "let the world finish coming up" delay, not a
+    // streaming wait — see MinVanillaNodesForRoll.)
     if (GetWorld() && GetWorld()->GetTimeSeconds() < 8.0f)
     {
         return false;
@@ -627,16 +644,21 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     // 1. Build the vanilla pool + the data that drives balance (per-resource
     //    counts, the purity multiset, the spawnable node class).
     //
-    // CRITICAL (streaming determinism): on a RE-ROLL the world may be only
-    // partially streamed in, so a live TActorIterator scan would miss rare
-    // resources and produce a different, broken balance each time (a resource
-    // could get ZERO active nodes despite its floor). The saved Layout holds
-    // the COMPLETE original vanilla pool (resource/purity/location/path were
-    // persisted at the initial roll), so on reroll we rebuild from it directly
-    // and balance becomes identical every time, independent of streaming.
+    // CRITICAL (re-roll determinism): a live TActorIterator scan on a RE-ROLL sees whatever population
+    // happens to exist at that instant, which is NOT the population the initial roll saw — our own
+    // previous spawns have replaced originals, other mods' nodes may have arrived since, and the result
+    // would be a different, broken balance each time (a resource could get ZERO active nodes despite its
+    // floor). The saved Layout holds the COMPLETE original vanilla pool (resource/purity/location/path
+    // were persisted at the initial roll), so on reroll we rebuild from it directly and balance becomes
+    // identical every time.
     //
-    // The INITIAL roll has no Layout yet and IsWorldReadyForRoll already gated
-    // full streaming, so it keeps the live scan.
+    // The INITIAL roll has no Layout yet, so it keeps the live scan.
+    // ns-truth-diagnostics: this block used to justify itself with "the world may be only partially
+    // streamed in" and "IsWorldReadyForRoll already gated full streaming". BOTH ARE FALSE. Measured
+    // 2026-08-08: level-placed vanilla nodes are all live in one frame at load (see
+    // MinVanillaNodesForRoll), and IsWorldReadyForRoll gates nothing of the kind. The rebuild-from-Layout
+    // decision is still right, for the reason restated above — determinism against a CHANGING live
+    // population — but it was never right for the reason previously written here.
     TArray<FVector> VanillaLocations;
     TMap<FString, int32> VanillaResourceCounts;     // descriptor path -> count
     TMap<FString, uint8> FormByResource;            // descriptor path -> EResourceForm value
@@ -847,7 +869,10 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
         {
             // Liquid (oil) + gas (e.g. lithium) live scan — these forms join the re-roll pool. Solids are
             // already in the rebuilt pool; this captures liquid/gas the saved layout did not.
-            int32 ExperimentalAdded = 0;
+            // ns-truth-diagnostics A3: counted PER FORM, because the summary line below used to call the
+            // whole total "RF_LIQUID (oil)" while this loop admits RF_LIQUID *and* RF_GAS. Lithium (gas)
+            // was reported to the user as oil on the strength of that label.
+            int32 ExperimentalAdded = 0, LiquidAdded = 0, GasAdded = 0;
             for (TActorIterator<AFGResourceNode> It(GetWorld()); It; ++It)
             {
                 AFGResourceNode* Node = *It;
@@ -903,10 +928,14 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                 }
                 VanillaCount++;
                 ExperimentalAdded++;
+                (LiveForm == EResourceForm::RF_LIQUID) ? ++LiquidAdded : ++GasAdded;
             }
             UE_LOG(LogNodeShuffle, Display,
-                TEXT("Liquid-form augment: added %d live RF_LIQUID (oil) nodes not in the saved pool to the reroll pool (captured into the layout for determinism)"),
-                ExperimentalAdded);
+                TEXT("Non-solid augment: added %d live non-solid nodes not in the saved pool to the reroll pool "
+                     "(%d RF_LIQUID e.g. oil, %d RF_GAS e.g. lithium -- this loop admits BOTH forms; the old "
+                     "line called the combined total 'RF_LIQUID (oil)' and a gas resource was reported as oil "
+                     "because of it) (captured into the layout for determinism)"),
+                ExperimentalAdded, LiquidAdded, GasAdded);
         }
 
         // FULL RE-SCAN augment. The reroll pool is rebuilt from the saved Layout (streaming-independent),
@@ -994,7 +1023,10 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     }
     else
     {
-        // INITIAL roll: live scan of the (fully streamed) vanilla pool.
+        // INITIAL roll: live scan of the vanilla pool. (ns-truth-diagnostics: "(fully streamed)" removed —
+        // it was an assumption, not a measurement. What IS measured: level-placed vanilla nodes are all
+        // live at load, so this scan does capture the whole map's vanilla set; nodes runtime-spawned by
+        // OTHER mods can arrive after this point and are missed until a re-roll. See ROLLCENSUS.)
         // Liquid (oil) AND gas (e.g. lithium) forms join the pool alongside solids.
         const bool bIncludeLiquid = true;
 
@@ -1699,6 +1731,128 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     UE_LOG(LogNodeShuffle, Display,
         TEXT("Rolled layout: seed %d, pool %d (vanilla %d, new %d), active %d, pinned %d"),
         Seed, PoolSize, VanillaCount, NewLocations.Num(), ActiveCount, PinnedCount);
+
+    EmitRollCensus(Seed, bIsReroll, PoolSize, TargetActive, VanillaCount, NewLocations.Num(),
+                   VanillaResourceCounts);
+}
+
+// ns-truth-diagnostics B. ONE line per roll carrying the numbers that two separate log-archaeology
+// passes had to reconstruct by hand on 2026-08-08 ("are vanilla nodes streamed?", "where did lithium
+// go?"). Both questions are now a single grep for `ROLLCENSUS`.
+//
+// THE RULE FOR EVERY FIELD HERE, AND FOR ANY FIELD ADDED LATER: it reports a MEASUREMENT and it names
+// HOW that measurement was taken. No field asserts a cause. The packet that created this function
+// exists because `WELLH1-UNKNOWN` asserted "it had not streamed in when the roll ran" -- a cause it
+// never tested -- and that sentence was then quoted to the user as fact. If you cannot name the test,
+// the field does not go in the line.
+//
+// Diagnostics only: one extra read-only TActorIterator pass, once per roll (rolls are rare -- initial
+// load and the edge-triggered re-roll). Nothing here writes to Layout or to any actor.
+void ANodeShuffleSubsystem::EmitRollCensus(int32 Seed, bool bIsReroll, int32 PoolSize, int32 TargetActive,
+                                           int32 OriginalsCaptured, int32 NewLocationCount,
+                                           const TMap<FString, int32>& PoolCountsByResource) const
+{
+    // 1. LIVE PROVENANCE, measured right now. This is the block that would have answered
+    //    "were 14 unknown well cores streamed in late, or were they ours?" without a log dig.
+    int32 LiveTotal = 0, LiveOurs = 0, LiveLevelPlaced = 0, LiveRuntimeOther = 0, LiveFracking = 0;
+    if (const UWorld* W = GetWorld())
+    {
+        for (TActorIterator<AFGResourceNodeBase> It(W); It; ++It)
+        {
+            AFGResourceNodeBase* N = *It;
+            if (!IsValid(N)) { continue; }
+            if (IsFrackingActor(N)) { ++LiveFracking; continue; } // wells have their own census (WELLH1-CENSUS)
+            ++LiveTotal;
+            // Test 1: our module-static managed-node registry OR the identity component we attach to
+            // everything we spawn. Same test the roll scan itself uses to skip our own nodes (:1014).
+            if (NodeShuffleIsOurNode(N) || FNodeShuffleModule::IsManagedSpawnedNode(N)) { ++LiveOurs; }
+            // Test 2: AActor::IsNetStartupActor() -- true for an actor loaded from the level (world
+            // partition included), false for anything SpawnActor'd at runtime. Already relied on at
+            // :4627 for the same "is this a level actor" question.
+            else if (N->IsNetStartupActor()) { ++LiveLevelPlaced; }
+            else { ++LiveRuntimeOther; } // runtime-spawned and not ours => spawned by some other mod
+        }
+    }
+
+    // 2. THE FINAL LAYOUT, after the active-set draw and after the deal.
+    //    NOTE the asymmetry, stated in the line itself: inactive ORIGINALS are gone by now -- the Hide
+    //    & Replace step removes them from the layout as hide-only records (see the RemoveAll at
+    //    "Remove the now-detached inactive originals"). So `inactive` here is new-location entries only.
+    TMap<FString, int32> ActiveByResource;
+    int32 ActiveEntries = 0, InactiveEntries = 0, ActiveWithNoResource = 0;
+    for (const FNodeShuffleEntry& E : Layout)
+    {
+        if (!E.bActive) { ++InactiveEntries; continue; }
+        ++ActiveEntries;
+        if (E.AssignedResourceClassPath.IsEmpty()) { ++ActiveWithNoResource; continue; }
+        ActiveByResource.FindOrAdd(E.AssignedResourceClassPath)++;
+    }
+
+    // Short display name: the trailing object name of a class path, e.g.
+    // "/Game/.../Desc_OreIron.Desc_OreIron_C" -> "Desc_OreIron_C". Full paths go in the ZERO-ACTIVE
+    // warning below, so nothing is only ever shown abbreviated.
+    const auto ShortRes = [](const FString& Path) -> FString
+    {
+        int32 Dot = INDEX_NONE;
+        return Path.FindLastChar(TEXT('.'), Dot) ? Path.Mid(Dot + 1) : Path;
+    };
+
+    TArray<FString> Kinds;
+    PoolCountsByResource.GenerateKeyArray(Kinds);
+    // Any resource that ended up active without being in the pool would be invisible otherwise; fold
+    // it in rather than silently dropping it (that omission is exactly how "48 groups" hid a missing
+    // resource for two sessions).
+    for (const TPair<FString, int32>& P : ActiveByResource)
+    {
+        if (!PoolCountsByResource.Contains(P.Key)) { Kinds.Add(P.Key); }
+    }
+    Kinds.Sort();
+
+    FString PerResource;
+    TArray<FString> ZeroActive;
+    for (const FString& K : Kinds)
+    {
+        const int32 A = ActiveByResource.FindRef(K);
+        const int32 InPool = PoolCountsByResource.FindRef(K);
+        PerResource += FString::Printf(TEXT("%s=%d/%d "), *ShortRes(K), A, InPool);
+        if (A == 0) { ZeroActive.Add(K); }
+    }
+
+    UE_LOG(LogNodeShuffle, Display,
+        TEXT("ROLLCENSUS: seed=%d reroll=%d "
+             "| LIVE NOW (one TActorIterator<AFGResourceNodeBase> at census time, fracking actors excluded=%d): "
+             "total=%d nodeShuffleSpawned=%d levelPlaced=%d runtimeSpawnedByOtherMods=%d "
+             "[provenance tests -- nodeShuffleSpawned: our managed-node registry / UNodeShuffleNodeComponent; "
+             "levelPlaced: AActor::IsNetStartupActor(); runtimeSpawnedByOtherMods: neither of those. "
+             "On a RE-ROLL nodeShuffleSpawned reads ~0 because the previous layout's spawns are destroyed "
+             "before this point and the new ones do not exist yet -- that is the measurement, not a fault] "
+             "| POOL THIS ROLL: originalsCaptured=%d resourceKinds=%d newLocations=%d poolSize=%d targetActive=%d "
+             "| LAYOUT AFTER DRAW+DEAL: entries=%d active=%d inactive=%d activeWithNoResourceYet=%d "
+             "[inactive ORIGINALS are NOT in these counts -- they were removed from the layout as hide-only "
+             "records at the Hide & Replace step; read 'Hide & Replace conversion' for those] "
+             "| ACTIVE PER RESOURCE (active/originalsInPool): %s"),
+        Seed, bIsReroll ? 1 : 0, LiveFracking,
+        LiveTotal, LiveOurs, LiveLevelPlaced, LiveRuntimeOther,
+        OriginalsCaptured, PoolCountsByResource.Num(), NewLocationCount, PoolSize, TargetActive,
+        Layout.Num(), ActiveEntries, InactiveEntries, ActiveWithNoResource,
+        PerResource.IsEmpty() ? TEXT("<none>") : *PerResource);
+
+    // 3. THE ZERO-ACTIVE ALARM. Both 2026-08-08 investigations independently asked for exactly this
+    //    line: the roll reported "48 groups" and never said "Desc_OreLithium_C went to zero", so a
+    //    resource being erased from the world cost two log-archaeology passes to notice.
+    //    Still a measurement: it states what is true of the layout and explicitly does not test why.
+    for (const FString& K : ZeroActive)
+    {
+        UE_LOG(LogNodeShuffle, Warning,
+            TEXT("ROLLCENSUS ZERO-ACTIVE: resource '%s' had %d original node(s) in this roll's pool and has "
+                 "ZERO active entries in the rolled layout. MEASURED: for this layout that resource is ABSENT "
+                 "from the world -- its originals are hidden and nothing active carries it. NOT MEASURED: why; "
+                 "this line tests only the layout. WHERE TO LOOK (untested here): the 'Hide & Replace "
+                 "conversion' line's 'left hidden-only' count for the active-set draw, and docs/TECH-DEBT.md "
+                 "T12 for the gas-floor accounting. KNOWN CONSEQUENCE: an extractor restricted to this node "
+                 "type has no managed group to be allow-listed against, so AUTOALLOW will report SKIP."),
+            *K, PoolCountsByResource.FindRef(K));
+    }
 }
 
 void ANodeShuffleSubsystem::GenerateNewLocations(FRandomStream& Rng, const TArray<FVector>& VanillaLocations,
@@ -1714,9 +1868,11 @@ void ANodeShuffleSubsystem::GenerateNewLocations(FRandomStream& Rng, const TArra
     // MAP-WIDE SPREAD: the previous version anchored each new spot to a randomly
     // chosen vanilla node and offset it 50-150 m, so on the initial roll (only the
     // load-point cluster streamed in) every new node bunched around the player. The
-    // saved vanilla set, by contrast, spans the whole playable map (the initial roll
-    // is gated on full streaming, and on reroll the pool is rebuilt from saved
-    // entries that cover the map). Distribute candidates uniformly across the
+    // saved vanilla set, by contrast, spans the whole playable map (MEASURED 2026-08-08: every
+    // level-placed vanilla node is live at load, so the initial roll's live scan already covers the whole
+    // map; and on reroll the pool is rebuilt from saved entries that cover it too. ns-truth-diagnostics:
+    // this used to read "the initial roll is gated on full streaming" — it is not, and never was; see
+    // MinVanillaNodesForRoll). Distribute candidates uniformly across the
     // bounding box of that full known-node set instead — true map-wide spread,
     // independent of what happens to be streamed in.
     // playtest-fixes-1 PERCENTILE BOUNDS: the raw min/max bounding box of the known-node set includes
