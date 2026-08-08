@@ -345,7 +345,8 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll, bool 
         // was left naming the destination this entry has just walked away from, while bRelocate stayed
         // true and bRelocationFailed false. That combination defeats BOTH of F2's layers -- the roll
         // tail below and the sweep's reconciliation both skip on `bRelocate && !failed`, and
-        // EntryIsMidAssembly() returns true -- so an occupied core DespawnWellGroup had just REFUSED to
+        // the sweep's since-retired EntryIsMidAssembly() lambda returned true (A3 replaced that whole
+        // derivation with bPlacementClaimLive) -- so an occupied core DespawnWellGroup had just REFUSED to
         // destroy (its handle still in the map, *** ABANDONED IN PLACE ***) went on being reported as
         // "genuinely retrying (mid-assembly at its committed coordinate: OWNED, not orphaned)" forever.
         // Dismantle the machine on it and it is still never reclaimed: a permanent, snappable duplicate

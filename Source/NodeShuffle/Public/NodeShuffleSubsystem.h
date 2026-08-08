@@ -322,6 +322,41 @@ struct FNodeShuffleWellEntry
     // The whole footprint validated and the group has been committed to these coordinates.
     UPROPERTY(SaveGame) bool bGroupPlaced = false;
 
+    // ================================================================================================
+    // A3 (ns-review-h2-r2 §5, ns-review-h2-r3 §6) -- THE PLACEMENT CLAIM, AS A STORED FACT.
+    // ================================================================================================
+    // TRUE means: PlacedCoreLocation (and every bCaptured satellite's PlacedLocation) name coordinates
+    // THIS ENTRY CURRENTLY OWNS -- actors of ours may be standing there and nothing may reclaim them.
+    // FALSE means: this entry names no coordinate at all.
+    //
+    // WHY THIS FIELD EXISTS AND WHY IT IS NOT A FIFTH LIFECYCLE FLAG. Seven cold-review rounds each
+    // closed every prior finding and each found a NEW instance of ONE failure: "the entry has
+    // abandoned its coordinate" was a DERIVED PREDICATE over four flags (bGroupPlaced, bRelocate,
+    // bRelocationFailed, and Placed* being non-zero as a proxy), re-derived independently at every
+    // reader, and every round found a new state tuple some reader mis-read:
+    //   * h5 F2   -- the ten refusal `continue`s (flags said abandoned, Placed* said owned)
+    //   * h2-6    -- the escalation ladder (destination rewritten, Placed* left behind)
+    //   * h2-7 FA -- re-enrolment (bRelocate true AND bRelocationFailed false: a SEARCH-lifecycle
+    //                state read as an ABANDONMENT state)
+    //   * h2-7 F2 -- the withdrawal destroyed the very coordinate the measurement needed
+    // The generator is the DERIVATION. This field turns it off: the claim is WRITTEN when it becomes
+    // true and CLEARED when it becomes false, and readers ASK instead of inferring.
+    //
+    // EXACTLY ONE WRITER OF EACH POLARITY. Do not add a third.
+    //   set true  : NodeShuffleWellRelocateApply.cpp, beside `E.PlacedCoreLocation = CoreLoc;` --
+    //               the ONLY non-zero write of PlacedCoreLocation in the packet.
+    //   set false : ClearAbandonedWellPlacement (NodeShuffleWellSweep.cpp) -- the ONLY function that
+    //               zeroes Placed*. All three abandonment events route through it.
+    // INVARIANT A3 (enforced in the log, not just asserted in prose):
+    //   bPlacementClaimLive == false  <=>  PlacedCoreLocation.IsNearlyZero()
+    // ValidateWellClaimInvariant() checks it every sweep and logs *** CLAIM INVARIANT VIOLATED *** if a
+    // future edit breaks it. That line is the thing to grep before believing any sweep number.
+    //
+    // NOT the same idea as the SaveGame identity COMPONENT (ns-review-h2-r3 §5). This answers
+    // "does this ENTRY still own the coordinate it names" (our save struct). The component would answer
+    // "is this ACTOR ours, and whose" (the world). Neither subsumes the other; both are wanted.
+    UPROPERTY(SaveGame) bool bPlacementClaimLive = false;
+
     // Every budget exhausted. The well stays exactly where the level author put it, for good, and the
     // roll never re-enrols it. Fail-safe to "untouched", never to "broken".
     UPROPERTY(SaveGame) bool bRelocationFailed = false;
@@ -1284,7 +1319,34 @@ private:
     // group (bGroupPlaced true means the entry owns those coordinates and the spawn/adopt/link/suppress
     // paths all read them).
     // Returns true when it actually dropped something, so callers can count and report.
+    //
+    // A3: this is now the SINGLE CLEARER of FNodeShuffleWellEntry::bPlacementClaimLive. It no longer
+    // decides ANYTHING from the four lifecycle flags except the one safety gate below.
     bool ClearAbandonedWellPlacement(FNodeShuffleWellEntry& E, const TCHAR* Why);
+
+    // A3, THE ENFORCEMENT. INVARIANT A3 is `bPlacementClaimLive == false <=> PlacedCoreLocation is
+    // zero`. Prose invariants in this packet have been silently eroded three times (h2-6 added three
+    // ZeroVector writers to one that "held by construction"; h2-7 added a fourth). This walks the
+    // layout every sweep -- ~20 entries, free -- and logs loudly on either direction of violation.
+    // SILENT ON PASS except one "checked N, 0 violations" line per session, so the log proves it ran.
+    // Returns the number of violations found.
+    int32 ValidateWellClaimInvariant(const TCHAR* Where);
+    bool bWellClaimInvariantOkLogged = false;
+
+    // A3 migration. A save written before bPlacementClaimLive existed deserialises it as false while
+    // Placed* still names a real coordinate -- INVARIANT A3 violated on every entry, and every reader
+    // converted below would then treat a live, working, built-on well as claiming nothing. Run ONCE
+    // per session at the load-time adopt, before anything reads the flag. Returns entries backfilled.
+    int32 BackfillWellPlacementClaims();
+
+    // A3 / ns-review-h2-r3 F-2. Session-scoped, NOT saved: the coordinates ClearAbandonedWellPlacement
+    // has zeroed this session. The withdrawal deletes the ONLY field that could identify a stranded
+    // actor as ours, at the exact instant the actor becomes strandable -- so pass B's "is this actor
+    // ours or a mis-classified vanilla well" discriminator measured the distance to an unrelated
+    // destination and could never fire. Remembering the coordinate costs 12 bytes and makes it fire.
+    // Bounded: a re-roll of a 30-well map withdraws at most ~30 claims, and it resets per session.
+    TArray<FVector> AbandonedWellClaimCoords;
+    static constexpr int32 WellAbandonedClaimCoordCap = 512; // pathological-loop guard, not a budget
 
     // ns-review-h5 judgement call (2): a group that VALIDATES a footprint and then fails to ASSEMBLE
     // retries the same placement forever -- TryPlaceWellGroup neither advances YawCursor nor spends

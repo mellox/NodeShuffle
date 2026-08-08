@@ -232,6 +232,20 @@ void ANodeShuffleSubsystem::AdoptRestoredWellGroups()
     UWorld* World = GetWorld();
     if (!World) { return; }
 
+    // A3 MIGRATION -- FIRST LINE OF THE LOAD-TIME PATH, BEFORE ANY READER OF THE CLAIM RUNS.
+    // bPlacementClaimLive is a new UPROPERTY(SaveGame): a save written by h2-7 or earlier deserialises
+    // it FALSE while PlacedCoreLocation still names a real, built-on, producing well. Every reader A3
+    // converted would then read "this entry claims nothing" about a working relocated well -- the
+    // backstop would report its actors as unaccounted, and SpawnWellGroup's new guard would refuse to
+    // maintain it. Backfilling from the coordinate restores INVARIANT A3 for those entries.
+    // Placed here rather than at BeginPlay because this is the packet's single load-time entry point
+    // for well state and it is already once-per-session (bAdoptedRestoredWells at the call site) --
+    // and critically it runs BEFORE the first ApplyWellRelocation pass, which is the first reader.
+    // NOTE it is ABOVE the `ExpectedGroups == 0` early return on purpose: an entry can hold a claim
+    // without being bGroupPlaced (an INCOMPLETE spawn), and that entry is exactly the one whose claim
+    // matters most -- returning first would leave it un-backfilled forever.
+    BackfillWellPlacementClaims();
+
     int32 ExpectedGroups = 0, ExpectedSats = 0;
     for (const FNodeShuffleWellEntry& E : WellLayout)
     {

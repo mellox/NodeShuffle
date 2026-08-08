@@ -81,6 +81,8 @@
 #include "NodeShuffleWellRetype.h"   // WellPathOf / WellShort
 #include "NodeShuffleWellRelocate.h" // IsFiniteVector, WellAdoptMatchRadiusCm, RotateWellOffsetXY
 #include "EngineUtils.h"             // TActorIterator -- the ONE world scan in the packet's teardown
+#include "Engine/Level.h"            // ns-review-h2-r3 F-2: ULevel, for the `level=` discriminator
+#include "Engine/World.h"            // ... and UWorld::PersistentLevel, which it is compared against
 
 namespace
 {
@@ -129,14 +131,20 @@ void ANodeShuffleSubsystem::RunWellLocationBackstop(const TCHAR* Phase, int32& O
         KnownLayoutPaths.Add(E.CorePath);
         for (const FNodeShuffleWellSatellite& S : E.Satellites) { KnownLayoutPaths.Add(S.SatellitePath); }
 
-        if (IsFiniteVector(E.PlacedCoreLocation) && !E.PlacedCoreLocation.IsNearlyZero())
+        // A3: "does this entry claim a coordinate" is READ, not inferred from the coordinate being
+        // non-zero. Same set today (INVARIANT A3 makes them equivalent, and ValidateWellClaimInvariant
+        // proves that in the log every sweep) -- but this set decides what counts as accounted-for, and
+        // it must not be the last place in the packet that re-derives the claim from a coordinate.
+        if (E.bPlacementClaimLive && IsFiniteVector(E.PlacedCoreLocation)
+            && !E.PlacedCoreLocation.IsNearlyZero())
         {
             AccountedFor.Add(E.PlacedCoreLocation);
             DestinationPoints.Add(E.PlacedCoreLocation);
         }
         for (const FNodeShuffleWellSatellite& S : E.Satellites)
         {
-            if (IsFiniteVector(S.PlacedLocation) && !S.PlacedLocation.IsNearlyZero())
+            if (E.bPlacementClaimLive && IsFiniteVector(S.PlacedLocation)
+                && !S.PlacedLocation.IsNearlyZero())
             {
                 AccountedFor.Add(S.PlacedLocation);
                 DestinationPoints.Add(S.PlacedLocation);
@@ -164,6 +172,15 @@ void ANodeShuffleSubsystem::RunWellLocationBackstop(const TCHAR* Phase, int32& O
         }
     }
 
+    // ns-review-h2-r3 F-2 -- THE WITHDRAWN CLAIMS OF THIS SESSION, folded in as destinations.
+    // Without this the discriminator's "ours" branch was ERASED AT THE MOMENT IT BECAME TRUE: the three
+    // fields DestinationPoints is built from are all zeroed by the events that strand an actor, so at the
+    // instant an actor became strandable the coordinate identifying it as ours had just been deleted.
+    for (const FVector& V : AbandonedWellClaimCoords)
+    {
+        if (IsFiniteVector(V) && !V.IsNearlyZero()) { DestinationPoints.Add(V); }
+    }
+
     TSet<const AActor*> Held;
     for (const TPair<FString, AFGResourceNodeFrackingCore*>& P : SpawnedWellCores) { Held.Add(P.Value); }
     for (const TPair<FString, AFGResourceNodeFrackingSatellite*>& P : SpawnedWellSatellites) { Held.Add(P.Value); }
@@ -183,8 +200,11 @@ void ANodeShuffleSubsystem::RunWellLocationBackstop(const TCHAR* Phase, int32& O
     // actor into no bucket is visible in the log rather than silent.
     int32 Iterated = 0, LevelActorOnly = 0, KnownPathOnly = 0, BothGates = 0;
     int32 Examined = 0, Unaccounted = 0, InUse = 0;
+    int32 HeldByUs = 0, StrandedAtOurClaim = 0;
     int32 LiveCores = 0, LiveSats = 0;
     FString Detail;
+
+    const ULevel* const PersistentLevel = World->PersistentLevel;
 
     // ONE examination routine for both actor classes, so the two cannot drift apart in which gates they
     // apply -- the two-copies-of-a-rule shape this packet has already been bitten by three times
@@ -212,9 +232,36 @@ void ANodeShuffleSubsystem::RunWellLocationBackstop(const TCHAR* Phase, int32& O
         }
 
         ++Examined;
-        if (Held.Contains(A) || IsAccountedFor(A)) { return; }
 
-        ++Unaccounted;
+        // ==========================================================================================
+        // ns-review-h2-r3 F-1 (HIGH, evidence integrity) -- "ACCOUNTED FOR" WAS ABSORBING THE VERY
+        // ACTORS RT-6 EXISTS TO COUNT, AND THEN REPORTING unaccounted=0 AS A CLEAN RESULT.
+        // ==========================================================================================
+        // The old line was `if (Held.Contains(A) || IsAccountedFor(A)) return;` -- one gate for two
+        // completely different questions:
+        //   Held         -- "WE HOLD A HANDLE TO THIS ACTOR." We know about it; nothing is lost.
+        //   IsAccountedFor -- "SOME ENTRY CLAIMS THIS SPOT." Says nothing at all about the ACTOR.
+        // The class this pass was built for (ns-review-h5 F-1) is exactly "an actor of ours holding NO
+        // HANDLE": a group spawns INCOMPLETE, the player saves and quits inside that window, and on
+        // reload AdoptRestoredWellGroups skips the entry (all four of its loops gate on bGroupPlaced),
+        // so both handle maps are empty for it. But the ENTRY still claims the coordinate -- correctly,
+        // it is mid-assembly and will retry there -- and the stranded actors are standing ON it. So
+        // IsAccountedFor returned true, they were counted as Examined, and they NEVER REACHED
+        // Unaccounted. RT-6 would then read 0 in the exact scenario it prescribes and step 8's own rule
+        // ("0 across a few sessions means log-only is a defensible permanent answer") would license
+        // doing nothing about a class that was real and present in every one of those sessions.
+        //
+        // That is the round-7 instance of this packet's recurring shape: a thing abandoned somewhere
+        // invisible, with the acceptance gate reporting healthy. The gate now separates the questions.
+        // A CLAIM ON A COORDINATE IS NOT KNOWLEDGE OF AN ACTOR -- which is precisely what A3 makes
+        // sayable: the entry owning a coordinate and us holding a handle to what stands on it are two
+        // different facts, and only the second one means the actor is accounted for.
+        if (Held.Contains(A)) { ++HeldByUs; return; }
+
+        const bool bAtOurClaim = IsAccountedFor(A);
+        ++Unaccounted;                        // <-- the RT-6 number. Both sub-cases count.
+        if (bAtOurClaim) { ++StrandedAtOurClaim; }
+
         const TCHAR* Why = TEXT("");
         const bool bInUse = IsWellMemberInUse(A, Why);
         if (bInUse) { ++InUse; }
@@ -223,15 +270,43 @@ void ANodeShuffleSubsystem::RunWellLocationBackstop(const TCHAR* Phase, int32& O
             const FVector Loc = A->GetActorLocation();
             const double DVan = NearestXY(Loc, VanillaPoints);
             const double DDst = NearestXY(Loc, DestinationPoints);
-            // F-C(2): the full object path plus BOTH distances. This is what makes the RT-6 number
-            // self-classifying: near a DEALT DESTINATION => a genuinely stranded actor of ours (the
-            // thing being measured); near a VANILLA POSITION => IsNetStartupActor returned false for a
-            // level actor and pass B must NEVER be armed as designed.
+            const double Radius = static_cast<double>(WellAdoptMatchRadiusCm);
+
+            // ns-review-h2-r3 F-2 -- A COMPUTED VERDICT, NOT TWO UNBOUNDED NUMBERS AND A HUMAN EYEBALL.
+            // The previous build printed nearestVanillaXY / nearestDealtXY with NO THRESHOLD and asked
+            // the tester to judge "near". Both of its branches were dead: the vanilla one is unreachable
+            // (gate 2 excludes every path the layout knows BEFORE this point, and VanillaPoints is built
+            // only from layout entries, so an actor that gets here is by construction one whose position
+            // the layout does not know), and the dealt one was erased by this packet's own claim
+            // withdrawal. The withdrawn coordinates are now remembered (see above), which revives the
+            // dealt branch; the vanilla branch is still structurally near-unreachable and is therefore
+            // NOT the discriminator -- `level=` is.
+            //
+            // `level=` IS THE WORKING DISCRIMINATOR AND IT IS NOT PROVEN. A vanilla well is authored
+            // into the map and arrives with its streaming sublevel; SpawnWellGroup passes no
+            // OverrideLevel, so ours land in the persistent level. That makes `persistentLevel=0` strong
+            // evidence of a level-placed actor -- but "Satisfactory authors its fracking wells into
+            // sublevels" is a fact about somebody else's map, unverifiable from our headers. So it is
+            // REPORTED and used only as a verdict HINT; it is never a gate and nothing destructive
+            // reads it. RT-6 tells the tester to read it, which is the point round 7 made: the one
+            // discriminating field was already being printed and no test step named it.
+            const ULevel* const Lvl = A->GetLevel();
+            const bool bPersistent = (Lvl != nullptr && Lvl == PersistentLevel);
+            const FString LevelName = Lvl ? Lvl->GetOutermost()->GetName() : FString(TEXT("<none>"));
+
+            const TCHAR* Verdict =
+                  bAtOurClaim                      ? TEXT("OURS-STRANDED (no handle, standing on a LIVE claim of ours -- the h5 F-1 class, MEASURED)")
+                : (DDst >= 0.0 && DDst < Radius)   ? TEXT("OURS-ABANDONED (within the adopt radius of a dealt or WITHDRAWN destination)")
+                : !bPersistent                     ? TEXT("VANILLA-SUSPECT (not in the persistent level -- gate 1 FALSE NEGATIVE, do not arm pass B)")
+                : (DVan >= 0.0 && DVan < Radius)   ? TEXT("VANILLA-SUSPECT (sitting on a vanilla position the layout knows)")
+                :                                    TEXT("AMBIGUOUS (read level= and path= by hand; neither distance is inside the adopt radius)");
+
             Detail += FString::Printf(
-                TEXT(" [%s path='%s' @%s nearestVanillaXY=%s nearestDealtXY=%s%s%s]"),
-                *A->GetName(), *Path, *Loc.ToCompactString(),
+                TEXT(" [%s VERDICT=%s path='%s' @%s level='%s' persistentLevel=%d ")
+                TEXT("nearestVanillaXY=%s nearestDealtXY=%s adoptRadius=%.0fcm%s%s]"),
+                *A->GetName(), Verdict, *Path, *Loc.ToCompactString(), *LevelName, bPersistent ? 1 : 0,
                 DVan < 0.0 ? TEXT("n/a") : *FString::Printf(TEXT("%.0fcm"), DVan),
-                DDst < 0.0 ? TEXT("n/a") : *FString::Printf(TEXT("%.0fcm"), DDst),
+                DDst < 0.0 ? TEXT("n/a") : *FString::Printf(TEXT("%.0fcm"), DDst), Radius,
                 bInUse ? TEXT(" IN-USE:") : TEXT(""), bInUse ? Why : TEXT(""));
         }
     };
@@ -247,19 +322,24 @@ void ANodeShuffleSubsystem::RunWellLocationBackstop(const TCHAR* Phase, int32& O
     // per session and threw the numbers away for every later pass. Throttled only in the sense that the
     // pass itself runs at the settled phase.
     const int32 BucketSum = LevelActorOnly + KnownPathOnly + BothGates + Examined;
+    const int32 ExaminedSum = HeldByUs + Unaccounted; // F-1: the SECOND sum, and the one that was wrong
     UE_LOG(LogNodeShuffle, Display,
         TEXT("WELLH2-BACKSTOP [%s]: GATE CENSUS (ns-review-h2-r2 F-C -- this line is the ONLY evidence ")
         TEXT("that IsNetStartupActor works, and RT-3/RT-6 are unreadable without it). Iterated %d live ")
         TEXT("fracking actor(s) (%d core(s) + %d satellite(s)). Excluded: %d by IsNetStartupActor ONLY ")
         TEXT("(gate 1, ENGINE-INTERNAL and ASSUMED), %d by the layout-path cross-check ONLY (gate 2, ")
-        TEXT("ours and provable), %d by BOTH. Passed both gates: %d examined -> %d unaccounted (%d in ")
-        TEXT("use). Bucket sum %d vs iterated %d (%s). Layout coverage: %d entry(ies), %d known path(s) ")
-        TEXT("vs %d live core(s) in the world -- gate 2 can only cover wells the layout has ever seen, ")
-        TEXT("so a shortfall here is the exact window gate 1 is suspect in. NOTHING WAS DESTROYED."),
+        TEXT("ours and provable), %d by BOTH. Passed both gates: %d examined -> %d HELD BY US (a handle ")
+        TEXT("points at it) + %d UNACCOUNTED (%d of those are STRANDED ON A LIVE CLAIM OF OURS -- ")
+        TEXT("ns-review-h2-r3 F-1: these used to be silently counted as accounted-for and are the whole ")
+        TEXT("RT-6 class; %d in use by a player). Sums: gates %d vs iterated %d (%s); examined %d vs ")
+        TEXT("held+unaccounted %d (%s). Layout coverage: %d entry(ies), %d known path(s) vs %d live ")
+        TEXT("core(s) in the world -- gate 2 can only cover wells the layout has ever seen, so a ")
+        TEXT("shortfall here is the exact window gate 1 is suspect in. NOTHING WAS DESTROYED."),
         Phase, Iterated, LiveCores, LiveSats,
         LevelActorOnly, KnownPathOnly, BothGates,
-        Examined, Unaccounted, InUse,
+        Examined, HeldByUs, Unaccounted, StrandedAtOurClaim, InUse,
         BucketSum, Iterated, (BucketSum == Iterated) ? TEXT("OK") : TEXT("*** MISMATCH: a population is uncounted ***"),
+        Examined, ExaminedSum, (Examined == ExaminedSum) ? TEXT("OK") : TEXT("*** MISMATCH: a population is uncounted ***"),
         WellLayout.Num(), KnownLayoutPaths.Num(), LiveCores);
 
     // GATE 1 FALSE NEGATIVE, CALLED OUT BY NAME. If gate 2 alone excluded an actor, then gate 1 said
@@ -280,23 +360,28 @@ void ANodeShuffleSubsystem::RunWellLocationBackstop(const TCHAR* Phase, int32& O
     if (Unaccounted > 0)
     {
         UE_LOG(LogNodeShuffle, Warning,
-            TEXT("WELLH2-ORPHAN [backstop LOG-ONLY, %s]: %d RUNTIME fracking actor(s) are in no handle ")
-            TEXT("map and no layout entry accounts for their position (%d in use by a player). NOTHING ")
-            TEXT("WAS DESTROYED -- this backstop reports only (WIP 2026-08-07, ns-review-h5 F1). ")
-            TEXT("CLASSIFY EACH BY ITS TWO DISTANCES: near nearestDealtXY => a genuinely stranded actor ")
-            TEXT("of ours, which is real evidence for the SaveGame identity component; near ")
-            TEXT("nearestVanillaXY => gate 1 mis-classified a vanilla well and pass B must never be ")
-            TEXT("armed as designed. First %d:%s"),
-            Phase, Unaccounted, InUse, FMath::Min(Unaccounted, 5), *Detail);
+            TEXT("WELLH2-ORPHAN [backstop LOG-ONLY, %s]: %d RUNTIME fracking actor(s) passed both gates ")
+            TEXT("and WE HOLD NO HANDLE TO THEM (%d of them are standing on a coordinate an entry still ")
+            TEXT("claims -- ns-review-h2-r3 F-1, these were previously absorbed into 'accounted for' and ")
+            TEXT("are the exact class RT-6 exists to count; %d in use by a player). NOTHING WAS ")
+            TEXT("DESTROYED -- this backstop reports only (WIP 2026-08-07, ns-review-h5 F1). EACH ACTOR ")
+            TEXT("BELOW CARRIES A COMPUTED VERDICT: OURS-STRANDED / OURS-ABANDONED => the stranded class ")
+            TEXT("is real and the SaveGame identity component is warranted; VANILLA-SUSPECT => gate 1 ")
+            TEXT("mis-classified a vanilla well and PASS B MUST NEVER BE ARMED AS DESIGNED; AMBIGUOUS ")
+            TEXT("=> read level= and path= by hand (a level-placed actor and a runtime-spawned one are ")
+            TEXT("distinguishable there, and that is the only field here that is never dead). First %d:%s"),
+            Phase, Unaccounted, StrandedAtOurClaim, InUse, FMath::Min(Unaccounted, 5), *Detail);
     }
     else if (!bWellBackstopLogOnlyLogged)
     {
         bWellBackstopLogOnlyLogged = true;
         UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH2-ORPHAN [backstop LOG-ONLY, %s]: clean -- %d runtime fracking actor(s) passed ")
-            TEXT("both gates and every one is accounted for. This backstop never destroys anything in ")
-            TEXT("this build. The GATE CENSUS line above carries the numbers RT-3 needs and is NOT ")
-            TEXT("throttled. Said once."),
-            Phase, Examined);
+            TEXT("both gates and WE HOLD A HANDLE TO EVERY ONE (%d held). ns-review-h2-r3 F-1: 'clean' ")
+            TEXT("now means we KNOW ABOUT the actor, not merely that some entry claims the spot it ")
+            TEXT("stands on -- the old test conflated those and could not report a stranded actor at ")
+            TEXT("all. This backstop never destroys anything in this build. The GATE CENSUS line above ")
+            TEXT("carries the numbers RT-3 needs and is NOT throttled. Said once."),
+            Phase, Examined, HeldByUs);
     }
 }

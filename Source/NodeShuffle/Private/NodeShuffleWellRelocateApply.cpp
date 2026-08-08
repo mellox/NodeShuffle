@@ -169,6 +169,15 @@ bool ANodeShuffleSubsystem::TryPlaceWellGroup(FNodeShuffleWellEntry& E, UClass* 
             E.GroupYawDeg = YawDeg;
             E.PlacedCoreLocation = CoreLoc;
             E.PlacedCoreRotation = FRotator(CoreRot.Pitch, CoreRot.Yaw + YawDeg, CoreRot.Roll);
+            // A3 -- THE ONLY PLACE bPlacementClaimLive IS EVER SET TRUE, deliberately on the line after
+            // the only non-zero write of PlacedCoreLocation in the packet. Seven review rounds' worth of
+            // bugs came from readers INFERRING this from bGroupPlaced/bRelocate/bRelocationFailed; the
+            // claim is now a stored fact written where it becomes true. Note it is set HERE, at the
+            // footprint commit, NOT at `bGroupPlaced = true` in ApplyWellRelocation: between those two
+            // points the group spawns, and an INCOMPLETE spawn leaves real actors of ours standing at
+            // exactly these coordinates with bGroupPlaced still false. That window is the h5 F-1 /
+            // RT-6 stranded-actor class, and it is precisely the window the claim must cover.
+            E.bPlacementClaimLive = true;
             // ns-review-h3 H10: MemberLocs/MemberRots hold ONLY the captured members now, so the commit
             // walks its own cursor rather than indexing E.Satellites -- indexing would misalign the
             // moment any record is uncaptured, and would write a coordinate into a record that must

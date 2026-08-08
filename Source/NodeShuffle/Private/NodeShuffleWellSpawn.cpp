@@ -75,6 +75,30 @@ bool ANodeShuffleSubsystem::SpawnWellGroup(FNodeShuffleWellEntry& E, UClass* Res
         return false;
     }
 
+    // ---- 0a. A3: THE PLACEMENT CLAIM MUST BE LIVE BEFORE ANYTHING IS BUILT AT PlacedCoreLocation ----
+    // Everything from here down reads E.PlacedCoreLocation and S.PlacedLocation as places to ADOPT an
+    // existing actor or SPAWN a new one. With no live claim those fields are ZeroVector, and a zero is
+    // FINITE -- which is exactly how h3 H10 put live, extractor-snappable nodes at the WORLD ORIGIN and
+    // inflated a well's rate. The satellite loop below carries its own `LocalOffset.IsNearlyZero() &&
+    // PlacedLocation.IsNearlyZero()` guard for that; the CORE has never had one, it is protected only
+    // by the caller-side argument that SpawnWellGroup is unreachable without a committed placement.
+    // A3 lets that argument be checked instead of trusted. UNREACHABLE TODAY via both callers (straight
+    // after TryPlaceWellGroup's commit, and the bGroupPlaced maintenance branch); a tripwire, not a
+    // behaviour change, and it fails toward "spawn nothing", which is always the safe direction here.
+    if (!E.bPlacementClaimLive)
+    {
+        UE_LOG(LogNodeShuffle, Warning,
+            TEXT("WELLH2-SPAWN core='%s': *** GROUP NOT SPAWNED -- NO LIVE PLACEMENT CLAIM *** ")
+            TEXT("claimLive=0, so PlacedCoreLocation=%s names nothing and spawning here would ")
+            TEXT("materialise a live snappable node at that coordinate (h3 H10). Refused (A3). ")
+            TEXT("UNREACHABLE via the two known callers -- if you are reading this, either a third ")
+            TEXT("caller exists or the claim was lost across a save round-trip. placed=%d relocate=%d ")
+            TEXT("failed=%d destDealt=%d."),
+            *WellShort(E.CorePath), *E.PlacedCoreLocation.ToCompactString(), E.bGroupPlaced ? 1 : 0,
+            E.bRelocate ? 1 : 0, E.bRelocationFailed ? 1 : 0, E.bDestDealt ? 1 : 0);
+        return false;
+    }
+
     // ---- 0. STALE-HANDLE GUARD (ns-review-h3 H1) ----
     // The reuse below used to trust the runtime handle unconditionally: FindRef, IsValid, reuse. It
     // never asked whether the actor was still WHERE THE ENTRY NOW SAYS IT SHOULD BE. Since a group's

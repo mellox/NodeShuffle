@@ -210,6 +210,37 @@ bool ANodeShuffleSubsystem::DespawnWellGroup(FNodeShuffleWellEntry& E, const TCH
 // for good. The audit did print GROUP SCATTERED, but only after the irreversible act.
 int32 ANodeShuffleSubsystem::DespawnStaleWellMembers(FNodeShuffleWellEntry& E)
 {
+    // ==============================================================================================
+    // A3 -- THE INVARIANT BELOW IS NOW ENFORCED AT ITS OWN DOOR INSTEAD OF ASSUMED FROM TWO CALLERS.
+    // ==============================================================================================
+    // This is the most dangerous reader of PlacedCoreLocation in the packet: it DESTROYS on
+    // `!IsAtTarget`, so a zero target means "everything is stale" and the whole group goes. The comment
+    // block below (h2-6 F-D, kept verbatim because its reasoning is still the reason this is not a
+    // one-line "parity fix") states the load-bearing invariant -- "only ever called with
+    // PlacedCoreLocation non-zero" -- and then says it holds by the coincidence of two unrelated
+    // caller-side predicates, unenforced. h2-6 added three ZeroVector writers to that convention and
+    // h2-7 added a fourth; the next one erodes it for real.
+    //
+    // A3 makes the invariant a fact this function can simply ASK for, so it does. The fail-safe
+    // direction is unambiguous here: no claim => the staleness question is UNANSWERABLE, and the
+    // answer to an unanswerable question is never "destroy". Return 0 (no stale members we could not
+    // clear), which lets SpawnWellGroup proceed exactly as it does today on a clean group.
+    // UNREACHABLE TODAY -- the two callers both hold a live claim -- so this is a tripwire, not a
+    // behaviour change, and if it ever fires the log says which entry and the packet has a new bug.
+    if (!E.bPlacementClaimLive)
+    {
+        UE_LOG(LogNodeShuffle, Warning,
+            TEXT("WELLH2-DESPAWN core='%s': *** STALE CHECK SKIPPED -- NO LIVE PLACEMENT CLAIM *** ")
+            TEXT("claimLive=0 while this function was called, so PlacedCoreLocation names nothing and ")
+            TEXT("every member would test as STALE and be DESTROYED. Skipped and reported instead ")
+            TEXT("(A3, ns-review-h2-r2 F-D's invariant, now enforced rather than assumed). This is ")
+            TEXT("UNREACHABLE via the two known callers -- if you are reading it, a third caller exists ")
+            TEXT("or the claim is being lost. placed=%d relocate=%d failed=%d core=%s."),
+            *WellShort(E.CorePath), E.bGroupPlaced ? 1 : 0, E.bRelocate ? 1 : 0,
+            E.bRelocationFailed ? 1 : 0, *E.PlacedCoreLocation.ToCompactString());
+        return 0;
+    }
+
     const float MatchSq = FMath::Square(WellAdoptMatchRadiusCm);
     int32 Stale = 0, RefusedInUse = 0;
 
