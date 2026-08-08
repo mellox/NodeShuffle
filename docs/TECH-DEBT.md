@@ -248,7 +248,37 @@ the population visible per roll.
 > would cement the false streaming model by looking like a fix) and building a node manifest
 > (strictly worse — it *loses* exactly this population).
 
-### T3. Snap-box overlap with neighbouring nodes is proven geometrically, never observed
+### T3. Snap-box overlap — **OBSERVED 2026-08-08, 8 cases in a single load**
+**The instrumentation worked on its first run.** Build `2026-08-08-t1t2-2`, one save load, no travel and
+no re-roll: **128 measurements, 8 provable overlaps**, against a snapshot of **1227** ordinary mineable
+nodes. Every verdict was audited against its own printed per-axis numbers — **zero mismatches**, so the
+predicate is correct, not merely firing.
+
+| member | extent | nearest mineable node | dx/dy/dz (cm) |
+|---|---|---|---|
+| `BP_FrackingSatellite_C_2147460444` | 900.00 | **868 cm** | 751 / 434 / 24 |
+| `BaseNode_FrackingSat_KLib_C_2147416684` | 860.56 | 933 cm | 879 / 80 / 302 |
+| `BaseNode_FrackingSat_KLib_C_2147416681` | 863.23 | 1099 cm | 1077 / 202 / 80 |
+| `BaseNode_FrackingSat_KLib_C_2147413508` | 807.99 | 1380 cm | 1072 / 869 / 10 |
+| `BaseNode_FrackingCore_KLib_C_2147416687` | 900.00 | 1833 cm | 1245 / 1281 / 413 |
+
+The first row is a satellite of the chlorine core the user built a pressurizer on, so it is **directly
+reachable for a runtime test**. The `KLib` members are modded wells.
+
+**Overlap is necessary, not sufficient** — it proves the boxes intersect, not that a Miner is refused.
+The runtime test is still owed: place a Miner Mk1 on the ordinary node beside row 1.
+
+> ⚠ **A LOG-DESIGN LESSON THAT COST THREE WRONG READINGS IN ONE SITTING.** This line's legend contains
+> the literal text `provableOverlap=0); provableOverlap=%d`, so the **legend's example value appears in
+> the log BEFORE the real field**. A naive `grep -c "provableOverlap=1"`, and even a "first occurrence"
+> regex, reads the legend and not the measurement — it produced "136 overlaps", then "0 overlaps",
+> before the correct answer of 8. Same family as the `(5 of 6 groups…)` constant and the
+> `re-enrolled by a new roll` prose. **RULE: a legend must DESCRIBE its fields, never EXEMPLIFY them in
+> `field=value` syntax that collides with the real field.** When counting any field in this project's
+> logs, anchor on a delimiter the legend cannot contain (here: the trailing `.`), and sanity-check the
+> match count against the line count — 384 matches over 128 lines was the tell. [[lessons-zero-needs-a-denominator]]
+
+### ~~T3 (original). Snap-box overlap with neighbouring nodes is proven geometrically, never observed~~
 `EnsureWellMemberSnapBox` can reach 900 cm; `EnsureNodeUseBox` gives ordinary nodes 650 cm.
 H0 measured the nearest non-same-well node at **1400 cm**. 900 + 650 = 1550 > 1400, so the
 boxes provably intersect in the population H0 measured.
