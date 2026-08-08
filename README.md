@@ -107,6 +107,28 @@ per save from a seed**. A **global terrain map** (water/land and cave floors) is
 learned as you play and **shipped prebuilt** inside the mod. See
 [DESIGN.md](DESIGN.md) for more detail.
 
+### Known behaviour: resource wells can duplicate if you build on one mid-move
+
+**This is a deliberate trade-off, not a bug — and it errs in your favour.**
+
+Resource-well relocation is *not* instant. A well is dealt a destination when the
+layout is rolled, but it cannot actually move until you visit that destination —
+the game has to have the terrain streamed in before we can find ground to place
+it on. Until then the well stays exactly where it is, fully working.
+
+We only hide the original **after** the new copy provably exists. That ordering is
+deliberate: if we hid it on the roll, a well whose destination you never visit
+would simply vanish from your save, possibly forever.
+
+The consequence: if you **build a Resource Well Pressurizer or Extractor on a well
+that is still waiting to move**, and later travel to its destination, you get
+**two wells** — yours, still standing and still producing, plus a fresh copy at the
+destination. We will never hide or delete a well you have built on.
+
+If you would rather not have duplicates, don't build on resource wells until
+you've explored the area its replacement is headed for — or leave
+`RelocateResourceWells` off and use in-place resource shuffling only.
+
 ## Building
 
 C++ source for the SML starter project (SatisfactoryModLoader). Drop this folder
