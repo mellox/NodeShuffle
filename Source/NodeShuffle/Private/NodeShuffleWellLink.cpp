@@ -144,6 +144,33 @@ void ANodeShuffleSubsystem::EnsureSatelliteLinked(AFGResourceNodeFrackingCore* C
 // Both helpers refuse level actors (IsNetStartupActor -- a vanilla well is never ours) and refuse any
 // actor another entry has already claimed, so two entries dealt near each other cannot steal each
 // other's members.
+//
+// ==================================================================================================
+// ns-review-h2-r2 F-D -- THE THIRD AND FOURTH COPIES OF THE "IS IT AT THIS COORDINATE" TEST, AND THE
+// UNWRITTEN INVARIANT THAT KEEPS THEM SAFE. DELIBERATELY NOT CHANGED (2026-08-07).
+// ==================================================================================================
+// Both test `IsFiniteVector(At)` only, and (0,0,0) IS finite -- so with At == ZeroVector each would
+// ADOPT any unclaimed runtime fracking actor within WellAdoptMatchRadiusCm (300 cm) OF THE WORLD
+// ORIGIN and hand it to an entry that names no coordinate. The sweep's copy of this test gained
+// `&& !Target.IsNearlyZero()` in h2-6; these did not, which is why the ZeroVector-means-no-coordinate
+// convention the h2-6 commit message calls universal is NOT yet universal.
+//
+// Unlike DespawnStaleWellMembers' copy (see the banner there), the fix here IS the obvious one --
+// `if (At.IsNearlyZero()) { return nullptr; }` fails towards "do not adopt", which is the safe
+// direction. It is NOT taken in this packet only because the packet's scope is F-A/F-B/F-C and a
+// behaviour change to the adoption path deserves its own review, not a drive-by.
+//
+//   INVARIANT (load-bearing, previously unwritten, still unenforced):
+//   Neither helper is ever called with a zero `At`. WHY IT HOLDS TODAY: the only call sites are
+//   NodeShuffleWellSpawn.cpp:107 (`E.PlacedCoreLocation`) and :193 (`S.PlacedLocation`), both inside
+//   SpawnWellGroup, which runs only after TryPlaceWellGroup committed non-zero coordinates or on the
+//   bGroupPlaced maintenance branch where ClearAbandonedWellPlacement provably never fires. The :193
+//   site is additionally behind the spawn guard's `LocalOffset.IsNearlyZero() &&
+//   PlacedLocation.IsNearlyZero()` rejection.
+//   WHAT ERODES IT: every new site that writes ZeroVector into Placed*. h2-6 added three; this packet
+//   adds a fourth (the re-enrolment claim withdrawal, ns-review-h2-r2 F-A). All four run on entries
+//   that are NOT bGroupPlaced, which is the same condition that keeps SpawnWellGroup off them -- but
+//   that is a coincidence of two separate predicates, not one enforced rule. Take the guard next time.
 AFGResourceNodeFrackingCore* ANodeShuffleSubsystem::FindExistingRuntimeWellCoreAt(const FVector& At)
 {
     UWorld* World = GetWorld();

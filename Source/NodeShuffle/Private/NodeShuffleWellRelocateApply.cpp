@@ -444,6 +444,12 @@ void ANodeShuffleSubsystem::ApplyWellRelocation(bool bWellShuffleEnabled, bool b
     // the whole layout; running it after the audit means a group placed THIS pass is already recorded
     // and can never be mistaken for an orphan.
     //
+    // ns-review-h2-r2 F-B: bOn now gates PASS B ONLY -- the world scan. Pass A (handle-driven) and the
+    // claim reconciliation run on EVERY call, including this one with both toggles off, because their
+    // safety does not depend on the config: pass A only ever destroys actors whose handles WE created.
+    // With the feature off over a save that still holds handles, that is the ONLY thing that reclaims
+    // an abandoned partial group. Do not re-add a gate here.
+    //
     // ns-review-h5 F1 (BLOCKING, the finding that parked this packet): bOn IS PASSED IN, and the sweep
     // refuses to look at the world without it. The `!bOn` block above deliberately does not return --
     // a save that already holds relocated wells must keep them spawned, linked and suppressed whatever

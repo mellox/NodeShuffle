@@ -213,6 +213,35 @@ int32 ANodeShuffleSubsystem::DespawnStaleWellMembers(FNodeShuffleWellEntry& E)
     const float MatchSq = FMath::Square(WellAdoptMatchRadiusCm);
     int32 Stale = 0, RefusedInUse = 0;
 
+    // ==============================================================================================
+    // ns-review-h2-r2 F-D -- WRITE THE UNWRITTEN INVARIANT DOWN. READ THIS BEFORE "FIXING" THE
+    // DIVERGENCE FROM THE SWEEP'S COPY OF THIS LAMBDA. DELIBERATELY NOT CHANGED (2026-08-07).
+    // ==============================================================================================
+    // The sweep's IsAtTarget (NodeShuffleWellSweep.cpp) gained `&& !Target.IsNearlyZero()` when F2
+    // started clearing withdrawn claims TO ZeroVector. THIS copy did not, and the h2-6 handoff claimed
+    // that was safe because it "fails in the opposite direction (an actor near the origin would be
+    // judged at-target and KEPT), which is non-destructive". THAT CHARACTERISATION IS FALSE, and it
+    // inverts the dominant case: both call sites below act on `!IsAtTarget`, i.e. they DESTROY. With
+    // Target == ZeroVector and the actor anywhere except within 300 cm of the world origin, IsAtTarget
+    // is FALSE, so the member is judged stale and DESTROYED (subject to the occupancy gate only).
+    //
+    // ==> PASTING THE SWEEP'S GUARD IN HERE WOULD MAKE THIS SITE ALWAYS-DESTROY ON A ZERO TARGET. <==
+    // The correct polarity for a destructive site is the opposite one: a zero target means NO CLAIM
+    // EXISTS, so "is this member stale?" is unanswerable and the member must be SKIPPED and logged,
+    // never destroyed. That is a behaviour change to a destructive path and it is NOT taken in this
+    // packet -- it needs its own review, and it is currently UNREACHABLE. Which is the invariant:
+    //
+    //   INVARIANT (load-bearing, previously unwritten, still unenforced):
+    //   DespawnStaleWellMembers is only ever called with E.PlacedCoreLocation NON-ZERO, and only ever
+    //   iterates satellite records whose PlacedLocation is non-zero or which hold no handle.
+    //   WHY IT HOLDS TODAY: the sole caller is SpawnWellGroup (NodeShuffleWellSpawn.cpp:96), reached
+    //   only (a) straight after TryPlaceWellGroup committed a non-zero PlacedCoreLocation
+    //   (NodeShuffleWellRelocateApply.cpp), or (b) on the bGroupPlaced maintenance branch, where
+    //   ClearAbandonedWellPlacement provably never fires (it returns early on bGroupPlaced). A
+    //   satellite record with a permanently-zero PlacedLocation is !bCaptured and can never acquire a
+    //   handle (spawn guard NodeShuffleWellSpawn.cpp:170-187; adopt filter NodeShuffleWellLink.cpp).
+    //   WHAT ERODES IT: every new site that writes ZeroVector into Placed*. h2-6 added three.
+    //   IF YOU ADD A FOURTH, re-derive this or make the skip-and-log change under its own review.
     const auto IsAtTarget = [&](const AActor* A, const FVector& Target) -> bool
     {
         return IsValid(A) && IsFiniteVector(Target)

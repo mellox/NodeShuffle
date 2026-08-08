@@ -1232,9 +1232,39 @@ private:
     // NodeShuffle the node-destroyer it already ships a two-layer defence against (cookbook §20), with
     // no equivalent opt-out. The gate is now a PARAMETER rather than a read of config inside here, so a
     // caller cannot forget it and cannot get a different answer than the pass it belongs to.
+    //
+    // ns-review-h2-r2 F-B (BLOCKING) -- BOTH GATES BELONG TO PASS B ONLY, AND USED TO GATE EVERYTHING.
+    // The two gates above exist for pass B's WORLD SCAN: with an empty accounted-for set a world scan
+    // calls the whole vanilla well population orphaned. Pass A is a different animal -- it only ever
+    // destroys actors whose handles WE created, which is true whatever the config says and whatever
+    // `placedGroups` is -- so gating it gave up the h4-F2 reclamation for nothing, in EXACTLY the window
+    // that produces abandoned handles: every entry enrolled and none placed yet means placedGroups == 0,
+    // so a re-roll that refuses an INCOMPLETE-spawned group left our actors standing while the log
+    // printed "SWEEP SKIPPED ... placedGroups=0", which reads as healthy. Same over-reach with the
+    // toggles OFF over a save that still holds handles. Gates now wrap the backstop call alone; the
+    // reconciliation and pass A always run, and the skip line names WHICH pass was skipped.
     void SweepOrphanedWellActors(const TCHAR* Phase, bool bRelocationOn);
     static constexpr int32 WellOrphanSweepCadence = 12; // ~1 min at one apply pass per ~5 s
     bool bWellOrphanInUseLogged = false;                // F-4: permanent state, said once per roll
+
+    // ns-review-h2-r2 F-A: ONE copy of the "withdraw the claim of every entry that no longer owns it"
+    // rule. It was written twice -- once at the roll tail, once inside the sweep -- which is the
+    // two-copies-of-a-rule drift shape this packet has already been bitten by three times. Returns the
+    // number of entries whose claim it actually withdrew. NEVER gated: it destroys nothing, and gating
+    // it would leave stale claims sitting in the save whenever the sweep's pass-B gates are shut.
+    int32 ReconcileAbandonedWellClaims(const TCHAR* Why);
+
+    // The roll's TEARDOWN TAIL (withdraw every claim the roll abandoned -> compute the post-roll sweep
+    // gate -> run the sweep). Moved out of RollWellRelocation into NodeShuffleWellSweep.cpp because that
+    // file is where the sweep it drives lives, and because NodeShuffleWellRelocateRoll.cpp was at exactly
+    // the 500-line limit when the F-A fix landed. Takes RelocateResourceWells as the caller received it;
+    // it computes the real gate (wellShuffle && relocate) itself.
+    void FinishWellRollTeardown(bool bRelocationEnabled);
+
+    // PASS B, the location backstop -- split into NodeShuffleWellBackstop.cpp for the 500-line rule.
+    // LOG-ONLY in this build (see that file's banner). Reports its two headline numbers to the sweep's
+    // summary line; everything else it measures it logs itself.
+    void RunWellLocationBackstop(const TCHAR* Phase, int32& OutExamined, int32& OutUnaccounted);
 
     // ns-review-h5 F1: a DESTROY CAP on pass A. Pass A is provably ours (it only ever destroys actors
     // whose handles WE put in SpawnedWellCores/SpawnedWellSatellites), so it stays destructive -- but a
@@ -1242,7 +1272,7 @@ private:
     // measured max of 10 satellites) plus headroom. Anything past the cap is deferred to the next sweep
     // and said loudly.
     static constexpr int32 WellSweepMaxDestroysPerPass = 16;
-    bool bWellSweepGatedLogged = false;      // "sweep skipped, and why" -- once per session
+    bool bWellSweepGatedLogged = false;      // "PASS B skipped, and why" -- once per session (F-B)
     bool bWellSweepCapLogged = false;        // cap tripped -- once per session
     bool bWellBackstopLogOnlyLogged = false; // pass B is LOG-ONLY -- once per session
 

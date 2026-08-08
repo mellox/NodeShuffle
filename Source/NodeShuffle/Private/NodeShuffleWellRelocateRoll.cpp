@@ -339,6 +339,27 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll, bool 
         E.GroupRedeals = 0;
         E.GroupYawDeg = 0.0f;
         E.bGroupPlaced = false;
+
+        // ns-review-h2-r2 F-A (BLOCKING) -- AND WITHDRAW THE CLAIM, WHICH THIS BRANCH RESET EVERYTHING
+        // ELSE EXCEPT. :300 above already zeroes every satellite's PlacedLocation; PlacedCoreLocation
+        // was left naming the destination this entry has just walked away from, while bRelocate stayed
+        // true and bRelocationFailed false. That combination defeats BOTH of F2's layers -- the roll
+        // tail below and the sweep's reconciliation both skip on `bRelocate && !failed`, and
+        // EntryIsMidAssembly() returns true -- so an occupied core DespawnWellGroup had just REFUSED to
+        // destroy (its handle still in the map, *** ABANDONED IN PLACE ***) went on being reported as
+        // "genuinely retrying (mid-assembly at its committed coordinate: OWNED, not orphaned)" forever.
+        // Dismantle the machine on it and it is still never reclaimed: a permanent, snappable duplicate
+        // core at an abandoned destination, invisible to an audit that walks bGroupPlaced entries.
+        //
+        // ORDERING, TWICE LOAD-BEARING -- this call must sit HERE and nowhere else in this branch:
+        //   * AFTER DespawnWellGroup (:330), because its *** ABANDONED IN PLACE *** line prints
+        //     PlacedCoreLocation to say WHERE it left occupied actors, and that must be the real
+        //     coordinate, not a zero. Same rationale as NodeShuffleWellEscalate.cpp:181.
+        //   * AFTER `E.bGroupPlaced = false` above, because ClearAbandonedWellPlacement RETURNS EARLY
+        //     on bGroupPlaced -- placed at the despawn it would silently no-op for exactly the
+        //     previously-placed wells this fix exists for.
+        ClearAbandonedWellPlacement(E, TEXT("re-enrolled by a new roll"));
+
         ++Enrolled;
 
         UE_LOG(LogNodeShuffle, Display,
@@ -457,35 +478,10 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll, bool 
         }
     }
 
-    // ns-review-h5 judgement call (1): SWEEP AT THE ROLL'S TAIL, after every entry's fate is decided. A
-    // guard at the loop TOP was correctly rejected (it would run before the bGroupPlaced branch and tear
-    // down the wells the packet exists to preserve), but "no roll-time sweep at all" was the weakest
-    // version of that idea. No ordering hazard here, and it closes a real window: WellAuditPasses is NOT
-    // reset on a re-roll, so handles from wells refused by the `continue`s above would otherwise survive
-    // ~60 s until the next cadence sweep, inside which SpawnWellGroup's lazy adoption can re-adopt them.
-    // ns-review-h5 F2 -- FIRST, WITHDRAW THE PLACEMENT CLAIM OF EVERY ENTRY THIS ROLL ABANDONED. Ten
-    // `continue`s above clear bRelocate and NOT ONE touched Placed*, so the sweep kept reporting their
-    // stranded actors as "mid-assembly: OWNED, not orphaned" forever. ONE state-driven loop, not a clear
-    // in each of the ten. UNCONDITIONAL, NOT under the sweep's gates below (it destroys nothing).
-    // Rationale + the independent one-line second layer: NodeShuffleWellSweep.cpp.
-    int32 ClaimsWithdrawn = 0;
-    for (FNodeShuffleWellEntry& E : WellLayout)
-    {
-        if (E.bGroupPlaced) { continue; }                       // a placed group OWNS its coordinates
-        if (E.bRelocate && !E.bRelocationFailed) { continue; }   // still searching: the claim is live
-        if (ClearAbandonedWellPlacement(E, TEXT("abandoned by this roll"))) { ++ClaimsWithdrawn; }
-    }
-    // ns-review-h5 F1: the sweep refuses to look at the world unless relocation is on for this pass, and
-    // bRelocationEnabled ALONE IS NOT that condition -- ApplyWellRelocation's gate is bWellShuffle &&
-    // bRelocation while this function receives RelocateResourceWells only. Passing `true` would re-open
-    // the blocker: a save with ShuffleResourceWells off but Relocate on reaches this line.
-    const bool bSweepOn = FNodeShuffleConfigStruct::GetActiveConfig(this).ShuffleResourceWells
-                       && bRelocationEnabled;
-    UE_LOG(LogNodeShuffle, Display,
-        TEXT("WELLH2-ROLL: withdrew the placement claim of %d of %d entry(ies) -- each refused by one of ")
-        TEXT("the ten branches above (h5 F2); post-roll sweep gate wellShuffle&&relocate=%d."),
-        ClaimsWithdrawn, WellLayout.Num(), bSweepOn ? 1 : 0);
-    SweepOrphanedWellActors(TEXT("post-roll"), bSweepOn);
+    // ns-review-h2-r2 F-I: the roll's TEARDOWN TAIL lives in NodeShuffleWellSweep.cpp next to the sweep
+    // it drives (this file was at exactly 500 lines and the F-A fix pushed it over). It withdraws the
+    // claim of every entry this roll abandoned, computes the post-roll sweep gate, and runs the sweep.
+    FinishWellRollTeardown(bRelocationEnabled);
 
     UE_LOG(LogNodeShuffle, Display,
         TEXT("WELLH2-ROLL: %s complete -- %d newly enrolled (%d destinations dealt, %d deal-failed), ")
