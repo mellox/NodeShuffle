@@ -1322,3 +1322,50 @@ throttled line, which is exactly the [[lessons-zero-needs-a-denominator]] shape.
 time, so T30 cannot be safer than this path is — **but T30 is no longer the reason to care.** Fix this
 first; T30's dressing question then answers itself. See also [[T31]] (the template is one global
 first-capture-wins pair). Full working: `_team/nodeshuffle-followups/T30-recount.md`.
+
+### ⚠ CORRECTION TO T31 AND T32 — THE AUTHOR WAS RIGHT: THE LOG POPULATION IS STALE. Both entries' runtime figures describe builds that no longer exist.
+**Filed 2026-08-09, within the hour, after the author said: *"I haven't played in a bit so I don't know
+if the log is representative of changes made since then."* They were right, and it is worse than
+"some staleness" — MEASURED by reading the boot marker out of each log:**
+
+| build marker | anchored `WELLH2B-APPLY` lines |
+|---|---|
+| `2026-08-08-t7split-1` | 36 |
+| `2026-08-08-t17-t7b-1` | 36 |
+| `2026-08-09-t23s0-3` | 2 |
+| `2026-08-09-t23hide-4` | 3 |
+| `2026-08-09-t24-2` | 11 |
+| **`2026-08-09-t27-2` / `-t27-3` (the deployed build)** | **0** |
+
+* **NOT ONE of the 88 observations comes from the deployed binary.**
+* **72 of 88 (82%) predate T23, T24, T26 and T27 entirely** — they are 2026-08-08 builds, before the
+  enclosure gate, before core-first placement with independent satellites, and before the group-scoped
+  occupancy gate.
+* The live `FactoryGame.log` is on `-t24-2` and has **0** apply lines.
+
+**WHAT THIS RETRACTS.** T32's headline — *"11 of 79 core-instances still no-visual at their last
+observation ... this ships TODAY"* — **is not supported.** The counts are real for the builds that
+produced them; the words "ships today" are not. T31's runtime frequency claim (*"7 of 19 groups never
+capture their own origin"*) inherits the same contamination, since it comes from the same population.
+
+**WHAT SURVIVES, and why.**
+* **T31's MECHANISM stands** — one global first-capture-wins template per kind, never keyed by
+  resource, never refreshed. That is read from CURRENT source (`NodeShuffleWellVisuals.cpp:174-176`,
+  `NodeShuffleSubsystem.h:2140-2141`), not from logs.
+* **T31's ASSET findings stand** — two mesh families, no desert node mesh anywhere. That is the pak
+  index, which is the game's, not ours, and is build-independent.
+* **T32's METHOD finding stands and is the durable part** — the prior zero came from deduping across
+  sessions. That critique is about arithmetic on a population, not about which build produced it.
+
+**THE ACTUAL LESSON, AND IT IS THE THIRD SIGHTING IN ONE HOUR.** POPULATION again. The first run merged
+different SAVES and ROLLS; the recount fixed that and merged different BUILDS; **neither of us checked
+the boot marker, which is one grep and is printed in every log for exactly this purpose.** Every gate
+we have passed on both runs. The author caught it from memory of when they last played.
+**RULE, and it goes in the brief for every future log measurement: SLICE BY BUILD MARKER FIRST, print
+the per-marker denominators, and state explicitly how many observations come from the build under
+discussion. A count that spans builds is not a count of anything.**
+
+**WHAT WOULD ACTUALLY MEASURE THIS.** One session on `-t27-3` with diagnostics ON, flying past a few
+relocated wells. Until then T31's frequency and all of T32 are **UNMEASURED ON THE CURRENT BUILD**, and
+neither may be cited as a live defect rate. The unbuildable question is unaffected and still worth one
+in-game attempt on any undressed core.
