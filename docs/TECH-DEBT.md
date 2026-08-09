@@ -366,7 +366,12 @@ declared in `NodeShuffleSubsystem.h`, which that packet did not own.
 Recorded rather than waved through, because the split-then-immediately-regrow pattern is how a limit
 stops meaning anything. **Next split packet takes this file and owns the header.**
 
-### PARKED — attempt 1 of the re-roll-geography change (`stash@{0}`, 2026-08-08)
+### ~~PARKED — attempt 1 of the re-roll-geography change~~ — SUPERSEDED, stash DROPPED 2026-08-08
+Attempt 2 shipped (above), so attempt 1 is dead code. **The stash was deliberately dropped rather than
+left lying around**: a `DO NOT SHIP` entry sitting in `stash@{0}` is a trap for a future session that
+pops it looking for context. Its content was one deletion — the `bGroupPlaced` guard — and both its
+blockers are recorded above in full. Nothing recoverable was lost. *Original entry retained below for
+the history.*
 **The author decided wells should re-roll like ordinary nodes** — unpinned re-rolls its geography,
 pinned does not move. The guard at `NodeShuffleWellRelocateRoll.cpp:152` was deleted to enable it, and
 the cold review returned **DO NOT SHIP on two blockers**. The work is stashed, not lost; the deployed
