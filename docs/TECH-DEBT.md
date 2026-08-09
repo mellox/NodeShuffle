@@ -523,6 +523,55 @@ build**. Hence `retypeReachable=`. **Fifth sighting of one-rule-one-side** (T16,
 > will under-report. And `%d fully linked` had quietly become **a label that lies**, since `bHealthy` now
 > also requires not-scattered / not-short / no-mismatch.
 
+### T26. A WELL footprint has NO enclosure gate — an ordinary node has one. A well can validate inside a slot or crevice.
+**Found 2026-08-09 by the author asking, in game, *"I'm pinging a water 48m away — is this inside a cliff?"*
+Measured from source, not inferred.**
+
+An ordinary node's placement applies **six** gates (`NodeShuffleSubsystem.cpp`, `EnsureNewNodeSpawned`):
+void `:3958-4006` · water `:3960-3971` · cliff `:5931-5936` · node-overlap 800 cm `:4024-4044` ·
+buildable 600 cm `:4050-4069` · **`IsEnclosed` `:4078-4093`** — 8 horizontal rays at 500 cm from
+`Z+200`, reject when **7 of 8 are blocked** — applied at `:4095` *and re-applied to every nudge target*
+at `:4123`.
+
+`ValidateWellMemberSpot` (`NodeShuffleWellFootprint.cpp:58-126`) applies **the same first five and stops**.
+**There is no enclosure test on the well path.**
+
+> ⚠ **AND THE FILE SAYS OTHERWISE.** `NodeShuffleWellFootprint.cpp:42-43` claims the gates are
+> *"Deliberately the SAME set of gates the ordinary node spawn applies, in the same order."* **That
+> comment is false**, and the mod's own instrumentation agrees with the code rather than the comment —
+> `NodeShuffleWellStage0.h:46-55` enumerates exactly five (`Gate_Void … Gate_Buildable`, no enclosure
+> member). A false comment asserting parity is how the gap survived: anyone auditing the well path
+> against the node path reads that line and stops.
+
+**Consequence, measured:** a well footprint can validate at the bottom of a narrow vertical slot, in a
+crevice, or hard against a cliff face — geometry where an ordinary node is refused. The ground trace
+takes the *first* blocking hit from `StartZ+20000` down, so a spot open ABOVE but blocked horizontally
+passes every gate the well path has. The cliff gate does not help: **a flat cave floor, a flat ledge
+under an overhang and the flat bottom of a slot all pass a 60° slope test perfectly.**
+
+**Seventh sighting of this project's most-repeated defect class: one rule applied to one side of a
+relationship.** (T16 · `ns-review-h2 F1` · T8 · T20 · T24's per-member occupancy · T24's four hide sites
+· this.)
+
+**Not observed to have produced an unreachable well yet.** The 2026-08-09 case that raised it is
+*unresolved*: the log can rule out a low roof but cannot distinguish an open-topped slot from open
+terrain, because **the mod records no terrain identity at settle time** — no hit actor, material or
+component. Its 8 satellites spanned 20.7 m of relief over ~78 × 62 m and all settled dry and off-cliff,
+which reads as open ground, but says nothing about the core's own 5 m ring.
+
+> **Cheapest measurement, and it needs no build:** stand at the well core and run `NodeShuffle.Here`.
+> `roofAbovePlayer` is an upward `ECC_WorldStatic` trace (`NodeShuffleSubsystem.cpp:6537-6540`) — `1` means
+> under rock, `0` means open sky — and the same line prints the local slope, which no other log line
+> carries. **Do this before writing any code.**
+>
+> **Pre-scoped fix, if the measurement justifies it:** give `ValidateWellMemberSpot` the same `IsEnclosed`
+> test, applied per member. **Decide deliberately whether it runs on every member or only the core** — a
+> satellite tucked against a rock face is far less harmful than a core that cannot take a Pressurizer, and
+> requiring 9 members to each pass an 8-ray test will reject more destinations at a time when only 7 of 17
+> wells are placing. **Measure the rejection rate before choosing** — Stage 0's `WELLH2-PROBECENSUS`
+> already carries a per-gate breakdown and would show the cost immediately.
+> **And fix the false parity comment in the same change**, whichever way the gate decision goes.
+
 ### T22. A solid node dealt into true void has its ORIGINAL hidden and its REPLACEMENT never spawns — and nothing counts it
 **Found 2026-08-08 while answering *"we can do solid nodes, why can't we do wells"* — measured, not
 inferred. This is the same shape as T19: a failure with no detector.**
