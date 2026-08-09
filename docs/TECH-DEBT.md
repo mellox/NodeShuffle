@@ -224,16 +224,46 @@ WELLH1-ROLL: re-roll complete -- 20 wells (20 managed, 0 pinned/unresolved)
 17 of 20 wells relocated; **every one reports `managed=1 pinned=0`.**
 
 **`ApplyWellRetype`'s "live pin re-check" (`NodeShuffleWellRetype.cpp:152, 202`) has the IDENTICAL
-defect** — it also resolves via `FindOriginalBaseByPath`. **Consequence in the build shipping today:**
-a re-roll can **retype a relocated well the player has built a Pressurizer and extractors on**, because
-the pin that exists to prevent exactly that cannot see their buildings. The player's chlorine setup
-silently becomes water. Not observed yet; the mechanism is proven.
+defect** — it also resolves via `FindOriginalBaseByPath`.
+
+> ⚠ **CORRECTION 2026-08-08 — THIS ENTRY'S STATED CONSEQUENCE WAS WRONG.** It said a re-roll could
+> "retype a relocated well the player has built on … their chlorine setup silently becomes water." The
+> T16 cold review found that **the retype cannot reach the spawned actors at all** (see T17): the write
+> goes through `FindOriginalBaseByPath`, i.e. the *hidden originals*, so nothing player-visible is
+> retyped. The pin defect is real and worth fixing — the *harm* I attributed to it is not the harm it
+> causes. Written into this file as fact after one code read; corrected after a review measured it.
+> **FIXED 2026-08-08** by `EvaluateWellPin()` (`NodeShuffleWellRetype.h`), one shared predicate for both
+> consumers, resolving against the actors a player can actually build on.
 
 > **Pre-scoped fix: repair the pin AT ITS SOURCE so both consumers inherit it** — resolve occupancy
 > against the actor the player can actually build on (our spawned core/satellites) when the entry is
 > relocated, falling back to the original only when it is not. **Do not patch it at one call site:**
 > this file already records two copies of one rule drifting apart, and there are two consumers here
 > (`WellRoll` and `WellRetype`) that must not diverge again.
+
+### T17. A relocated well's SPAWNED actors are never re-typed — the world and the layout disagree
+**Found 2026-08-08 by the T16 cold review. Code-read and log-corroborated, NOT observed — do not quote
+it as measured.** This is the defect T16's first draft mistook itself for.
+
+`NodeShuffleWellSpawn.cpp:169` and `:282` write `mResourceClassOverride` **only inside the fresh-spawn
+branches**. The **reuse** and **adopt-late** paths never re-write it. `ApplyWellRetype` resolves through
+`FindOriginalBaseByPath` — the *hidden originals* — so it cannot reach a spawned actor either.
+
+**Corroboration from the author's own log:** 15 groups were **adopted** (no `WELLH2-SPAWN … res=` line)
+while the same re-roll reported *"16 actually changed resource"*. So the visible relocated wells are
+**still producing their pre-re-roll resources** while the layout, the roll log and the conservation
+lines all say otherwise.
+
+**Why it matters beyond correctness:** every conservation guarantee this mod advertises is asserted
+against the *layout*, and the layout is not what the player's wells produce. It also means T16's pin fix
+is necessary but not sufficient — pinning now protects the right actors, but a *non*-pinned relocated
+well still will not actually change resource on a re-roll.
+
+> **Not fixed here, deliberately** — a scoped pin fix is not the place for it. The likely shape is to
+> re-write `mResourceClassOverride` on the reuse/adopt paths too, but that touches the spawn lifecycle
+> and owes its own packet and its own review. **First runtime step is cheap:** on a well you have
+> pressurized, compare `The core the pin was READ FROM ('…') now holds 'Y'` against that well's earlier
+> `-> 'Z'`. **Y ≠ Z confirms it live.**
 
 ### PARKED — the re-roll-geography change (`stash@{0}`, 2026-08-08)
 **The author decided wells should re-roll like ordinary nodes** — unpinned re-rolls its geography,

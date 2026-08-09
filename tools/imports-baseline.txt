@@ -3,7 +3,7 @@
 # Regenerate / diff: see tools\capture-imports-baseline.ps1, which also explains why this exists
 # alongside check_imports.ps1 (that one asks 'does every import RESOLVE?'; this one records WHICH).
 #
-# CAPTURED AT MARKER : 2026-08-08-t7split-1
+# CAPTURED AT MARKER : 2026-08-08-t16pin-1
 # CAPTURED ON        : 2026-08-08
 # SOURCE DLL         : C:\Program Files (x86)\Steam\steamapps\common\Satisfactory\FactoryGame\Mods\NodeShuffle\Binaries\Win64\FactoryGameSteam-NodeShuffle-Win64-Shipping.dll
 #

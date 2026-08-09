@@ -199,7 +199,34 @@ void ANodeShuffleSubsystem::ApplyWellRetype(bool bWellShuffleEnabled)
         // LIVE PIN RE-CHECK, the well analogue of ApplyLayout's occupied-spawned-node pin: if someone
         // built on this well between the roll and now, stand down rather than changing the resource
         // under working machinery.
-        const bool bOccupiedNow = Core->GetActivator().IsValid() || Core->IsOccupied();
+        //
+        // T16 (2026-08-08): the actors this asks are chosen by EvaluateWellPin -- the SAME function the
+        // roll calls, which is the whole point of the fix. `Core` above is the VANILLA original, resolved
+        // by path; for a well H2 has relocated that actor is hidden, de-collided and deregistered, so
+        // asking it "is a pressurizer on you?" can only ever answer no. The check below therefore asks
+        // our SPAWNED core/satellites for a relocated well and the originals for every other well, and
+        // says in the log which population it used.
+        const FNodeShuffleWellPinCheck Pin =
+            EvaluateWellPin(E, SpawnedWellCores, SpawnedWellSatellites, Core, Live);
+        // T16, THE DISCIPLINE GAP, NAMED RATHER THAN ARGUED AWAY. The roll refuses to CLEAR a pin on a
+        // non-decisive verdict; this apply does NOT refuse to WRITE on one, and that asymmetry is
+        // deliberate for now -- refusing here would stop the retype of a relocated well every pass on
+        // which its spawned handle happens not to have resolved, which is a behaviour change no part of
+        // this packet asked for. It is GUARANTEED to occur on apply pass 1 of every session: ApplyLayout
+        // calls ApplyWellRetype (NodeShuffleSubsystem.cpp:2215) BEFORE ApplyWellRelocation (:2224), and
+        // AdoptRestoredWellGroups -- the only thing that populates SpawnedWellCores at load -- runs
+        // inside the latter. So the line below is expected once per session per relocated well and is
+        // NOT expected afterwards; a repeat past pass 2 means an adopted handle went missing.
+        if (!Pin.IsDecisive())
+        {
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("WELLH1-PIN-UNMEASURED core='%s' pass=%d resolvedAgainst=%s groupPlaced=%d "
+                     "(tested %d core + %d/%d satellite actor(s)) -- MEASURED: no in-use signal on the "
+                     "actors tested. NOT MEASURED: whether anything is built on this well, because the "
+                     "population tested is not the one a player can build on. This pass writes anyway."),
+                *WellShort(E.CorePath), WellApplyPasses, WellPinSourceName(Pin.Source),
+                E.bGroupPlaced ? 1 : 0, Pin.CoresTested, Pin.SatellitesTested, Pin.SatellitesExpected);
+        }
         const bool bAlreadyApplied = (Core->mResourceClassOverride.Get() == ResourceClass);
 
         // ns-review-h1 W1 -- THE HOLE THIS CLOSES. The roll-time pin checks satellites
@@ -213,17 +240,12 @@ void ANodeShuffleSubsystem::ApplyWellRetype(bool bWellShuffleEnabled)
         // again. Unconditional on bAlreadyApplied, exactly as the roll-time rule is: a well the player
         // has finished building on is not ours, and the next roll re-derives the same verdict from live
         // state, so F2's withdrawal still takes the right card.
-        const AFGResourceNodeFrackingSatellite* OccupiedSat = nullptr;
-        for (const AFGResourceNodeFrackingSatellite* Sat : Live)
-        {
-            if (const_cast<AFGResourceNodeFrackingSatellite*>(Sat)->GetExtractor().IsValid() || Sat->IsOccupied())
-            {
-                OccupiedSat = Sat;
-                break;
-            }
-        }
-
-        if ((bOccupiedNow && !bAlreadyApplied) || OccupiedSat)
+        //
+        // T16 keeps the two verdicts SEPARATE (Pin.bCoreInUse / Pin.bSatelliteInUse) for exactly this
+        // asymmetry: collapsing them into one "pinned" bool would have silently made a core-occupancy
+        // pin stand down even when the resource was already written, changing behaviour that no part of
+        // this packet asked to change.
+        if ((Pin.bCoreInUse && !bAlreadyApplied) || Pin.bSatelliteInUse)
         {
             E.bPinned = true;
             E.bManaged = false;
@@ -232,17 +254,36 @@ void ANodeShuffleSubsystem::ApplyWellRetype(bool bWellShuffleEnabled)
             // not the same as "authored" -- a previous roll's assignment may already be on this core.
             // Reading the world is the only statement true in both cases, and it is what keeps F2's
             // withdrawal taking the right card on the next roll.
-            const UClass* LiveRes = Core->GetResourceClass().Get();
+            //
+            // T16: read it from THE CORE THE PIN WAS RESOLVED AGAINST, not unconditionally from the
+            // original. For a relocated well those two can genuinely differ -- the spawned core takes
+            // its resource once, at spawn time, while a later re-roll retypes the hidden original -- and
+            // the number this field must carry is what the PLAYER'S well produces, because that is the
+            // card F2's withdrawal has to take out of the next deck. Falls back to `Core` only if no
+            // actor resolved at all, which cannot be reached from inside this branch (nothing could have
+            // fired) and is written defensively rather than argued away.
+            const AFGResourceNodeFrackingCore* PinCore = Pin.ResolvedCore ? Pin.ResolvedCore : Core;
+            const UClass* LiveRes = PinCore->GetResourceClass().Get();
             E.AssignedResourceClassPath = LiveRes ? LiveRes->GetPathName() : E.OriginalResourceClassPath;
             int32 Disagree = 0;
             const FString GroupState = DescribeGroupState(Core, Disagree);
             if (Disagree > 0) { ++Mismatches; } // W2: the assert below is unreachable from here, so count it HERE
             UE_LOG(LogNodeShuffle, Display,
-                TEXT("WELLH1-PIN core='%s' reason=%s -- un-managed until the next roll (which re-evaluates the "
-                     "pin from live state and may free it again). Core now holds '%s'; %s."),
+                TEXT("WELLH1-PIN core='%s' reason=%s why='%s' firedOn='%s' resolvedAgainst=%s (tested %d core "
+                     "+ %d/%d satellite actor(s), groupPlaced=%d) -- un-managed until the next roll (which "
+                     "re-evaluates the pin from live state and may free it again). The core the pin was READ "
+                     "FROM ('%s') now holds '%s'. Group state, measured over the ORIGINAL level actors only "
+                     "(the population this apply resolves by path): %s."),
                 *WellShort(E.CorePath),
-                OccupiedSat ? TEXT("satellite-extractor (a Resource Well Extractor is on one of its satellites)")
-                            : TEXT("pressurizer-on-core (appeared before we retyped it)"),
+                Pin.bSatelliteInUse ? TEXT("satellite-extractor (a Resource Well Extractor is on one of its satellites)")
+                                    : TEXT("core-in-use"),   // T16 review F4.3: IsWellMemberInUse may
+                                    // have fired on IsOccupied rather than a pressurizer; the true
+                                    // signal is on this same line in why=. Do not re-assert a cause here.
+                Pin.bSatelliteInUse ? Pin.SatelliteWhy : Pin.CoreWhy,
+                Pin.FiredActorName.IsEmpty() ? TEXT("<none>") : *Pin.FiredActorName,
+                WellPinSourceName(Pin.Source), Pin.CoresTested, Pin.SatellitesTested, Pin.SatellitesExpected,
+                E.bGroupPlaced ? 1 : 0,
+                *PinCore->GetName(),
                 *WellShort(E.AssignedResourceClassPath), *GroupState);
             continue;
         }

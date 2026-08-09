@@ -31,6 +31,12 @@
 // occupied original: a node someone has already built on is not ours to change. Decided here from live
 // state, re-checked at apply time, and every skip logged with its reason.
 //
+// T16 (2026-08-08): WHICH ACTORS THAT QUESTION IS PUT TO now lives in ONE place --
+// EvaluateWellPin in NodeShuffleWellRetype.h, called from here and from ApplyWellRetype. This file used
+// to ask the vanilla original directly, which is unanswerable for a well H2 has RELOCATED (the original
+// is hidden, de-collided and deregistered, so nobody can build on it and it can never report a pin)
+// while the actors a player CAN build on are our spawned ones. See that header for the full account.
+//
 // IMPORT DISCIPLINE (memory: sf-shipping-export-trap; H0 baseline 744 / 0 missing). This packet reaches
 // for NO new engine entry point: discovery, IsOccupied(), GetActivator(), GetExtractor(),
 // GetResourceClassOriginal() and GetResourceClass() are all already reached by H0's census/dump. That is
@@ -42,10 +48,13 @@
 #include "NodeShuffle.h"
 #include "NodeShuffleConfig.h"
 #include "NodeShuffleWellCensus.h" // H0's grouping -- CollectWellCensus + the well record/member types
-#include "NodeShuffleWellRetype.h" // the shared pure helpers
+#include "NodeShuffleWellRetype.h" // the shared pure helpers -- incl. T16's EvaluateWellPin
 // TWeakObjectPtr<T>::IsValid() does not need T complete, but GetActivator()/GetExtractor() return the
 // weak pointer BY VALUE, so the type has to be complete to copy one. Includes only -- no method of
-// either buildable is called anywhere in this file.
+// either buildable is called anywhere in this file. Since T16 those accessors are reached through
+// EvaluateWellPin/IsWellMemberInUse rather than from this file directly; the includes stay because the
+// completeness requirement is the same wherever the inline body is instantiated, and stating it here
+// keeps the dependency visible rather than implicit in another header's include list.
 #include "Buildables/FGBuildableFrackingActivator.h"
 #include "Buildables/FGBuildableFrackingExtractor.h"
 
@@ -112,6 +121,12 @@ void ANodeShuffleSubsystem::RollWellLayout(int32 Seed, bool bIsReroll)
     for (int32 i = 0; i < Merged.Num(); ++i) { IndexByCore.Add(Merged[i].CorePath, i); }
 
     int32 NewlyDiscovered = 0, SkippedOurSpawned = 0;
+    // T16: the pin verdict for every well this roll actually evaluated, keyed by CorePath, so the
+    // per-well log line below can state WHICH ACTOR the pin was resolved against instead of only its
+    // outcome. An entry absent from this map was never evaluated this roll (its core did not stream in,
+    // or it is one of our own spawned cores the F1 filter excluded) -- and the line says exactly that
+    // rather than implying a measurement that never happened.
+    TMap<FString, FNodeShuffleWellPinCheck> PinByCore;
     for (const FNodeShuffleWellRecord& W : Census.Wells)
     {
         AFGResourceNodeFrackingCore* Core = W.Core;
@@ -144,13 +159,19 @@ void ANodeShuffleSubsystem::RollWellLayout(int32 Seed, bool bIsReroll)
         const FString Authored = WellAuthoredResourcePath(Core);
         if (!Authored.IsEmpty()) { E.OriginalResourceClassPath = Authored; }
 
-        // PIN. Live state decides whenever the CORE is loaded -- the same rule RollLayout uses for a
-        // carried spawned node ("with a live actor, LIVE occupancy decides"), so a well whose pressurizer
-        // was dismantled correctly frees back into the pool. The core alone is a COMPLETE answer for the
-        // pin question even if not one satellite has streamed: a Resource Well Extractor cannot exist on
-        // a well that has no pressurizer, so GetActivator()/IsOccupied() on the core is the load-bearing
-        // signal and the per-satellite extractor check below can only ever ADD a pin, never miss one.
-        bool bPinned = Core->GetActivator().IsValid() || Core->IsOccupied();
+        // PIN. Live state decides whenever the well's actors are loaded -- the same rule RollLayout uses
+        // for a carried spawned node ("with a live actor, LIVE occupancy decides"), so a well whose
+        // pressurizer was dismantled correctly frees back into the pool.
+        //
+        // T16: WHICH ACTOR IS ASKED IS NOT OBVIOUS AND WAS WRONG. The question is decided by
+        // EvaluateWellPin (NodeShuffleWellRetype.h) -- the ONE implementation the apply-time re-check
+        // also calls -- because for a RELOCATED well the vanilla core this loop is standing on is
+        // hidden, de-collided and deregistered: a player cannot build on it, so it could never report a
+        // pin, and the well someone HAS built on reported managed=1 pinned=0 for 17 of 20 wells in the
+        // author's own log. The candidate satellites are collected below and the verdict is taken AFTER
+        // the merge loop, because the spawned satellites are looked up by the SatellitePath keys that
+        // loop maintains.
+        TArray<AFGResourceNodeFrackingSatellite*> OriginalSats;
 
         // MERGE, NEVER REPLACE. The obvious version of this loop -- Satellites.Reset() then rebuild from
         // the census -- is destructive: a core can be loaded while some of its satellites are not (H0
@@ -185,9 +206,22 @@ void ANodeShuffleSubsystem::RollWellLayout(int32 Seed, bool bIsReroll)
             // roll ran. If H2 needs an ordered vector, sort by SatellitePath first (as the deal already
             // sorts wells by CorePath) or key it by path -- do not consume this by index.
             E.Satellites[SatIdx].OriginalPurity = Sat->GetResourcePurity(); // RECORDED ONLY -- never written back
-            if (Sat->GetExtractor().IsValid() || Sat->IsOccupied()) { bPinned = true; }
+            // T16: candidate only. Whether this satellite is the one the pin question is put to depends
+            // on whether this well has been relocated -- EvaluateWellPin decides, once, for the group.
+            OriginalSats.Add(Sat);
         }
-        E.bPinned = bPinned;
+
+        // T16, THE VERDICT. Note what is NOT here any more: an unconditional `E.bPinned = <this roll's
+        // answer>`. A NON-DECISIVE answer -- a relocated well whose spawned core handle has not been
+        // rebuilt this session -- tested a hidden actor that cannot be built on, so it may not CLEAR a
+        // pin a decisive earlier evaluation set. It may still SET one: an in-use signal is a positive
+        // fact wherever it is found. The direction of the asymmetry is the protective one, and it is
+        // the other half of the defect (the old `E.bPinned = bPinned;` reset a true pin to false).
+        const FNodeShuffleWellPinCheck Pin =
+            EvaluateWellPin(E, SpawnedWellCores, SpawnedWellSatellites, Core, OriginalSats);
+        PinByCore.Add(CorePath, Pin);
+        if (Pin.IsPinned())        { E.bPinned = true; }
+        else if (Pin.IsDecisive()) { E.bPinned = false; }
     }
 
     if (SkippedOurSpawned > 0)
@@ -242,11 +276,17 @@ void ANodeShuffleSubsystem::RollWellLayout(int32 Seed, bool bIsReroll)
     TArray<FString> Deck;
     TArray<int32> Recipients;
     TArray<TPair<FString, FString>> PinnedTakes; // {effective resource held, this well's own original}
+    // T16: counted separately from the pinned wells. The summary line used to print ONE number called
+    // "pinned/unresolved", which is why `0 pinned` read as a fact about the world instead of as the
+    // impossible value it was -- a reader had no way to tell a pinned well from a well with no authored
+    // resource from an undealt tail entry. Three states, three counters, all printed.
+    int32 NoAuthoredResource = 0;
     for (int32 i = 0; i < Merged.Num(); ++i)
     {
         FNodeShuffleWellEntry& E = Merged[i];
         if (E.OriginalResourceClassPath.IsEmpty())
         {
+            ++NoAuthoredResource;
             // No authored resource to reason about: contributes no card and receives none. Fail SAFE to
             // "left exactly as it stands" (design §Q3 point 4).
             E.bManaged = false;
@@ -327,14 +367,53 @@ void ANodeShuffleSubsystem::RollWellLayout(int32 Seed, bool bIsReroll)
         E.bManaged = false;
     }
 
+    // T16 provenance totals, accumulated while the per-well lines print so the summary can state HOW the
+    // pins were reached, not merely how many there are.
+    int32 PinnedViaSpawned = 0, PinnedViaOriginal = 0, PinnedCarried = 0, RelocatedFallback = 0;
     int32 WellIndex = 0;
     for (const FNodeShuffleWellEntry& E : Merged)
     {
         ++WellIndex;
+        // T16: WHICH ACTOR ANSWERED, per well, in the line that already reports the outcome. A pin whose
+        // provenance is not printed is exactly how "0 pinned" survived 20 wells without anyone asking
+        // whether it was even answerable.
+        const FNodeShuffleWellPinCheck* Pin = PinByCore.Find(E.CorePath);
+        FString PinDetail;
+        if (!Pin)
+        {
+            // MEASURED: this roll's merge loop never reached this entry (its core did not stream in, or
+            // it is one of our own spawned cores, excluded by the F1 filter above). NOT MEASURED: which
+            // of those it was -- this line does not test it and must not name one.
+            if (E.bPinned) { ++PinnedCarried; } // only a PIN can be carried; an unevaluated unpinned well is not one
+            PinDetail = FString::Printf(
+                TEXT("pinSrc=%s -- no pin evaluation ran for this entry this roll, so pinned=%d is the value "
+                     "carried in the save"),
+                WellPinSourceName(ENodeShuffleWellPinSource::NotEvaluated), E.bPinned ? 1 : 0);
+        }
+        else
+        {
+            if (Pin->Source == ENodeShuffleWellPinSource::OriginalWhileRelocated) { ++RelocatedFallback; }
+            if (Pin->IsPinned())
+            {
+                if (Pin->Source == ENodeShuffleWellPinSource::Spawned) { ++PinnedViaSpawned; }
+                else { ++PinnedViaOriginal; }
+            }
+            else if (E.bPinned) { ++PinnedCarried; } // not decisive, so the saved pin was kept
+            PinDetail = FString::Printf(
+                TEXT("pinSrc=%s tested=%dcore+%d/%dsat groupPlaced=%d coreInUse=%d(%s) satInUse=%d(%s) "
+                     "firedOn='%s' decisive=%d"),
+                WellPinSourceName(Pin->Source), Pin->CoresTested, Pin->SatellitesTested,
+                Pin->SatellitesExpected, E.bGroupPlaced ? 1 : 0,
+                Pin->bCoreInUse ? 1 : 0, Pin->CoreWhy,
+                Pin->bSatelliteInUse ? 1 : 0, Pin->SatelliteWhy,
+                Pin->FiredActorName.IsEmpty() ? TEXT("<none>") : *Pin->FiredActorName,
+                Pin->IsDecisive() ? 1 : 0);
+        }
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("WELLH1-ROLL well #%d core='%s' sats=%d res '%s' -> '%s' pinned=%d managed=%d corePath='%s'"),
+            TEXT("WELLH1-ROLL well #%d core='%s' sats=%d res '%s' -> '%s' pinned=%d managed=%d %s corePath='%s'"),
             WellIndex, *WellShort(E.CorePath), E.Satellites.Num(), *WellShort(E.OriginalResourceClassPath),
-            *WellShort(E.AssignedResourceClassPath), E.bPinned ? 1 : 0, E.bManaged ? 1 : 0, *E.CorePath);
+            *WellShort(E.AssignedResourceClassPath), E.bPinned ? 1 : 0, E.bManaged ? 1 : 0, *PinDetail,
+            *E.CorePath);
     }
 
     // CONSERVATION CHECK -- WORLD TOTALS, NOT THE DECK (ns-review-h1 F3).
@@ -388,9 +467,23 @@ void ANodeShuffleSubsystem::RollWellLayout(int32 Seed, bool bIsReroll)
 
     WellLayout = MoveTemp(Merged);
     bWellLayoutRolled = true;
+    // T16: THE CONFLATION IS GONE. This line used to print one number, `%d pinned/unresolved`, computed
+    // as WellLayout.Num() - DealCount -- so a pinned well, a well with no authored resource and an
+    // undealt tail entry were one figure, and `0 pinned/unresolved` read as "nobody has built on a well"
+    // when it was in fact "the pin question was never answerable for the 17 relocated wells". Four
+    // disjoint counts now, and they sum to the well total by construction.
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("WELLH1-ROLL: %s complete -- %d wells (%d managed, %d pinned/unresolved), %d newly discovered this roll, "
-             "%d actually changed resource. Seed %d (well stream %d)."),
-        bIsReroll ? TEXT("re-roll") : TEXT("initial roll"), WellLayout.Num(), DealCount,
-        WellLayout.Num() - DealCount, NewlyDiscovered, Changed, Seed, Seed ^ 0x57454C4C);
+        TEXT("WELLH1-ROLL: %s complete -- %d wells = %d managed (dealt a card) + %d PINNED (bPinned set "
+             "-- see the per-well pinSrc for whether THIS roll measured it -- and "
+             "holding an authored resource) + %d with no authored resource (pinned or not) + %d undealt "
+             "(see any deck/recipient mismatch above). %d newly "
+             "discovered this roll, %d actually changed resource. PIN PROVENANCE (T16, what the pin was "
+             "MEASURED against): %d pinned via OUR SPAWNED relocated actors, %d via the vanilla level "
+             "actors, %d carried from the save (not evaluated or not decisive this roll); %d relocated "
+             "well(s) had to fall back to the HIDDEN original because no spawned core handle resolved -- "
+             "an unpinned verdict on those is not a measurement of anything a player could build on. "
+             "Seed %d (well stream %d)."),
+        bIsReroll ? TEXT("re-roll") : TEXT("initial roll"), WellLayout.Num(), DealCount, PinnedTakes.Num(),
+        NoAuthoredResource, Recipients.Num() - DealCount, NewlyDiscovered, Changed,
+        PinnedViaSpawned, PinnedViaOriginal, PinnedCarried, RelocatedFallback, Seed, Seed ^ 0x57454C4C);
 }

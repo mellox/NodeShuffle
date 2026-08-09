@@ -6253,7 +6253,24 @@ void ANodeShuffleSubsystem::BuildManagedNodeGroupsFromLayout(TArray<FNodeShuffle
     // /Game/FactoryGame/... paths, so a modded well class joins automatically.
     for (const FNodeShuffleWellEntry& Well : WellLayout)
     {
-        if (!Well.bManaged) { continue; }
+        // T16-followup (2026-08-08): A PINNED **RELOCATED** WELL STILL CONTRIBUTES ITS EVIDENCE.
+        // The `!bManaged` skip that used to stand alone here inherited its rationale from the ordinary-
+        // node population -- "a pinned well is one NodeShuffle leaves vanilla, so its placement question
+        // was settled before we ran". That sentence is FALSE for a well H2 RELOCATED: we spawned it, we
+        // moved it and we chose the resource it carries, so the ONLY reason a machine could be on it is
+        // evidence THIS census emitted. Withdrawing it the moment a player pressurizes the core lands
+        // BETWEEN the pressurizer and the satellite extractors -- i.e. mid-build -- which is
+        // RollWellLayout's own RT-6 failure ("withdrawing the allow-list would leave the player holding
+        // retyped wells they can no longer build on"). Unreachable before T16, because pinning never
+        // fired for a relocated well at all.
+        // NARROWEST POSSIBLE WIDENING: only bGroupPlaced entries. A pinned NON-relocated well is still
+        // excluded, exactly as ns-review-g2 F2 decided, for exactly its own reason.
+        const bool bContributesEvidence = Well.bManaged || (Well.bPinned && Well.bGroupPlaced);
+        if (!bContributesEvidence) { continue; }
+        // Keyed on what it ACTUALLY holds. The apply-time pin maintains AssignedResourceClassPath from
+        // the core the pin was resolved against (T16), so for a pinned relocated well this names the
+        // resource the player's well produces, not a layout value the world may have diverged from.
+        if (Well.AssignedResourceClassPath.IsEmpty()) { continue; }
         ++OutTotalActiveEntries; // one well = one entry, not one per member
         UClass* WellResource = LoadClassByPath(Well.AssignedResourceClassPath);
         if (!WellResource) { ++OutUnresolvedEntries; continue; }
