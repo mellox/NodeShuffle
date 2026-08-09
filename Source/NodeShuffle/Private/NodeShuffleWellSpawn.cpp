@@ -189,6 +189,9 @@ bool ANodeShuffleSubsystem::SpawnWellGroup(FNodeShuffleWellEntry& E, UClass* Res
     int32 RegisteredByBeginPlay = 0, RegisteredByUs = 0, LinkSkippedInvalid = 0;
     int32 PurityWritten = 0, PurityUnknown = 0, UncapturedRefused = 0;
     const int32 ExpectedSats = ExpectedRelocatedSatelliteCount(E);
+    // T17: every satellite this pass ends up holding a live handle for, however it got one (fresh
+    // spawn, reuse, adopt-late). The resource convergence below needs the POPULATION, not the path.
+    TArray<AFGResourceNodeFrackingSatellite*> LiveSpawnedSats;
 
     for (FNodeShuffleWellSatellite& S : E.Satellites)
     {
@@ -330,6 +333,121 @@ bool ANodeShuffleSubsystem::SpawnWellGroup(FNodeShuffleWellEntry& E, UClass* Res
         // this workspace has twice written a reasoned conclusion into the cookbook and had it
         // falsified by measurement. If T2 fails, the log will name which lookup came up empty.
         RegisterNodeWithManager(Sat);
+        // T17: recorded on EVERY path that leaves a live handle -- fresh spawn, reuse, adopt-late.
+        LiveSpawnedSats.Add(Sat);
+    }
+
+    // ---- 3. T17 (2026-08-08): THE SPAWNED GROUP CARRIES THE LAYOUT'S RESOURCE ON EVERY PATH ----
+    //
+    // THE DEFECT THIS REMOVES. mResourceClassOverride was written at exactly two places in this file
+    // (the fresh-core spawn, the fresh-satellite spawn) and nowhere else in the project for a relocated
+    // well. The REUSE branch (`if (IsValid(Sat)) { ++ReusedSats; }`) and BOTH adopt-late branches leave
+    // whatever the actor already had. H1's ApplyWellRetype cannot cover for that: it resolves members
+    // through FindOriginalBaseByPath -> VanillaNodeCache, which SKIPS our own nodes by construction
+    // (NodeShuffleSubsystem.cpp, `if (NodeShuffleIsOurNode(*It)) { continue; }`). So nothing could move
+    // an already-existing spawned well actor onto a new assignment -- and the audit line prints res=
+    // from E.AssignedResourceClassPath, the LAYOUT, so the disagreement was also unprintable.
+    // REACHABLE: the maintenance caller re-invokes this every pass with the CURRENT assignment, so any
+    // roll that re-deals an ALREADY-PLACED well left the player's visible well on the old resource.
+    //
+    // THE WRITE IS NOT RE-IMPLEMENTED. RetypeWellMember does the Friend-granted field write plus the
+    // native visual rebuild, and it is IDEMPOTENT BY POINTER COMPARE -- so a converged group costs
+    // nothing. The extra `StaleRes > 0` gate in front is not redundant with that: it keeps the STEADY
+    // STATE free of the occupancy evaluation too, so a settled world runs pointer compares and stops.
+    int32 StaleRes = 0;
+    const int32 LiveMembers = (IsValid(Core) ? 1 : 0) + LiveSpawnedSats.Num();
+    if (IsValid(Core) && Core->mResourceClassOverride.Get() != ResourceClass) { ++StaleRes; }
+    for (AFGResourceNodeFrackingSatellite* Sat : LiveSpawnedSats)
+    {
+        if (Sat->mResourceClassOverride.Get() != ResourceClass) { ++StaleRes; }
+    }
+    if (IsValid(Core) && StaleRes > 0)
+    {
+        // MEASURED BEFORE THE WRITE, so the line can state what the WORLD held rather than what the
+        // layout wished it held. GetResourceClass() is what the game itself asks (override if set,
+        // else authored) -- the same accessor RetypeWellMember reports `Was` from.
+        const UClass* WorldCoreRes = Core->GetResourceClass().Get();
+
+        // THE PIN, T16's ONE predicate -- not a second occupancy test. The population is the SPAWNED
+        // group, which is the only one a player can build on for a relocated well, and it is the
+        // population this function has just resolved; EvaluateWellPinOnActors is the same body
+        // EvaluateWellPin runs, with the selection step skipped because there is nothing to select.
+        const FNodeShuffleWellPinCheck Pin = EvaluateWellPinOnActors(
+            ENodeShuffleWellPinSource::Spawned, Core, LiveSpawnedSats, E.Satellites.Num());
+        // The SAME asymmetry ApplyWellRetype uses (ns-review-h1 W1, T16): a core-occupancy pin is
+        // ignored once the resource is already on that core (there is nothing left to change), while
+        // a satellite-extractor pin stands down unconditionally. Read from the SPAWNED core, never
+        // from the hidden original -- the two can genuinely differ, which is the whole defect.
+        const bool bCoreAlready = (Core->mResourceClassOverride.Get() == ResourceClass);
+        if ((Pin.bCoreInUse && !bCoreAlready) || Pin.bSatelliteInUse)
+        {
+            // Throttled for ns-review-h5 F-3's reason: a player's machine stays built, so this state
+            // never self-clears and an unthrottled line is one every ~5 s forever. Reuses the set that
+            // already exists for exactly that shape, under a namespaced key; the assigned resource is
+            // IN the key so a later re-roll to a different resource reports again on its own merits
+            // (and does not depend on the roll file clearing the set -- that file is not ours).
+            const FString PinKey = E.CorePath + TEXT("|t17pin|") + ResourceClass->GetPathName();
+            if (!WellStaleInUseLogged.Contains(PinKey))
+            {
+                WellStaleInUseLogged.Add(PinKey);
+                UE_LOG(LogNodeShuffle, Warning,
+                    TEXT("WELLH2-RETYPE-PIN core='%s': the RELOCATED (player-visible) group holds '%s' ")
+                    TEXT("but the layout assigns '%s' -- %d of %d live spawned member(s) disagree and ")
+                    TEXT("NONE is retyped. MEASURED: an in-use signal on the SPAWNED actors ")
+                    TEXT("(resolvedAgainst=%s, tested %d core + %d/%d satellite actor(s); coreWhy='%s' ")
+                    TEXT("satWhy='%s' firedOn='%s'). NOT MEASURED: what was built, or whether the ")
+                    TEXT("player still wants it. This line does NOT un-manage the entry -- ")
+                    TEXT("ApplyWellRetype owns E.bPinned/E.bManaged and re-evaluates the same ")
+                    TEXT("predicate. Said once per core per assigned resource. ")
+                    TEXT("LAYOUT BOOKKEEPING AT THIS INSTANT: bManaged=%d bPinned=%d -- if bPinned=0 here, ")
+                    TEXT("ApplyWellRetype has NOT recorded this pin and the layout will keep claiming this ")
+                    TEXT("assignment until the next roll re-evaluates from live state."),
+                    *WellShort(E.CorePath), *WellShort(WellPathOf(WorldCoreRes)),
+                    *WellShort(ResourceClass->GetPathName()), StaleRes, LiveMembers,
+                    WellPinSourceName(Pin.Source), Pin.CoresTested, Pin.SatellitesTested,
+                    Pin.SatellitesExpected, Pin.CoreWhy, Pin.SatelliteWhy,
+                    Pin.FiredActorName.IsEmpty() ? TEXT("<none>") : *Pin.FiredActorName,
+                    E.bManaged ? 1 : 0, E.bPinned ? 1 : 0);
+            }
+        }
+        else
+        {
+            // PURITY IS STILL NEVER TOUCHED. RetypeWellMember writes mResourceClassOverride only;
+            // mPurityOverride is written exactly once, at a satellite's FRESH spawn above (design §Q2).
+            int32 Wrote = RetypeWellMember(Core, ResourceClass, TEXT("spawned-core"), *WellShort(E.CorePath)) ? 1 : 0;
+            for (AFGResourceNodeFrackingSatellite* Sat : LiveSpawnedSats)
+            {
+                Wrote += RetypeWellMember(Sat, ResourceClass, TEXT("spawned-sat"), *WellShort(E.CorePath)) ? 1 : 0;
+            }
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("WELLH2-RETYPE core='%s': MEASURED on the spawned actor '%s' -- the RELOCATED ")
+                TEXT("(player-visible) group's core held '%s' while the layout assigns '%s'; %d of %d ")
+                TEXT("live spawned member(s) disagreed, %d rewritten this pass (1 core + %d live ")
+                TEXT("satellite(s) offered). The hidden vanilla originals are a DIFFERENT population ")
+                TEXT("and are written separately -- see WELLH1 for those. NOT MEASURED: why they ")
+                TEXT("disagreed; reuse, adopt-late and a re-roll under an already-placed group all ")
+                TEXT("reach this line and this line tests none of them."),
+                *WellShort(E.CorePath), *Core->GetName(), *WellShort(WellPathOf(WorldCoreRes)),
+                *WellShort(ResourceClass->GetPathName()), StaleRes, LiveMembers, Wrote,
+                LiveSpawnedSats.Num());
+        }
+    }
+    else if (IsValid(Core))
+    {
+        // T17 F2: the CONVERGED verdict, said once per core per assigned resource. Without a positive
+        // line, "no WELLH2-RETYPE in the log" is ambiguous between converged, empty-population and a
+        // stale DLL -- and the last of those is the one that wastes a test session.
+        const FString OkKey = E.CorePath + TEXT("|t17ok|") + ResourceClass->GetPathName();
+        if (!WellStaleInUseLogged.Contains(OkKey))
+        {
+            WellStaleInUseLogged.Add(OkKey);
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("WELLH2-RETYPE-OK core='%s': MEASURED -- all %d live spawned member(s) (1 core + %d ")
+                TEXT("of %d satellite record(s)) already hold the assigned '%s'. Nothing written. NOT ")
+                TEXT("MEASURED: whether they are the members a player can see -- see WELLH2-AUDIT."),
+                *WellShort(E.CorePath), LiveMembers, LiveSpawnedSats.Num(), E.Satellites.Num(),
+                *WellShort(ResourceClass->GetPathName()));
+        }
     }
 
     // ns-review-h2 F7: COMPLETE means every CAPTURED satellite is live and none failed. Uncaptured

@@ -132,48 +132,31 @@ struct FNodeShuffleWellPinCheck
     }
 };
 
-// OriginalCore / OriginalSats are whatever the CALLER already resolved for the vanilla group (the
-// census actors at roll time, the FindOriginalBaseByPath results at apply time) -- this helper does
-// no lookups of its own beyond the two spawned-handle maps, so it stays free of the subsystem.
-inline FNodeShuffleWellPinCheck EvaluateWellPin(
-    const FNodeShuffleWellEntry& E,
-    const TMap<FString, AFGResourceNodeFrackingCore*>& SpawnedCores,
-    const TMap<FString, AFGResourceNodeFrackingSatellite*>& SpawnedSats,
-    AFGResourceNodeFrackingCore* OriginalCore,
-    const TArray<AFGResourceNodeFrackingSatellite*>& OriginalSats)
+// THE ACTOR-TESTING HALF, ON ITS OWN (T17, 2026-08-08).
+// A PURE EXTRACTION of EvaluateWellPin's tail -- not one line of the test changed, and
+// EvaluateWellPin below now delegates to it, so its two existing consumers (the roll and
+// ApplyWellRetype) behave exactly as they did when T16 landed.
+//
+// WHY THE SPLIT EXISTS. The pin is ONE rule, but its callers arrive with the population in two
+// different states. The roll and the apply hold a LAYOUT ENTRY and need the population SELECTED from
+// it; SpawnWellGroup has just resolved the live spawned core and satellites itself and must NOT
+// re-derive them (re-deriving which actor to ask IS the T16 defect, and doing it twice in one pass
+// would also be the "one rule in two places" shape that caused T8 and ns-review-h2 F3). So:
+// selection lives in ONE function, the test lives in ONE function, and neither is duplicated.
+//
+// Candidates is used verbatim -- nothing is filtered here, because IsWellMemberInUse is null-safe and
+// the FiredActorName read only happens once it has returned true (which requires a live actor).
+// SatellitesExpected is REPORTED, never used to decide anything.
+inline FNodeShuffleWellPinCheck EvaluateWellPinOnActors(
+    ENodeShuffleWellPinSource Source,
+    AFGResourceNodeFrackingCore* ResolvedCore,
+    const TArray<AFGResourceNodeFrackingSatellite*>& Candidates,
+    int32 SatellitesExpected)
 {
     FNodeShuffleWellPinCheck Check;
-    Check.SatellitesExpected = E.Satellites.Num();
-
-    TArray<AFGResourceNodeFrackingSatellite*> Candidates;
-
-    // SOURCE SELECTION, the whole fix in five lines. A relocated well is answered by our spawned
-    // group; anything else by the level actors. The fallback is deliberately NOT "test both": mixing
-    // populations would make the provenance in the log unreadable, and the fallback's own result is
-    // marked non-decisive above rather than being trusted.
-    AFGResourceNodeFrackingCore* const* FoundSpawnedCore = E.bGroupPlaced ? SpawnedCores.Find(E.CorePath) : nullptr;
-    AFGResourceNodeFrackingCore* SpawnedCore = (FoundSpawnedCore && IsValid(*FoundSpawnedCore)) ? *FoundSpawnedCore : nullptr;
-
-    if (SpawnedCore)
-    {
-        Check.Source = ENodeShuffleWellPinSource::Spawned;
-        Check.ResolvedCore = SpawnedCore;
-        for (const FNodeShuffleWellSatellite& S : E.Satellites)
-        {
-            AFGResourceNodeFrackingSatellite* const* FoundSat = SpawnedSats.Find(S.SatellitePath);
-            if (FoundSat && IsValid(*FoundSat)) { Candidates.Add(*FoundSat); }
-        }
-    }
-    else
-    {
-        Check.Source = E.bGroupPlaced ? ENodeShuffleWellPinSource::OriginalWhileRelocated
-                                      : ENodeShuffleWellPinSource::Original;
-        if (IsValid(OriginalCore)) { Check.ResolvedCore = OriginalCore; }
-        for (AFGResourceNodeFrackingSatellite* Sat : OriginalSats)
-        {
-            if (IsValid(Sat)) { Candidates.Add(Sat); }
-        }
-    }
+    Check.Source = Source;
+    Check.SatellitesExpected = SatellitesExpected;
+    if (IsValid(ResolvedCore)) { Check.ResolvedCore = ResolvedCore; }
 
     Check.CoresTested = Check.ResolvedCore ? 1 : 0;
     Check.SatellitesTested = Candidates.Num();
@@ -205,4 +188,50 @@ inline FNodeShuffleWellPinCheck EvaluateWellPin(
         }
     }
     return Check;
+}
+
+// OriginalCore / OriginalSats are whatever the CALLER already resolved for the vanilla group (the
+// census actors at roll time, the FindOriginalBaseByPath results at apply time) -- this helper does
+// no lookups of its own beyond the two spawned-handle maps, so it stays free of the subsystem.
+inline FNodeShuffleWellPinCheck EvaluateWellPin(
+    const FNodeShuffleWellEntry& E,
+    const TMap<FString, AFGResourceNodeFrackingCore*>& SpawnedCores,
+    const TMap<FString, AFGResourceNodeFrackingSatellite*>& SpawnedSats,
+    AFGResourceNodeFrackingCore* OriginalCore,
+    const TArray<AFGResourceNodeFrackingSatellite*>& OriginalSats)
+{
+    TArray<AFGResourceNodeFrackingSatellite*> Candidates;
+
+    // SOURCE SELECTION, the whole fix in five lines. A relocated well is answered by our spawned
+    // group; anything else by the level actors. The fallback is deliberately NOT "test both": mixing
+    // populations would make the provenance in the log unreadable, and the fallback's own result is
+    // marked non-decisive above rather than being trusted.
+    AFGResourceNodeFrackingCore* const* FoundSpawnedCore = E.bGroupPlaced ? SpawnedCores.Find(E.CorePath) : nullptr;
+    AFGResourceNodeFrackingCore* SpawnedCore = (FoundSpawnedCore && IsValid(*FoundSpawnedCore)) ? *FoundSpawnedCore : nullptr;
+
+    ENodeShuffleWellPinSource Source = ENodeShuffleWellPinSource::NotEvaluated;
+    AFGResourceNodeFrackingCore* Resolved = nullptr;
+
+    if (SpawnedCore)
+    {
+        Source = ENodeShuffleWellPinSource::Spawned;
+        Resolved = SpawnedCore;
+        for (const FNodeShuffleWellSatellite& S : E.Satellites)
+        {
+            AFGResourceNodeFrackingSatellite* const* FoundSat = SpawnedSats.Find(S.SatellitePath);
+            if (FoundSat && IsValid(*FoundSat)) { Candidates.Add(*FoundSat); }
+        }
+    }
+    else
+    {
+        Source = E.bGroupPlaced ? ENodeShuffleWellPinSource::OriginalWhileRelocated
+                                : ENodeShuffleWellPinSource::Original;
+        Resolved = OriginalCore; // EvaluateWellPinOnActors applies the IsValid test, as this did
+        for (AFGResourceNodeFrackingSatellite* Sat : OriginalSats)
+        {
+            if (IsValid(Sat)) { Candidates.Add(Sat); }
+        }
+    }
+
+    return EvaluateWellPinOnActors(Source, Resolved, Candidates, E.Satellites.Num());
 }

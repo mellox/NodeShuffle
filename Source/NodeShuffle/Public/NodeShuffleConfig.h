@@ -127,6 +127,25 @@ struct NODESHUFFLE_API FNodeShuffleConfigStruct
     UPROPERTY(BlueprintReadWrite)
     bool RelocateResourceWells{false};
 
+    // T7b (ns-t7b-reroll): does a re-roll re-consider a well that has ALREADY been relocated?
+    //
+    // DEFAULT OFF, and the default is the whole point of the option. With it off, RollWellRelocation
+    // behaves exactly as it did before T7b: a placed group keeps its geography across re-rolls and only
+    // never-moved wells are dealt a destination. With it on, an already-relocated well is re-captured
+    // from its (still standing, suppressed) vanilla actors, torn down and dealt a new destination like
+    // any other well -- which on the author's own save means ~17 of 20 wells churn on the first
+    // re-roll after the toggle is enabled. That is a deliberate act, not a surprise, which is why it
+    // has its own switch rather than riding on RelocateResourceWells.
+    //
+    // A well someone has built on is never re-enrolled: bManaged is false for a pinned well, and since
+    // T16 the pin for a relocated well is decided from the actors WE spawned (the ones a player can
+    // actually reach) rather than from the hidden vanilla core.
+    //
+    // Inert unless BOTH ShuffleResourceWells and RelocateResourceWells are on -- this flag only
+    // widens the population RollWellRelocation considers, it never enables relocation by itself.
+    UPROPERTY(BlueprintReadWrite)
+    bool RerollRelocatedWells{false};
+
     // ns-h1b-notice: post one chat message when an extractor has been cleared for use on shuffled nodes
     // but needs a game restart before SF+ will permit it. DEFAULT TRUE -- the entire point is that the
     // player did not know, and the notice is structurally unable to nag (it is a STATE test that empties

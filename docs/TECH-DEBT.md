@@ -249,10 +249,25 @@ it as measured.** This is the defect T16's first draft mistook itself for.
 branches**. The **reuse** and **adopt-late** paths never re-write it. `ApplyWellRetype` resolves through
 `FindOriginalBaseByPath` — the *hidden originals* — so it cannot reach a spawned actor either.
 
-**Corroboration from the author's own log:** 15 groups were **adopted** (no `WELLH2-SPAWN … res=` line)
-while the same re-roll reported *"16 actually changed resource"*. So the visible relocated wells are
-**still producing their pre-re-roll resources** while the layout, the roll log and the conservation
-lines all say otherwise.
+**Confirmed statically and decisively 2026-08-08.** `ApplyWellRetype` provably cannot cover for it: it
+resolves through `FindOriginalBaseByPath` → `VanillaNodeCache`, which **skips our own nodes by
+construction** (`NodeShuffleSubsystem.cpp:2126`). So no path ever moves an existing spawned well actor
+onto a re-dealt resource. Log confirms this is the *normal* state, not an edge case: all 15 relocated
+groups were **adopted** (`:37147`), and only 4 `WELLH2-SPAWN` lines exist in 111,496 — both "spawned"
+ones are newly-placed wells. No relocated group ever re-spawns.
+
+> ⚠ **RETRACTED, and this is the third time today the same mistake was made in this file.** The first
+> draft cited *"16 actually changed resource"* against 15 adopted groups as evidence the world had
+> diverged from the layout. **It is not evidence of that.** That counter is
+> `Assigned != ORIGINAL` (`NodeShuffleWellRoll.cpp:359`) — not `!= previously-assigned`. And in that
+> log the assignment never moved at all: the pre-roll apply at 00:07:19 already shows the values the
+> 00:07:55 roll produced, because **both rolls shared seed `1223222528`**.
+>
+> So the **defect is proven; its consequence is UNOBSERVED.** A relocated well's resource cannot change
+> — but nothing has yet been seen changing and failing to take effect, because no roll in evidence
+> re-dealt one. Same [[lessons-log-asserted-a-cause]] shape as the two retractions above it: a counter
+> was read as answering a question it does not ask. **Do not re-state the consequence as measured until
+> a roll with a DIFFERENT seed re-deals a relocated well and the world is checked against it.**
 
 **Why it matters beyond correctness:** every conservation guarantee this mod advertises is asserted
 against the *layout*, and the layout is not what the player's wells produce. It also means T16's pin fix
@@ -265,7 +280,93 @@ well still will not actually change resource on a re-roll.
 > pressurized, compare `The core the pin was READ FROM ('…') now holds 'Y'` against that well's earlier
 > `-> 'Z'`. **Y ≠ Z confirms it live.**
 
-### PARKED — the re-roll-geography change (`stash@{0}`, 2026-08-08)
+### T18. A pin found on a relocated well is never RECORDED — `bAlreadyApplied` measures the wrong actor
+**Found 2026-08-08 by the T17 cold review. Pre-existing T16 defect that T17 makes consequential.**
+Diagnostics for it shipped with T17; the fix did not.
+
+`NodeShuffleWellRetype.cpp:230` computes `bAlreadyApplied` from the **hidden original**, while the pin
+one line above resolves the **spawned** core (T16). Consequence: apply pass 1 writes the new resource to
+the originals; from pass 2 a core-only pin is suppressed by `bAlreadyApplied == true`. So **a well with a
+Pressurizer on it stays recorded `bManaged=1 bPinned=0` all session** while the world permanently refuses
+the assignment — the layout keeps claiming an assignment the player's well will never hold.
+
+**Now visible in one grep**, shipped with T17: `WELLH2-RETYPE-PIN … LAYOUT BOOKKEEPING AT THIS INSTANT:
+bManaged=%d bPinned=%d`. **`bPinned=0` on that line is the defect firing.** That is diagnostics, not a fix.
+
+> **Pre-scoped fix (review's Option B), one line** — measure "already applied" on the actor the pin was
+> resolved against:
+> ```cpp
+> const AFGResourceNodeFrackingCore* AppliedOn = Pin.ResolvedCore ? Pin.ResolvedCore : Core;
+> const bool bAlreadyApplied = (AppliedOn->mResourceClassOverride.Get() == ResourceClass);
+> ```
+> **It is a mode-selection-predicate change to code that landed hours earlier, so it owes a full review**,
+> not a one-line drive-by. This project's own record: *"a mode-selection predicate let one stray pixel
+> fail a whole image"* is one of the three structural fixes that each introduced a fresh bug.
+>
+> **The review's stronger rival, and the better long-term target:** extend `ApplyWellRetype` to resolve
+> **spawned actors first**. That dissolves this entry entirely and closes the proximity gate, at the cost
+> of writing two populations per well. Its own packet.
+
+### T19. The well acceptance gate cannot fail for a resource mismatch
+**Found 2026-08-08 by the T17 cold review, and it is why T17 went unnoticed.**
+`NodeShuffleWellAudit.cpp:123-127` prints `res=` **from the layout**, while `:53` already holds the
+spawned core. `bHealthy` is computed from counts, positions and links and **never from resource** — so
+the acceptance gate printed `-- OK` throughout the entire pre-T17 defect and would do so again.
+
+This is the P3 class in its purest form: not a gate that *did not* fail, but one **structurally unable
+to** for this defect class, while reading as evidence that the well is well.
+
+> **Pre-scoped fix:** print `res=` from the spawned core (the audit already holds it) and add resource
+> agreement to `bHealthy`. Cheap; needs one decision first — whether a resource mismatch should make a
+> group *unhealthy* (blocking suppression) or merely be reported, since blocking suppression on it
+> changes what the gate gates.
+
+### SHIPPED (DEFAULT OFF) — re-roll geography, `RerollRelocatedWells`, 2026-08-08
+**Author's decision: a well should re-roll like any other node** — unpinned re-rolls its geography, pinned
+never moves. **Took two attempts and two rejections.** The toggle defaults **OFF**; with it off the
+pre-T7b path runs unchanged, which is what protects an existing save from churning ~17 wells on one
+keypress.
+
+**Attempt 1** (just deleting the guard) was rejected: the safety property it claimed was false because a
+relocated well was structurally unpinnable (**T16**, fixed separately), and despawn ran *before* the deal
+so a failed deal left the well **nowhere**. Parked at `stash@{0}`.
+
+**Attempt 2** restructured `RollWellRelocation` into three phases with a file-local pending capture, and
+the full review verified — statement by statement — that **no layout field is written on any success
+path before a destination exists**. The orphan blocker is closed and graded *provably provided*. It also
+**upheld the packet's disagreement with the previous reviewer** on destination self-exclusion: two wells
+cannot be dealt the same site, and no well can be dealt the site of one that then fails to move.
+
+**Attempt 2 was still rejected**, for three things worth remembering:
+1. **The same bug through a different door.** Gate 1 treated **0 resolved handles as a PASS**. Not an
+   independent layer: T16's pin falls back to the hidden vanilla actors, that verdict is deliberately
+   non-decisive so `bPinned` keeps its *saved* value, `DespawnWellGroup` then finds nothing, returns
+   all-clear and **prints nothing** (its log is gated on having destroyed or refused something). Phase 1
+   proves the *origin* streamed; nothing proved the *destination* did. **Fixed: the gate now fails
+   closed, with its own counter and line.**
+2. **"Byte-for-byte with the toggle OFF" was FALSE.** `WellDestinations` was built from pre-capture
+   state, so a candidate's stale destination blocked every other well *with the feature disabled*.
+   Fixed.
+3. **The tooltip claimed a well is "removed and rebuilt at its new spot within a single frame."** False —
+   spawns defer behind `IsLocationNearAnyPlayer`, so one keypress makes every relocated well vanish until
+   visited. **Third false claim shipped into this one config panel in a single day.**
+
+> **Lesson worth more than the feature.** The teardown-cost line reported `Σ(1 + Satellites.Num())` from
+> the **layout**, not `DespawnWellGroup`'s real destroyed count — a derived upper bound presented as a
+> measurement. In blocker 1's own scenario it would have printed *"136 destroys, 0.4 ms"* while
+> destroying **nothing**: the single number that would have exposed the bug, structurally unable to.
+> [[lessons-zero-needs-a-denominator]] has a sibling: **a derived figure is not a measurement, and the
+> more precise it looks the more it is trusted.**
+
+### T7 REGRESSION — `NodeShuffleWellRelocateRoll.cpp` is 921 lines, the day T7 was closed
+The three-phase restructure took it 519 → **921** (84% over the limit), hours after the four well files
+were split under 500. It **cannot** be split from inside its own packet: the extraction needs a member
+declared in `NodeShuffleSubsystem.h`, which that packet did not own.
+
+Recorded rather than waved through, because the split-then-immediately-regrow pattern is how a limit
+stops meaning anything. **Next split packet takes this file and owns the header.**
+
+### PARKED — attempt 1 of the re-roll-geography change (`stash@{0}`, 2026-08-08)
 **The author decided wells should re-roll like ordinary nodes** — unpinned re-rolls its geography,
 pinned does not move. The guard at `NodeShuffleWellRelocateRoll.cpp:152` was deleted to enable it, and
 the cold review returned **DO NOT SHIP on two blockers**. The work is stashed, not lost; the deployed

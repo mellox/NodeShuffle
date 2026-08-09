@@ -168,7 +168,46 @@ void UNodeShuffleConfig::PostInitProperties()
     // nitrogen well is now 4 km away". This one also carries a stage warning the other does not.
     AddBool(TEXT("RelocateResourceWells"), false,
         TEXT("Relocate Resource Wells (EXPERIMENTAL)"),
-        TEXT("OFF by default and still experimental — leave it off if you want a quiet save.\n\nWhen ON, a whole resource well (its core and every satellite) is MOVED to a new place as a rigid body: the satellites keep their exact spacing and pattern relative to the core, and the whole group is rotated together to find an orientation that fits the terrain. A well is moved all-or-nothing — if the full footprint cannot be placed, the well is left exactly where it was.\n\nA relocated well is DRESSED AND BUILDABLE: its rocks and cracks are re-created at the new site, and a Resource Well Pressurizer and its Extractors snap to it and produce.\n\nKNOWN LIMITS:\n- A well cannot actually move until you travel to its destination and the terrain loads. If you build on one while it is still waiting, you can end up with two wells — we never hide a well you have built on (see the mod's README).\n- Re-rolling does NOT move a well that has already moved — it keeps its new spot. Only wells that have not moved yet are dealt a new destination.\n- A well moves with the satellites that had loaded when it was enrolled. If more of its satellites load later, they are left out of the moved well permanently — the well is smaller, and produces less, until you reload the save.\n- A relocated well claims a large build area, and that has not been tested against ordinary resource nodes closer than about 15 m. If a Miner will not place on an ordinary node right beside a relocated well, please report it — that case is untested. (For a Miner that will not place anywhere near a well, see the note at the top of this panel.)\n- Desert-biome wells are unverified and may arrive without their rock graphics.\n\nRequires 'Shuffle Resource Wells' to be on as well, and applies at ROLL time — turn both on, then use 'Re-roll Layout'."));
+        TEXT("OFF by default and still experimental — leave it off if you want a quiet save.\n\nWhen ON, a whole resource well (its core and every satellite) is MOVED to a new place as a rigid body: the satellites keep their exact spacing and pattern relative to the core, and the whole group is rotated together to find an orientation that fits the terrain. A well is moved all-or-nothing — if the full footprint cannot be placed, the well is left exactly where it was.\n\nA relocated well is DRESSED AND BUILDABLE: its rocks and cracks are re-created at the new site, and a Resource Well Pressurizer and its Extractors snap to it and produce.\n\nKNOWN LIMITS:\n- A well cannot actually move until you travel to its destination and the terrain loads. If you build on one while it is still waiting, you can end up with two wells — we never hide a well you have built on (see the mod's README).\n- Re-rolling does NOT move a well that has already moved, unless you turn on 'Re-roll Wells That Have Already Moved' below. With that option off, only wells that have not moved yet are dealt a new destination.\n- A well moves with the satellites that had loaded when it was enrolled. If more of its satellites load later, they are left out of the moved well permanently — the well is smaller, and produces less, until you reload the save.\n- A relocated well claims a large build area, and that has not been tested against ordinary resource nodes closer than about 15 m. If a Miner will not place on an ordinary node right beside a relocated well, please report it — that case is untested. (For a Miner that will not place anywhere near a well, see the note at the top of this panel.)\n- Desert-biome wells are unverified and may arrive without their rock graphics.\n\nRequires 'Shuffle Resource Wells' to be on as well, and applies at ROLL time — turn both on, then use 'Re-roll Layout'."));
+
+    // T7b (ns-t7b-reroll). A THIRD well toggle, and it earns its place for the same reason the second
+    // one did: "a well may move" and "a well I have already found may move again" are different
+    // promises. DEFAULT OFF also means the behaviour ships dark -- an existing save keeps today's
+    // semantics until the player asks for the new ones, which matters because the first re-roll after
+    // it is enabled re-considers EVERY already-moved well at once.
+    AddBool(TEXT("RerollRelocatedWells"), false,
+        TEXT("Re-roll Wells That Have Already Moved"),
+        TEXT("OFF by default. Decides what 'Re-roll Layout' does to wells that have ALREADY moved.\n\n")
+        TEXT("OFF: a well that has already moved keeps its spot, and only wells that have not moved yet ")
+        TEXT("are dealt a destination. This is how the mod behaved before this option existed.\n\n")
+        TEXT("ON: an already-moved well is re-considered on every re-roll, like an ordinary node - it is ")
+        TEXT("taken from where it stands and dealt a new destination.\n\n")
+        TEXT("WHAT TO EXPECT ON AN EXISTING SAVE: every well that has already moved is re-considered on ")
+        TEXT("the FIRST re-roll after you turn this on - not a few of them. The save this was developed ")
+        TEXT("against held 17 moved wells out of 20.\n\n")
+        TEXT("A RE-ROLLED WELL DISAPPEARS UNTIL YOU GO AND FIND IT. The old well is removed the moment ")
+        TEXT("you press Re-roll Layout, but the new one is not built until you travel to its new spot ")
+        TEXT("and the terrain loads - exactly like a well moving for the first time. Turn this on with ")
+        TEXT("many moved wells and most of your wells will be gone from the map until you visit each new ")
+        TEXT("location. The log line 'WELLH2-ROLL: re-enrolment teardown' reports how many groups were ")
+        TEXT("removed and how long that frame took.\n\n")
+        TEXT("WHAT STILL DOES NOT MOVE: a well you have built on. A Resource Well Pressurizer on the ")
+        TEXT("core, or any Resource Well Extractor on a satellite, keeps the well exactly where it is. ")
+        TEXT("That check reads the well you can actually see and build on, and it is taken a second time ")
+        TEXT("immediately before anything is removed.\n\n")
+        TEXT("LIMITS YOU CAN HIT:\n")
+        TEXT("- A well is only re-considered while its ORIGINAL satellites are loaded. Re-roll from far ")
+        TEXT("away and it keeps its current spot for that roll.\n")
+        TEXT("- Each well gets a limited number of draws to find a destination that clears water and ")
+        TEXT("spacing (the log's 'deal-failed' count says how often a well ran out). A well that runs ")
+        TEXT("out keeps the spot it already has: nothing is removed for it that roll.\n")
+        TEXT("- A moved well is re-captured from its original satellites, so satellites that loaded ")
+        TEXT("since it moved are included this time and the well can come back a different size.\n")
+        TEXT("- A moved well is only re-considered while the place it currently stands has been loaded ")
+        TEXT("this session. If it has not, the log says '0 of N member handle(s)' and the well keeps its ")
+        TEXT("spot.\n\n")
+        TEXT("Requires 'Shuffle Resource Wells' and 'Relocate Resource Wells' to be on as well, and ")
+        TEXT("applies at ROLL time - turn it on, then use 'Re-roll Layout'."));
 
     // ns-h1b-notice, anti-nag rule 7: the opt-out. Default TRUE deliberately -- see the struct comment.
     AddBool(TEXT("ShowCompatibilityNotices"), true,

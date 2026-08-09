@@ -329,14 +329,24 @@ void ANodeShuffleSubsystem::ApplyWellRetype(bool bWellShuffleEnabled)
         if (WroteHere > 0 || !WellAppliedLogged.Contains(E.CorePath))
         {
             WellAppliedLogged.Add(E.CorePath);
+            // T17 (2026-08-08): groupPlaced= IS ON THIS LINE BECAUSE THE LINE IS ABOUT ONE POPULATION
+            // AND NEVER SAID SO. Every actor this pass resolved came from FindOriginalBaseByPath, i.e.
+            // VanillaNodeCache, which SKIPS our own spawns by construction -- so on a relocated well
+            // (groupPlaced=1) `res=` is the layout, and written=/equal= are measured on the HIDDEN
+            // originals, not on the well a player can see. Without this flag a reader takes res= for
+            // the world's value on exactly the wells where it is not. The visible group's own measured
+            // resource is reported by WELLH2-RETYPE / WELLH2-RETYPE-PIN in NodeShuffleWellSpawn.cpp.
             UE_LOG(LogNodeShuffle, Display,
-                TEXT("WELLH1 core='%s' res='%s' (was '%s') members=1core+%d/%dsat written=%d equal=%s"),
+                TEXT("WELLH1 core='%s' res='%s' (was '%s') members=1core+%d/%dsat written=%d equal=%s "
+                     "groupPlaced=%d (1 => written=/equal= describe the HIDDEN VANILLA originals only; "
+                     "the relocated actors a player sees are reported by WELLH2-RETYPE)"),
                 *WellShort(E.CorePath), *WellShort(E.AssignedResourceClassPath),
                 *WellShort(E.OriginalResourceClassPath), Resolved, E.Satellites.Num(), WroteHere,
                 // n/a, never 1, when no satellite has streamed: with nothing compared there IS no verdict,
                 // and printing a pass would be the "clean vs could-not-answer" conflation H0's own summary
                 // verdicts were rewritten three times to avoid.
-                !bComparable ? TEXT("n/a(no satellite streamed)") : (bEqual ? TEXT("1") : TEXT("0")));
+                !bComparable ? TEXT("n/a(no satellite streamed)") : (bEqual ? TEXT("1") : TEXT("0")),
+                E.bGroupPlaced ? 1 : 0);
         }
     }
 
