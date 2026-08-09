@@ -280,7 +280,26 @@ well still will not actually change resource on a re-roll.
 > pressurized, compare `The core the pin was READ FROM ('…') now holds 'Y'` against that well's earlier
 > `-> 'Z'`. **Y ≠ Z confirms it live.**
 
-### T20. Well-vs-node clearance is ONE-WAY — a node can be dealt inside a well's footprint
+### ~~T20~~ → **D3. ACCEPTED: nodes may sit inside a well's footprint. Author's call, do not "fix" it.**
+**Decided 2026-08-08 by the mod author, after taking the measurement this entry asked for: ~6 active
+nodes sit around the well in question, and both the Miner and the well work.**
+
+> *"I don't think the solid near the well is a bad thing since the miner and wells both work."*
+
+**Do not open a packet to make the clearance symmetric.** Inverting the roll order so node placement can
+see well destinations is a real change to the hottest path in the mod, and it would buy an aesthetic
+property the author does not want. The asymmetry stays.
+
+**The ONE thing that would reopen this** — and it is a *satellite*-level question the core-distance
+measurement above does not answer: **a Well Extractor refused because a Miner got to that spot first.**
+The 45.9 m figure is to the well's CORE; satellites sit further out, so a node can be much closer to a
+satellite than to the core. If a Well Extractor is ever refused next to a Miner, this entry becomes a
+defect again and option (A) below is the pre-scoped fix.
+
+*Mechanism retained below, because the asymmetry is real and the next person to find it should read the
+decision rather than re-derive the bug.*
+
+### ~~T20 (mechanism, retained)~~. Well-vs-node clearance is ONE-WAY
 **Found in game 2026-08-08 by the author, from a screenshot, on build `2026-08-08-t17-t7b-1`.**
 A solid Sulfur node appeared beside a relocated chlorine well and took a Miner. Measured from the log:
 the node sits **45.9 m** from `BaseNode_FrackingCore_2`'s core.
