@@ -280,6 +280,37 @@ well still will not actually change resource on a re-roll.
 > pressurized, compare `The core the pin was READ FROM ('…') now holds 'Y'` against that well's earlier
 > `-> 'Z'`. **Y ≠ Z confirms it live.**
 
+### T20. Well-vs-node clearance is ONE-WAY — a node can be dealt inside a well's footprint
+**Found in game 2026-08-08 by the author, from a screenshot, on build `2026-08-08-t17-t7b-1`.**
+A solid Sulfur node appeared beside a relocated chlorine well and took a Miner. Measured from the log:
+the node sits **45.9 m** from `BaseNode_FrackingCore_2`'s core.
+
+**The clearance a well respects is 90 m** — `WellMaxBoundRadiusCm (6500) + WellMinNodeSpacingCm (2500)`,
+tested against every active layout node in `NodeShuffleWellRelocateRoll.cpp:604-612`. So the well would
+never have chosen that spot. **The node did, because node placement does not know wells exist:**
+`WellDestinations` occurs **0 times** in `NodeShuffleSubsystem.cpp`, which is where ordinary node
+locations are generated.
+
+**The relationship is therefore asymmetric by construction:** wells avoid nodes; nodes do not avoid
+wells. Across rolls — and now more often, with `RerollRelocatedWells` moving wells — a node dealt in a
+later roll can land inside a well placed in an earlier one, and nothing re-checks.
+
+**Same shape as three other defects in this file** (T16's two consumers of one pin, the `ns-review-h2 F1`
+census filter, T8's `AFGResourceNode*` typing): **one rule, applied on one side of a relationship only.**
+That is now this project's most-repeated defect class, ahead of even the zero-without-a-denominator one.
+
+**Not observed to break anything.** The Miner placed and works. The plausible harms are unmeasured: a
+node overlapping a satellite's snap box (T3's geometry, from the other direction), a Well Extractor
+refused because a Miner got there first, or simply a solid node standing in the middle of a fracking
+cluster.
+
+> **Pre-scoped fix, and pick deliberately:** (A) give node generation the same 90 m test against
+> `WellDestinations` — symmetric, but it needs the well destinations to exist *before* node placement,
+> which inverts the current roll order; (B) test it at the *later* of the two whenever a re-roll moves
+> either — cheaper, but leaves pre-existing saves unfixed; (C) accept and document, like D1.
+> **Measure before choosing:** count how many active nodes currently sit within 90 m of a placed well
+> core. If it is a handful, (C) is defensible; if it is dozens, it is a placement bug.
+
 ### T18. A pin found on a relocated well is never RECORDED — `bAlreadyApplied` measures the wrong actor
 **Found 2026-08-08 by the T17 cold review. Pre-existing T16 defect that T17 makes consequential.**
 Diagnostics for it shipped with T17; the fix did not.
