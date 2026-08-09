@@ -96,11 +96,16 @@ bool ANodeShuffleSubsystem::IsSpotEnclosed(const FVector& At, int32& OutBlockedR
 // ns-t27-perf: THE ONE WORLD SCAN PER GROUP PER PASS
 // ------------------------------------------------------------------------------------------------
 // The node-overlap gate below used to walk ULevel::Actors with TActorIterator<AFGResourceNode> ON EVERY
-// PROBE. The cold review measured that as the dominant cost of a placement pass, and named the property
-// that makes it dangerous: it scales with the number of ACTORS IN THE WORLD -- every conveyor segment,
-// wall, foundation and machine the player has built -- not with the number of resource nodes. So it
-// costs more the longer a save has been played, and a well relocating near a large factory is exactly
-// where it costs the most.
+// PROBE. The cold review ESTIMATED that as the dominant cost of a placement pass (T27-fixes-review.md
+// section 5, under a heading that says "The estimate"): an order-of-magnitude argument from an assumed
+// actor count and an assumed per-actor cost. NOTHING WAS TIMED -- there was no clock on this path until
+// F-A added one in the same packet, so no millisecond figure for the OLD binary can exist. The probe
+// COUNT is measured; the milliseconds are not, and runtime step 1 is what turns the estimate into a
+// number. What is STRUCTURAL rather than estimated is the property that makes it dangerous: the
+// iterator walks the level's actor list, so it scales with the number of ACTORS IN THE WORLD -- every
+// conveyor segment, wall, foundation and machine the player has built -- not with the number of
+// resource nodes. So it costs more the longer a save has been played, and a well relocating near a
+// large factory is exactly where it costs the most.
 //
 // WHY THIS IS NOT THE BROADPHASE CHANGE, WHICH IS STILL REFUSED. Replacing the iteration with an
 // overlap query would change the POPULATION the gate sees (a broadphase reaches only collision-enabled
@@ -117,10 +122,16 @@ bool ANodeShuffleSubsystem::IsSpotEnclosed(const FVector& At, int32& OutBlockedR
 //   * every satellite probe is drawn at XY radius <= WellSatMaxRadiusCm from the scan centre;
 //   * therefore XY distance from the scan centre to any node that could reject any candidate is under
 //     WellSatMaxRadiusCm + WellOverlapRejectRadiusCm, which is this scan's radius.
-// The scan is therefore a strict SUPERSET of the union of every per-probe walk it replaces. It is
-// deliberately measured in XY and not in 3-D: a 3-D radius would be a SMALLER set (3-D distance is the
-// larger number), and would silently drop a node beside a satellite that settled far below its core --
-// the exact shape of a population bug that reads as a clean optimisation.
+// The scan is therefore a superset of every actor that could REJECT any candidate this call will
+// probe. It is NOT a superset of the per-probe walk it replaces -- that walk reached every
+// AFGResourceNode in the level and this set is a strict SUBSET of it, bounded to
+// WellSatMaxRadiusCm + WellOverlapRejectRadiusCm (7300 cm as those two constants stand today) in XY
+// about the settled core. That distinction is load-bearing: this cache is safe for THIS gate at THIS
+// reject radius and for nothing else. A second consumer with a different radius, or a draw that
+// reaches further than WellSatMaxRadiusCm, is outside the proof above and will silently under-scan.
+// It is deliberately measured in XY and not in 3-D: a 3-D radius would be a SMALLER set (3-D distance
+// is the larger number), and would silently drop a node beside a satellite that settled far below its
+// core -- the exact shape of a population bug that reads as a clean optimisation.
 // The relative-Z gate does not help here and is not relied on: it runs AFTER this test, so at scan time
 // a candidate's Z is unbounded.
 //

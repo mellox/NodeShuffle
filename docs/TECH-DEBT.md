@@ -306,7 +306,10 @@ the node sits **45.9 m** from `BaseNode_FrackingCore_2`'s core.
 
 **The clearance a well respects is 90 m** — `WellSatMaxRadiusCm (6500) + WellMinNodeSpacingCm (2500)`
 (ns-t27-review 3 merged the roll's file-local `WellMaxBoundRadiusCm` into that header constant),
-tested against every active layout node in `NodeShuffleWellRelocateRoll.cpp:641-651`. So the well would
+tested against every active layout node in `NodeShuffleWellRelocateRoll.cpp:644-652` (the
+`for (const FNodeShuffleEntry& Node : Layout)` loop; the `Node.Location, Cand` test is line 647 —
+re-measured 2026-08-09 by ns-t27-truth. The previous citation here, `641-651`, was applied verbatim
+from a review that had it wrong at both ends: 641 closes the *previous* well-spacing loop). So the well would
 never have chosen that spot. **The node did, because node placement does not know wells exist:**
 `WellDestinations` occurs **0 times** in `NodeShuffleSubsystem.cpp`, which is where ordinary node
 locations are generated.
@@ -524,7 +527,17 @@ build**. Hence `retypeReachable=`. **Fifth sighting of one-rule-one-side** (T16,
 > will under-report. And `%d fully linked` had quietly become **a label that lies**, since `bHealthy` now
 > also requires not-scattered / not-short / no-mismatch.
 
-### ~~T26. A WELL footprint has NO enclosure gate — an ordinary node has one.~~ — **FIXED (built, COLD-REVIEWED, UNTESTED IN GAME) 2026-08-09, marker `2026-08-09-t27-2`, packets ns-t27-corefirst + ns-t27-fixes**
+### ~~T26. A WELL footprint has NO enclosure gate — an ordinary node has one.~~ — **FIXED (built, COLD-REVIEWED, UNTESTED IN GAME) 2026-08-09, marker `2026-08-09-t27-3`, packets ns-t27-corefirst + ns-t27-fixes + ns-t27-perf**
+
+> **THE SHIPPED MARKER IS `-t27-3`, AND IT WAS NOT COLD-REVIEWED WHEN IT WAS BUILT.** This heading and
+> the paragraph below originally named `-t27-2` and its review, which is one packet short of what is
+> deployed: `-t27-3` additionally contains `ns-t27-fixes` (second review round,
+> `_team/nodeshuffle-followups/T27-fixes-review.md`) **and `ns-t27-perf`, the node-scan hoist, which
+> was UNREVIEWED at the moment that binary was built and deployed (16:35, 2026-08-09).** It became
+> reviewed later the same day, by `_team/nodeshuffle-followups/T27-perf-review-2.md` (SHIP WITH TESTS,
+> 13 findings + an addendum) — a review that lands **after** the build, not before it. Corrected here
+> 2026-08-09 by ns-t27-truth; do not read the earlier wording as evidence that the shipped build was
+> reviewed before it shipped, because it was not.
 
 > **STATUS IS "BUILT", NOT "CLOSED".** The build is green and the import table is unchanged
 > (817/767/0, zero symbols moved). A cold review has now run (SHIP WITH TESTS, 13 findings —
@@ -690,12 +703,20 @@ cannot be dealt the same site, and no well can be dealt the site of one that the
 > [[lessons-zero-needs-a-denominator]] has a sibling: **a derived figure is not a measurement, and the
 > more precise it looks the more it is trusted.**
 
-### T27 REGRESSION — `NodeShuffleWellRelocateApply.cpp` is 1171 lines (was 892 before ns-t27-corefirst)
+### T27 REGRESSION — `NodeShuffleWellRelocateApply.cpp` is 1201 lines (was 892 before ns-t27-corefirst, 1171 after ns-t27-perf)
 **Not introduced by T27, but made worse by it, and stated rather than left for someone to notice.**
 *(This figure has now been wrong twice: it was written as 1056 — true after `ns-t27-corefirst` — and
 not re-measured when `ns-t27-fixes` added ~56 lines of comment, then not re-measured again when
-`ns-t27-perf` added the cost-fix commentary. A debt entry whose entire content is a file-size figure
+`ns-t27-perf` added the cost-fix commentary. Now **1201**: `ns-t27-truth` added ~30 lines of comment
+(the estimate/measured re-labelling and the two coupling TODOs), and re-ran `wc -l` rather than
+leaving the figure for the next reader to find wrong a fourth time. A debt entry whose entire content is a file-size figure
 is the worst possible place for [[stale figure drift]]. **Re-run `wc -l` before editing this line.**)*
+*(**And take the figure from `wc -l`, NOT from `tools/arity.py`.** ns-t27-perf published this same file
+as **1172** in its handoff (from arity.py) and **1171** here (from `wc -l`, and correct) — one file, one
+packet, two numbers. Cause, measured 2026-08-09 by ns-t27-truth: `arity.py`'s `total_lines =
+raw.count(chr(10)) + 1` counts one line too many for any file ending in a newline, i.e. every file here.
+Confirmed on two other files by the cold review. That off-by-one is DEFERRED, not fixed — see the
+KNOWN-BROKEN banner at the top of `tools/arity.py`.)*
 The file breached the 500-line rule before this packet (892 lines) and the core-first/independent-
 satellite rewrite added ~164 more: the per-satellite draw loop, two layout gates, and the reasoning
 for why sibling clearance became ours. No split was attempted — a split during a placement-semantics
@@ -710,6 +731,33 @@ own banner comment and shares nothing with the search but the entry type.
 
 **Do this as its own packet, after T27 has been reviewed and tested in game.** Splitting unreviewed
 code moves the review target while the reviewer is reading it.
+
+### T27-PERF — the superset proof is unenforced: the node-scan scope and the satellite DRAW radius are coupled only by convention
+**Opened 2026-08-09 by ns-t27-truth, deferred from it (that packet was comment-only). Source:
+`_team/nodeshuffle-followups/T27-perf-review-2.md` F2 — which carries the verbatim fix.**
+
+`BuildWellNodeScanCache` (`NodeShuffleWellFootprint.cpp`) scopes its one-per-call node scan to
+`WellSatMaxRadiusCm + WellOverlapRejectRadiusCm`. The node-overlap gate is correct **only while every
+satellite probe stays inside that scope** — and the probes are drawn from `WellSatMaxRadiusCm` at a
+second, independent read of the same constant in `NodeShuffleWellRelocateApply.cpp`'s satellite loop.
+The two files agree today. **Nothing makes them agree.**
+
+**Why this is worse than an ordinary latent bug: the break is SILENT and it PASSES rather than fails.**
+A larger draw radius — e.g. a per-well `SatMaxRadius`, which the **short-wells packet is named as the
+next owner of this code and is exactly the kind of change it wants** — leaves probes outside the
+scanned set. The gate then tests a candidate against an incomplete population, **accepts** a spot beside
+a real resource node, and no reason string changes, no rejection is logged, and no counter moves. The
+player sees two node meshes intersecting; the log says the layout validated.
+
+**The fix is an assertion, not prose.** The two TODO comments ns-t27-truth left at both sides of the
+coupling (`TODO(ns-t27-truth 2026-08-09)`, in `NodeShuffleWellRelocateApply.cpp` at the scan call and at
+the satellite draw) are a marker, **not** a fix — this workspace's own rule is to put the check AT the
+seam, and prose is not a check. The reviewer's proposed shape: pass the scan centre and scope radius
+into `ValidateWellMemberSpot`, and on the cached branch count and log any probe whose
+`Dist2D(OutLoc, ScanCentre)` exceeds `ScopeRadius - WellOverlapRejectRadiusCm`. A compile-time coupling
+(deriving one from the other in one place) is stronger still and should be considered first.
+
+**Do this before, or as part of, the short-wells packet — not after it.**
 
 ### T7 REGRESSION — `NodeShuffleWellRelocateRoll.cpp` is 921 lines, the day T7 was closed
 The three-phase restructure took it 519 → **921** (84% over the limit), hours after the four well files

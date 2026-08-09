@@ -1525,10 +1525,15 @@ private:
                                 const TArray<TWeakObjectPtr<AFGResourceNode>>* NodeScanCache,
                                 FVector& OutLoc, FRotator& OutRot, FString& OutReason) const;
 
-    // ns-t27-perf: build that set ONCE per group per pass. The cold review measured the per-probe
-    // TActorIterator as the dominant cost of a placement pass and -- crucially -- as one that scales
-    // with the player's FACTORY (every conveyor, wall and machine is an actor), not with node count, so
-    // it grows without limit as a save is played. This hoist changes no query, no radius and no
+    // ns-t27-perf: build that set ONCE per group per pass. The cold review ESTIMATED the per-probe
+    // TActorIterator as the dominant cost of a placement pass (T27-fixes-review.md section 5, under a
+    // heading that says "The estimate") -- an order-of-magnitude argument from an assumed actor count
+    // and an assumed per-actor cost, with NOTHING TIMED: there was no clock on this path until F-A
+    // added one in the same packet, so no millisecond figure for the OLD binary can exist. The probe
+    // COUNT is measured; the milliseconds are not. What is structural rather than estimated is that the
+    // iterator scales with the player's FACTORY (every conveyor, wall and machine is an actor), not
+    // with node count, so it grows without limit as a save is played. This hoist changes no query, no
+    // radius and no
     // predicate; it changes how many times the level is walked, from once per probe to once per call.
     // The scan centre is the SETTLED core location, which is why this cannot be called before the core
     // gate has run.
@@ -2261,8 +2266,12 @@ private:
     // difficult groups near one player multiply it, all on the game thread inside one 5 s tick.
     // ns-t27-perf: A COST REDUCTION DOES NOW SHIP, AND IT IS NOT THE BROADPHASE ONE. The world-wide
     // TActorIterator<AFGResourceNode> that used to run inside EVERY probe is hoisted to ONE scan per
-    // group per pass (BuildWellNodeScanCache), which the cold review measured as the dominant term
-    // because it scales with the player's factory rather than with node count. The review's earlier
+    // group per pass (BuildWellNodeScanCache), which the cold review ESTIMATED as the dominant term
+    // (T27-fixes-review.md section 5, under a heading that says "The estimate") from an assumed actor
+    // count and an assumed per-actor cost. NOTHING WAS TIMED: no clock existed on this path until F-A
+    // added one in the same packet, so no millisecond figure for the OLD binary can exist. That the
+    // iterator scales with the player's factory rather than with node count IS structural and does not
+    // depend on the estimate; the milliseconds do. The review's earlier
     // preferred fix -- replacing that iteration with a broadphase overlap query -- is still NOT applied
     // and is still its own packet, because it CHANGES THE POPULATION the node gate sees; the hoist does
     // not, and that is the whole reason it could ship here. The measurement ships too: WELLH2-PROBECENSUS

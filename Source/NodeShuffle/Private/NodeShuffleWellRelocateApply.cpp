@@ -70,9 +70,15 @@
 // The loop below this one puts no cap on how many GROUPS a pass searches.
 //
 // ns-t27-perf: THE RESOURCE-NODE SCAN IS NO LONGER PER PROBE. It was a
-// TActorIterator<AFGResourceNode> over the entire world inside every probe -- the cold review measured
-// that as the dominant term and, worse, one that scales with the player's FACTORY actor count rather
-// than with node count, so it grows for the whole life of a save. It is now built ONCE per group per
+// TActorIterator<AFGResourceNode> over the entire world inside every probe -- the cold review
+// ESTIMATED that as the dominant term (T27-fixes-review.md section 5, under a heading that says "The
+// estimate"): an order-of-magnitude argument from an assumed actor count and an assumed per-actor
+// cost. NOTHING WAS TIMED -- there was no clock on this path until F-A added one in this same packet
+// (PlaceStartSec below), so no millisecond figure for the OLD binary can exist. The probe COUNT is
+// measured; the milliseconds are not. Runtime step 1 is what turns the estimate into a number.
+// What IS structural rather than estimated: the iterator walks the level's actor list, so its cost
+// scales with the player's FACTORY actor count rather than with node count, and it therefore grows
+// for the whole life of a save. It is now built ONCE per group per
 // pass (BuildWellNodeScanCache) and the gate tests against that set. The POPULATION IS UNCHANGED and
 // the argument for that is written out at the scan function; the broadphase replacement, which would
 // change the population, is still refused and is still its own packet. What each pass now costs is
@@ -179,7 +185,10 @@ bool ANodeShuffleSubsystem::TryPlaceWellGroup(FNodeShuffleWellEntry& E, UClass* 
     // ns-t27-perf: /*NodeScanCache=*/nullptr IS DELIBERATE AND IS NOT AN OVERSIGHT. The scan is centred
     // on the SETTLED core, and this call is what settles it -- there is nothing to centre on yet. The
     // core is probed exactly once per call, so this is one whole-level walk per call either way, which
-    // is not the term the review measured. Written as an explicit nullptr rather than a defaulted
+    // is not the term the review's cost ESTIMATE named (that term was the PER-SATELLITE-PROBE walk;
+    // nothing on either path has ever been timed -- see the head of this file). Once per call is what
+    // this path already cost, so the hoist has nothing to buy here. Written as an explicit nullptr
+    // rather than a defaulted
     // parameter for the T26 reason: a call site must say which path it takes.
     if (!ValidateWellMemberSpot(E.DestCoreLocation, StartZ, /*bApplyEnclosureGate=*/true,
                                 /*NodeScanCache=*/nullptr,
@@ -234,6 +243,17 @@ bool ANodeShuffleSubsystem::TryPlaceWellGroup(FNodeShuffleWellEntry& E, UClass* 
     // BuildWellNodeScanCache in NodeShuffleWellFootprint.cpp. Read it before changing this radius --
     // it is derived from WellSatMaxRadiusCm and the gate's own reject radius, and shrinking it would
     // silently make the node gate blind rather than making it fail.
+    // TODO(ns-t27-truth 2026-08-09): THE WARNING ABOVE POINTS AT ONLY ONE OF THE TWO SIDES. It warns
+    // about shrinking the SCAN radius; the direction this coupling actually breaks is GROWING the DRAW
+    // radius, at the satellite draw below (search: "UNIFORM IN AREA"), which does not touch this call
+    // at all. A per-well satellite radius -- which the short-wells packet is named as the next owner of
+    // this function to want -- would compile, would leave probes outside the scanned set, and the node
+    // gate would then PASS a spot it should refuse with NO reason string changing and NO rejection to
+    // grep for. Nothing enforces the coupling today: it is two reads of WellSatMaxRadiusCm in two
+    // files. DEFERRED FROM ns-t27-truth BECAUSE THE FIX IS EXECUTABLE CODE AND THAT PACKET WAS
+    // COMMENT-ONLY. The fix is an assertion, not more prose -- see docs/TECH-DEBT.md, T27-PERF entry
+    // "the superset proof is unenforced", and T27-perf-review-2.md F2, which carries the reviewer's
+    // verbatim implementation (a per-probe scope check inside ValidateWellMemberSpot).
     TArray<TWeakObjectPtr<AFGResourceNode>> NodeScanCache;
     BuildWellNodeScanCache(CoreLoc, NodeScanCache);
     Probes.NodesInScope = NodeScanCache.Num(); // ns-t27-perf: LOG ONLY; the census prints it per call
@@ -298,6 +318,16 @@ bool ANodeShuffleSubsystem::TryPlaceWellGroup(FNodeShuffleWellEntry& E, UClass* 
                 // UNIFORM IN AREA, not uniform in radius. r = sqrt(lerp(rMin^2, rMax^2, u)) spreads
                 // candidates evenly over the annulus; drawing r uniformly would pile them against the
                 // inner edge and produce the tight ring that reads as generated rather than authored.
+                // TODO(ns-t27-truth 2026-08-09): WellSatMaxRadiusCm HERE IS ONE HALF OF AN UNENFORCED
+                // COUPLING. BuildWellNodeScanCache (called above, defined in NodeShuffleWellFootprint.cpp)
+                // scopes its node scan to this same constant plus the gate's reject radius, and the
+                // superset proof that makes the node-overlap gate correct holds ONLY while every probe
+                // drawn here stays inside that scope. Raising this radius -- or overriding it per well,
+                // which is what a short-wells packet wants -- silently breaks the gate: it would PASS a
+                // spot beside a real node, with no reason string changing and nothing logged. Nothing
+                // checks it. DEFERRED FROM ns-t27-truth (that packet was comment-only); the fix is a
+                // compile-time or check-time assertion, not this comment. See docs/TECH-DEBT.md and
+                // T27-perf-review-2.md F2 for the verbatim implementation.
                 const float U = Rng.FRand();
                 const float Radius = FMath::Sqrt(FMath::Lerp(FMath::Square(WellSatMinRadiusCm),
                                                              FMath::Square(WellSatMaxRadiusCm), U));

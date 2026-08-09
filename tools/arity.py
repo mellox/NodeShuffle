@@ -1,6 +1,47 @@
 #!/usr/bin/env python3
 """arity.py -- count UE_LOG format specifiers against arguments, per log line, per file.
 
+================================================================================================
+KNOWN BROKEN. DO NOT QUOTE THIS TOOL'S VERDICT WITHOUT HAND-COUNTING FIRST.
+(Banner added 2026-08-09 by ns-t27-truth. Every figure below was re-measured that day, at commit
+662d8ac, by running this script -- not inherited from the review that reported it.)
+================================================================================================
+1. IT REPORTS SIX MISMATCHES ON THE CURRENT TREE AND EVERY ONE EXAMINED IS A FALSE POSITIVE.
+   Run over Source/NodeShuffle/Private/*.cpp + Public/*.h it flags 1 in NodeShuffleAutoAllow-
+   Extractors.cpp, 1 in NodeShuffleSubsystem.cpp, 1 in NodeShuffleWellMeshIndex.cpp and 3 in
+   NodeShuffleWellSnapBox.cpp, and exits 1. Three separate causes: an escaped percent in prose is
+   counted as a specifier (a doubled percent is not handled at all); an odd number of scope-
+   resolution tokens inside a parenthesised sub-expression drives the argument walker's depth
+   negative, after which no top-level comma is counted; and TEXTPAT cannot span a chunk containing
+   an escaped quote, so the chunk loop stops early and the call is misclassified.
+2. PARSER GIVE-UPS AND REAL DEFECTS LAND IN THE SAME COUNTER AND THE SAME EXIT CODE. "The scanner
+   could not read this" and "the code is wrong" are both `mismatches` and both exit 1. That is the
+   conflation this tool exists to prevent, reproduced inside it.
+3. THE ONE THAT MATTERS -- A SILENT VACUOUS PASS, AND IT IS ASYMMETRIC. A closing paren inside a
+   TEXT() body ends the paren walk early. The truncated body then fails the chunk match, the call
+   is classified format-only with a zero specifier count, and because a mismatch is counted only
+   when the specifier count is above zero, IT INCREMENTS NOTHING. The file summary then reads
+   "0 mismatch(es); whole file scanned" and the script exits 0. A three-specifier log left the
+   audit with a clean verdict. An OPENING paren in the same position aborts loudly and exits 2.
+   Same defect, opposite polarity, only one half safe.
+   Measured on two fixtures 2026-08-09: closing paren -> clean, exit 0; opening paren -> SCAN
+   ABORTED, exit 2.
+   NO LIVE INSTANCE IS KNOWN AT HEAD -- this is a MECHANISM, not an observed defect in this repo.
+   The cold review sampled the format-only sites in NodeShuffle.cpp and NodeShuffleAutoAllow-
+   Extractors.cpp and found each a genuine no-argument log; ns-t27-truth did not re-sample every
+   site. The exposure is prospective and not remote: this file family's log legends routinely
+   contain parentheses and quoted code tokens.
+4. EVERY LINE COUNT IT PRINTS IS ONE TOO HIGH for a file ending in a newline, i.e. every file here
+   (`total_lines` adds 1 unconditionally). This already put two different figures for one file into
+   one packet -- see docs/TECH-DEBT.md, the T27 REGRESSION entry. Take line counts from `wc -l`.
+
+A CHECKER WHOSE OWN FAILURE MODE IS A CLEAN VERDICT CANNOT BE TRUSTED ON THE STRENGTH OF A CLEAN
+VERDICT. Fixing this is its own packet, and its FIRST item must be a self-test corpus: one known-bad
+log, one escaped percent, one scope-resolution-inside-parens, one closing paren inside TEXT() and one
+opening paren inside TEXT(), each with its expected verdict asserted. Until then, a pass from this
+tool is a hint; hand-count the log you actually care about.
+================================================================================================
+
     python tools/arity.py <file.cpp> [<file.cpp> ...]
 
 Exit code 0 = every UE_LOG in every file scanned to completion and every one balanced.
@@ -17,8 +58,17 @@ call and ran off the end of the file looking for a closing paren that was never 
 "all balanced" verdict on that file covered only the lines ABOVE the abort and claimed the whole file.
 
 Two changes fix that class, not just that instance:
-  1. COMMENTS AND STRING LITERALS ARE REMOVED BEFORE ANY PAREN WALK (StripCommentsPreservingLines).
-     Line numbers are preserved exactly, so reported line numbers still match the original file.
+  1. COMMENT BODIES -- AND ONLY COMMENT BODIES -- ARE REMOVED BEFORE ANY PAREN WALK
+     (StripCommentsPreservingLines). Line numbers are preserved exactly, so reported line numbers
+     still match the original file.
+     CORRECTED 2026-08-09 by ns-t27-truth: this line used to read "COMMENTS AND STRING LITERALS ARE
+     REMOVED", which is FALSE and contradicted StripCommentsPreservingLines' own docstring twenty
+     lines below ("Literal CONTENT is preserved -- the format-string parser downstream needs it").
+     The format-string parser needs the literal, so the literal stays. Consequence, measured: a
+     literal `UE_LOG(` inside a TEXT() string still restarts the paren walk -- it aborts, loudly, by
+     design (exit 2), rather than short-reading. The comment half of the original defect is closed;
+     the string-literal half is not. See KNOWN BROKEN item 3 above for the far worse case, an
+     unbalanced paren inside a TEXT() body.
   2. AN ABORT IS A LOUD FAILURE, NOT A SHORT READ. If the walk cannot balance, the script prints
      *** SCAN ABORTED *** naming the file and line, states how much of the file it actually covered,
      and exits 2. A checker that silently covers less than it claims is this project's named defect
