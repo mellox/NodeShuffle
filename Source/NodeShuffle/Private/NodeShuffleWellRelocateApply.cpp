@@ -574,6 +574,12 @@ void ANodeShuffleSubsystem::ApplyWellRelocation(bool bWellShuffleEnabled, bool b
     ++WellAuditPasses;
 
     int32 Searching = 0, PlacedNow = 0, Spawned = 0, Deferred = 0, Maintained = 0, IncompleteSpawns = 0;
+    // ns-t24-groupgate: entries whose placement the group-scoped occupancy gate refused this pass, and
+    // entries it could not measure because nothing of the vanilla group resolved to a live actor. Kept
+    // apart: a refusal is a decision, an unmeasured verdict is the absence of one, and summing them would
+    // be the "zero with no denominator" this file already got wrong once.
+    int32 GateRefused = 0, GateUnmeasured = 0;
+    const bool bWellDiag = FNodeShuffleModule::AreDiagnosticsEnabled();
     // ns-t23-rollhide: how many UNPLACED entries had their suppression re-asserted this pass. A brand-new
     // population -- before roll-time commitment no unplaced entry was ever suppressed, so nothing ever
     // re-asserted for one, and a level actor that streams back in un-hidden would have undone the hide
@@ -639,6 +645,109 @@ void ANodeShuffleSubsystem::ApplyWellRelocation(bool bWellShuffleEnabled, bool b
                         ResourceClass ? TEXT("is not a UFGResourceDescriptor") : TEXT("failed to load"));
                 }
                 continue;
+            }
+
+            // ============ ns-t24-groupgate: THE GROUP-SCOPED OCCUPANCY GATE ============
+            // THE FIELD DEFECT THIS REMOVES, measured from the author's 2026-08-09 log. A player built a
+            // Resource Well Pressurizer on the VANILLA ORIGIN core; eight seconds later the destination
+            // validated after ~38 deferred attempts, the group spawned, and the suppression ran:
+            //     "member='BP_FrackingCore18': NOT hidden -- in use (pressurizer-on-core)"
+            //     "core='BP_FrackingCore18' phase=APPLY: hid 7 vanilla member(s) + 13 mesh piece(s) ...
+            //      1 occupied (left alone)"
+            // The core survived with the player's Pressurizer on it and all seven satellites vanished:
+            // a well that can never produce, 990 m from the group that can.
+            //
+            // WHY IT HAPPENED, IN ONE SENTENCE: HideOne tests occupancy PER MEMBER and returns early for
+            // that member only, but the invariant it protects -- do not take away a well the player has
+            // built on -- is a GROUP property. This workspace's most-repeated defect: one rule applied to
+            // one side of a relationship. It is PRE-EXISTING and is not a regression of the roll-time
+            // commit feature; the suppression that fired was the apply phase, which predates it.
+            //
+            // THE GATE IS A REFUSAL TO START, NOT A REPAIR. Hiding an occupied member anyway would pull
+            // the ground out from under a built Pressurizer, and un-hiding a group already relocated would
+            // put two live copies in the world. The only safe direction is the mod's own stated fail-safe
+            // (NodeShuffleWellEscalate.cpp): never a partial or broken well, only an untouched one.
+            //
+            // EvaluateWellPin IS REUSED RATHER THAN A NEW LOOP -- it is the same question, and this entry
+            // is UNPLACED here (the enclosing branch tests that), so its source selection resolves to the
+            // ORIGINAL level actors, which is exactly the population that is about to be hidden. It
+            // already breaks on the first satellite in use and reports which actor and which signal.
+            // SYMMETRY: the core AND every satellite record are handed to it -- INCLUDING uncaptured
+            // records, which are never spawned but ARE hidden by HideOne, so an Extractor on one of those
+            // is the mirrored version of the same defect and must refuse the placement identically.
+            AFGResourceNodeFrackingCore* GateCore =
+                Cast<AFGResourceNodeFrackingCore>(FindOriginalBaseByPath(E.CorePath));
+            TArray<AFGResourceNodeFrackingSatellite*> GateSats;
+            for (const FNodeShuffleWellSatellite& S : E.Satellites)
+            {
+                AFGResourceNodeFrackingSatellite* Sat =
+                    Cast<AFGResourceNodeFrackingSatellite>(FindOriginalBaseByPath(S.SatellitePath));
+                if (IsValid(Sat)) { GateSats.Add(Sat); }
+            }
+            const FNodeShuffleWellPinCheck GatePin =
+                EvaluateWellPin(E, SpawnedWellCores, SpawnedWellSatellites, GateCore, GateSats);
+            if (GatePin.IsPinned())
+            {
+                ++GateRefused;
+                // Throttled on the VERDICT, not on the path: a refusal that changes member or changes
+                // side is announced again, an unchanged one is said once. NOTHING announces a refusal
+                // that STOPS -- the entry simply reaches TryPlaceWellGroup and the ordinary FOOTPRINT
+                // VALIDATED / spawned COMPLETE lines are the evidence that it did. The state does not
+                // self-clear -- the player's machine stays built -- so an unthrottled line prints forever.
+                const FString GateKey = FString::Printf(TEXT("%s|%s|%d%d"), *E.CorePath,
+                                                        *GatePin.FiredActorName,
+                                                        GatePin.bCoreInUse ? 1 : 0,
+                                                        GatePin.bSatelliteInUse ? 1 : 0);
+                if (!WellGroupGateLogged.Contains(GateKey))
+                {
+                    WellGroupGateLogged.Add(GateKey);
+                    UE_LOG(LogNodeShuffle, Display,
+                        TEXT("WELLH2-GATE core='%s': PLACEMENT REFUSED THIS PASS. MEASURED -- the shared ")
+                        TEXT("occupancy predicate returned true for actor '%s' of the VANILLA group ")
+                        TEXT("(core signal '%s', satellite signal '%s'); the actors asked were %s, %d ")
+                        TEXT("core and %d of %d satellite record(s) resolved live. The whole vanilla ")
+                        TEXT("group is left UNTOUCHED -- nothing hidden, nothing spawned, nothing ")
+                        TEXT("de-registered -- because hiding the rest of a group around a member a ")
+                        TEXT("player has built on leaves a well that cannot produce. This is re-evaluated ")
+                        TEXT("on every pass that reaches this gate, so the placement proceeds by itself ")
+                        TEXT("once the building is gone. Said once per group per verdict."),
+                        *WellShort(E.CorePath), *GatePin.FiredActorName,
+                        GatePin.CoreWhy, GatePin.SatelliteWhy, WellPinSourceName(GatePin.Source),
+                        GatePin.CoresTested, GatePin.SatellitesTested, E.Satellites.Num());
+                }
+                continue;
+            }
+            if (!GatePin.IsDecisive())
+            {
+                // NOT A REFUSAL, AND THE LINE MUST NOT READ AS ONE. Nothing of the vanilla group resolved
+                // to a live actor, so no occupancy signal could be read -- and refusing here would refuse
+                // every relocation whose ORIGIN is out of streaming range of its DESTINATION, which under
+                // spawn-on-discovery is the normal case (the player stands at the destination). The
+                // placement therefore proceeds. What is NOT measured is stated rather than implied: this
+                // pass did not test whether anything is built on this well. Any member counted as
+                // resolved above CAN still be hidden by the suppression that follows a successful spawn
+                // on this pass. A member that streams in LATER carrying a building is refused by HideOne
+                // alone, per member, which is the residual case named in the T24 handoff.
+                ++GateUnmeasured;
+                const FString UnmKey = E.CorePath + TEXT("|unmeasured");
+                if (bWellDiag && !WellGroupGateLogged.Contains(UnmKey))
+                {
+                    WellGroupGateLogged.Add(UnmKey);
+                    UE_LOG(LogNodeShuffle, Verbose,
+                        TEXT("WELLH2-GATE core='%s': OCCUPANCY UNMEASURED, placement proceeding. The ")
+                        TEXT("actors asked were %s and %d core plus %d of %d satellite record(s) ")
+                        TEXT("resolved live. The predicate that produced this branch is IsDecisive()==0, ")
+                        TEXT("which on this path means NO CORE resolved; any satellite(s) counted above ")
+                        TEXT("were asked and reported not in use, and that is the whole of what was ")
+                        TEXT("measured. NOT MEASURED: whether anything is built on the core, or on any ")
+                        TEXT("satellite that did not resolve. Placement proceeds because refusing here ")
+                        TEXT("would refuse every relocation whose origin is out of streaming range of ")
+                        TEXT("its destination. Any member counted as resolved above CAN still be hidden ")
+                        TEXT("by the suppression that follows a successful spawn on this pass. Said ")
+                        TEXT("once per group per session."),
+                        *WellShort(E.CorePath), WellPinSourceName(GatePin.Source), GatePin.CoresTested,
+                        GatePin.SatellitesTested, E.Satellites.Num());
+                }
             }
 
             if (!TryPlaceWellGroup(E, ResourceClass)) { continue; }
@@ -751,15 +860,20 @@ void ANodeShuffleSubsystem::ApplyWellRelocation(bool bWellShuffleEnabled, bool b
                                 bOn);
     }
 
-    if (Searching > 0 || PlacedNow > 0 || Spawned > 0 || IncompleteSpawns > 0 || ReassertedUnplaced > 0)
+    if (Searching > 0 || PlacedNow > 0 || Spawned > 0 || IncompleteSpawns > 0 || ReassertedUnplaced > 0
+        || GateRefused > 0)
     {
         UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH2 pass: %d group(s) searching, %d newly validated, %d spawned COMPLETE, ")
             TEXT("%d spawned INCOMPLETE (not marked placed, nothing suppressed, retried next pass), ")
             TEXT("%d maintained, %d deferred (no player near the destination), %d unplaced group(s) had ")
-            TEXT("an existing suppression re-asserted. %d placed this session."),
+            TEXT("an existing suppression re-asserted. ns-t24-groupgate, out of the %d searching: %d ")
+            TEXT("refused by the group occupancy gate (the shared occupancy predicate returned true for ")
+            TEXT("a member of the vanilla group; it is left untouched) and %d proceeded with occupancy ")
+            TEXT("UNMEASURED (no vanilla CORE resolved to a live actor on that entry's pass). %d placed ")
+            TEXT("this session."),
             Searching, PlacedNow, Spawned, IncompleteSpawns, Maintained, Deferred, ReassertedUnplaced,
-            WellGroupsPlacedThisSession);
+            Searching, GateRefused, GateUnmeasured, WellGroupsPlacedThisSession);
     }
 
     // ns-t23-stage0 INSTRUMENT 2 (K3). LAST, so it reports the state this pass ended in rather than the

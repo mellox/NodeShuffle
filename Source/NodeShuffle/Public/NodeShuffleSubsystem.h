@@ -1742,6 +1742,12 @@ private:
     // non-self-clearing state, so also throttled per record per session.
     TSet<FString> WellSuppressSkipLogged;
 
+    // ns-t24-groupgate: WELLH2-GATE throttle. Keyed on the core path PLUS the verdict it printed, so a
+    // refusal that stops (the player removed the building) or changes member is announced again while an
+    // unchanged refusal is said once. Same non-self-clearing shape as WellSuppressSkipLogged above: a
+    // player's Pressurizer stays built, and an unthrottled line would print every ~5 s forever.
+    TSet<FString> WellGroupGateLogged;
+
     // THE mCore LIFECYCLE (design R1 -- the packet's highest risk). Sets mCore if it is not already
     // this core, then registers the satellite ONLY IF the core's mSatellites does not already contain
     // it. The Contains() guard is what makes calling this safe on BOTH paths: after a spawn (where
@@ -1904,8 +1910,21 @@ private:
     // Stricter than CaptureWellGroupVisuals' own return value on purpose: that function early-returns
     // true on bGroupVisualsComplete, which is sticky across a re-enrolment that ADDED satellites, so it
     // can report complete for a group holding a freshly-captured satellite with no visual at all.
-    bool IsWellGroupCaptureComplete(const FNodeShuffleWellEntry& E, int32& OutMembers,
-                                    int32& OutMissing) const;
+    //
+    // ns-t24-groupgate -- THE POPULATION, NOT THE PREDICATE, WAS WRONG. This asked every DRESSABLE member
+    // for a captured look, and refused the whole group when any one had none. But a well member with no
+    // paired mesh piece has nothing to capture: stage 0 measured 15 pieces across 135 members on the
+    // author's save, so "holds no captured look" is the ORDINARY case, not a capture failure -- and the
+    // gate refused 16 of 17 committed wells on that basis. The requirement now falls only on members that
+    // HAVE pieces in the live mesh index; a member with none is not evidence of incomplete capture. All
+    // four counts are reported so the gate's own population is visible in the log.
+    //   OutDressable  -- core + captured satellites: every member that could ever be dressed.
+    //   OutWithPieces -- of those, how many have at least one component in WellMeshIndex right now.
+    //                    This is the denominator the gate actually judges.
+    //   OutCaptured   -- of the dressable members, how many hold at least one captured visual.
+    //   OutMissing    -- members that have pieces but hold no captured look. The refusal count.
+    bool IsWellGroupCaptureComplete(const FNodeShuffleWellEntry& E, int32& OutDressable,
+                                    int32& OutWithPieces, int32& OutCaptured, int32& OutMissing) const;
 
     // WELLH2-STRANDED (T23 §4): per apply pass, how many entries are suppressed-and-unplaced, split by
     // WHY, with the denominators. The relocation-FAILED bucket is a Warning and must read zero in a

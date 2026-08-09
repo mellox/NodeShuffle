@@ -146,6 +146,10 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll, bool 
     WellUncapturedLogged.Empty();
     WellStaleInUseLogged.Empty();
     WellSuppressSkipLogged.Empty();
+    // ns-t24-groupgate: same lifecycle and same reason. A re-roll re-decides every well's destination, so
+    // a group the occupancy gate refused under the OLD roll deserves to be announced again under the new
+    // one -- and a stale key would silence the one line that says a player's build blocked a placement.
+    WellGroupGateLogged.Empty();
     // ns-t23-rollhide: same lifecycle as WellSuppressLogged above. A re-roll re-decides every well's
     // fate, so a restore that happens under the NEW roll deserves to be announced again; keeping the old
     // roll's keys would silence the un-hide lines for exactly the wells the re-roll just re-considered.
@@ -995,19 +999,26 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll, bool 
         {
             EnsureRollMeshIndexOnce();
             CaptureWellGroupVisuals(E);
-            int32 CapMembers = 0, CapMissing = 0;
-            if (IsWellGroupCaptureComplete(E, CapMembers, CapMissing))
+            // ns-t24-groupgate: four counts, each with its denominator, because the OLD two could not
+            // distinguish "the capture failed" from "there was nothing to capture" -- and the second is
+            // the ordinary case, which is how this gate came to refuse 16 of 17 wells.
+            int32 CapDressable = 0, CapWithPieces = 0, CapCaptured = 0, CapMissing = 0;
+            if (IsWellGroupCaptureComplete(E, CapDressable, CapWithPieces, CapCaptured, CapMissing))
             {
                 SuppressVanillaWellGroup(E, EWellSuppressPhase::Roll);
                 ++RollHidden;
                 UE_LOG(LogNodeShuffle, Display,
-                    TEXT("WELLH2-ROLLHIDE core='%s': COMMITTED AT THE ROLL -- the look of all %d dressable ")
-                    TEXT("member(s) is captured, so the vanilla group is suppressed now rather than after ")
-                    TEXT("the replacement is built. The replacement is still only built when a player ")
-                    TEXT("reaches %s, so this well is absent from the world until then. Every member we ")
-                    TEXT("hid carries a persisted restore obligation (grep WELLH2-STRANDED for the ")
-                    TEXT("population that has not been given back)."),
-                    *WellShort(E.CorePath), CapMembers, *P.Dest.ToCompactString());
+                    TEXT("WELLH2-ROLLHIDE core='%s': COMMITTED AT THE ROLL -- of %d dressable member(s), ")
+                    TEXT("%d have at least one mesh piece in the index at this instant and every one of ")
+                    TEXT("those holds a captured look (%d member(s) hold one in total). A member with no ")
+                    TEXT("indexed piece is not required to hold a look and is not counted against this ")
+                    TEXT("gate; nothing here measured WHY a member has no piece. So the vanilla group is ")
+                    TEXT("suppressed now rather than after the replacement is built. The replacement is ")
+                    TEXT("still only built when a player reaches %s, so this well is absent from the world ")
+                    TEXT("until then. Every member we hid carries a persisted restore obligation; the ")
+                    TEXT("stranded census names the population that has not been given back."),
+                    *WellShort(E.CorePath), CapDressable, CapWithPieces, CapCaptured,
+                    *P.Dest.ToCompactString());
             }
             else
             {
@@ -1018,12 +1029,15 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll, bool 
                     RollFellBackNames += WellShort(E.CorePath);
                 }
                 UE_LOG(LogNodeShuffle, Display,
-                    TEXT("WELLH2-ROLLHIDE core='%s': NOT committed at the roll -- %d of %d dressable ")
-                    TEXT("member(s) hold no captured look at this instant, and the roll-time capture is ")
-                    TEXT("taken once and not retried. This entry keeps the ORIGINAL behaviour: the vanilla ")
-                    TEXT("well stays standing and is suppressed only once the replacement has been built ")
-                    TEXT("at %s. Nothing was hidden for it on this roll."),
-                    *WellShort(E.CorePath), CapMissing, CapMembers, *P.Dest.ToCompactString());
+                    TEXT("WELLH2-ROLLHIDE core='%s': NOT committed at the roll -- %d of the %d member(s) ")
+                    TEXT("that HAVE a mesh piece in the index hold no captured look at this instant ")
+                    TEXT("(%d dressable member(s) in the entry, %d holding a look in total), and the ")
+                    TEXT("roll-time capture is taken once and not retried. That is a genuine partial ")
+                    TEXT("capture: these members have something to lose. This entry keeps the ORIGINAL ")
+                    TEXT("behaviour: the vanilla well stays standing and is suppressed only once the ")
+                    TEXT("replacement has been built at %s. Nothing was hidden for it on this roll."),
+                    *WellShort(E.CorePath), CapMissing, CapWithPieces, CapDressable, CapCaptured,
+                    *P.Dest.ToCompactString());
             }
         }
 
@@ -1056,8 +1070,11 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll, bool 
         UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH2-ROLLHIDE summary: commit-at-roll was %s for this roll. Of %d committed well(s), ")
             TEXT("%d had the vanilla group suppressed AT THE ROLL and %d fell back to the original ")
-            TEXT("suppress-after-the-replacement-is-built path because their look was not completely ")
-            TEXT("captured at this instant (%s). Mesh index rebuilt %s for this roll, %.1f ms measured."),
+            TEXT("suppress-after-the-replacement-is-built path because at least one member that HAS a ")
+            TEXT("mesh piece in the index held no captured look at this instant (%s). ns-t24-groupgate: ")
+            TEXT("members with no indexed piece no longer count against this gate -- see the per-well ")
+            TEXT("lines above for each well's own four counts. Mesh index rebuilt %s for this roll, ")
+            TEXT("%.1f ms measured."),
             bCommitAtRoll ? TEXT("ON") : TEXT("OFF"), Enrolled, RollHidden, RollFellBack,
             RollFellBackNames.IsEmpty() ? TEXT("none named") : *RollFellBackNames,
             bStage0IndexBuilt ? TEXT("once") : TEXT("not at all"), Stage0IndexMs);

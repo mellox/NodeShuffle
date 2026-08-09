@@ -323,20 +323,54 @@ bool ANodeShuffleSubsystem::WellGroupHasRollSuppressedMember(const FNodeShuffleW
 // origin streams). At ROLL time the capture is ONE SHOT, so believing a sticky flag would hide an origin
 // whose look we do not actually hold, and the well would come back at the destination missing pieces
 // with no way to recover them. This asks the per-member question directly.
-bool ANodeShuffleSubsystem::IsWellGroupCaptureComplete(const FNodeShuffleWellEntry& E, int32& OutMembers,
+//
+// ns-t24-groupgate -- WHAT CHANGED AND WHY, because the predicate here did not change at all: the
+// POPULATION it is asked of did. The old version required a captured look from EVERY dressable member,
+// which reads as "prove the capture succeeded" and is in fact "prove every member had something to
+// capture". Most well members have no paired mesh piece by ANY of the index's three routes -- stage 0
+// measured 15 pieces across 135 members -- so on the author's 2026-08-09 roll this refused 16 of 17
+// committed wells, one of them reporting all 8 of 8 dressable members holding no captured look. Same
+// error class as review-F6: "has no pieces" was read as "capture failed". A member with no indexed piece
+// has nothing that can be lost by hiding it, so it cannot be evidence of an incomplete capture. A member
+// that HAS pieces and still holds no look is a genuine partial capture and still refuses the group --
+// that fallback is unchanged, and it is the only thing this gate now judges.
+//
+// MEASURED AT THIS INSTANT, from the live index. The caller runs EnsureRollMeshIndexOnce() and then
+// CaptureWellGroupVisuals(E) immediately before this call, so the index this reads is the one the capture
+// just worked from. Nothing here infers WHY a member has no pieces (not streamed / not paired / no mesh
+// component at all are indistinguishable from here and this function tests none of them) -- it counts.
+bool ANodeShuffleSubsystem::IsWellGroupCaptureComplete(const FNodeShuffleWellEntry& E, int32& OutDressable,
+                                                       int32& OutWithPieces, int32& OutCaptured,
                                                        int32& OutMissing) const
 {
-    OutMembers = 0;
+    OutDressable = 0;
+    OutWithPieces = 0;
+    OutCaptured = 0;
     OutMissing = 0;
-    ++OutMembers;
-    if (!E.bCoreVisualsCaptured || E.CoreVisuals.Num() == 0) { ++OutMissing; }
+
+    // SYMMETRY: the core and every captured satellite go through ONE lambda, so the core cannot acquire a
+    // different rule from the satellites through an edit that touches only one of the two call sites below.
+    const auto Consider = [&](const FString& Path, bool bMemberCaptured, int32 CapturedPieces) -> void
+    {
+        ++OutDressable;
+        const TArray<TWeakObjectPtr<UStaticMeshComponent>>* Indexed = WellMeshIndex.Find(Path);
+        const int32 IndexedPieces = Indexed ? Indexed->Num() : 0;
+        const bool bHoldsLook = bMemberCaptured && CapturedPieces > 0;
+        if (bHoldsLook) { ++OutCaptured; }
+        if (IndexedPieces > 0)
+        {
+            ++OutWithPieces;
+            if (!bHoldsLook) { ++OutMissing; }
+        }
+    };
+
+    Consider(E.CorePath, E.bCoreVisualsCaptured, E.CoreVisuals.Num());
     for (const FNodeShuffleWellSatellite& S : E.Satellites)
     {
         // Only CAPTURED satellites are ever spawned or dressed, so only they can be missing a look.
         // An uncaptured record is still suppressed with the group; it is simply not part of this question.
         if (!S.bCaptured) { continue; }
-        ++OutMembers;
-        if (!S.bVisualsCaptured || S.Visuals.Num() == 0) { ++OutMissing; }
+        Consider(S.SatellitePath, S.bVisualsCaptured, S.Visuals.Num());
     }
     return OutMissing == 0;
 }
