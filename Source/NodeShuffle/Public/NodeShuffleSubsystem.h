@@ -1680,6 +1680,10 @@ private:
         bool bScattered = false;
         bool bShortByDesign = false;
         bool bNoCore = false;
+        // T19 review F4: the SHORT-OR-UNLINKED arm had no counter, so the sweep's breakdown could sum
+        // to LESS than the not-OK count and print five reassuring zeros beside a dozen broken wells.
+        // Set by the verdict chain itself, so the sweep still totals and derives nothing.
+        bool bShortOrUnlinked = false;
 
         // ---- T19 (2026-08-08): THE RESOURCE TERM. docs/TECH-DEBT.md T19. ----
         // The gate had no resource term at all, so it printed OK throughout the entire pre-T17 defect

@@ -250,6 +250,7 @@ ANodeShuffleSubsystem::AuditOneWellGroup(const FNodeShuffleWellEntry& E, const T
     // INVARIANT FOR ANYONE ADDING AN ARM: every `***` arm below must force bHealthy false, or a group
     // this gate considers healthy will print an alarm verdict. Check bHealthy's definition above first.
     const TCHAR* Verdict = TEXT("OK");
+    bool bShortOrUnlinked = false;
     if (!IsValid(Core))
     {
         Verdict = TEXT("*** NO LIVE CORE -- if this persists after the world has streamed, the group is DEAD ***");
@@ -267,7 +268,9 @@ ANodeShuffleSubsystem::AuditOneWellGroup(const FNodeShuffleWellEntry& E, const T
         // Ranked above SHORT BY DESIGN deliberately: a member on the wrong resource changes what the
         // well PRODUCES, and both states still get their own dedicated token line below regardless.
         Verdict = TEXT("*** RESOURCE MISMATCH -- a live spawned member holds a resource other than the one ")
-                  TEXT("this entry assigns, and no in-use signal fires on this group to explain it ***");
+                  TEXT("this entry assigns, and the retype-decline predicate is FALSE on this group, so the ")
+                  TEXT("pin does not explain it (read coreWhy=/satWhy= below before concluding nothing is ")
+                  TEXT("built here) ***");
     }
     else if (bShortByDesign)
     {
@@ -275,6 +278,7 @@ ANodeShuffleSubsystem::AuditOneWellGroup(const FNodeShuffleWellEntry& E, const T
     }
     else if (!bHealthy)
     {
+        bShortOrUnlinked = true;
         Verdict = TEXT("*** SHORT OR UNLINKED -- the Pressurizer will under-report this well; mCore is not ")
                   TEXT("SaveGame, so an unlinked satellite produces NO crash and NO error anywhere ***");
     }
@@ -340,14 +344,19 @@ ANodeShuffleSubsystem::AuditOneWellGroup(const FNodeShuffleWellEntry& E, const T
             TEXT("disagreeing member is '%s' (the core whenever the core is one of them, otherwise the ")
             TEXT("first satellite found; it is A disagreeing member, not necessarily the only one). ")
             TEXT("MEASURED: GetResourceClass() on each live spawned member of THIS group, ")
-            TEXT("and the in-use pin predicate evaluated FALSE on it (resolvedAgainst=%s, tested %d core ")
+            TEXT("and the RETYPE-DECLINE predicate -- (coreInUse AND the core does not already hold the ")
+            TEXT("assigned resource) OR satelliteInUse -- evaluated FALSE on it. A CORE in-use signal can ")
+            TEXT("still be firing and be ignored by that predicate, so read coreWhy=/satWhy= rather than ")
+            TEXT("inferring nothing is built here (resolvedAgainst=%s, tested %d core ")
             TEXT("+ %d/%d listed satellite record(s); coreWhy='%s' satWhy='%s'). ALSO MEASURED: ")
             TEXT("retypeReachable=%d -- the maintenance retype (NodeShuffleWellRelocateApply.cpp:501) ")
             TEXT("runs only for a group within %.0fcm of a player, and this reports whether ANY PLAYER IS ")
             TEXT("WITHIN THAT RADIUS AS OF THIS SWEEP (1=yes, 0=no). ")
-            TEXT("NOT MEASURED: whether a player was near it on any earlier pass, so this does not ")
-            TEXT("establish the group was never visited; grep 'retypeReachable=1' for the ones the retype ")
-            TEXT("demonstrably reached and failed to fix. ")
+            TEXT("NOT MEASURED: whether a player was near it on any earlier pass, and whether the ")
+            TEXT("maintenance retype actually ran, attempted a write, or failed on this group -- this ")
+            TEXT("field is a proximity test taken at audit time, not a record of the retype. (This ")
+            TEXT("sentence deliberately names no literal value for that field, so a grep for one ")
+            TEXT("matches only real occurrences.) ")
             TEXT("NOT MEASURED: why they disagree -- reuse, adopt-late and a re-roll under an ")
             TEXT("already-placed group all reach this state and this line tests none of them. ***"),
             Phase, *WellShort(E.CorePath), ResDisagree, ResTested,
@@ -401,6 +410,7 @@ ANodeShuffleSubsystem::AuditOneWellGroup(const FNodeShuffleWellEntry& E, const T
     V.bScattered = bScattered;
     V.bShortByDesign = bShortByDesign;
     V.bNoCore = !IsValid(Core);
+    V.bShortOrUnlinked = bShortOrUnlinked;
     V.bResourceMismatch = bResourceMismatch;
     V.bResourcePinned = bResourcePinned;
     V.bResourceUnknown = bResourceUnknown;
@@ -411,7 +421,7 @@ void ANodeShuffleSubsystem::AuditWellGroupLinks(const TCHAR* Phase)
 {
     int32 Groups = 0, Healthy = 0, Broken = 0, Inflated = 0, Scattered = 0, ShortByDesign = 0, NoCore = 0;
     // T19: totalled from the per-group verdict like every counter here -- NOT re-derived.
-    int32 ResMismatch = 0, ResPinned = 0, ResUnknown = 0, ResPinnedAndHealthy = 0;
+    int32 ResMismatch = 0, ResPinned = 0, ResUnknown = 0, ResPinnedAndHealthy = 0, ShortOrUnlinked = 0;
 
     // The sweep TOTALS the per-group verdicts and derives nothing of its own. It used to recompute the
     // whole health rule -- two copies of the one predicate that decides whether this packet's silent
@@ -426,6 +436,7 @@ void ANodeShuffleSubsystem::AuditWellGroupLinks(const TCHAR* Phase)
         if (V.bScattered) { ++Scattered; }
         if (V.bShortByDesign) { ++ShortByDesign; }
         if (V.bNoCore) { ++NoCore; }
+        if (V.bShortOrUnlinked) { ++ShortOrUnlinked; }
         if (V.bResourceMismatch) { ++ResMismatch; }
         if (V.bResourcePinned) { ++ResPinned; }
         // T19 review F2: bResourcePinned only says the DISAGREEMENT is explained. A pinned group can
@@ -438,10 +449,14 @@ void ANodeShuffleSubsystem::AuditWellGroupLinks(const TCHAR* Phase)
     if (Groups > 0)
     {
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("WELLH2-AUDIT [%s]: %d relocated group(s) -- %d fully linked, %d not OK. The not-OK ")
-            TEXT("breakdown is a set of FLAGS THAT OVERLAP, not a partition, so it can sum to more than ")
-            TEXT("the not-OK count: %d no live core, %d SCATTERED, %d RATE-INFLATED, %d RESOURCE ")
-            TEXT("MISMATCH, %d SHORT BY DESIGN. Separately, %d group(s) hold a resource other than their ")
+            TEXT("WELLH2-AUDIT [%s]: %d relocated group(s) -- %d fully linked (this total is THE GATE ")
+            TEXT("VERDICT: fully linked AND not scattered AND not short by design AND no unexplained ")
+            TEXT("resource mismatch -- it is not a link-only count), %d not OK. The not-OK breakdown is ")
+            TEXT("a set of FLAGS THAT OVERLAP, not a partition, so it can sum to more than the not-OK ")
+            TEXT("count -- but every not-OK group carries at least one of them, so it can never sum to ")
+            TEXT("less: %d no live core, %d SCATTERED, %d RATE-INFLATED, %d RESOURCE ")
+            TEXT("MISMATCH, %d SHORT BY DESIGN, %d SHORT OR UNLINKED. Separately, ")
+            TEXT("%d group(s) hold a resource other than their ")
             TEXT("assignment WITH a live in-use signal that explains it -- that DISAGREEMENT is not a ")
             TEXT("fault, but such a group can still be not-OK for an unrelated reason, so this count is ")
             TEXT("NOT a subset of either total: %d of them are in the fully-linked total. And %d ")
@@ -455,7 +470,7 @@ void ANodeShuffleSubsystem::AuditWellGroupLinks(const TCHAR* Phase)
             TEXT("without the third a well extracting the WRONG RESOURCE printed OK for the whole of T17. ")
             TEXT("Every number here is a total of the per-group verdicts above; this sweep derives none ")
             TEXT("of them."),
-            Phase, Groups, Healthy, Broken, NoCore, Scattered, Inflated, ResMismatch, ShortByDesign,
+            Phase, Groups, Healthy, Broken, NoCore, Scattered, Inflated, ResMismatch, ShortByDesign, ShortOrUnlinked,
             ResPinned, ResPinnedAndHealthy, ResUnknown);
     }
 
