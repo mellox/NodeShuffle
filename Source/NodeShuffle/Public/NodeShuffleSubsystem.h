@@ -1655,9 +1655,16 @@ private:
     // once per ~5 s pass.
     TSet<FString> WellUncapturedLogged;
 
-    // Emitted for every placed group, every session, at both ends of the lifecycle:
-    //   WELL guid=<core> core=<name> res=<r> yaw=<deg> satellites=<expected>/<spawned>/<registered>
-    // A shrunk or unlinked well must be impossible to miss in one log read (design §Q3 point 5).
+    // Emitted for every placed group, every session, at both ends of the lifecycle. The line carries,
+    // in order: the phase; the entry's core path and the live core actor's name; the LAYOUT's assigned
+    // resource; what the spawned core actually HOLDS; how many live spawned members disagree out of how
+    // many were tested, and one of them by name; the group yaw; expected/spawned/registered satellite
+    // counts; the core's live/raw/stale array sizes; the uncaptured record count; the largest member
+    // drift and which member; the bPlaced-vs-live flag mismatch count; the placed coordinate; and the
+    // verdict. THE FORMAT STRING IN NodeShuffleWellAudit.cpp IS THE ONLY AUTHORITY FOR TOKEN NAMES --
+    // this comment describes the fields and must never restate them as field=value (T19 review F7).
+    // A shrunk, unlinked or wrongly-resourced well must be impossible to miss in one log read
+    // (design §Q3 point 5, T19).
     void AuditWellGroupLinks(const TCHAR* Phase);
     // ns-review-h2 F12: one group, audited on demand -- called the instant a group is placed. The
     // fixed-pass sweep fires ~40 s after load, but relocation is spawn-on-discovery, so the wells a
@@ -1673,6 +1680,27 @@ private:
         bool bScattered = false;
         bool bShortByDesign = false;
         bool bNoCore = false;
+
+        // ---- T19 (2026-08-08): THE RESOURCE TERM. docs/TECH-DEBT.md T19. ----
+        // The gate had no resource term at all, so it printed OK throughout the entire pre-T17 defect
+        // and was structurally unable to fail for that class while reading as evidence that the well
+        // was well. These three are the per-group answers the sweep totals; the sweep still derives
+        // nothing of its own.
+        //
+        // bResourceMismatch -- at least one LIVE SPAWNED member holds a resource other than the
+        //   layout's assignment, and the in-use pin predicate is FALSE for this group. UNHEALTHY.
+        // bResourcePinned   -- the same disagreement with the in-use pin predicate TRUE. The DISAGREEMENT
+        //   is not a fault (the group may still be unhealthy for an unrelated reason), and it is
+        //   deliberately NOT an alarm: NodeShuffleWellSpawn.cpp's T17 block declines to retype an
+        //   in-use spawned group, so such a well legitimately holds the old resource, permanently. A
+        //   false alarm on this file's loudest token teaches the reader to ignore it.
+        // bResourceUnknown  -- the layout's assignment did not resolve to a class, so NOTHING was
+        //   compared. Reported on its own so a zero disagreement count is never read as agreement.
+        //   It does NOT feed bHealthy: that would change what the gate gates for a different defect
+        //   class than the one T19 scopes.
+        bool bResourceMismatch = false;
+        bool bResourcePinned = false;
+        bool bResourceUnknown = false;
     };
     FWellAuditVerdict AuditOneWellGroup(const FNodeShuffleWellEntry& E, const TCHAR* Phase);
     int32 WellAuditPasses = 0;
