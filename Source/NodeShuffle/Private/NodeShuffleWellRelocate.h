@@ -117,22 +117,30 @@ constexpr float WellAdoptMatchRadiusCm = 300.0f;
 // live RNG advanced by whatever else ran that pass would each pass every H2 test except T8.
 //
 // ns-review-h2 F15 -- WHAT IS AND IS NOT SEED-PURE, stated precisely, because the earlier wording
-// implied more than the code delivers. Seed-pure: the yaw ORDER, the redeal coordinates, the
-// destination deal. NOT seed-pure: WHICH yaw wins, which nudge succeeds, and therefore where a well
-// ends up -- those depend on TERRAIN QUERIES, and terrain queries depend on what has streamed in, so
-// the SEARCH is deterministic but its OUTCOME is world-state-dependent. Two loads of the SAME SAVE
+// implied more than the code delivers. Seed-pure: the CANDIDATE SEQUENCE, the redeal coordinates, the
+// destination deal. NOT seed-pure: WHICH candidate wins, which nudge succeeds, and therefore where a
+// well ends up -- those depend on TERRAIN QUERIES, and terrain queries depend on what has streamed in,
+// so the SEARCH is deterministic but its OUTCOME is world-state-dependent. Two loads of the SAME SAVE
 // reproduce the same result because the placement is persisted the moment it is committed and never
 // re-searched (that is what test T8 checks). Two runs from a fresh save with the same seed but
 // different exploration order need NOT place a well identically. Do not build anything on the
 // stronger claim.
 //
-// So the yaw ORDER is not stored and not carried in a live stream. It is RECOMPUTED, identically,
-// from a seed that is a pure function of PERSISTED state:
+// ns-t27-corefirst: THE YAW PERMUTATION IS GONE and so are BuildWellYawOrder / WellYawDegForIndex.
+// The rigid-body search rotated the whole captured cloud about the core and asked whether the WHOLE
+// footprint fitted at that angle; satellites are now drawn INDEPENDENTLY around the settled core, so
+// there is no group angle left to permute. What survives unchanged is the seeding discipline, because
+// it is the thing test T8 actually guards: the candidate sequence is not stored and not carried in a
+// live stream. It is RECOMPUTED, identically, from a seed that is a pure function of PERSISTED state:
 //     save seed  ^  hash(this well's core path)  ^  redeal count  ^  nudge count
 // Nudges and redeals are included on purpose: a re-dealt group should search its NEW location in a
 // different order (searching the same order at a different place is not a different search), and both
-// counters are UPROPERTY(SaveGame), so the result is still fully reproducible.
-inline int32 WellYawSeedFor(int32 SavedSeed, const FString& CorePath, uint8 Redeals, uint8 Nudges)
+// counters are UPROPERTY(SaveGame), so the result is still fully reproducible. TryPlaceWellGroup mixes
+// the ATTEMPT index in on top of this, so a re-draw is a genuinely different draw.
+//
+// RotateWellOffsetXY below is NOT retired with the rest of the yaw machinery, and deleting it would
+// break something with no obvious connection to placement -- see its own comment.
+inline int32 WellLayoutSeedFor(int32 SavedSeed, const FString& CorePath, uint8 Redeals, uint8 Nudges)
 {
     return SavedSeed
          ^ static_cast<int32>(GetTypeHash(CorePath))
@@ -140,31 +148,22 @@ inline int32 WellYawSeedFor(int32 SavedSeed, const FString& CorePath, uint8 Rede
          ^ (static_cast<int32>(Nudges) * 104729);
 }
 
-// Fills OutOrder with a seeded Fisher-Yates permutation of the K yaw INDICES [0..K).
-// Index i means i * (360/K) degrees. Same seed => same array, always, on any machine and at any
-// point in a session, because the stream is constructed here and consumed here.
-inline void BuildWellYawOrder(int32 Seed, int32 K, TArray<int32>& OutOrder)
-{
-    OutOrder.Reset();
-    if (K <= 0) { return; }
-    OutOrder.Reserve(K);
-    for (int32 i = 0; i < K; ++i) { OutOrder.Add(i); }
-    FRandomStream Rng(Seed);
-    for (int32 i = K - 1; i > 0; --i) { OutOrder.Swap(i, Rng.RandRange(0, i)); }
-}
-
-inline float WellYawDegForIndex(int32 Index, int32 K)
-{
-    return (K > 0) ? (360.0f * static_cast<float>(Index) / static_cast<float>(K)) : 0.0f;
-}
-
 // ---------------------------------------------------------------------------------------------
-// RIGID BODY (design §Q3 point 2, §Q3a rules)
+// RIGID BODY -- RETIRED FOR PLACEMENT, STILL LOAD-BEARING FOR THE BACKSTOP (design §Q3 point 2)
 // ---------------------------------------------------------------------------------------------
-// YAW ONLY -- never pitch or roll. Tilting the group would push satellites into or out of the terrain;
-// per-node Z settle already handles slope, and H0 measured four wells with >12 m of vertical spread,
-// so the Z that comes back from the settle is the only Z that means anything at the destination. That
-// is why this returns XY only and the caller supplies Z from its own trace.
+// ns-t27-corefirst -- DO NOT DELETE THIS FUNCTION, AND DO NOT DELETE THE LocalOffset CAPTURE THAT
+// FEEDS IT. Placement no longer rotates a rigid cloud, so it is tempting to read both as dead. They
+// are not. NodeShuffleWellBackstop.cpp reconstructs the VANILLA site's satellite points as
+// VanillaCoreLocation + RotateWellOffsetXY(LocalOffset, VanillaCoreYawDeg), and that is how the
+// stranded-actor discriminator tells one of OUR abandoned actors from a genuine untouched vanilla
+// well. Those offsets describe the AUTHORED well, which the placement change does not touch, so the
+// reconstruction is as correct after T27 as before it. Remove either half and the backstop starts
+// mistaking vanilla wells for our litter.
+//
+// YAW ONLY -- never pitch or roll. Tilting would push members into or out of the terrain; per-node Z
+// settle already handles slope, and H0 measured four wells with >12 m of vertical spread, so the Z
+// that comes back from the settle is the only Z that means anything. That is why this returns XY only
+// and the caller supplies Z from its own trace.
 inline FVector2D RotateWellOffsetXY(const FVector& LocalOffset, float YawDeg)
 {
     const float Rad = FMath::DegreesToRadians(YawDeg);
@@ -178,8 +177,14 @@ inline FVector2D RotateWellOffsetXY(const FVector& LocalOffset, float YawDeg)
 // H0 measured 1818.8 cm across 401 satellite pairs and 2076 cm core-to-satellite, against the 800 cm
 // reject radius -- which is exactly WHY H2 needs no same-group overlap exemption. This function is how
 // that measurement is ASSERTED per well at capture time instead of assumed forever: a group whose own
-// members sit closer than the reject radius could never validate its own footprint, so it must be
-// refused loudly rather than allowed to loop through 36 yaws x 8 nudges x 3 redeals and quietly fail.
+// members sit closer than the reject radius is refused here rather than assumed away. ns-t27-review F7:
+// the sentence that used to sit here -- that such a group "could never validate its own footprint" and
+// would "loop through 36 yaws x 8 nudges x 3 redeals" -- described the RETIRED rigid search, which
+// replayed the captured cloud at the destination. ns-t27-corefirst never replays it: satellites are
+// redrawn at >= WellSiblingMinSeparationCm from each other, so a tight vanilla well would place fine.
+// The refusal is conservatism about design 4b's DERIVATION and about the backstop's vanilla-site
+// reconstruction (which does still use LocalOffset), not a claim about placeability. Same correction as
+// WellSelfOverlapFloorCm's comment and the WELLH2-ROLL REFUSED line.
 //
 // ns-review-h2 F13: measured in XY, NOT in 3-D. The placement rotates the cloud about Z and RE-SETTLES
 // every member's Z on the new terrain, so the vertical separation the group had at its vanilla site

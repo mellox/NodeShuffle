@@ -22,25 +22,81 @@
 // group can still exist for one pass while an incomplete spawn is retried. During that window the
 // vanilla well is still fully visible, which is the correct direction to fail in.
 //
-// SEARCH ORDER IS ROTATE, THEN MOVE (design §Q3a). A well's footprint is anisotropic and, more to the
-// point, often LOPSIDED -- H0 measured max angular gaps of 263, 220, 155 and 151 degrees on wells 19,
-// 14, 18 and 20, i.e. crescents and fans with every satellite on one side. Those can be tucked into a
-// valley by rotation in a way that moving them cannot. Rotation also re-uses the core's
-// already-validated position and only re-tests the satellites, so it is the cheap axis as well as the
-// effective one.
+// ns-t27-corefirst -- SEARCH ORDER IS NOW: PLACE THE CORE, THEN EACH SATELLITE WHEREVER IT CAN LAND.
+// The author's directive, 2026-08-09, after flying to a relocated Water core and being unable to reach
+// it: "the check of placement like on solids to the core and independently to the wells. The core
+// needs placing first and the wells somewhere around it wherever they can land."
 //
-// K = 36 (10 deg), NOT 12. Measured twice over, independently: arc displacement r*delta at the mean
-// bounding radius (4587 cm) stays inside the 800 cm reject radius only up to ~10 deg, and the smallest
-// measured angular gap between neighbouring satellites is 9.6 deg. K=12's 30 deg step moves an outer
-// satellite ~20 m per attempt and skips valid pockets wholesale. The footprint test early-outs on the
-// first failing satellite, so a bad yaw usually dies after one or two traces -- K=36 is affordable.
+// WHAT IT REPLACES, and why the replacement is not a smaller version of it. The retired search rotated
+// the CAPTURED CLOUD about the core through a 36-step seeded yaw permutation and asked whether the
+// WHOLE footprint fitted at that angle. Rotation was the right cheap axis for a RIGID body -- H0
+// measured max angular gaps of 263, 220, 155 and 151 degrees, i.e. crescents with every satellite on
+// one side, which rotation can tuck into a valley and translation cannot -- but rigidity was the
+// problem itself: ONE blocked satellite refused the entire destination, at all 36 angles, and the
+// group then spent a nudge and eventually a redeal over it. Independence removes the coupling rather
+// than searching harder around it.
 //
-// NO SAME-GROUP OVERLAP EXEMPTION IS BUILT, and that is deliberate rather than an omission. H0
-// measured min inter-satellite 1818.8 cm over 401 pairs and min core->satellite 2076 cm against the
-// 800 cm reject radius: satellites cannot reject each other. The roll ASSERTS that per well at capture
-// (MinIntraGroupDistance) and refuses any group that violates it, so by the time a group reaches this
-// file the property holds by construction. The only self-exclusion here is of the group's OWN already
-// spawned actors, which exist for a different reason entirely (re-validation after a spawn).
+// THE DIFFERENCE IN WHAT AN ATTEMPT COSTS. Retired: 36 yaws x (probes until the first satellite fails,
+// usually 1-2). Now: WellLayoutAttempts full re-draws, each drawing every captured satellite from its
+// own budget of WellSatPlacementTries polar candidates around the settled core. A re-draw re-draws
+// EVERY satellite, including the ones that already succeeded -- that is deliberate and is the cheap
+// form of backtracking, because a greedy sequence can wall itself in with its own earlier siblings and
+// only a full re-draw escapes that.
+//
+// ns-t27-review F1: AND IT COSTS 4x-20x MORE PER PASS THAN THE SEARCH IT REPLACED. This paragraph and
+// NodeShuffleSubsystem.h both used to claim one attempt was "roughly the cost of the whole old per-pass
+// budget"; counted, that is false. Retired, per pass: 6 yaws x (probes until the FIRST satellite fails)
+// ~= 6-12 probes, ~48 worst case. Now, per pass: one attempt x up to 10 satellites x 24 draws = up to
+// 240 probes.
+//
+// ns-t27-fixes-review F-B(i): a satellite does NOT give up on its first rejected draw -- it retries up
+// to its whole budget, which the retired search never did. It is bounded the other way by a break: the
+// FIRST satellite that exhausts its budget ends the attempt, so satellites after it are never drawn,
+// and a satellite that succeeds stops at its first accepted draw. The 240 is therefore a CEILING, not
+// the typical cost; a typical failing attempt is (a few draws per earlier satellite) + one full budget.
+// (The previous version of this paragraph said there was NO early-out and that every satellite spent
+// its whole budget. Both halves were false; the break is at the bottom of the satellite loop below and
+// the inner loop's own condition carries `&& !bPlaced`.)
+//
+// ns-t27-fixes-review F-B(ii): TEN satellites, not eight. H0's measured maximum is 10 -- the figure
+// NodeShuffleSubsystem.h and NodeShuffleWellFootprint.cpp both already state -- so the ceiling is 240.
+//
+// ns-t27-fixes-review F-B(iii): each probe is up to 13 line traces -- 1 settle + 4 ring in
+// RaycastGroundAt, and, on any candidate that reaches gate six, 8 horizontal enclosure rays, which
+// satellites now run because F3 in this same packet compiled WellEnclosureGateOnSatellites true --
+// plus one overlap sphere and one resource-node scan. The previous version said 5 traces, which was
+// the count from before F3 turned the enclosure gate on in this same build.
+//
+// The loop below this one puts no cap on how many GROUPS a pass searches.
+//
+// ns-t27-perf: THE RESOURCE-NODE SCAN IS NO LONGER PER PROBE. It was a
+// TActorIterator<AFGResourceNode> over the entire world inside every probe -- the cold review measured
+// that as the dominant term and, worse, one that scales with the player's FACTORY actor count rather
+// than with node count, so it grows for the whole life of a save. It is now built ONCE per group per
+// pass (BuildWellNodeScanCache) and the gate tests against that set. The POPULATION IS UNCHANGED and
+// the argument for that is written out at the scan function; the broadphase replacement, which would
+// change the population, is still refused and is still its own packet. What each pass now costs is
+// MEASURED rather than argued: WELLH2-PROBECENSUS carries elapsed wall-clock ms for the call and the
+// size of the scanned set, which is what T27 runtime checklist step 4 reads.
+//
+// SIBLING CLEARANCE IS NOW OURS, AND THAT IS THE LOAD-BEARING CHANGE IN THIS FILE. The retired
+// version deliberately built no same-group overlap exemption, and was RIGHT not to: H0 measured min
+// inter-satellite 1818.8 cm over 401 pairs against the 800 cm reject radius, the roll ASSERTS it per
+// well at capture (MinIntraGroupDistance), and members moved RIGIDLY -- so a group was self-clear by
+// construction and could not reject itself. Independent placement destroys that argument outright.
+// Two satellites drawn from the same disc can land on top of each other, and ValidateWellMemberSpot
+// cannot catch it: the sibling is not spawned yet, so there is no actor for its node-overlap gate to
+// find. Left unhandled this converts an EXTERNAL failure (the terrain refused us) into an INTERNAL one
+// (we refused ourselves), which is strictly worse because it looks like bad luck. Hence the layout
+// gates below, applied to every candidate after the footprint test clears it.
+//
+// ALL-OR-NOTHING STILL GOVERNS THE GROUP -- see the paragraph above; independence is per SATELLITE, not
+// per COMMIT. A satellite that exhausts its draw budget kills the whole ATTEMPT; a group that exhausts
+// its attempts escalates through the same nudge/redeal ladder. NOTHING places short. Placing short is
+// docs/TECH-DEBT.md T15's permanent-shrink defect, where a well silently produces less than its
+// vanilla counterpart forever, and this packet refuses to create a second instance of it. The cost of
+// that refusal is COUNTED, not hidden: WELLH2-PROBECENSUS carries the per-satellite budget-exhaustion
+// count and the worst per-satellite draw count on every line.
 //
 // IMPORT DISCIPLINE (memory: sf-shipping-export-trap): the new engine surface this file reaches for is
 // SpawnActorDeferred/FinishSpawning on the two fracking classes plus their StaticClass thunks, all of
@@ -77,6 +133,11 @@ bool ANodeShuffleSubsystem::TryPlaceWellGroup(FNodeShuffleWellEntry& E, UClass* 
     // incremented beside a call that was already being made. The emitted line's own text carries the
     // asymmetry between the two probe populations; NodeShuffleWellStage0.h carries the reasoning.
     FNodeShuffleWellProbeCensus Probes;
+    // ns-t27-fixes-review F-A: the packet's own headline open question (checklist step 4) is a TIMING
+    // question and this path emitted no timing. FPlatformTime::Seconds is already used by the roll's
+    // commit timing in this module, so this reaches no new engine entry point. Reports elapsed
+    // wall-clock for THIS call only; it states no cause and names no culprit.
+    const double PlaceStartSec = FPlatformTime::Seconds();
     const auto EmitProbes = [&](const TCHAR* Outcome, const TCHAR* TerminatedBy) -> void
     {
         if (bDiag)
@@ -84,11 +145,18 @@ bool ANodeShuffleSubsystem::TryPlaceWellGroup(FNodeShuffleWellEntry& E, UClass* 
             // ns-t23-stage0 REVIEW FIX (F2): how many CONSECUTIVE attempts a yaw-exhaustion outcome
             // costs, against one for a core rejection -- the emission-rate asymmetry the line discloses.
             // Computed here because both constants are private to this class and the emitter is free.
-            const int32 AttemptsToExhaust = (WellYawAttemptsPerPass > 0)
-                ? ((WellYawSteps + WellYawAttemptsPerPass - 1) / WellYawAttemptsPerPass)
+            const int32 AttemptsToExhaust = (WellLayoutAttemptsPerPass > 0)
+                ? ((WellLayoutAttempts + WellLayoutAttemptsPerPass - 1) / WellLayoutAttemptsPerPass)
                 : -1;
-            LogWellProbeCensus(CoreLabel, Probes, Outcome, TerminatedBy, E.YawCursor, WellYawSteps,
-                               ExpectedRelocatedSatelliteCount(E), AttemptsToExhaust);
+            LogWellProbeCensus(CoreLabel, Probes, Outcome, TerminatedBy, E.YawCursor, WellLayoutAttempts,
+                               ExpectedRelocatedSatelliteCount(E), AttemptsToExhaust,
+                               // ns-t27-fixes-review F-E: MaxDrawsAnySat printed with the budget it is
+                               // read against, on the same line. Private static, member caller, so it
+                               // is in scope here -- the same argument the 6500 merge used.
+                               WellSatPlacementTries,
+                               // ns-t27-fixes-review F-A: measured at the emission point, so a line
+                               // emitted on an early return reports only what that early return cost.
+                               (FPlatformTime::Seconds() - PlaceStartSec) * 1000.0);
         }
     };
 
@@ -101,8 +169,21 @@ bool ANodeShuffleSubsystem::TryPlaceWellGroup(FNodeShuffleWellEntry& E, UClass* 
     FRotator CoreRot = FRotator::ZeroRotator;
     FString CoreReason;
     const float StartZ = static_cast<float>(E.DestCoreLocation.Z);
-    ++Probes.CoreProbes; // ns-t23-stage0: the core is probed exactly once per attempt -- the denominator
-    if (!ValidateWellMemberSpot(E.DestCoreLocation, StartZ, CoreLoc, CoreRot, CoreReason))
+    ++Probes.CoreProbes; // ns-t23-stage0: the core is probed exactly once per call -- the denominator
+    // ns-t27-corefirst: THE CORE ALWAYS GETS THE ENCLOSURE GATE. This literal `true` is the whole of
+    // T26's fix on the core side, and it is written at the call site rather than defaulted inside the
+    // callee so that it is visible to anyone reading the placement, not only to anyone reading the
+    // footprint test. The author flew to a relocated Water core, circled a rock column and could not
+    // reach it; a core nobody can reach cannot take a Pressurizer, so the well produces nothing and
+    // looks like a bug in the mod rather than a bad roll.
+    // ns-t27-perf: /*NodeScanCache=*/nullptr IS DELIBERATE AND IS NOT AN OVERSIGHT. The scan is centred
+    // on the SETTLED core, and this call is what settles it -- there is nothing to centre on yet. The
+    // core is probed exactly once per call, so this is one whole-level walk per call either way, which
+    // is not the term the review measured. Written as an explicit nullptr rather than a defaulted
+    // parameter for the T26 reason: a call site must say which path it takes.
+    if (!ValidateWellMemberSpot(E.DestCoreLocation, StartZ, /*bApplyEnclosureGate=*/true,
+                                /*NodeScanCache=*/nullptr,
+                                CoreLoc, CoreRot, CoreReason))
     {
         ++Probes.CoreRejects[WellRejectGateIndex(CoreReason)];
         if (CoreReason.StartsWith(TEXT("void")))
@@ -136,72 +217,254 @@ bool ANodeShuffleSubsystem::TryPlaceWellGroup(FNodeShuffleWellEntry& E, UClass* 
         return false;
     }
 
-    // ---- STEP 2: the core is good; walk the SEEDED yaw permutation ----
-    // The order is recomputed from persisted state (see WellYawSeedFor in NodeShuffleWellRelocate.h),
-    // never carried in a live stream and never derived from frame time or actor iteration. YawCursor
-    // persists so a group deferred mid-search RESUMES rather than restarting.
-    const int32 YawSeed = WellYawSeedFor(SavedSeed, E.CorePath, E.GroupRedeals, E.GroupNudges);
-    TArray<int32> YawOrder;
-    BuildWellYawOrder(YawSeed, WellYawSteps, YawOrder);
+    // ---- STEP 2: the core is good; draw each satellite its OWN spot around it ----
+    // The candidate sequence is recomputed from persisted state (WellLayoutSeedFor in
+    // NodeShuffleWellRelocate.h), never carried in a live stream and never derived from frame time or
+    // actor iteration. YawCursor -- the ATTEMPT cursor now, see its header comment -- persists so a
+    // group deferred mid-search RESUMES rather than restarting.
+    const int32 LayoutSeed = WellLayoutSeedFor(SavedSeed, E.CorePath, E.GroupRedeals, E.GroupNudges);
+
+    // ns-t27-perf: THE ONE WORLD SCAN. Built HERE -- after the core has settled, so there is a centre,
+    // and before the attempt loop, so every attempt and every draw inside it shares one walk instead of
+    // making its own. This is the whole cost fix: 25-240 whole-level walks per group per pass become 1.
+    // It is placed OUTSIDE the attempt loop on purpose; putting it inside would still be correct and
+    // would still be ~6x better than per-probe, but it would leave the dominant term multiplied by the
+    // attempt count for no gain, since nothing between attempts can change the set.
+    // The population argument, and why the radius is measured in XY, are written out at
+    // BuildWellNodeScanCache in NodeShuffleWellFootprint.cpp. Read it before changing this radius --
+    // it is derived from WellSatMaxRadiusCm and the gate's own reject radius, and shrinking it would
+    // silently make the node gate blind rather than making it fail.
+    TArray<TWeakObjectPtr<AFGResourceNode>> NodeScanCache;
+    BuildWellNodeScanCache(CoreLoc, NodeScanCache);
+    Probes.NodesInScope = NodeScanCache.Num(); // ns-t27-perf: LOG ONLY; the census prints it per call
 
     int32 Attempts = 0;
-    while (E.YawCursor < WellYawSteps && Attempts < WellYawAttemptsPerPass)
+    while (E.YawCursor < WellLayoutAttempts && Attempts < WellLayoutAttemptsPerPass)
     {
-        const int32 YawIdx = YawOrder[E.YawCursor];
-        const float YawDeg = WellYawDegForIndex(YawIdx, WellYawSteps);
+        const int32 AttemptIndex = E.YawCursor;
         ++Attempts;
-        Probes.YawsTried = Attempts; // ns-t23-stage0
+        Probes.AttemptsTried = Attempts; // ns-t23-stage0 / renamed by ns-t27-corefirst
 
-        // ---- THE FULL FOOTPRINT, VALIDATED BEFORE ANYTHING IS COMMITTED ----
+        // ONE stream per attempt, seeded from persisted state plus the attempt index, and consumed in
+        // E.Satellites order -- which is itself persisted. Both halves are needed for T8: a stream
+        // seeded per attempt but consumed in a non-persisted order would still drift.
+        FRandomStream Rng(LayoutSeed ^ ((AttemptIndex + 1) * 15485863));
+
+        // ---- EVERY MEMBER PLACED AND CHECKED BEFORE ANYTHING IS COMMITTED ----
         TArray<FVector> MemberLocs;
         TArray<FRotator> MemberRots;
         MemberLocs.Reserve(E.Satellites.Num());
         MemberRots.Reserve(E.Satellites.Num());
+        // ns-t27-corefirst: the sibling-clearance reference set, and THE CORE IS ITS FIRST ENTRY.
+        // Two reasons it must be, and only the first is obvious. (1) The core-to-satellite minimum is
+        // a real gate, not a construction argument -- the draw's inner radius already guarantees it in
+        // XY, and this makes the guarantee a line of code that a reviewer can see fail. (2) The
+        // footprint test's node-overlap gate CANNOT catch a satellite drawn onto our own core: that
+        // gate deliberately self-excludes our already-spawned cores and satellites (F7), so on a
+        // re-validation pass after a partial spawn our own actors are invisible to it.
+        // ns-t27-review F6: THE SENTENCE THAT USED TO END THIS COMMENT -- "the only thing standing
+        // between a satellite and its own core is this array" -- WAS FALSE AND IS STRUCK. What stands
+        // between them is the DRAW'S INNER RADIUS: every candidate is generated at XY radius >=
+        // WellSatMinRadiusCm from CoreLoc and RaycastGroundAt traces straight down at the probe's X/Y
+        // and never rewrites XY, so Dist2D(CoreLoc, SatLoc) == Radius >= 2076 always. Reason (2) above
+        // still stands unchanged and is why the entry stays in the array.
+        TArray<FVector> PlacedPoints;
+        PlacedPoints.Reserve(E.Satellites.Num() + 1);
+        PlacedPoints.Add(CoreLoc);
         bool bAllOk = true;
-        bool bVoid = false;          // an unstreamed member is a DEFER, never a yaw rejection
+        bool bVoid = false;          // an unstreamed member is a DEFER, never a placement rejection
         FString FailReason, FailWho;
         FVector FailProbe = FVector::ZeroVector; // ns-review-h2 F8: the coordinate to name in the log
 
         for (const FNodeShuffleWellSatellite& S : E.Satellites)
         {
-            // ns-review-h3 H10: an UNCAPTURED record has no rigid-body offset, so rotating its zero
-            // offset re-probes the CORE's own spot -- and then the commit below wrote PlacedLocation =
-            // CoreLoc into it. That silently disarmed half of the spawn guard's belt-and-braces (the
-            // `LocalOffset.IsNearlyZero() && PlacedLocation.IsNearlyZero()` term stopped holding), and
-            // it spent a trace per yaw testing a point we had already tested. These records are never
-            // spawned; they must not be validated either.
+            // ns-review-h3 H10: an UNCAPTURED record is never spawned, so it must not be placed
+            // either. Under the retired rigid search the danger was concrete -- rotating its zero
+            // offset re-probed the CORE's own spot and the commit then wrote PlacedLocation = CoreLoc
+            // into it, disarming half of the spawn guard's belt-and-braces. Under an independent draw
+            // it would instead consume a real spot in the world for a record nothing will ever stand
+            // at, which is a different failure with the same fix.
             if (!S.bCaptured) { continue; }
-            const FVector2D RotXY = RotateWellOffsetXY(S.LocalOffset, YawDeg);
-            const FVector Probe(CoreLoc.X + RotXY.X, CoreLoc.Y + RotXY.Y, CoreLoc.Z);
-            FVector SatLoc; FRotator SatRot = FRotator::ZeroRotator; FString Reason;
-            ++Probes.SatProbes; // ns-t23-stage0: the satellite-side denominator, counted per PROBE
-            // Z is re-settled PER MEMBER from the core's Z. H0 measured four wells with more than 12 m
-            // of vertical spread, so carrying the captured Z across would bury or float those members.
-            if (!ValidateWellMemberSpot(Probe, static_cast<float>(CoreLoc.Z), SatLoc, SatRot, Reason))
+
+            bool bPlaced = false;
+            int32 Draws = 0;
+            int32 VoidDraws = 0;
+            FString LastReason = TEXT("no-draw-made");
+            FVector LastProbe = CoreLoc;
+
+            for (int32 Try = 0; Try < WellSatPlacementTries && !bPlaced; ++Try)
+            {
+                ++Draws;
+                // UNIFORM IN AREA, not uniform in radius. r = sqrt(lerp(rMin^2, rMax^2, u)) spreads
+                // candidates evenly over the annulus; drawing r uniformly would pile them against the
+                // inner edge and produce the tight ring that reads as generated rather than authored.
+                const float U = Rng.FRand();
+                const float Radius = FMath::Sqrt(FMath::Lerp(FMath::Square(WellSatMinRadiusCm),
+                                                             FMath::Square(WellSatMaxRadiusCm), U));
+                const float Ang = Rng.FRandRange(0.0f, 2.0f * PI);
+                // The satellite's OWN actor yaw, drawn per candidate. The retired search turned every
+                // member by the one group yaw so the rocks stayed in formation; there is no formation
+                // any more, so each rock faces its own way -- which is what vanilla looks like.
+                const float DrawYawDeg = Rng.FRandRange(0.0f, 360.0f);
+                const FVector Probe(CoreLoc.X + Radius * FMath::Cos(Ang),
+                                    CoreLoc.Y + Radius * FMath::Sin(Ang),
+                                    CoreLoc.Z);
+                LastProbe = Probe;
+
+                FVector SatLoc; FRotator SatRot = FRotator::ZeroRotator; FString Reason;
+                ++Probes.SatProbes; // ns-t23-stage0: the satellite-side denominator, counted per PROBE
+                // Z is re-settled PER MEMBER from the core's Z. H0 measured four wells with more than
+                // 12 m of vertical spread, so a shared Z would bury or float members either way.
+                // The enclosure gate is a NAMED CONSTANT here, never a literal: see
+                // WellEnclosureGateOnSatellites for why the two sides differ and what it costs.
+                // ns-t27-perf: &NodeScanCache is the hoisted set built once above. Same gate, same
+                // order, same reason strings -- only the source of the actors changed.
+                if (!ValidateWellMemberSpot(Probe, static_cast<float>(CoreLoc.Z),
+                                            WellEnclosureGateOnSatellites, &NodeScanCache,
+                                            SatLoc, SatRot, Reason))
+                {
+                    ++Probes.SatRejects[WellRejectGateIndex(Reason)]; // ns-t23-stage0
+                    LastReason = Reason;
+                    if (Reason.StartsWith(TEXT("void"))) { ++VoidDraws; }
+                    continue;
+                }
+
+                // ---- LAYOUT GATE 1: SIBLING CLEARANCE ----
+                // Measured in XY, not in 3-D, and that is the STRICTER of the two: XY distance is
+                // never greater than 3-D distance, so clearing this clears the 3-D form as well. The
+                // reason to want the stricter one is ns-review-h2 F13's: two members 300 cm apart in
+                // XY and 1500 cm apart in Z read as 1529 cm in 3-D and look comfortably separated,
+                // right up until you stand between them and see one node stacked above the other.
+                {
+                    // ns-t27-review F6: THE CORE'S FLOOR IS THE CORE'S CONSTANT. PlacedPoints[0] is the
+                    // core and the rest are siblings, and the two have DIFFERENT minima: the packet's
+                    // stated Pressurizer/Extractor clearance assumption is WellSatMinRadiusCm (2076),
+                    // while WellSiblingMinSeparationCm (1818) is H0's inter-SATELLITE measurement.
+                    // Testing the core against 1818 made this guard looser than the draw that feeds it,
+                    // so it could never fire and would have admitted an under-clearance core the moment
+                    // anything upstream changed.
+                    bool bTooClose = false;
+                    double Closest = TNumericLimits<double>::Max();
+                    double ClosestFloor = WellSiblingMinSeparationCm;
+                    for (int32 i = 0; i < PlacedPoints.Num(); ++i)
+                    {
+                        const double D = FVector::Dist2D(PlacedPoints[i], SatLoc);
+                        const double Floor = (i == 0) ? WellSatMinRadiusCm : WellSiblingMinSeparationCm;
+                        if (D < Floor) { bTooClose = true; }
+                        if (D < Closest) { Closest = D; ClosestFloor = Floor; }
+                    }
+                    if (bTooClose)
+                    {
+                        LastReason = FString::Printf(TEXT("sibling(nearest %.0f cm, floor %.0f cm)"),
+                                                     Closest, ClosestFloor);
+                        ++Probes.SatRejects[FNodeShuffleWellProbeCensus::Gate_Sibling];
+                        continue;
+                    }
+                }
+
+                // ---- LAYOUT GATE 2: RELATIVE Z ----
+                // Per-member Z settle is unbounded on its own: an independently drawn satellite can
+                // settle on a clifftop or a ravine floor with nothing tying it to its core's height.
+                {
+                    // ns-t27-review F4: the cap is RADIUS-RELATIVE, not flat. A flat 2500 cm cap applied
+                    // to a candidate drawn up to 6500 cm out is a grade limit in disguise -- it first
+                    // bites at 21 degrees and, because the draw is uniform in AREA (half of all
+                    // candidates land beyond 4825 cm), it refuses more than half the budget on a 30
+                    // degree hillside while the log reads as terrain hostility. The flat term is still
+                    // the bound on the absurd for a close-in satellite; the grade term is what keeps an
+                    // outer satellite on the same hillside rather than on a different landform.
+                    const double DZ = FMath::Abs(SatLoc.Z - CoreLoc.Z);
+                    const double R  = FVector::Dist2D(CoreLoc, SatLoc);
+                    const double ZCap = FMath::Max<double>(WellSatMaxRelativeZCm,
+                                                           WellSatMaxRelativeGrade * R);
+                    if (DZ > ZCap)
+                    {
+                        LastReason = FString::Printf(
+                            TEXT("relZ(%.0f cm above/below core at %.0f cm out, cap %.0f cm)"),
+                            DZ, R, ZCap);
+                        ++Probes.SatRejects[FNodeShuffleWellProbeCensus::Gate_RelativeZ];
+                        continue;
+                    }
+                }
+
+                // ACCEPTED.
+                // ns-t27-review F12 (style note, no behaviour change): S.LocalYawDeg is a NO-OP TERM in
+                // this sum and its presence must not be read as the captured vanilla orientation being
+                // honoured -- it is not. DrawYawDeg is uniform on the whole circle, so adding a fixed
+                // per-record offset to it changes nothing distributionally; the authored orientation is
+                // destroyed either way, which is the design (there is no group to stay in formation
+                // with). The term is kept so that a future packet narrowing DrawYawDeg to a band has to
+                // decide explicitly which of the two yaws wins, rather than silently re-imposing the
+                // authored one. Second, related note: SatRot comes back from RaycastGroundAt SURFACE
+                // ALIGNED, so writing .Yaw on it does not compose as a world-Z rotation once pitch/roll
+                // are non-zero. Harmless while the yaw is uniform random; the retired path did the same
+                // thing with GroupYawDeg, so this is NOT a regression -- it is flagged here so nobody
+                // discovers it later as new. Build the rotation as a quaternion composition the moment a
+                // specific yaw is intended.
+                SatRot.Yaw = SatRot.Yaw + S.LocalYawDeg + DrawYawDeg;
+                MemberLocs.Add(SatLoc);
+                MemberRots.Add(SatRot);
+                PlacedPoints.Add(SatLoc);
+                bPlaced = true;
+                if (bDiag)
+                {
+                    UE_LOG(LogNodeShuffle, Verbose,
+                        TEXT("WELLH2-SATDRAW core='%s' satellite='%s': placed at %s on draw %d of a ")
+                        TEXT("budget of %d, %.0f cm from the core in XY and %.0f cm from it in Z, own ")
+                        TEXT("yaw %.1f deg. The draw envelope this candidate came from is the annulus ")
+                        TEXT("between the two satellite radius constants, sampled uniformly by AREA."),
+                        *CoreLabel, *WellShort(S.SatellitePath), *SatLoc.ToCompactString(), Draws,
+                        WellSatPlacementTries, FVector::Dist2D(CoreLoc, SatLoc),
+                        FMath::Abs(SatLoc.Z - CoreLoc.Z), DrawYawDeg);
+                }
+            }
+
+            // ns-t27-review F5: RECORDED HERE, OUTSIDE THE ACCEPT BLOCK, SO THE EXHAUSTED CASE COUNTS
+            // TOO. While this line sat beside the accepted candidate it recorded successes only, which
+            // made it structurally incapable of answering the one question it exists to answer --
+            // whether WellSatPlacementTries is binding -- because the binding case was exactly the case
+            // it excluded.
+            Probes.MaxDrawsAnySat = FMath::Max(Probes.MaxDrawsAnySat, Draws);
+
+            if (!bPlaced)
             {
                 bAllOk = false;
-                ++Probes.SatRejects[WellRejectGateIndex(Reason)]; // ns-t23-stage0
-                bVoid = Reason.StartsWith(TEXT("void"));
-                FailReason = Reason;
+                ++Probes.SatBudgetExhausted;
+                FailReason = LastReason;
                 FailWho = WellShort(S.SatellitePath);
-                FailProbe = Probe;
-                break; // EARLY-OUT: this is what makes K=36 affordable
+                FailProbe = LastProbe;
+                // WHEN EVERY DRAW FOUND NO GROUND AT ALL, this is a streaming state, not a refusal --
+                // the same distinction the retired search drew on its single probe. The predicate is
+                // "every draw this satellite made was void", from THIS attempt's own two counters, and
+                // it is stated rather than inferred: a satellite that was refused for any other reason
+                // even once is NOT a streaming case and must spend budget like any other failure.
+                bVoid = (Draws > 0 && VoidDraws == Draws);
+                if (bDiag)
+                {
+                    UE_LOG(LogNodeShuffle, Verbose,
+                        TEXT("WELLH2-SATDRAW core='%s' satellite='%s': NO SPOT FOUND in %d draw(s) ")
+                        TEXT("(budget %d); %d of those draw(s) found no ground under the probe. Last ")
+                        TEXT("refusal was %s at %s. This ends the whole attempt: the group is placed ")
+                        TEXT("entire or not at all, and is never placed short."),
+                        *CoreLabel, *FailWho, Draws, WellSatPlacementTries, VoidDraws, *FailReason,
+                        *FailProbe.ToCompactString());
+                }
+                break;
             }
-            // Rotate the satellite's OWN actor yaw with its offset, so the rocks turn with the group
-            // (design §Q3a). Without it a rotated well's meshes all face the original direction --
-            // subtly wrong in a way that is hard to name when you see it.
-            SatRot.Yaw = SatRot.Yaw + S.LocalYawDeg + YawDeg;
-            MemberLocs.Add(SatLoc);
-            MemberRots.Add(SatRot);
         }
 
         if (bAllOk)
         {
             // COMMIT. Nothing before this line wrote to the world or to the entry's placement fields.
             WellVoidDefers.Remove(E.CorePath); // ns-review-h2 F8: a settled group starts fresh
-            E.GroupYawDeg = YawDeg;
+            // ns-t27-corefirst: WRITTEN AS ZERO, AND THAT IS THE TRUTH RATHER THAN A LEFTOVER. There is
+            // no rigid-body rotation any more, so there is no group yaw to record; each satellite
+            // carries its own drawn yaw in its PlacedRotation. Three log lines still print this field
+            // (well spawn x2, well audit x1) and they will print zero for every T27-placed group. See
+            // the field's own comment in NodeShuffleSubsystem.h for the dated retirement note.
+            E.GroupYawDeg = 0.0f;
             E.PlacedCoreLocation = CoreLoc;
-            E.PlacedCoreRotation = FRotator(CoreRot.Pitch, CoreRot.Yaw + YawDeg, CoreRot.Roll);
+            E.PlacedCoreRotation = CoreRot;
             // A3 -- THE ONLY PLACE bPlacementClaimLive IS EVER SET TRUE, deliberately on the line after
             // the only non-zero write of PlacedCoreLocation in the packet. Seven review rounds' worth of
             // bugs came from readers INFERRING this from bGroupPlaced/bRelocate/bRelocationFailed; the
@@ -236,26 +499,38 @@ bool ANodeShuffleSubsystem::TryPlaceWellGroup(FNodeShuffleWellEntry& E, UClass* 
                 ++Cursor;
             }
             UE_LOG(LogNodeShuffle, Display,
-                // ns-review-h4 F6: print the count actually TRACED (the bCaptured subset, after h3 H10
+                // ns-review-h4 F6: print the count actually PLACED (the bCaptured subset, after h3 H10
                 // stopped validating uncaptured records) and the raw record count separately. Saying
                 // "N satellites all settled" with N = Satellites.Num() claimed validation of members
                 // this loop deliberately never touched.
-                TEXT("WELLH2-SEARCH core='%s': FOOTPRINT VALIDATED at %s with yaw=%.1f deg (permutation ")
-                TEXT("index %d of %d, cursor %d, yawSeed=%d, nudges=%d, redeals=%d) -- %d captured ")
-                TEXT("satellite(s) all settled, dry, off cliffs and clear of nodes and buildings (%d ")
-                TEXT("record(s) in the entry; any difference is uncaptured and is neither traced nor spawned)."),
-                *CoreLabel, *CoreLoc.ToCompactString(), YawDeg, YawIdx, WellYawSteps, E.YawCursor,
-                YawSeed, E.GroupNudges, E.GroupRedeals, ExpectedRelocatedSatelliteCount(E),
-                E.Satellites.Num());
-            EmitProbes(TEXT("VALIDATED"), TEXT("no-side(footprint fit)"));
+                // ns-t27-corefirst: every field below is a measurement from THIS attempt. The list of
+                // conditions is the list of predicates that returned false nowhere in it -- it names
+                // the gates, and does not claim the site is good for any reason beyond them.
+                TEXT("WELLH2-SEARCH core='%s': LAYOUT VALIDATED -- core settled at %s and every ")
+                TEXT("satellite placed independently around it (layout attempt %d of a limit of %d, ")
+                TEXT("cursor %d, layout seed %d, nudges %d, redeals %d). %d captured satellite(s) each ")
+                TEXT("settled, dry, off cliffs, clear of nodes and buildings, at least the sibling ")
+                TEXT("floor from the core and from every other placed member, and within the relative ")
+                TEXT("Z cap THAT APPLIED TO IT -- ns-t27-review F4 made that cap two terms, a flat one ")
+                TEXT("and a grade one, so it is a per-candidate number and the WELLH2-SATDRAW refusal ")
+                TEXT("line prints the one that applied (%d record(s) in the entry; any difference is ")
+                TEXT("uncaptured and ")
+                TEXT("is neither placed nor spawned). The core additionally passed the enclosure test; ")
+                TEXT("whether the satellites did depends on WellEnclosureGateOnSatellites, which is ")
+                TEXT("compiled %s in this build."),
+                *CoreLabel, *CoreLoc.ToCompactString(), AttemptIndex + 1, WellLayoutAttempts,
+                E.YawCursor, LayoutSeed, E.GroupNudges, E.GroupRedeals,
+                ExpectedRelocatedSatelliteCount(E), E.Satellites.Num(),
+                WellEnclosureGateOnSatellites ? TEXT("on") : TEXT("off"));
+            EmitProbes(TEXT("VALIDATED"), TEXT("no-side(whole group placed)"));
             return true;
         }
 
         if (bVoid)
         {
-            // Part of the footprint has not streamed. Do NOT advance the cursor: the same yaw deserves
-            // a fair retry once the terrain is there, and advancing would silently consume the search.
-            // ns-review-h2 F8: bounded and audible, same as the core-probe defer above.
+            // Every draw this satellite made found no ground. Do NOT advance the cursor: the same
+            // attempt deserves a fair retry once the terrain is there, and advancing would silently
+            // consume the search. ns-review-h2 F8: bounded and audible, same as the core-probe defer.
             NoteWellVoidDefer(E, TEXT("satellite"), FailProbe, *FailWho, bDiag);
             EmitProbes(TEXT("DEFERRED-void"), TEXT("satellite"));
             return false;
@@ -264,35 +539,39 @@ bool ANodeShuffleSubsystem::TryPlaceWellGroup(FNodeShuffleWellEntry& E, UClass* 
         if (bDiag)
         {
             UE_LOG(LogNodeShuffle, Verbose,
-                TEXT("WELLH2-SEARCH core='%s': yaw=%.1f deg REJECTED by satellite '%s' (%s) -- cursor %d/%d."),
-                *CoreLabel, YawDeg, *FailWho, *FailReason, E.YawCursor + 1, WellYawSteps);
+                TEXT("WELLH2-SEARCH core='%s': layout attempt REJECTED -- satellite '%s' found no spot ")
+                TEXT("in its whole draw budget, last refusal %s. Cursor %d of %d. The other satellites' ")
+                TEXT("placements from this attempt are DISCARDED and every one of them is re-drawn next ")
+                TEXT("attempt, because a sequence can wall itself in with its own earlier members."),
+                *CoreLabel, *FailWho, *FailReason, E.YawCursor + 1, WellLayoutAttempts);
         }
         ++E.YawCursor;
     }
 
-    if (E.YawCursor < WellYawSteps)
+    if (E.YawCursor < WellLayoutAttempts)
     {
         // Per-pass budget spent, search not finished. Resume next pass from the same cursor.
         if (bDiag)
         {
             UE_LOG(LogNodeShuffle, Verbose,
-                TEXT("WELLH2-SEARCH core='%s': %d yaws tried this pass, cursor now %d/%d -- resuming next pass."),
-                *CoreLabel, Attempts, E.YawCursor, WellYawSteps);
+                TEXT("WELLH2-SEARCH core='%s': %d layout attempt(s) made this pass, cursor now %d of ")
+                TEXT("%d -- resuming next pass."),
+                *CoreLabel, Attempts, E.YawCursor, WellLayoutAttempts);
         }
-        // The per-pass yaw budget ended this attempt, not a rejection: the search is unfinished and
-        // resumes next pass from the same cursor. Named apart from exhaustion so the two are never
-        // summed together as "failed".
+        // The per-pass budget ended this call, not a rejection: the search is unfinished and resumes
+        // next pass from the same cursor. Named apart from exhaustion so the two are never summed
+        // together as "failed".
         EmitProbes(TEXT("BUDGET-SPENT-resuming"), TEXT("no-side(per-pass budget)"));
         return false;
     }
 
-    // ---- STEP 3/4/5: all K yaws failed here -> the shared escalation ladder ----
-    // Every refusal counted in THIS attempt came from the satellite side: the core settled at the top
-    // of this call and was not re-probed. Yaws refused on EARLIER attempts of the same search are on
-    // those attempts' own lines. Emitted BEFORE the ladder, which resets E.YawCursor to 0.
-    EmitProbes(TEXT("ESCALATED-yaws-exhausted"), TEXT("satellite"));
+    // ---- STEP 3/4/5: every layout attempt failed here -> the shared escalation ladder ----
+    // Every refusal counted in THIS call came from the satellite side: the core settled at the top of
+    // this call and was not re-probed. Attempts refused on EARLIER passes of the same search are on
+    // those passes' own lines. Emitted BEFORE the ladder, which resets E.YawCursor to 0.
+    EmitProbes(TEXT("ESCALATED-layouts-exhausted"), TEXT("satellite"));
     EscalateWellPlacement(E, CoreLoc, /*bHaveSettledCore=*/true,
-        *FString::Printf(TEXT("all %d yaws failed"), WellYawSteps));
+        *FString::Printf(TEXT("all %d independent-layout attempts failed"), WellLayoutAttempts));
     return false;
 }
 

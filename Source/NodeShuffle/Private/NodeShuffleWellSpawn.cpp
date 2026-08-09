@@ -179,9 +179,14 @@ bool ANodeShuffleSubsystem::SpawnWellGroup(FNodeShuffleWellEntry& E, UClass* Res
         // WellActorsSpawnedThisSession.
         WellActorsSpawnedThisSession.Add(Core);
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("WELLH2-SPAWN core='%s': spawned '%s' at %s yaw=%.1f res='%s'."),
+            // ns-t27-corefirst: this printed E.GroupYawDeg, which T27 pins to 0.0 for every group it
+            // places -- so the line would have read "yaw=0.0" beside a core standing at whatever yaw
+            // the terrain settle gave it. A field whose NAME says one thing while its value comes
+            // from a retired concept is the wrong-label failure, not merely a stale number. It now
+            // prints the yaw the actor was ACTUALLY spawned with, and is named for it.
+            TEXT("WELLH2-SPAWN core='%s': spawned '%s' at %s coreYaw=%.1f res='%s'."),
             *WellShort(E.CorePath), *Core->GetName(), *E.PlacedCoreLocation.ToCompactString(),
-            E.GroupYawDeg, *WellShort(ResourceClass->GetPathName()));
+            E.PlacedCoreRotation.Yaw, *WellShort(ResourceClass->GetPathName()));
     }
 
     // ---- 2. EVERY SATELLITE, WITH mCore SET BEFORE FinishSpawning ----
@@ -508,9 +513,11 @@ bool ANodeShuffleSubsystem::SpawnWellGroup(FNodeShuffleWellEntry& E, UClass* Res
     {
         WellRelocLogged.Add(PlacedKey);
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("WELLH2-PLACED core='%s' res='%s' yaw=%.1f: vanilla %s -> RELOCATED TO %s (group %s this ")
-            TEXT("pass)."),
-            *WellShort(E.CorePath), *WellShort(ResourceClass->GetPathName()), E.GroupYawDeg,
+            // ns-t27-corefirst: was E.GroupYawDeg -- see the WELLH2-SPAWN line above for why that
+            // became a wrong label rather than just a zero.
+            TEXT("WELLH2-PLACED core='%s' res='%s' coreYaw=%.1f: vanilla %s -> RELOCATED TO %s (group ")
+            TEXT("%s this pass)."),
+            *WellShort(E.CorePath), *WellShort(ResourceClass->GetPathName()), E.PlacedCoreRotation.Yaw,
             *E.VanillaCoreLocation.ToCompactString(), *E.PlacedCoreLocation.ToCompactString(),
             bComplete ? TEXT("COMPLETE") : TEXT("INCOMPLETE -- retried next pass, nothing suppressed yet"));
     }

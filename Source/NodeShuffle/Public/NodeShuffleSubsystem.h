@@ -447,12 +447,27 @@ struct FNodeShuffleWellEntry
     UPROPERTY(SaveGame) FVector PlacedCoreLocation = FVector::ZeroVector;
     UPROPERTY(SaveGame) FRotator PlacedCoreRotation = FRotator::ZeroRotator;
 
-    // The group yaw (degrees) whose FULL satellite set validated, and how far through this group's
-    // seeded yaw permutation the search has got. Both persist: design §Q3a requires that a group
-    // deferred mid-search RESUMES rather than restarts, for the same reason OverlapNudges persists.
-    // The permutation itself is never stored -- it is recomputed from WellYawSeedFor(), a pure
-    // function of persisted state, so it is byte-identical every load. A yaw drawn from frame time or
-    // actor-iteration order would pass every test on the H2 list except the determinism one (T8).
+    // ns-t27-corefirst: BOTH FIELDS KEPT THEIR NAMES AND BOTH CHANGED MEANING. Renaming a
+    // UPROPERTY(SaveGame) breaks every existing save, so the names are frozen and the meanings are
+    // stated here and in every log legend that prints them.
+    //
+    // GroupYawDeg: under the retired rigid-body search this was the ONE yaw the whole cloud was
+    // rotated by. Independent placement has no group yaw -- each satellite draws its own actor yaw --
+    // so this is now WRITTEN AS 0.0 at every commit and means "no rigid-body rotation was applied",
+    // which is the truth rather than a leftover. NOTHING READS IT ANY MORE: the three log lines that
+    // did (well spawn x2, well audit x1) were switched to PlacedCoreRotation.Yaw in this same packet,
+    // because a field named `yaw` sourced from a retired concept and pinned to zero is a wrong LABEL,
+    // not merely a stale number -- and a wrong label is what makes a reader stop looking.
+    // TODO(2026-08-09, ns-t27-corefirst): the field is now write-only and exists solely so that saves
+    // written before this build still deserialise. Delete it at the next save-format break.
+    //
+    // YawCursor: now the INDEPENDENT-LAYOUT ATTEMPT cursor, counting up to WellLayoutAttempts rather
+    // than through a 36-step yaw permutation. It still persists for the original reason -- design §Q3a
+    // requires a group deferred mid-search to RESUME rather than restart, the same reason
+    // OverlapNudges persists -- and the search is still recomputed rather than stored, from
+    // WellLayoutSeedFor(), a pure function of persisted state, so it is byte-identical every load. A
+    // draw seeded from frame time or actor-iteration order would pass every test on the H2 list except
+    // the determinism one (T8).
     UPROPERTY(SaveGame) float GroupYawDeg = 0.0f;
     UPROPERTY(SaveGame) int32 YawCursor = 0;
     UPROPERTY(SaveGame) uint8 GroupNudges = 0;
@@ -1461,9 +1476,12 @@ private:
     // group is only searched/placed once a player is within SpawnRadiusCm of its dealt destination.
     void ApplyWellRelocation(bool bWellShuffleEnabled, bool bRelocationEnabled, float SpawnRadiusCm);
 
-    // The §Q3a search for ONE group: settle the core, then walk the seeded yaw permutation from
-    // YawCursor (budgeted per pass), validating the FULL satellite footprint each time. Returns true
-    // only when the whole footprint validated and E's Placed* fields were committed.
+    // ns-t27-corefirst: CORE FIRST, THEN EACH SATELLITE INDEPENDENTLY. Settle and validate the core at
+    // the dealt destination -- with the enclosure gate an ordinary node has always had -- then, per
+    // attempt, draw each captured satellite its own spot from a disc around the settled core. Budgeted
+    // per pass and resumed from YawCursor (the attempt cursor). Returns true only when the core AND
+    // every captured satellite found a spot and E's Placed* fields were committed: all-or-nothing
+    // still governs the GROUP, so a well never places short.
     bool TryPlaceWellGroup(FNodeShuffleWellEntry& E, UClass* ResourceClass);
 
     // ns-review-h2 F3: the ONE escalation ladder -- nudge, then re-deal, then leave the well vanilla
@@ -1485,10 +1503,46 @@ private:
     static constexpr int32 WellVoidDeferNoticeAt = 20;
     static constexpr int32 WellVoidDeferEscalateAt = 60;
 
-    // One member's terrain test at a candidate XY: settle, water, slope, resource-node overlap and
-    // buildable overlap. OutReason is filled with a short token for the rejection log.
-    bool ValidateWellMemberSpot(const FVector& ProbeXY, float StartZ, FVector& OutLoc, FRotator& OutRot,
-                                FString& OutReason) const;
+    // One member's terrain test at a candidate XY: settle, water, slope, resource-node overlap,
+    // buildable overlap and -- when bApplyEnclosureGate -- enclosure. OutReason is filled with a short
+    // token for the rejection log.
+    // ns-t27-corefirst: bApplyEnclosureGate is a REQUIRED argument with no default ON PURPOSE. T26 was
+    // caused by the well path silently lacking a gate the node path had; a defaulted parameter would
+    // recreate exactly that, with every future call site quietly opting out by saying nothing.
+    // ns-t27-perf: NodeScanCache is the hoisted resource-node set for the node-overlap gate, or nullptr
+    // to walk the level with TActorIterator exactly as this function always did. REQUIRED with no
+    // default, for the same reason bApplyEnclosureGate is: a defaulted parameter would let a future call
+    // site silently take the expensive path (or, worse, a wrong-radius cached one) by saying nothing.
+    // WHAT THE CACHE MUST CONTAIN FOR THE POPULATION TO BE UNCHANGED -- this is the contract, and
+    // BuildWellNodeScanCache below is the only thing that satisfies it: every AFGResourceNode whose
+    // XY distance to the scan centre is under WellSatMaxRadiusCm + the node reject radius. Because
+    // RaycastGroundAt traces straight down and never rewrites XY, a settled candidate's XY is its
+    // probe's XY, which is at most WellSatMaxRadiusCm from the centre -- so any node that could fall
+    // inside the 800 cm reject sphere of any candidate is inside that XY disc by the triangle
+    // inequality. The gate's own tests (deposit exclusion, 3-D radius, our-own-actors exclusion) still
+    // run per probe, unchanged and in the same order, so the FIRST rejecting actor is the same actor.
+    bool ValidateWellMemberSpot(const FVector& ProbeXY, float StartZ, bool bApplyEnclosureGate,
+                                const TArray<TWeakObjectPtr<AFGResourceNode>>* NodeScanCache,
+                                FVector& OutLoc, FRotator& OutRot, FString& OutReason) const;
+
+    // ns-t27-perf: build that set ONCE per group per pass. The cold review measured the per-probe
+    // TActorIterator as the dominant cost of a placement pass and -- crucially -- as one that scales
+    // with the player's FACTORY (every conveyor, wall and machine is an actor), not with node count, so
+    // it grows without limit as a save is played. This hoist changes no query, no radius and no
+    // predicate; it changes how many times the level is walked, from once per probe to once per call.
+    // The scan centre is the SETTLED core location, which is why this cannot be called before the core
+    // gate has run.
+    void BuildWellNodeScanCache(const FVector& ScanCentre,
+                                TArray<TWeakObjectPtr<AFGResourceNode>>& OutNodes) const;
+
+    // ns-t27-corefirst: THE ONE enclosure test, for both the node path and the well path.
+    // "Boxed in by rock on nearly all sides at close range" -- 8 horizontal rays of 500 cm from
+    // At.Z+200, enclosed when 7 or more are blocked. It was a lambda private to EnsureNewNodeSpawned;
+    // T26 is what happens when a gate exists in exactly one function's scope. Promoting it to a member
+    // means the node path and the well path cannot drift apart, which is the failure T26 actually is.
+    // OutBlockedRays reports how many of the 8 rays hit, so a refusal can say 7/8 or 8/8 instead of
+    // only "enclosed" -- a 7/8 refusal is a very different place from an 8/8 one.
+    bool IsSpotEnclosed(const FVector& At, int32& OutBlockedRays, int32& OutTotalRays) const;
 
     // Group-atomic spawn (design Q1's decision): core deferred-spawned first, then EVERY satellite
     // deferred-spawned with mCore pre-set, then all finished -- so a core can never exist without its
@@ -2164,16 +2218,133 @@ private:
     bool bWellRelocDisabledLogged = false;
     int32 WellGroupsPlacedThisSession = 0;
 
-    // §Q3a: K IS MEASURED, NOT CHOSEN. H0's run gives a mean bounding radius of 4587 cm; a yaw step
-    // that moves an outer satellite less than the 800 cm reject radius needs 800/4587 ~= 10 deg, and
-    // the smallest measured angular gap between neighbouring satellites is 9.6 deg. Two independent
-    // routes to ~10 deg is the confirmation. K=12 (30 deg) moves an outer satellite ~20 m per attempt
-    // and would skip valid pockets wholesale.
-    static constexpr int32 WellYawSteps = 36;
-    // The footprint test early-outs on the FIRST failing satellite, so a bad yaw usually dies after
-    // one or two traces. Still budgeted per pass and resumed via YawCursor rather than burning the
-    // whole 36-yaw search in one frame.
-    static constexpr int32 WellYawAttemptsPerPass = 6;
+    // ns-t27-corefirst: THE RIGID-BODY YAW SEARCH IS GONE. It is replaced by CORE FIRST, THEN EACH
+    // SATELLITE INDEPENDENTLY (the author's directive, 2026-08-09). The old constants and their
+    // reasoning are kept in this comment because the reasoning is still the reason the old search
+    // could not do the job, and a later reader deserves it rather than a git blame:
+    //     WellYawSteps = 36 / WellYawAttemptsPerPass = 6. K was MEASURED, not chosen -- H0's mean
+    //     bounding radius 4587 cm against the 800 cm reject radius gives ~10 deg, and the smallest
+    //     measured angular gap between neighbouring satellites is 9.6 deg. Both routes land on ~10
+    //     deg, hence 36 steps. What that search could NOT do is move ONE satellite: the whole cloud
+    //     rotated or nothing did, so a single blocked satellite refused the entire destination.
+    //
+    // ONE ATTEMPT NOW MEANS ONE FULL INDEPENDENT LAYOUT DRAW, not one yaw. Each attempt re-draws
+    // EVERY satellite from scratch (not just the ones that failed), which is the cheap form of
+    // backtracking: a greedy placement can paint itself into a corner with its own earlier siblings,
+    // and only a full re-draw escapes that. FNodeShuffleWellEntry::YawCursor is reused as the attempt
+    // cursor -- the field name is retained because renaming a UPROPERTY(SaveGame) breaks every
+    // existing save; the field's header comment and every log legend name it for what it now counts.
+    static constexpr int32 WellLayoutAttempts = 6;
+    // Budgeted per pass and resumed via the cursor, same as the yaw search was. ONE per pass, not six:
+    // an attempt is now up to WellSatPlacementTries probes PER SATELLITE rather than one probe per
+    // satellite.
+    // ns-t27-review F1: THE OLD SENTENCE HERE -- "so a single attempt is roughly the cost of the whole
+    // old per-pass budget" -- WAS FALSE AND IS DELETED. Counted rather than asserted: the retired search
+    // spent 6 yaws x (probes until the FIRST satellite failed, usually 1-2) ~= 6-12 probes per pass, ~48
+    // if every yaw probed every satellite. One attempt now spends up to 10 satellites x 24 draws = up to
+    // 240 probes.
+    // ns-t27-fixes-review F-B(i): a satellite does NOT give up on its first rejected draw -- it retries
+    // up to its whole budget, which the retired search never did. It is bounded the other way by a
+    // break: the FIRST satellite that exhausts its budget ends the attempt, so satellites after it are
+    // never drawn, and a satellite that succeeds stops at its first accepted draw. The 240 is therefore
+    // a CEILING, not the typical cost; a typical failing attempt is (a few draws per earlier satellite)
+    // + one full budget.
+    // ns-t27-fixes-review F-B(ii): the satellite count here is 10, not 8 -- H0's measured maximum, the
+    // same figure this header states at WellMinSatellitesForRelocation and NodeShuffleWellFootprint.cpp
+    // states at its head. 8 was the mean-ish figure of the wells looked at, and using it understated the
+    // ceiling by 20%.
+    // ns-t27-fixes-review F-B(iii): each probe is up to 13 line traces -- 1 settle + 4 ring in
+    // RaycastGroundAt, and, on any candidate that reaches gate six, 8 horizontal enclosure rays, which
+    // satellites now run because F3 in this same packet compiled WellEnclosureGateOnSatellites true --
+    // plus one overlap sphere and one resource-node scan.
+    // ApplyWellRelocation caps nothing about HOW MANY groups it searches in a pass, so two or three
+    // difficult groups near one player multiply it, all on the game thread inside one 5 s tick.
+    // ns-t27-perf: A COST REDUCTION DOES NOW SHIP, AND IT IS NOT THE BROADPHASE ONE. The world-wide
+    // TActorIterator<AFGResourceNode> that used to run inside EVERY probe is hoisted to ONE scan per
+    // group per pass (BuildWellNodeScanCache), which the cold review measured as the dominant term
+    // because it scales with the player's factory rather than with node count. The review's earlier
+    // preferred fix -- replacing that iteration with a broadphase overlap query -- is still NOT applied
+    // and is still its own packet, because it CHANGES THE POPULATION the node gate sees; the hoist does
+    // not, and that is the whole reason it could ship here. The measurement ships too: WELLH2-PROBECENSUS
+    // now carries elapsed wall-clock ms for the call and the size of the hoisted set, so T27 runtime
+    // checklist step 4 produces a number instead of an impression. This comment states probe COUNTS,
+    // which are counted, and the per-call time it states is measured at runtime, not asserted here.
+    static constexpr int32 WellLayoutAttemptsPerPass = 1;
+    // Candidate draws for ONE satellite within one attempt. Each draw is a polar sample around the
+    // settled core, so this is the satellite's own search, and it is what the yaw search never had.
+    static constexpr int32 WellSatPlacementTries = 24;
+
+    // ---- ns-t27-corefirst: THE SATELLITE DRAW ENVELOPE ----
+    // Every one of these is a DESIGN CAP informed by an H0 measurement, not a measured property that
+    // the code is merely restating. Each says which.
+    //
+    // Inner radius. H0 measured minimum core->satellite 2076 cm across the vanilla wells. The reason
+    // to keep it is ASSUMED, NOT PROVEN: no distance, radius or extent field exists on
+    // AFGResourceNodeFrackingCore, AFGResourceNodeFrackingSatellite, the Pressurizer or the Well
+    // Extractor -- the link is a pointer plus a registration array -- so nothing in the engine
+    // requires this. The assumption is that 2076 cm is what stops a Pressurizer and an Extractor
+    // building volume from colliding. Untested; a runtime test step in the T27 handoff covers it.
+    static constexpr float WellSatMinRadiusCm = 2076.0f;
+    // Outer radius, which the destination deal ALREADY assumes: it insets the deal box by that radius
+    // and spaces destinations by twice it. Under the rigid search that was a measured max (6447 cm) the
+    // code hoped held; under an independent draw it is ENFORCED, so the deal's inset is now a guarantee
+    // rather than a hope. Raising it makes the destination deal strictly harder -- WellRedealTries=24 is
+    // already flagged undersized in docs/TECH-DEBT.md -- so it is not a free knob.
+    // ns-t27-review 3: THIS IS NOW THE SINGLE DEFINITION. NodeShuffleWellRelocateRoll.cpp used to carry
+    // its own file-local `WellMaxBoundRadiusCm = 6500` for the deal's inset and spacing; that copy is
+    // deleted and its three uses read this constant, because ns-t27-corefirst turned the equality from a
+    // coincidence into a DEPENDENCY -- the deal's inset and the draw's reach are one fact. Raising this
+    // number here now raises the deal's inset with it, which is the whole point: two copies meant
+    // raising one silently un-guaranteed the other, with no compile error and no log line.
+    static constexpr float WellSatMaxRadiusCm = 6500.0f;
+    // SIBLING CLEARANCE. Under the rigid search the group was self-clear BY CONSTRUCTION (members moved
+    // together and the roll asserts they start >= WellSelfOverlapFloorCm apart). Placed independently
+    // they can collide with each other, so that external guarantee becomes OUR gate. The floor is set
+    // to H0's measured minimum inter-satellite distance (1818.8 cm over 401 pairs) rather than to the
+    // 800 cm node-overlap radius: 1818 >= 800, so the parity requirement is satisfied outright, and a
+    // draw gated only at 800 cm packs satellites into tight rings that read as generated. If placement
+    // rates suffer, THIS is the constant to relax first, and 800 is the floor below which it must not
+    // go because that is where ValidateWellMemberSpot's own node gate would start rejecting.
+    static constexpr float WellSiblingMinSeparationCm = 1818.0f;
+    // RELATIVE Z BOUND. Per-member Z settle is unbounded by itself; independently placed, a satellite
+    // can settle on a clifftop or a ravine floor far above or below its core. H0 measured vanilla
+    // wells with more than 12 m of vertical spread and the T26 case spanned 20.7 m of relief, so the
+    // cap is set ABOVE the largest relief vanilla is known to contain. Measured in |Z - coreZ| per
+    // satellite, not as a group spread.
+    // ns-t27-review F4: THE OLD CLAIM "a bound on the absurd, not a shaping constraint" WAS FALSE
+    // UNCONDITIONALLY, and the honest version is: applied FLAT to a candidate drawn up to
+    // WellSatMaxRadiusCm out, this number is a GRADE limit in disguise. It first bites at ~21 deg (2500
+    // cm of rise at 6500 cm out) and, because the draw is uniform in AREA -- half of all candidates land
+    // beyond ~4825 cm -- it would refuse more than half of every satellite's draw budget on a 30 deg
+    // hillside while the log read as terrain hostility. The `relativeZ:` census bucket is how you find
+    // out it is biting. The cap is therefore now TWO terms, max()'d: the flat term below is still the
+    // bound on the absurd for a close-in satellite, and the grade term is what keeps an OUTER satellite
+    // on the same hillside rather than on a different landform.
+    static constexpr float WellSatMaxRelativeZCm = 2500.0f;
+    static constexpr double WellSatMaxRelativeGrade = 0.45; // ~24 deg; a DESIGN CAP, not a measurement
+    // ns-t27-corefirst: DOES THE ENCLOSURE GATE RUN ON SATELLITES TOO?
+    // The core runs it unconditionally (that is the whole point of T27 -- an unreachable core cannot
+    // take a Pressurizer and the author hit exactly that in game). A satellite tucked against a rock
+    // face is far less harmful, and requiring every member to pass an 8-ray test rejects destinations
+    // at a time when placement rates are already the problem. Default OFF, separately toggleable here,
+    // and the WELLH2-PROBECENSUS line carries the enclosure gate's own reject counter either way, so
+    // the price of flipping it is visible in the log before anyone flips it.
+    // ns-t27-review F3: FLIPPED TO TRUE. The OFF reasoning weighed "an unreachable core produces nothing,
+    // an unreachable satellite produces something" and did not weigh either against what a REJECTION
+    // costs. On the core side a rejection spends a nudge; on the satellite side it spends ONE of 24
+    // draws and the satellite tries again -- so the gate is near-free on exactly the side it was
+    // switched off on. And an Extractor that can never be built on a satellite is a well that produces
+    // less than its vanilla counterpart forever, which is docs/TECH-DEBT.md T15's permanent-shrink
+    // defect that this packet's own all-or-nothing rule exists to refuse. The satellite `enclosed:`
+    // bucket in WELLH2-PROBECENSUS now has a live denominator, so the price is measured rather than
+    // predicted; if it turns out to be the binding constraint, the constant is one token away.
+    // ns-t27-review 9.2 (author ruling, 2026-08-09): "we need the core reachable. A satellite can be
+    // tried in other areas." Independent retry is what makes ON cheap -- a refused candidate costs ONE
+    // of WellSatPlacementTries draws, not the attempt and not the group -- and under the same day's
+    // short-well ruling the absolute worst case of ON is one dropped satellite, which is now an
+    // accepted outcome. The worst case of OFF is a rock the player can see, cannot build on, and which
+    // occupies a spot inside the sibling floor that a buildable satellite could have had.
+    static constexpr bool WellEnclosureGateOnSatellites = true;
     static constexpr uint8 WellMaxGroupNudges = 8;
     static constexpr uint8 WellMaxGroupRedeals = 3;
     static constexpr int32 WellRedealTries = 24;
@@ -2183,7 +2354,15 @@ private:
     static constexpr int32 WellMinSatellitesForRelocation = 4;
     // H0 measured minimum inter-satellite distance 1818.8 cm over 401 pairs, against the 800 cm
     // reject radius -- which is WHY H2 needs no same-group overlap exemption. That measurement is
-    // ASSERTED at capture, not assumed: a well whose own members sit closer than this could never
-    // validate its own footprint, so it is refused with a loud line rather than looping forever.
+    // ASSERTED at capture, not assumed, and a violating well is refused with a loud line.
+    // ns-t27-review F7 (same correction as the log line at NodeShuffleWellRelocateRoll.cpp; the false
+    // cause lived on BOTH sides of this pair): the sentence that used to end this comment -- "a well
+    // whose own members sit closer than this could never validate its own footprint" -- was true only
+    // while members moved RIGIDLY, because the captured cloud was replayed at the destination.
+    // ns-t27-corefirst never replays the captured offsets; satellites are redrawn at >=
+    // WellSiblingMinSeparationCm from each other, so a tight vanilla well would now place fine. What
+    // this floor still guards is the MEASUREMENT design 4b's no-same-group-exemption conclusion rests
+    // on, and the backstop's vanilla-site reconstruction, which does still use LocalOffset. Refusing is
+    // the conservative call, not a statement that the group could not be placed.
     static constexpr float WellSelfOverlapFloorCm = 800.0f;
 };

@@ -4075,21 +4075,17 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
         // shaft) but unreachable horizontally. User-reported: a node "inside a column with no entrance". Real
         // caves and cliff-bases are NOT flagged (they're open on multiple sides). 8 horizontal rays at ~2 m
         // height; flag only when 7+ of 8 hit rock within 5 m (a true pocket, not a walkable cave/ravine).
+        // ns-t27-corefirst: THE BODY MOVED, THE BEHAVIOUR DID NOT. This was 15 lines of ray-casting
+        // private to this function -- and that privacy is docs/TECH-DEBT.md T26: the WELL placement
+        // path could not reach it, so wells were placed with five gates while nodes got six, and a
+        // comment in NodeShuffleWellFootprint.cpp claimed parity that did not exist. The rays, the
+        // reach, the eye height and the 7-of-8 threshold now live in ONE place
+        // (ANodeShuffleSubsystem::IsSpotEnclosed, defined in NodeShuffleWellFootprint.cpp) and both
+        // paths call it, so they cannot drift. Same inputs, same predicate, same verdict.
         auto IsEnclosed = [&](const FVector& At) -> bool
         {
-            const FVector Eye(At.X, At.Y, At.Z + 200.f);
-            constexpr float Reach = 500.0f;
-            constexpr int32 Dirs = 8;
-            int32 Blocked = 0;
-            for (int32 d = 0; d < Dirs; d++)
-            {
-                const float Ang = (2.0f * PI * d) / Dirs;
-                const FVector To(Eye.X + Reach * FMath::Cos(Ang), Eye.Y + Reach * FMath::Sin(Ang), Eye.Z);
-                FHitResult EncHit;
-                FCollisionQueryParams EncParams(FName(TEXT("NodeShuffleEnclosure")), false);
-                if (GetWorld()->LineTraceSingleByChannel(EncHit, Eye, To, ECC_WorldStatic, EncParams)) { ++Blocked; }
-            }
-            return Blocked >= 7;
+            int32 Blocked = 0, Total = 0;
+            return IsSpotEnclosed(At, Blocked, Total);
         };
 
         const bool bSpotOccupied = OverlapsAt(Entry.Location);

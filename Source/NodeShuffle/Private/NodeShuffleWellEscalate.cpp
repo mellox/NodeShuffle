@@ -211,8 +211,11 @@ void ANodeShuffleSubsystem::EscalateWellPlacement(FNodeShuffleWellEntry& E, cons
         if (BoxMax.X > BoxMin.X && BoxMax.Y > BoxMin.Y)
         {
             // Deterministic per-group redeal stream: a pure function of persisted state, exactly like
-            // the yaw seed. Frame time or a shared live stream here would break T8 just as surely.
-            FRandomStream Rng(WellYawSeedFor(SavedSeed, E.CorePath, E.GroupRedeals, 0) ^ 0x52444C31);
+            // the layout seed. Frame time or a shared live stream here would break T8 just as surely.
+            // ns-t27-corefirst: renamed with the function (WellYawSeedFor -> WellLayoutSeedFor). The
+            // value, the arguments and the XOR salt are untouched, so a save's redeal coordinates are
+            // bit-identical across this change -- only the placement search downstream of them differs.
+            FRandomStream Rng(WellLayoutSeedFor(SavedSeed, E.CorePath, E.GroupRedeals, 0) ^ 0x52444C31);
             E.DestCoreLocation = FVector(Rng.FRandRange(BoxMin.X, BoxMax.X),
                                          Rng.FRandRange(BoxMin.Y, BoxMax.Y),
                                          (DealMeanZ != 0.0f) ? DealMeanZ : E.DestCoreLocation.Z);
@@ -254,11 +257,12 @@ void ANodeShuffleSubsystem::EscalateWellPlacement(FNodeShuffleWellEntry& E, cons
         bRestoredNow = TryUnhideWellGroup(E, TEXT("relocation gave up permanently"));
     }
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("WELLH2-SEARCH core='%s': GIVING UP (%s) -- %d yaws x %d nudges x %d redeals all failed. Our ")
+        TEXT("WELLH2-SEARCH core='%s': GIVING UP (%s) -- %d independent-layout attempts x %d nudges x ")
+        TEXT("%d redeals all failed. Our ")
         TEXT("own spawned members at the abandoned destination were destroyed at the top of this ")
         TEXT("escalation (see any WELLH2-DESPAWN line above) and the well will not be re-enrolled. %s ")
         TEXT("This is the designed fail-safe: never a partial or broken well, only an untouched one."),
-        *CoreLabel, Why, WellYawSteps, WellMaxGroupNudges, WellMaxGroupRedeals,
+        *CoreLabel, Why, WellLayoutAttempts, WellMaxGroupNudges, WellMaxGroupRedeals,
         !bOwedRestore
             ? TEXT("We hold no suppression record on this well's vanilla members, so it is standing ")
               TEXT("exactly where the level author put it and nothing had to be given back.")

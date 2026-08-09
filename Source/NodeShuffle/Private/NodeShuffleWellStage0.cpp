@@ -72,6 +72,9 @@ namespace
         case FNodeShuffleWellProbeCensus::Gate_Cliff:        return TEXT("cliff");
         case FNodeShuffleWellProbeCensus::Gate_NodeOverlap:  return TEXT("nodeOverlap");
         case FNodeShuffleWellProbeCensus::Gate_Buildable:    return TEXT("buildableOverlap");
+        case FNodeShuffleWellProbeCensus::Gate_Enclosed:     return TEXT("enclosed");
+        case FNodeShuffleWellProbeCensus::Gate_Sibling:      return TEXT("siblingClearance");
+        case FNodeShuffleWellProbeCensus::Gate_RelativeZ:    return TEXT("relativeZ");
         default:                                             return TEXT("unclassified");
         }
     }
@@ -303,42 +306,83 @@ void ANodeShuffleSubsystem::EmitWellDeferralCensus()
 // own named fallback is taken and the value is computed at the call site in TryPlaceWellGroup.
 void LogWellProbeCensus(const FString& CoreLabel, const FNodeShuffleWellProbeCensus& C,
                         const TCHAR* Outcome, const TCHAR* TerminatedBy,
-                        int32 YawCursor, int32 YawSteps, int32 CapturedSatellites,
-                        int32 AttemptsToExhaust)
+                        int32 AttemptCursor, int32 AttemptLimit, int32 CapturedSatellites,
+                        int32 AttemptsToExhaust, int32 SatPlacementTries, double ElapsedMs)
 {
     const int32 CoreTotal = SumGates(C.CoreRejects);
     const int32 SatTotal = SumGates(C.SatRejects);
+    // ns-t27-corefirst: the LAYOUT gates' own denominator. Gate_Sibling and Gate_RelativeZ are tested
+    // only on a candidate that already cleared ValidateWellMemberSpot, so their chances-to-fire are the
+    // probes that survived the footprint, not all probes. Computed here so no reader has to.
+    // ns-t27-review F9: Gate_Unclassified is a FOOTPRINT reject too -- it is written by
+    // ValidateWellMemberSpot for any reason string the classifier does not recognise (no-world today) --
+    // and it sits at index 8, outside the contiguous 0..Gate_Enclosed run. Omitting it inflates the
+    // layout gates' denominator, in the direction that makes them look less binding than they are.
+    int32 SatFootprintRejects = C.SatRejects[FNodeShuffleWellProbeCensus::Gate_Unclassified];
+    for (int32 G = FNodeShuffleWellProbeCensus::Gate_Void; G <= FNodeShuffleWellProbeCensus::Gate_Enclosed; ++G)
+    {
+        SatFootprintRejects += C.SatRejects[G];
+    }
+    const int32 SatLayoutChances = C.SatProbes - SatFootprintRejects;
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("WELLH2-PROBECENSUS core='%s': attempt ended %s, terminated by the %s side. Yaws tried this ")
-        TEXT("attempt %d, cursor now %d of %d. CORE probes %d, core rejects %d [%s]. SATELLITE probes ")
-        TEXT("%d over %d captured satellite record(s), satellite rejects %d [%s]. The bracketed lists ")
-        TEXT("carry one counter per gate of ValidateWellMemberSpot, in the order that function evaluates ")
-        TEXT("them, and each list sums to the reject total printed beside it. READ EACH REJECT COUNT ")
-        TEXT("AGAINST ITS OWN PROBE DENOMINATOR AND NOT AGAINST THE OTHER SIDE'S: the core is validated ")
-        TEXT("ONCE per attempt and its settled location is then reused for every yaw, while satellites ")
-        TEXT("are re-probed on every yaw and each yaw stops at its first failing satellite -- so the two ")
-        TEXT("populations differ in size by construction and a raw core-vs-satellite ratio measures that ")
-        TEXT("construction, not the world. The comparable fact is which side produced the rejection ")
-        TEXT("that ENDED this attempt, which is the field named above and is taken from the branch this ")
-        TEXT("call returned on, never inferred from the counters. COMPARE ONLY THE TWO ESCALATING ")
-        TEXT("OUTCOMES -- ESCALATED-core-rejected against ESCALATED-yaws-exhausted -- AND DO NOT POOL ")
-        TEXT("THE SIDE FIELD ACROSS OUTCOMES. A core rejection ends an attempt on the pass it happens, ")
-        TEXT("while yaw exhaustion needs WellYawSteps/WellYawAttemptsPerPass consecutive attempts (%d ")
-        TEXT("as this build is compiled), so per unit time the core outcome is emitted about that many ")
-        TEXT("times as often for the same underlying rate; per ESCALATION the two are one-for-one, ")
-        TEXT("because each spends exactly one nudge. A BUDGET-SPENT-resuming line is not a termination ")
-        TEXT("at all. A DEFERRED-void line also carries a side field and MUST NOT be pooled with ")
-        TEXT("either: void means no terrain was found under the probe, which is a streaming state, not ")
-        TEXT("a fit refusal, and whether a free satellite search could settle where a trace found no ")
-        TEXT("ground is UNTESTED. THIS IS T23 STAGE 0 INSTRUMENT 3: the design's stage-4 option assumes ")
-        TEXT("independent satellite placement would let a well fit almost anywhere. Whether it would ")
-        TEXT("rescue an ESCALATED-yaws-exhausted attempt is NOT MEASURED here -- this line bounds the ")
-        TEXT("population the assumption could apply to and nothing more. It cannot apply to an ")
-        TEXT("ESCALATED-core-rejected attempt, because the core is placed first at the dealt ")
-        TEXT("destination and freeing the satellites does not move it. Nothing here states WHY any gate ")
-        TEXT("fired; each gate name is the predicate that returned false in this run."),
-        *CoreLabel, Outcome, TerminatedBy, C.YawsTried, YawCursor, YawSteps,
+        TEXT("WELLH2-PROBECENSUS core='%s': attempt ended %s, terminated by the %s side. Independent ")
+        TEXT("layout attempts made in this call %d, attempt cursor now %d of %d. CORE probes %d, core ")
+        TEXT("rejects %d [%s]. SATELLITE probes %d over %d captured satellite record(s), satellite ")
+        TEXT("rejects %d [%s]. Of those satellite probes, %d cleared the footprint test and were the ")
+        TEXT("only ones the two LAYOUT gates could fire on. Satellites that exhausted their whole draw ")
+        TEXT("budget without finding any spot %d; the most draws any single satellite spent, whether or ")
+        TEXT("not it found a spot %d of a per-satellite budget of %d. The bracketed lists carry one ")
+        TEXT("counter per gate in evaluation ")
+        TEXT("order, and each list sums to the reject total printed beside it. THE LIST SPANS TWO ")
+        TEXT("FUNCTIONS: the ")
+        TEXT("first six gates are ValidateWellMemberSpot's, in the order it evaluates them; the last ")
+        TEXT("two are layout gates applied afterwards by TryPlaceWellGroup, which is why they have the ")
+        TEXT("separate, smaller denominator named above -- AND WHY THEY ARE STRUCTURALLY ZERO IN THE CORE ")
+        TEXT("LIST: the core is placed before any sibling exists and has no relative Z of its own, so ")
+        TEXT("those two core counters can never be anything but zero and say nothing about the world. ")
+        TEXT("A ninth counter, unclassified, closes the list and is not an evaluation position -- it is ")
+        TEXT("any reason string the classifier did not recognise, counted rather than dropped, and it is ")
+        TEXT("a FOOTPRINT reject, so it is inside the smaller denominator above and not outside it. ")
+        TEXT("THE ENCLOSURE GATE IS ASYMMETRIC BY DESIGN AND ")
+        TEXT("ITS TWO COUNTERS ARE NOT COMPARABLE: it always runs on the core and runs on satellites ")
+        TEXT("only when WellEnclosureGateOnSatellites is compiled true, so a zero in the satellite ")
+        TEXT("enclosure bucket may mean the gate is off rather than that nothing was enclosed -- read ")
+        TEXT("the constant, not the zero. READ EACH REJECT COUNT AGAINST ITS OWN PROBE DENOMINATOR AND ")
+        TEXT("NOT AGAINST THE OTHER SIDE'S: the core is validated ONCE per call and its settled ")
+        TEXT("location is then reused by every attempt, while each satellite is drawn up to its full ")
+        TEXT("budget within every attempt -- so the two populations differ in size by construction and ")
+        TEXT("a raw core-vs-satellite ratio measures that construction, not the world. The comparable ")
+        TEXT("fact is which side produced the rejection that ENDED this call, which is the side field ")
+        TEXT("above and is taken from the branch this call returned on, never inferred from the ")
+        TEXT("counters. COMPARE ONLY THE TWO ESCALATING OUTCOMES -- ESCALATED-core-rejected against ")
+        TEXT("ESCALATED-layouts-exhausted -- AND DO NOT POOL THE SIDE FIELD ACROSS OUTCOMES. A core ")
+        TEXT("rejection ends a call on the pass it happens, while layout exhaustion needs ")
+        TEXT("WellLayoutAttempts/WellLayoutAttemptsPerPass consecutive passes (%d as this build is ")
+        TEXT("compiled), so per unit time the core outcome is emitted about that many times as often ")
+        TEXT("for the same underlying rate; per ESCALATION the two are one-for-one, because each ")
+        TEXT("spends exactly one nudge. A BUDGET-SPENT-resuming line is not a termination at all. A ")
+        TEXT("DEFERRED-void line also carries a side field and MUST NOT be pooled with either: void ")
+        TEXT("means no terrain was found under the probe, which is a streaming state, not a fit ")
+        TEXT("refusal. A SATELLITE THAT EXHAUSTS ITS BUDGET KILLS THE WHOLE ATTEMPT AND THE GROUP IS ")
+        TEXT("NEVER PLACED SHORT -- all-or-nothing still governs the group -- so the exhaustion count ")
+        TEXT("above is the price of that rule, not a count of missing satellites in the world. ")
+        TEXT("ns-t27-perf -- THE NODE-OVERLAP GATE NOW READS A HOISTED SET, AND THIS IS ITS SIZE: ")
+        TEXT("resource-node actors kept by the ONE world scan this call made %d, where a negative ")
+        TEXT("value means no scan was made at all because the call ended at the core gate first. ")
+        TEXT("Every satellite probe tested against that set instead of walking the level itself. The ")
+        TEXT("set is the nodes within the satellite draw's outer radius plus the node reject radius, ")
+        TEXT("measured in XY of the settled core, which is a superset of everything the per-probe walk ")
+        TEXT("could have reached; the same deposit exclusion, the same self-exclusion and the same ")
+        TEXT("radius test then run per probe exactly as before. Nothing ")
+        TEXT("here states WHY any gate fired; each gate name is the predicate that returned false in ")
+        TEXT("this run. TIME, LAST, AND IT IS THE ONLY TIME ON THIS LINE: this call spent %.2f ms of ")
+        TEXT("wall clock on the game thread. That figure is this one call in this one frame on this ")
+        TEXT("one machine; it attributes nothing and names no cause. Divide it by the probe counts ")
+        TEXT("above to get a per-probe cost, and do not compare it across saves without also ")
+        TEXT("comparing how built-up they are."),
+        *CoreLabel, Outcome, TerminatedBy, C.AttemptsTried, AttemptCursor, AttemptLimit,
         C.CoreProbes, CoreTotal, *GateBreakdown(C.CoreRejects),
         C.SatProbes, CapturedSatellites, SatTotal, *GateBreakdown(C.SatRejects),
-        AttemptsToExhaust);
+        SatLayoutChances, C.SatBudgetExhausted, C.MaxDrawsAnySat, SatPlacementTries,
+        AttemptsToExhaust, C.NodesInScope, ElapsedMs);
 }

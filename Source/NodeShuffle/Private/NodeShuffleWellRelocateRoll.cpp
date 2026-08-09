@@ -88,7 +88,18 @@ namespace
     // A well's footprint is far bigger than a node's. H0 measured bounding radii 3566-6447 cm, so a
     // destination must clear the deal-box edge and other layout entries by the LARGEST radius plus the
     // node spacing, or the outer satellites start their search already on top of something.
-    constexpr float WellMaxBoundRadiusCm = 6500.0f;      // design §Q3a: measured max 6447 cm
+    //
+    // ns-t27-review 3: DELETED AND REPOINTED. The file-local constant that used to stand here --
+    //   constexpr float WellMaxBoundRadiusCm = 6500.0f;   // design §Q3a: measured max 6447 cm
+    // -- is gone and its three uses below read ANodeShuffleSubsystem::WellSatMaxRadiusCm instead (they
+    // are all inside RollWellRelocation, a member of that class, so the private static is in scope).
+    // Until ns-t27-corefirst this number was an INSET derived from a measurement (max observed cloud
+    // radius 6447 cm) and the placement merely hoped it held. It is now the ENFORCED outer radius of the
+    // satellite draw, so the deal's inset and the draw's reach are ONE fact -- and the T27 handoff's own
+    // relaxation ladder names widening the draw radius as a knob someone may reach for. Two copies in
+    // two translation units means raising one silently un-guarantees the other, with no compile error
+    // and no log line: satellites would draw outside the region the deal certified clear. Read the
+    // single definition from the header instead.
 
     // T7b/A3: a rigid-body capture held OUTSIDE the layout entry until a destination exists.
     //
@@ -430,21 +441,35 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll, bool 
         // H0 measured min inter-satellite 1818.8 cm and min core->satellite 2076 cm over the whole
         // world, against the 800 cm reject radius, and design §4b draws the conclusion that H2 needs NO
         // same-group overlap exemption. H2 builds no exemption. But a measurement is a measurement of
-        // one world at one time, and a group whose own members sit inside the reject radius could never
-        // validate its own footprint -- it would burn 36 yaws x 8 nudges x 3 redeals and then fail,
-        // with nothing in the log saying why. So the measurement is re-taken per well, here, and a
-        // violating well is refused with a line that says the measurement no longer holds.
+        // one world at one time, so the measurement is re-taken per well, here, and a violating well is
+        // refused with a line that says the measurement no longer holds.
+        // ns-t27-review F7 (this comment carried the same retired cause its log line did, and the
+        // packet's retired-constant sweep missed both): the sentence struck from here said such a group
+        // "could never validate its own footprint -- it would burn 36 yaws x 8 nudges x 3 redeals".
+        // That was true of the RIGID search, which replayed the captured cloud at the destination. There
+        // is no 36-yaw search any more and the captured offsets are never replayed, so a tight vanilla
+        // well would now place fine. The refusal is retained as caution about the DERIVATION, not as a
+        // claim about placeability -- see the log line below and WellSelfOverlapFloorCm's own comment.
         const double MinIntra = MinIntraGroupDistance(Cloud);
         if (MinIntra < WellSelfOverlapFloorCm)
         {
             ++RefusedGeometry;
             NoteRefusal(E);
+            // ns-t27-review F7: THE REASON CHANGED WHEN THE PLACEMENT DID. Under the retired rigid search a
+            // self-overlapping cloud was REPLAYED at the destination and could never validate its own
+            // footprint, which is what this line used to say. ns-t27-corefirst never replays the captured
+            // offsets -- satellites are redrawn at >= WellSiblingMinSeparationCm from each other -- so a
+            // tight vanilla well would now place fine. What this check still guards is the MEASUREMENT that
+            // design 4b's no-same-group-exemption conclusion rests on, and the backstop's vanilla-site
+            // reconstruction, which does still use LocalOffset. Refusing is the conservative call; the line
+            // no longer claims the group could not be placed.
             UE_LOG(LogNodeShuffle, Warning,
-                TEXT("WELLH2-ROLL core='%s': REFUSED -- its own members sit %.1f cm apart, inside the ")
-                TEXT("%.0f cm reject radius, so this group can never validate its own footprint. H0 ")
-                TEXT("measured a minimum of 1818.8 cm over 401 pairs and design §4b concluded no ")
-                TEXT("same-group exemption was needed; IF YOU ARE READING THIS LINE, that measurement no ")
-                TEXT("longer holds and the exemption question is reopened. %s"),
+                TEXT("WELLH2-ROLL core='%s': REFUSED -- its own members sit %.1f cm apart, inside the %.0f cm ")
+                TEXT("reject radius. H0 measured a minimum of 1818.8 cm over 401 pairs; IF YOU ARE READING ")
+                TEXT("THIS LINE that measurement no longer holds for this world, which is the condition ")
+                TEXT("design 4b's no-same-group-exemption conclusion was derived under. Under core-first ")
+                TEXT("placement the captured offsets are never replayed, so this group is refused out of ")
+                TEXT("caution about that derivation rather than because it could not be placed. %s"),
                 *WellShort(E.CorePath), MinIntra, WellSelfOverlapFloorCm, *KeptOrVanilla(E));
             continue;
         }
@@ -599,7 +624,7 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll, bool 
             // largest measured bounding radius so the outer satellites of a group dealt near the edge
             // are still inside the playable area, and space destinations by that radius plus the node
             // spacing.
-            const float Inset = WellMaxBoundRadiusCm;
+            const float Inset = WellSatMaxRadiusCm;
             const float MinX = BoxMin.X + Inset, MaxX = BoxMax.X - Inset;
             const float MinY = BoxMin.Y + Inset, MaxY = BoxMax.Y - Inset;
             for (int32 Try = 0; Try < WellRedealTries && !P.bDealt; ++Try)
@@ -610,7 +635,7 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll, bool 
                 for (int32 d = 0; d < WellDestinations.Num(); ++d)
                 {
                     if (d == P.SelfSiteIndex) { continue; } // this well's own vacating site
-                    if (FVector::DistSquared2D(WellDestinations[d], Cand) < FMath::Square(2.0f * WellMaxBoundRadiusCm))
+                    if (FVector::DistSquared2D(WellDestinations[d], Cand) < FMath::Square(2.0f * WellSatMaxRadiusCm))
                     {
                         bTooClose = true; break;
                     }
@@ -620,7 +645,7 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll, bool 
                 {
                     if (!Node.bActive) { continue; }
                     if (FVector::DistSquared2D(Node.Location, Cand)
-                        < FMath::Square(WellMaxBoundRadiusCm + WellMinNodeSpacingCm))
+                        < FMath::Square(WellSatMaxRadiusCm + WellMinNodeSpacingCm))
                     {
                         bTooClose = true; break;
                     }
@@ -1107,13 +1132,15 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll, bool 
         TEXT("not streamed %d, below the %d-satellite floor %d, pinned/unmanaged %d (%d of them already ")
         TEXT("relocated), geometry-refused %d, non-finite %d, permanently failed %d; %d refusal(s) ")
         TEXT("landed on an already-relocated well and KEPT its placement. rerollRelocatedWells=%d. ")
-        TEXT("Seed %d (relocation stream %d). K=%d yaw steps, %d tried per pass, %d nudges, %d redeals ")
-        TEXT("before a well is left vanilla for good."),
+        TEXT("Seed %d (relocation stream %d). Placement is core-first then independent satellites: %d ")
+        TEXT("layout attempts, %d made per pass, %d satellite draws per satellite per attempt, %d ")
+        TEXT("nudges, %d redeals before a well is left vanilla for good."),
         bIsReroll ? TEXT("re-roll") : TEXT("initial roll"), WellLayout.Num(),
         Captured, CapturedWhilePlaced, Dealt, DealFailed, DealFailedWhilePlaced,
         Enrolled, ReEnrolled, Enrolled - ReEnrolled, AbortedInUse, AbortedAfterTeardown, RefusedNoHandles,
         AlreadyKept, RefusedUnstreamed, WellMinSatellitesForRelocation, RefusedTooFew,
         RefusedPinned, RefusedPinnedWhilePlaced, RefusedGeometry, RefusedNonFinite, PermanentlyFailed,
         RefusedWhilePlaced, bRerollRelocated ? 1 : 0, Seed, Seed ^ 0x574C5232,
-        WellYawSteps, WellYawAttemptsPerPass, WellMaxGroupNudges, WellMaxGroupRedeals);
+        WellLayoutAttempts, WellLayoutAttemptsPerPass, WellSatPlacementTries,
+        WellMaxGroupNudges, WellMaxGroupRedeals);
 }

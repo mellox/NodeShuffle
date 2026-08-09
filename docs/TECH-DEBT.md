@@ -304,8 +304,9 @@ decision rather than re-derive the bug.*
 A solid Sulfur node appeared beside a relocated chlorine well and took a Miner. Measured from the log:
 the node sits **45.9 m** from `BaseNode_FrackingCore_2`'s core.
 
-**The clearance a well respects is 90 m** — `WellMaxBoundRadiusCm (6500) + WellMinNodeSpacingCm (2500)`,
-tested against every active layout node in `NodeShuffleWellRelocateRoll.cpp:604-612`. So the well would
+**The clearance a well respects is 90 m** — `WellSatMaxRadiusCm (6500) + WellMinNodeSpacingCm (2500)`
+(ns-t27-review 3 merged the roll's file-local `WellMaxBoundRadiusCm` into that header constant),
+tested against every active layout node in `NodeShuffleWellRelocateRoll.cpp:641-651`. So the well would
 never have chosen that spot. **The node did, because node placement does not know wells exist:**
 `WellDestinations` occurs **0 times** in `NodeShuffleSubsystem.cpp`, which is where ordinary node
 locations are generated.
@@ -523,7 +524,46 @@ build**. Hence `retypeReachable=`. **Fifth sighting of one-rule-one-side** (T16,
 > will under-report. And `%d fully linked` had quietly become **a label that lies**, since `bHealthy` now
 > also requires not-scattered / not-short / no-mismatch.
 
-### T26. A WELL footprint has NO enclosure gate — an ordinary node has one. A well can validate inside a slot or crevice.
+### ~~T26. A WELL footprint has NO enclosure gate — an ordinary node has one.~~ — **FIXED (built, COLD-REVIEWED, UNTESTED IN GAME) 2026-08-09, marker `2026-08-09-t27-2`, packets ns-t27-corefirst + ns-t27-fixes**
+
+> **STATUS IS "BUILT", NOT "CLOSED".** The build is green and the import table is unchanged
+> (817/767/0, zero symbols moved). A cold review has now run (SHIP WITH TESTS, 13 findings —
+> `_team/nodeshuffle-followups/T27-review.md`) and its fixes are applied in marker
+> `2026-08-09-t27-2`, but **nobody has stood at a relocated core in game.** Do not mark this closed
+> on the strength of a compile plus a review; the review's own verdict is that its two decisive
+> assumptions (F2, the enclosure predicate against the reported symptom; and parity row 14, Pressurizer /
+> Extractor clearance at 2076 cm) are unreachable by any amount of static review. (`F14` was written
+> here first and is wrong: the review has findings F1-F13 only, and 14 is a row of its PARITY TABLE at
+> `T27-review.md:565`. A reader would have hunted a finding that does not exist.)
+>
+> **What landed.** The enclosure lambda that lived inside `EnsureNewNodeSpawned` is now
+> `ANodeShuffleSubsystem::IsSpotEnclosed` (defined in `NodeShuffleWellFootprint.cpp`), and BOTH paths
+> call it — the node path's lambda delegates rather than keeping a second copy, so the two cannot
+> drift. `ValidateWellMemberSpot` gained a **required, undefaulted** `bApplyEnclosureGate` parameter;
+> the core passes a literal `true`, satellites pass the named constant
+> `WellEnclosureGateOnSatellites` (**compiled `true` as of marker `2026-08-09-t27-2`** — it shipped
+> `false` in `-t27-1`; the cold review's F3, reinforced by its §9.2 under the author's 2026-08-09
+> ruling, flipped it, because a satellite you can see but cannot build a Well Extractor on is the
+> same permanent, log-invisible shrink T15 names, and under independent retry a rejection costs one
+> of 24 draws). The undefaulted parameter is deliberate: a
+> defaulted one would let a future call site opt out by saying nothing, which is exactly how this
+> gap survived in the first place.
+>
+> **The false parity comment is gone**, replaced by a conditional claim that lists the six gates and
+> names the condition on the sixth. `WELLH2-PROBECENSUS` gained an `enclosed` counter on both sides,
+> and its prose warns that a zero in the SATELLITE enclosure bucket may mean the gate is off rather
+> than that nothing was enclosed — read the constant, not the zero.
+>
+> **The measurement this entry asked for was never taken** (`NodeShuffle.Here` at the 2026-08-09
+> Water core). The author's in-game report — flew there, circled a rock column, could not reach it —
+> was taken as sufficient grounds by directive. So the *rate* at which the new gate rejects
+> destinations is still UNMEASURED; the first log from this build is what measures it.
+>
+> This entry is retained in full below because its gate-by-gate source citation is still the record
+> of what the two paths did, and because the "measure the rejection rate before choosing" advice is
+> the advice for the SATELLITE half, which is still an open toggle.
+
+### T26 (original entry, retained). A WELL footprint has NO enclosure gate — an ordinary node has one. A well can validate inside a slot or crevice.
 **Found 2026-08-09 by the author asking, in game, *"I'm pinging a water 48m away — is this inside a cliff?"*
 Measured from source, not inferred.**
 
@@ -649,6 +689,27 @@ cannot be dealt the same site, and no well can be dealt the site of one that the
 > destroying **nothing**: the single number that would have exposed the bug, structurally unable to.
 > [[lessons-zero-needs-a-denominator]] has a sibling: **a derived figure is not a measurement, and the
 > more precise it looks the more it is trusted.**
+
+### T27 REGRESSION — `NodeShuffleWellRelocateApply.cpp` is 1171 lines (was 892 before ns-t27-corefirst)
+**Not introduced by T27, but made worse by it, and stated rather than left for someone to notice.**
+*(This figure has now been wrong twice: it was written as 1056 — true after `ns-t27-corefirst` — and
+not re-measured when `ns-t27-fixes` added ~56 lines of comment, then not re-measured again when
+`ns-t27-perf` added the cost-fix commentary. A debt entry whose entire content is a file-size figure
+is the worst possible place for [[stale figure drift]]. **Re-run `wc -l` before editing this line.**)*
+The file breached the 500-line rule before this packet (892 lines) and the core-first/independent-
+satellite rewrite added ~164 more: the per-satellite draw loop, two layout gates, and the reasoning
+for why sibling clearance became ours. No split was attempted — a split during a placement-semantics
+rewrite would have made the diff unreviewable, which is the opposite of what a packet handing work to
+a cold reviewer should do.
+
+The seam is the same one `NodeShuffleWellFootprint.cpp` was split along and is already obvious: the
+**satellite draw** (draw a candidate, run the two layout gates, log it) knows nothing about attempts,
+cursors, budgets, escalation or the commit. It is a `TryDrawSatelliteSpot`-shaped function and would
+take ~180 lines with it. `SuppressVanillaWellGroup` is a second, cleaner cut — it already carries its
+own banner comment and shares nothing with the search but the entry type.
+
+**Do this as its own packet, after T27 has been reviewed and tested in game.** Splitting unreviewed
+code moves the review target while the reviewer is reading it.
 
 ### T7 REGRESSION — `NodeShuffleWellRelocateRoll.cpp` is 921 lines, the day T7 was closed
 The three-phase restructure took it 519 → **921** (84% over the limit), hours after the four well files

@@ -300,7 +300,10 @@ ANodeShuffleSubsystem::AuditOneWellGroup(const FNodeShuffleWellEntry& E, const T
     }
 
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("WELL [%s] guid=%s core=%s res=%s worldHolds=%s resDisagree=%d/%d resDisagreeOn='%s' yaw=%.1f ")
+        // ns-t27-corefirst: coreYaw= was yaw= and read E.GroupYawDeg, which T27 pins to 0.0 for every
+        // group it places. It now reports the spawned core's own yaw, which is what a reader auditing
+        // a placed well was always looking for.
+        TEXT("WELL [%s] guid=%s core=%s res=%s worldHolds=%s resDisagree=%d/%d resDisagreeOn='%s' coreYaw=%.1f ")
         TEXT("satellites=%d/%d/%d (expected/spawned/registered) coreArray=%d live (%d raw, %d stale) ")
         TEXT("uncaptured=%d maxMemberDrift=%.0fcm (%s) flagMismatch=%d at=%s -- %s"),
         Phase, *WellShort(E.CorePath), IsValid(Core) ? *Core->GetName() : TEXT("<NO CORE>"),
@@ -308,7 +311,7 @@ ANodeShuffleSubsystem::AuditOneWellGroup(const FNodeShuffleWellEntry& E, const T
         // core's live resource; resDisagree= counts live spawned members against the live members
         // TESTED, so a zero always arrives with the number of chances it had to be non-zero.
         *WellShort(E.AssignedResourceClassPath), *WellShort(WellPathOf(CoreHolds)),
-        ResDisagree, ResTested, *ResDisagreeOn, E.GroupYawDeg,
+        ResDisagree, ResTested, *ResDisagreeOn, E.PlacedCoreRotation.Yaw,
         Expected, SpawnedCount, RegisteredCount, ArrayLive, ArrayRaw, ArrayStale, Uncaptured,
         MaxDrift, *DriftWho, FlagDisagreements, *E.PlacedCoreLocation.ToCompactString(),
         Verdict);
