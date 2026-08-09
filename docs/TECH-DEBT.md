@@ -205,6 +205,62 @@ Player-facing as of the T1 copy fix, which now states this instead of the false 
 >
 > **"until you reload the save" is still ASSUMED** — the recovery half has not been observed.
 
+### T16. A RELOCATED well is structurally UNPINNABLE — pin detection resolves through the hidden original
+**Found 2026-08-08 by the cold review of the re-roll-guard change, and MEASURED in the author's own
+log. This is a PRE-EXISTING defect in the shipped build, not a consequence of that change** (which was
+parked; see below). It is filed here because the same broken predicate is what made that change unsafe.
+
+`E.bPinned` is derived in `NodeShuffleWellRoll.cpp:153` from the **vanilla original core**. Relocation
+hides that core, disables its collision and deregisters it from the node manager — so a player
+**physically cannot build on it**, and the pin can never become true. The actor they *can* build on is
+our spawned core, which the `ns-review-h2 F1` filter at `:133` deliberately excludes from the census
+map. `:190` then does an unconditional `E.bPinned = bPinned;`, so even a previously-true pin is reset.
+
+**Measured, one roll, from `FactoryGame.log`:**
+```
+WELLH1-ROLL: skippedOurSpawned=17 -- ... wells H2 RELOCATED ... excluded
+WELLH1-ROLL: re-roll complete -- 20 wells (20 managed, 0 pinned/unresolved)
+```
+17 of 20 wells relocated; **every one reports `managed=1 pinned=0`.**
+
+**`ApplyWellRetype`'s "live pin re-check" (`NodeShuffleWellRetype.cpp:152, 202`) has the IDENTICAL
+defect** — it also resolves via `FindOriginalBaseByPath`. **Consequence in the build shipping today:**
+a re-roll can **retype a relocated well the player has built a Pressurizer and extractors on**, because
+the pin that exists to prevent exactly that cannot see their buildings. The player's chlorine setup
+silently becomes water. Not observed yet; the mechanism is proven.
+
+> **Pre-scoped fix: repair the pin AT ITS SOURCE so both consumers inherit it** — resolve occupancy
+> against the actor the player can actually build on (our spawned core/satellites) when the entry is
+> relocated, falling back to the original only when it is not. **Do not patch it at one call site:**
+> this file already records two copies of one rule drifting apart, and there are two consumers here
+> (`WellRoll` and `WellRetype`) that must not diverge again.
+
+### PARKED — the re-roll-geography change (`stash@{0}`, 2026-08-08)
+**The author decided wells should re-roll like ordinary nodes** — unpinned re-rolls its geography,
+pinned does not move. The guard at `NodeShuffleWellRelocateRoll.cpp:152` was deleted to enable it, and
+the cold review returned **DO NOT SHIP on two blockers**. The work is stashed, not lost; the deployed
+binary was rebuilt from the reviewed commit so nothing unsafe is in the DLL.
+
+1. **T16 above makes the change's stated safety property false.** The comment claimed pinning protected
+   built-on wells; nothing is ever pinned, so a re-roll could despawn a well out from under a
+   pressurizer. Buildings survive (`DespawnWellGroup`'s occupancy gate holds) — but **its return value
+   is discarded**, so execution continues into `bGroupPlaced=false`, claim withdrawal and a re-deal,
+   leaving the player's machine on the old core and fresh live satellites kilometres away, retrying
+   forever. In a mod whose deck machinery exists to conserve well resources, that duplicates them.
+2. **A failed re-deal deletes the well from the world.** Despawn + `ClearAbandonedWellPlacement` run
+   *before* the deal loop, and nothing ever un-suppresses a vanilla group. On deal failure the log says
+   "left vanilla this roll" — false: nothing at the old site, nothing at a new one.
+
+> **Pre-scoped fix, in the review's recommended order:** (A2) fix the pin at its source per T16;
+> (A3) restructure to **deal-first, despawn-second** so a failed deal cannot orphan the well;
+> (A4) gate it behind a `RerollRelocatedWells` toggle, default OFF, so an existing save with 17 placed
+> wells does not churn on one keypress. **This is a structural review-response change to a
+> path-replacing change — it earns a FULL re-review, from a different reviewer.**
+> Also flagged: `WellRedealTries = 24` was sized for 3-5 wells per roll and would now be asked for ~20
+> ([[feedback-own-caps-are-revisable]]); five refusal diagnostics would assert "left vanilla" for wells
+> that are visibly relocated; and the summary counters would double-count, since `AlreadyCaptured` and
+> `Enrolled` were disjoint only because of the guard.
+
 ---
 
 ## P2 — real unknowns, cheap to close
