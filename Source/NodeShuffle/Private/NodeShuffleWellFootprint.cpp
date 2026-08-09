@@ -26,6 +26,7 @@
 
 #include "NodeShuffle.h"
 #include "NodeShuffleWellCensus.h"   // AFGResourceNodeFrackingSatellite (the self-exclusion scan)
+#include "NodeShuffleWellStage0.h"   // ns-t35-gatereach: the gate enum the reached array is indexed by
 
 #include "EngineUtils.h"
 #include "Engine/OverlapResult.h"
@@ -65,14 +66,28 @@ namespace
 // it, so the well path did not have it, and a comment two files away claimed it did. This is now a
 // member with ONE definition; EnsureNewNodeSpawned's lambda delegates here rather than keeping a
 // second copy, because two copies of a gate that must agree is the same defect one indirection later.
+// ns-t35-gatereach: OutRays RECORDS, IT DOES NOT DECIDE. It exists so NodeShuffle.Here can print this
+// predicate's per-ray working while calling THIS function -- the one the placement paths call -- rather
+// than a second copy that could drift from it, which is T26's defect in a new place. Everything that
+// produces the verdict is unchanged: the same 8 bearings, the same 500 cm reach from At.Z+200, the same
+// ECC_WorldStatic trace with the same query params, the same 7-of-8 threshold, the same return. The
+// recorder writes only inside `if (OutRays)`, and every placement caller passes nullptr.
 bool ANodeShuffleSubsystem::IsSpotEnclosed(const FVector& At, int32& OutBlockedRays,
-                                           int32& OutTotalRays) const
+                                           int32& OutTotalRays,
+                                           TArray<FNodeShuffleEnclosureRay>* OutRays,
+                                           int32* OutBlockedThreshold) const
 {
     OutBlockedRays = 0;
     OutTotalRays = WellEnclosureRayCount;
+    if (OutRays) { OutRays->Reset(); }
+    // Written from the same named constant this function's return statement compares the blocked count
+    // against -- never from a number a caller typed into a log string.
+    if (OutBlockedThreshold) { *OutBlockedThreshold = WellEnclosureBlockedThreshold; }
     UWorld* World = GetWorld();
     // No world means the test could not be RUN. Report not-enclosed and a zero blocked count -- the
     // caller's own no-world guard is the one that refuses; this must not manufacture a verdict.
+    // With a recorder attached the array is left EMPTY, which is how a caller tells "no rays were cast"
+    // from "8 rays were cast and none hit".
     if (!World) { return false; }
 
     const FVector Eye(At.X, At.Y, At.Z + WellEnclosureEyeHeightCm);
@@ -84,9 +99,23 @@ bool ANodeShuffleSubsystem::IsSpotEnclosed(const FVector& At, int32& OutBlockedR
                          Eye.Z);
         FHitResult EncHit;
         FCollisionQueryParams EncParams(FName(TEXT("NodeShuffleEnclosure")), false);
-        if (World->LineTraceSingleByChannel(EncHit, Eye, To, ECC_WorldStatic, EncParams))
+        const bool bHit = World->LineTraceSingleByChannel(EncHit, Eye, To, ECC_WorldStatic, EncParams);
+        if (bHit)
         {
             ++OutBlockedRays;
+        }
+        if (OutRays)
+        {
+            FNodeShuffleEnclosureRay Rec;
+            Rec.BearingDeg = FMath::RadiansToDegrees(static_cast<double>(Ang));
+            Rec.bBlocked = bHit;
+            // The distance is taken from the hit this ray reported, not from the reach constant: a
+            // blocking hit can be anywhere along the segment and the constant is only its far end.
+            Rec.HitDistanceCm = bHit ? FVector::Dist(Eye, EncHit.ImpactPoint) : -1.0;
+            const AActor* HitActor = bHit ? EncHit.GetActor() : nullptr;
+            Rec.HitActor = HitActor ? HitActor->GetName()
+                                    : (bHit ? FString(TEXT("<hit-with-no-actor>")) : FString(TEXT("<no-hit>")));
+            OutRays->Add(Rec);
         }
     }
     return OutBlockedRays >= WellEnclosureBlockedThreshold;
@@ -192,15 +221,31 @@ bool ANodeShuffleSubsystem::ValidateWellMemberSpot(const FVector& ProbeXY, float
                                                    bool bApplyEnclosureGate,
                                                    const TArray<TWeakObjectPtr<AFGResourceNode>>* NodeScanCache,
                                                    FVector& OutLoc,
-                                                   FRotator& OutRot, FString& OutReason) const
+                                                   FRotator& OutRot, FString& OutReason,
+                                                   int32* OutGatesReached) const
 {
+    // ns-t35-gatereach: the caller hands in a bare int32* because this header may not include the
+    // private census header. That makes the array WIDTH an unchecked contract, so it is checked here --
+    // the one place that knows both sides -- rather than left to a future edit of the enum.
+    static_assert(FNodeShuffleWellProbeCensus::Gate_Count == 9,
+                  "ns-t35-gatereach: the gate enum changed width; every OutGatesReached caller passes a "
+                  "fixed-size array indexed by it and must be revisited before this assert is relaxed.");
+    // Increments the reached slot for gate G, and does nothing at all when no recorder was supplied.
+    // Called immediately BEFORE the gate it names, so it counts chances to fire and never outcomes.
+    const auto Reach = [OutGatesReached](int32 G) { if (OutGatesReached) { ++OutGatesReached[G]; } };
+
     OutReason.Reset();
+    // The unclassified slot's denominator is every probe that got this far -- see the field's own
+    // comment in NodeShuffleWellStage0.h. It is counted before the no-world guard on purpose: the
+    // no-world refusal classifies as unclassified and must be inside its own denominator.
+    Reach(FNodeShuffleWellProbeCensus::Gate_Unclassified);
     UWorld* World = GetWorld();
     if (!World) { OutReason = TEXT("no-world"); return false; }
 
     bool bWater = false, bSteep = false;
     // Long top-down trace. Wells are surface features; there is no cave path for them, so the short
     // trace (and its whole cave-floor ruleset) deliberately does not apply.
+    Reach(FNodeShuffleWellProbeCensus::Gate_Void);
     if (!RaycastGroundAt(ProbeXY, StartZ, nullptr, nullptr, OutLoc, OutRot, bWater, /*bShortTrace=*/false,
                          &bSteep))
     {
@@ -210,7 +255,11 @@ bool ANodeShuffleSubsystem::ValidateWellMemberSpot(const FVector& ProbeXY, float
         OutReason = TEXT("void(unstreamed)");
         return false;
     }
+    // Both flags were written by the single RaycastGroundAt call above, so each gate below is reached
+    // exactly when the one before it did not return -- the count is of the TEST, not of the trace.
+    Reach(FNodeShuffleWellProbeCensus::Gate_Water);
     if (bWater) { OutReason = TEXT("water"); return false; }
+    Reach(FNodeShuffleWellProbeCensus::Gate_Cliff);
     if (bSteep) { OutReason = TEXT("cliff"); return false; }
 
     // Resource-node overlap. Deposits are excluded for the same reason the node path excludes them
@@ -249,6 +298,9 @@ bool ANodeShuffleSubsystem::ValidateWellMemberSpot(const FVector& ProbeXY, float
         OutReason = FString::Printf(TEXT("node-overlap(%s)"), *Other->GetName());
         return true;
     };
+    // Counted ONCE per probe, not once per candidate actor: the gate is the whole scan, and the thing
+    // with a denominator is how many probes the scan was run for.
+    Reach(FNodeShuffleWellProbeCensus::Gate_NodeOverlap);
     if (NodeScanCache)
     {
         // The hoisted set (BuildWellNodeScanCache above). Kept in TActorIterator order, so the first
@@ -272,6 +324,7 @@ bool ANodeShuffleSubsystem::ValidateWellMemberSpot(const FVector& ProbeXY, float
     // Player machinery. Foundations and ramps are EXEMPT -- the user's standing call is that a node on
     // a foundation is fine; a node inside a machine is not.
     {
+        Reach(FNodeShuffleWellProbeCensus::Gate_Buildable);
         TArray<FOverlapResult> Hits;
         FCollisionObjectQueryParams ObjParams;
         ObjParams.AddObjectTypesToQuery(ECC_WorldStatic);
@@ -301,6 +354,11 @@ bool ANodeShuffleSubsystem::ValidateWellMemberSpot(const FVector& ProbeXY, float
     // and naming one of them would be this repo's log-asserted-a-cause defect in its purest form.
     if (bApplyEnclosureGate)
     {
+        // INSIDE the flag test, so the reached count answers the question T35 asks: how often this gate
+        // actually ran, not how often a probe got as far as the flag that decides whether it runs. A
+        // satellite-side reached count of zero beside a non-zero buildable one therefore says the flag
+        // was false for every probe -- and a zero on both says the probes ended earlier.
+        Reach(FNodeShuffleWellProbeCensus::Gate_Enclosed);
         int32 Blocked = 0, Total = 0;
         if (IsSpotEnclosed(OutLoc, Blocked, Total))
         {

@@ -190,9 +190,11 @@ bool ANodeShuffleSubsystem::TryPlaceWellGroup(FNodeShuffleWellEntry& E, UClass* 
     // this path already cost, so the hoist has nothing to buy here. Written as an explicit nullptr
     // rather than a defaulted
     // parameter for the T26 reason: a call site must say which path it takes.
+    // ns-t35-gatereach: Probes.CoreReached is the gate-reached half of the core census. It is an
+    // out-parameter only -- nothing below reads it and no branch depends on it.
     if (!ValidateWellMemberSpot(E.DestCoreLocation, StartZ, /*bApplyEnclosureGate=*/true,
                                 /*NodeScanCache=*/nullptr,
-                                CoreLoc, CoreRot, CoreReason))
+                                CoreLoc, CoreRot, CoreReason, Probes.CoreReached))
     {
         ++Probes.CoreRejects[WellRejectGateIndex(CoreReason)];
         if (CoreReason.StartsWith(TEXT("void")))
@@ -349,9 +351,12 @@ bool ANodeShuffleSubsystem::TryPlaceWellGroup(FNodeShuffleWellEntry& E, UClass* 
                 // WellEnclosureGateOnSatellites for why the two sides differ and what it costs.
                 // ns-t27-perf: &NodeScanCache is the hoisted set built once above. Same gate, same
                 // order, same reason strings -- only the source of the actors changed.
+                // ns-t35-gatereach: Probes.SatReached is the gate-reached half of the satellite census,
+                // and the enclosure slot in it is the one measurement T35 exists to obtain -- it counts
+                // how many satellite probes reached that gate, which a reject count alone cannot say.
                 if (!ValidateWellMemberSpot(Probe, static_cast<float>(CoreLoc.Z),
                                             WellEnclosureGateOnSatellites, &NodeScanCache,
-                                            SatLoc, SatRot, Reason))
+                                            SatLoc, SatRot, Reason, Probes.SatReached))
                 {
                     ++Probes.SatRejects[WellRejectGateIndex(Reason)]; // ns-t23-stage0
                     LastReason = Reason;
@@ -366,6 +371,10 @@ bool ANodeShuffleSubsystem::TryPlaceWellGroup(FNodeShuffleWellEntry& E, UClass* 
                 // XY and 1500 cm apart in Z read as 1529 cm in 3-D and look comfortably separated,
                 // right up until you stand between them and see one node stacked above the other.
                 {
+                    // ns-t35-gatereach: this gate is TryPlaceWellGroup's own, so its reached counter is
+                    // incremented here rather than inside the footprint test. Counted before the loop
+                    // runs, so it is a chance to fire and not an outcome.
+                    ++Probes.SatReached[FNodeShuffleWellProbeCensus::Gate_Sibling];
                     // ns-t27-review F6: THE CORE'S FLOOR IS THE CORE'S CONSTANT. PlacedPoints[0] is the
                     // core and the rest are siblings, and the two have DIFFERENT minima: the packet's
                     // stated Pressurizer/Extractor clearance assumption is WellSatMinRadiusCm (2076),
@@ -396,6 +405,9 @@ bool ANodeShuffleSubsystem::TryPlaceWellGroup(FNodeShuffleWellEntry& E, UClass* 
                 // Per-member Z settle is unbounded on its own: an independently drawn satellite can
                 // settle on a clifftop or a ravine floor with nothing tying it to its core's height.
                 {
+                    // ns-t35-gatereach: the second layout gate's own reached counter, same rule as the
+                    // sibling gate's above -- incremented before the test, never after it.
+                    ++Probes.SatReached[FNodeShuffleWellProbeCensus::Gate_RelativeZ];
                     // ns-t27-review F4: the cap is RADIUS-RELATIVE, not flat. A flat 2500 cm cap applied
                     // to a candidate drawn up to 6500 cm out is a grade limit in disguise -- it first
                     // bites at 21 degrees and, because the draw is uniform in AREA (half of all

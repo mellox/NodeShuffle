@@ -79,12 +79,20 @@ namespace
         }
     }
 
-    FString GateBreakdown(const int32* Counts)
+    // ns-t35-gatereach: ONE ENTRY PER GATE, CARRYING BOTH HALVES. Before this, each entry was a bare
+    // rejection count, and a gate that rejected nothing printed identically to a gate no probe ever
+    // reached -- which is docs/TECH-DEBT.md T35 and the fourth sighting of the missing-denominator
+    // defect in this file family. Each entry is now the gate's name, a colon, the number of probes it
+    // REJECTED, a slash, and the number of probes that REACHED it. The two halves are counted at
+    // different places and neither is derived from the other: the rejection half is written where the
+    // gate returns false, the reached half where the gate is about to be evaluated.
+    FString GateBreakdown(const int32* Rejects, const int32* Reached)
     {
         FString S;
         for (int32 G = 0; G < FNodeShuffleWellProbeCensus::Gate_Count; ++G)
         {
-            S += FString::Printf(TEXT("%s%s:%d"), (G == 0) ? TEXT("") : TEXT(" "), GateName(G), Counts[G]);
+            S += FString::Printf(TEXT("%s%s:%d/%d"), (G == 0) ? TEXT("") : TEXT(" "), GateName(G),
+                                 Rejects[G], Reached[G]);
         }
         return S;
     }
@@ -331,23 +339,47 @@ void LogWellProbeCensus(const FString& CoreLabel, const FNodeShuffleWellProbeCen
         TEXT("rejects %d [%s]. Of those satellite probes, %d cleared the footprint test and were the ")
         TEXT("only ones the two LAYOUT gates could fire on. Satellites that exhausted their whole draw ")
         TEXT("budget without finding any spot %d; the most draws any single satellite spent, whether or ")
-        TEXT("not it found a spot %d of a per-satellite budget of %d. The bracketed lists carry one ")
-        TEXT("counter per gate in evaluation ")
-        TEXT("order, and each list sums to the reject total printed beside it. THE LIST SPANS TWO ")
-        TEXT("FUNCTIONS: the ")
+        TEXT("not it found a spot %d of a per-satellite budget of %d. THE BRACKETED LISTS CARRY ONE ")
+        TEXT("ENTRY PER GATE IN EVALUATION ORDER, AND EACH ENTRY NOW CARRIES BOTH HALVES: the gate's ")
+        TEXT("name, then a colon, then how many probes that gate REJECTED, then a slash, then how many ")
+        TEXT("probes REACHED it -- got as far as that gate and had it evaluated. The rejection halves ")
+        TEXT("sum to the reject total printed beside the list; the reached halves do not sum to ")
+        TEXT("anything, because one probe is counted by every gate it reaches. ns-t35-gatereach ADDED ")
+        TEXT("THE SECOND HALF AND THAT IS THE POINT OF IT: with a rejection count alone, a gate that ")
+        TEXT("refused nothing printed exactly like a gate no probe ever reached, so neither could be ")
+        TEXT("told from the other -- measured on the build immediately before this counter existed, ")
+        TEXT("where the enclosure bucket read zero on both sides across every census line of a whole ")
+        TEXT("session. That build's marker is deliberately NOT spelled here: it would put a build tag ")
+        TEXT("into every census line and break the slice-by-marker grep that every log measurement in ")
+        TEXT("this project starts with. WHEN GREPPING A COUNT ")
+        TEXT("OFF THESE LISTS, ANCHOR ON THE DELIMITERS AND NOT ON THE DIGITS: entries are separated ")
+        TEXT("by a single space and the last one is followed by the closing bracket, so a pattern ")
+        TEXT("ending in a digit will also match any longer number that starts with it. THE LIST SPANS ")
+        TEXT("TWO FUNCTIONS: the ")
         TEXT("first six gates are ValidateWellMemberSpot's, in the order it evaluates them; the last ")
         TEXT("two are layout gates applied afterwards by TryPlaceWellGroup, which is why they have the ")
         TEXT("separate, smaller denominator named above -- AND WHY THEY ARE STRUCTURALLY ZERO IN THE CORE ")
         TEXT("LIST: the core is placed before any sibling exists and has no relative Z of its own, so ")
         TEXT("those two core counters can never be anything but zero and say nothing about the world. ")
+        TEXT("Both halves of those two core entries are zero, which is now visible on the line rather ")
+        TEXT("than asserted by this sentence: the core never reaches either gate, so neither can reject. ")
         TEXT("A ninth counter, unclassified, closes the list and is not an evaluation position -- it is ")
         TEXT("any reason string the classifier did not recognise, counted rather than dropped, and it is ")
         TEXT("a FOOTPRINT reject, so it is inside the smaller denominator above and not outside it. ")
         TEXT("THE ENCLOSURE GATE IS ASYMMETRIC BY DESIGN AND ")
         TEXT("ITS TWO COUNTERS ARE NOT COMPARABLE: it always runs on the core and runs on satellites ")
-        TEXT("only when WellEnclosureGateOnSatellites is compiled true, so a zero in the satellite ")
-        TEXT("enclosure bucket may mean the gate is off rather than that nothing was enclosed -- read ")
-        TEXT("the constant, not the zero. READ EACH REJECT COUNT AGAINST ITS OWN PROBE DENOMINATOR AND ")
+        TEXT("only when WellEnclosureGateOnSatellites is compiled true, so a zero rejection count in ")
+        TEXT("the satellite enclosure entry may mean the gate is off rather than that nothing was ")
+        TEXT("enclosed. ITS REACHED HALF IS WHAT SEPARATES THOSE: a zero there means the gate did not ")
+        TEXT("run in this call, and a non-zero there means it ran that many times and refused nothing. ")
+        TEXT("The reached half does NOT say why it did not run -- gate compiled off, and every probe ")
+        TEXT("ending at an earlier gate, both print zero. The buildable entry on the same list ")
+        TEXT("separates those, because nothing sits between the two gates: subtract that entry's ")
+        TEXT("rejections from its reached count and the difference is how many probes arrived at the ")
+        TEXT("enclosure flag this call. A non-zero difference beside a zero enclosure reach is probes ")
+        TEXT("arriving and the gate not running; a zero difference is no probe arriving. READ EACH ")
+        TEXT("REJECT COUNT ")
+        TEXT("AGAINST ITS OWN PROBE DENOMINATOR AND ")
         TEXT("NOT AGAINST THE OTHER SIDE'S: the core is validated ONCE per call and its settled ")
         TEXT("location is then reused by every attempt, while each satellite is drawn up to its full ")
         TEXT("budget within every attempt -- so the two populations differ in size by construction and ")
@@ -383,8 +415,8 @@ void LogWellProbeCensus(const FString& CoreLabel, const FNodeShuffleWellProbeCen
         TEXT("above to get a per-probe cost, and do not compare it across saves without also ")
         TEXT("comparing how built-up they are."),
         *CoreLabel, Outcome, TerminatedBy, C.AttemptsTried, AttemptCursor, AttemptLimit,
-        C.CoreProbes, CoreTotal, *GateBreakdown(C.CoreRejects),
-        C.SatProbes, CapturedSatellites, SatTotal, *GateBreakdown(C.SatRejects),
+        C.CoreProbes, CoreTotal, *GateBreakdown(C.CoreRejects, C.CoreReached),
+        C.SatProbes, CapturedSatellites, SatTotal, *GateBreakdown(C.SatRejects, C.SatReached),
         SatLayoutChances, C.SatBudgetExhausted, C.MaxDrawsAnySat, SatPlacementTries,
         AttemptsToExhaust, C.NodesInScope, ElapsedMs);
 }

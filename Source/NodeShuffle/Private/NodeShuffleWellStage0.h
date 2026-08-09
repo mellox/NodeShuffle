@@ -65,6 +65,21 @@ struct FNodeShuffleWellProbeCensus
 
     int32 CoreRejects[Gate_Count] = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
     int32 SatRejects[Gate_Count] = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+    // ns-t35-gatereach: THE DENOMINATOR EACH REJECT COUNT WAS MISSING, and it is what T35 is. Element G
+    // is incremented immediately BEFORE gate G is evaluated, so it counts the times that gate got a
+    // CHANCE to fire. Measured 2026-08-09 on build 2026-08-09-t27-3: the enclosure bucket read zero on
+    // both sides across 2,961 census lines while 2,032 of 2,042 attempts ended at the void gate, which
+    // is gate index 0 -- and with only a reject count there is no way to tell a gate that passed
+    // everything from a gate nothing ever reached. Gates 0-5 are filled inside ValidateWellMemberSpot
+    // (which is handed a pointer to one of these arrays); gates 6-7 are filled by TryPlaceWellGroup at
+    // the two layout gates it evaluates itself.
+    // THE UNCLASSIFIED SLOT IS NOT AN EVALUATION POSITION AND ITS DENOMINATOR IS DIFFERENT: it is
+    // incremented once per probe that ENTERED ValidateWellMemberSpot, because an unrecognised reason
+    // string can be produced by any refusal inside that function -- including the no-world refusal that
+    // happens before any gate runs. So its reached value should equal CoreProbes / SatProbes exactly,
+    // and a disagreement is a defect in the counting, not a fact about the world.
+    int32 CoreReached[Gate_Count] = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+    int32 SatReached[Gate_Count] = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
     // The denominators. Without them a zero in any bucket above cannot be told from a bucket that was
     // never given a chance to fire -- the failure mode this repo has now shipped twice.
     // Two of the buckets have a denominator of their OWN and it is not CoreProbes or SatProbes:

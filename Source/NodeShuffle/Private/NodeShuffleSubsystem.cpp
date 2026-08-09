@@ -2265,6 +2265,10 @@ void ANodeShuffleSubsystem::ApplyLayout()
         LastDeferSummary = DeferredThisPass;
     }
 
+    // ns-t35-gatereach: the solid-node gate census (NodeShuffleNodeGateCensus.cpp). Called every pass;
+    // it emits only when one of its counters has moved, so a settled world adds no lines.
+    EmitNodeGateCensus();
+
     // coexist-1 §1: THE ungated coexistence summary — one Display line per pass, only when the dormant
     // count changed (never repeated on a stable world; a bulk destroyer's mass-tombstone pass = 1 line).
     if (DormantThisSession.Num() != LastDormantSummaryNum)
@@ -3958,6 +3962,10 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
     if (!Entry.bRayCasted)
     {
         bool bWaterNoLand = false;
+        // ns-t35-gatereach: the settle gate's denominator. Counted before the call, so it is a chance
+        // to fire and not an outcome; the two refusal counters below split ONLY by the flag
+        // RaycastSettle sets, because that is the only sub-reason it exposes.
+        ++NodeGateSettleReached;
         bool bSettled = RaycastSettle(Entry, nullptr, nullptr, &bWaterNoLand);
         // playtest-fixes-1 / steepfix-1 (unplaceable redeal): a hit that is water OR too steep, with
         // no flat land within the 300 m spiral, is DEFINITIVE (the ground is there, it just can't
@@ -3971,6 +3979,8 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
         }
         if (!bSettled)
         {
+            // ns-t35-gatereach: the settle gate's rejection half, split by the one signal available.
+            if (bWaterNoLand) { ++NodeGateSettleRejectedWater; } else { ++NodeGateSettleRejectedNoWater; }
             // Cold review #1 safety net: an underground entry that keeps VOID-deferring (bad cell Z,
             // changed geometry) has no water signal to trigger a redeal and would retry silently
             // forever — a lost node. Count misses only while a player is CLOSE (cave collision
@@ -4023,6 +4033,10 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
 
         auto OverlapsAt = [&](const FVector& At) -> bool
         {
+            // ns-t35-gatereach: this lambda IS the node path's occupancy gate, so counting here counts
+            // every call of it -- the dealt spot and every spiral-nudge probe. The counters are read by
+            // nothing but the census emitter and no branch below tests them.
+            ++NodeGateCallOccupiedReached;
             for (TActorIterator<AFGResourceNode> It(GetWorld()); It; ++It)
             {
                 AFGResourceNode* Other = *It;
@@ -4039,6 +4053,7 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
                 }
                 if (FVector::DistSquared(Other->GetActorLocation(), At) < RejSq)
                 {
+                    ++NodeGateCallOccupiedRejected; // ns-t35-gatereach (resource-node half)
                     return true;
                 }
             }
@@ -4062,6 +4077,7 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
                         AActor* HitActor = H.GetActor();
                         if (HitActor && HitActor->IsA<AFGBuildable>() && !HitActor->IsA<AFGBuildableFoundation>())
                         {
+                            ++NodeGateCallOccupiedRejected; // ns-t35-gatereach (buildable half)
                             return true; // a machine/wall/belt — reject (foundations & ramps are allowed)
                         }
                     }
@@ -4085,11 +4101,26 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
         auto IsEnclosed = [&](const FVector& At) -> bool
         {
             int32 Blocked = 0, Total = 0;
-            return IsSpotEnclosed(At, Blocked, Total);
+            // ns-t35-gatereach: THE COUNT T35 ASKS FOR ON THIS PATH. The verdict is still whatever the
+            // shared predicate returns -- it is called once, its result is stored, returned unchanged,
+            // and the counters are written from that stored result rather than from a second call.
+            ++NodeGateCallEnclosedReached;
+            const bool bEnclosed = IsSpotEnclosed(At, Blocked, Total);
+            if (bEnclosed) { ++NodeGateCallEnclosedRejected; }
+            return bEnclosed;
         };
 
+        // ns-t35-gatereach: the DEALT-SPOT population, counted separately from the all-calls counters
+        // inside the two lambdas because one nudging entry contributes many calls and exactly one dealt
+        // spot. The enclosure line below is unchanged -- the short circuit still decides whether
+        // IsEnclosed runs -- so the reached counter is incremented on the same condition the short
+        // circuit tests, and never by evaluating that condition a second way.
+        ++NodeGatePrimaryOccupiedReached;
         const bool bSpotOccupied = OverlapsAt(Entry.Location);
+        if (bSpotOccupied) { ++NodeGatePrimaryOccupiedRejected; }
+        else { ++NodeGatePrimaryEnclosedReached; }
         const bool bSpotEnclosed = !bSpotOccupied && IsEnclosed(Entry.Location);
+        if (bSpotEnclosed) { ++NodeGatePrimaryEnclosedRejected; }
         if (bSpotOccupied || bSpotEnclosed)
         {
             if (bSpotEnclosed && FNodeShuffleModule::AreDiagnosticsEnabled())
@@ -6559,8 +6590,12 @@ void ANodeShuffleSubsystem::LogHereCensus() const
         bool bSlopeWater = false;
         bool bSlopeCliff = false;
         FVector SlopeN = FVector::UpVector;
-        if (RaycastGroundAt(P, P.Z, Pawn, nullptr, SlopeLoc, SlopeRot, bSlopeWater,
-                            /*bShortTrace=*/false, &bSlopeCliff, &SlopeN))
+        // ns-t35-gatereach: the result is now held in a local so the enclosure block below can say
+        // WHICH point it tested without tracing a second time. The call, its arguments and the branch
+        // it feeds are unchanged.
+        const bool bHaveSettled = RaycastGroundAt(P, P.Z, Pawn, nullptr, SlopeLoc, SlopeRot, bSlopeWater,
+                                                  /*bShortTrace=*/false, &bSlopeCliff, &SlopeN);
+        if (bHaveSettled)
         {
             const float SlopeHereDeg = FMath::RadiansToDegrees(
                 FMath::Acos(FMath::Clamp(static_cast<float>(SlopeN.Z), -1.0f, 1.0f)));
@@ -6569,6 +6604,56 @@ void ANodeShuffleSubsystem::LogHereCensus() const
                 SlopeHereDeg, CliffSlopeDeg,
                 bSlopeCliff ? TEXT("WOULD REJECT settles here") : TEXT("accepts settles here"),
                 bSlopeWater ? 1 : 0);
+        }
+
+        // ns-t35-gatereach: THE ENCLOSURE GATE, RUN WHERE YOU ARE STANDING, WITH ITS WORKING PRINTED.
+        // docs/TECH-DEBT.md T35: this gate reported zero rejections across a whole session while the
+        // author stood at a relocated core buried in a rock, and a reject count alone cannot say
+        // whether the gate passed that spot or never reached it. This runs the SAME
+        // ANodeShuffleSubsystem::IsSpotEnclosed that both placement paths call -- not a copy of it, so
+        // there is nothing here that can disagree with the gate -- and prints every ray it cast.
+        // WHICH POINT IS TESTED: the placement paths test the SETTLED location, so when the ground
+        // trace above hit, this tests that impact point; when it missed, it tests the player's own
+        // position instead. The line says which, every time, because they are different questions.
+        {
+            const FVector TestAt = bHaveSettled ? SlopeLoc : P;
+            TArray<FNodeShuffleEnclosureRay> Rays;
+            int32 Blocked = 0, Total = 0, Threshold = -1;
+            const bool bEnclosed = IsSpotEnclosed(TestAt, Blocked, Total, &Rays, &Threshold);
+            for (int32 i = 0; i < Rays.Num(); ++i)
+            {
+                const FNodeShuffleEnclosureRay& R = Rays[i];
+                UE_LOG(LogNodeShuffle, Display,
+                    TEXT("HERE: enclosure ray %d of %d, bearing %.0f deg: %s%s%s"),
+                    i + 1, Rays.Num(), R.BearingDeg,
+                    R.bBlocked ? TEXT("BLOCKED") : TEXT("clear"),
+                    R.bBlocked ? *FString::Printf(TEXT(" at %.0f cm by "), R.HitDistanceCm) : TEXT(""),
+                    R.bBlocked ? *R.HitActor : TEXT(""));
+            }
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("HERE: ENCLOSURE GATE at %s (%s) — %d of %d rays blocked, and this build refuses a ")
+                TEXT("spot at %d or more blocked, so the verdict here is %s. The rays above are the ")
+                TEXT("ones this call cast: horizontal, evenly spaced in bearing, from a fixed height ")
+                TEXT("above the tested point, each one reaching a fixed distance. The threshold and the ")
+                TEXT("ray count printed here were read back from the predicate this run, not typed into ")
+                TEXT("this line. WHAT THIS SHAPE OF TEST CANNOT SEE, by construction and not by ")
+                TEXT("observation: anything that blocks beyond one ray's reach, anything above or below ")
+                TEXT("the ray height, and any gap that falls between two bearings. This is the same ")
+                TEXT("function both placement paths call, so wherever one of them runs this gate at ")
+                TEXT("this point in this world it reaches the verdict printed here. WHETHER a path runs ")
+                TEXT("it at all is a different question and this line does not answer it -- the ")
+                TEXT("gate-reached counters on the census lines are what do. It states no cause: each ")
+                TEXT("ray reports the trace ")
+                TEXT("it made and nothing about why the world is shaped that way. A ray count of zero ")
+                TEXT("above means the predicate cast no rays at all and the verdict is not a ")
+                TEXT("measurement of this spot."),
+                *TestAt.ToCompactString(),
+                bHaveSettled ? TEXT("the settled ground point under you, the point a placement gate tests")
+                             : TEXT("your own position: the ground trace found nothing to settle on, so ")
+                               TEXT("this is NOT the point a placement gate would test"),
+                Blocked, Total, Threshold,
+                bEnclosed ? TEXT("ENCLOSED (a placement here would be refused by this gate)")
+                          : TEXT("not enclosed (this gate would not refuse a placement here)"));
         }
     }
 

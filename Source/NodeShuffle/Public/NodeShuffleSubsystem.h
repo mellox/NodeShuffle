@@ -35,6 +35,19 @@ struct FNodeShuffleMeshHideWatch
     int32 HidePass = 0;
 };
 
+// ns-t35-gatereach: ONE ray of the enclosure predicate, recorded so a diagnostic can print the
+// predicate's working instead of only its verdict. Filled ONLY when a caller passes the optional
+// out-array to ANodeShuffleSubsystem::IsSpotEnclosed; the placement paths pass nothing and so record
+// nothing. Every field is copied out of the trace this run made -- none of them is inferred, and
+// nothing here says WHY a ray hit what it hit.
+struct FNodeShuffleEnclosureRay
+{
+    double BearingDeg = 0.0;      // the ray's compass bearing, from the same angle the loop generated
+    bool bBlocked = false;        // did LineTraceSingleByChannel report a blocking hit on THIS ray
+    double HitDistanceCm = -1.0;  // distance to that hit; -1 means this ray reported no hit at all
+    FString HitActor;             // the hit actor's name, or an explicit sentinel when there was none
+};
+
 // One node-pool entry of the per-save layout. The layout is rolled exactly
 // once per save (seeded) and afterwards only ever *applied*; it is the single
 // source of truth for which nodes exist, are active, and what they carry.
@@ -793,6 +806,28 @@ private:
     // redesign-1: spawn one of OUR relocated nodes (the only kind of active node besides the
     // untouched occupied originals). Handles solid (authored rock or quartz placeholder) and oil.
     void EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool& bOutChangedWorld);
+    // ns-t35-gatereach: THE SOLID-NODE PATH'S GATE CENSUS -- the symmetric half of the well path's
+    // WELLH2-PROBECENSUS. Every counter here comes in a REACHED/REJECTED pair, because a rejection
+    // count on its own cannot be told from a gate that never ran; that indistinguishability is T35.
+    // All of them accumulate for the life of THIS subsystem instance -- nothing resets them, and no
+    // claim is made here about what a world change does to the instance -- and they are read by NOTHING
+    // except the emitter: no placement branch tests any of them.
+    // TWO POPULATIONS ARE COUNTED SEPARATELY AND THEY ARE NOT INTERCHANGEABLE. The Primary* pair
+    // counts ONLY the test of the entry's DEALT spot, which is the decision comparable to the well
+    // core's; the Call* pair counts EVERY call of the same lambda in EnsureNewNodeSpawned, dealt spot
+    // and spiral-nudge probes together, which is what says how often the predicate actually ran.
+    int32 NodeGateSettleReached = 0;       // entries that reached the spawn-on-discovery settle gate
+    int32 NodeGateSettleRejectedNoWater = 0;  // settle returned false WITHOUT the water-no-land signal
+    int32 NodeGateSettleRejectedWater = 0;    // settle returned false WITH the water-no-land signal
+    int32 NodeGatePrimaryOccupiedReached = 0, NodeGatePrimaryOccupiedRejected = 0;
+    int32 NodeGatePrimaryEnclosedReached = 0, NodeGatePrimaryEnclosedRejected = 0;
+    int32 NodeGateCallOccupiedReached = 0, NodeGateCallOccupiedRejected = 0;
+    int32 NodeGateCallEnclosedReached = 0, NodeGateCallEnclosedRejected = 0;
+    FString NodeGateCensusLastKey;         // throttle: emit only when one of the counters above moves
+    // Emitted once per ApplyLayout pass, and only when a counter has changed since the last emission
+    // (with diagnostics on it emits on every pass in which one moved). Defined in
+    // NodeShuffleNodeGateCensus.cpp.
+    void EmitNodeGateCensus();
     // redesign-3b BLOCKER FIX: the "Resource"-profile UseBox a spawned node needs for interaction
     // (look-at, build-gun, miner placement, hand-mine) is a runtime NewObject component and is NOT
     // serialized, so a restored/adopted node loses it on reload -> non-interactable. Idempotent helper
@@ -1521,9 +1556,17 @@ private:
     // inside the 800 cm reject sphere of any candidate is inside that XY disc by the triangle
     // inequality. The gate's own tests (deposit exclusion, 3-D radius, our-own-actors exclusion) still
     // run per probe, unchanged and in the same order, so the FIRST rejecting actor is the same actor.
+    // ns-t35-gatereach: OutGatesReached is the GATE-REACHED half of the census and it is the whole of
+    // T35. It is a pointer to an array of at least FNodeShuffleWellProbeCensus::Gate_Count int32s
+    // (NodeShuffleWellStage0.h owns that enum; the footprint .cpp static_asserts the width so this
+    // untyped contract cannot silently outlive a change to the enum). Each element is INCREMENTED
+    // immediately before its gate is evaluated, so it counts CHANCES TO FIRE, never outcomes. Passing
+    // nullptr records nothing. It is an out-parameter only: nothing in this function reads it, and no
+    // branch depends on whether it was supplied.
     bool ValidateWellMemberSpot(const FVector& ProbeXY, float StartZ, bool bApplyEnclosureGate,
                                 const TArray<TWeakObjectPtr<AFGResourceNode>>* NodeScanCache,
-                                FVector& OutLoc, FRotator& OutRot, FString& OutReason) const;
+                                FVector& OutLoc, FRotator& OutRot, FString& OutReason,
+                                int32* OutGatesReached = nullptr) const;
 
     // ns-t27-perf: build that set ONCE per group per pass. The cold review ESTIMATED the per-probe
     // TActorIterator as the dominant cost of a placement pass (T27-fixes-review.md section 5, under a
@@ -1547,7 +1590,19 @@ private:
     // means the node path and the well path cannot drift apart, which is the failure T26 actually is.
     // OutBlockedRays reports how many of the 8 rays hit, so a refusal can say 7/8 or 8/8 instead of
     // only "enclosed" -- a 7/8 refusal is a very different place from an 8/8 one.
-    bool IsSpotEnclosed(const FVector& At, int32& OutBlockedRays, int32& OutTotalRays) const;
+    // ns-t35-gatereach: OutRays is an OPTIONAL recorder, added so NodeShuffle.Here can print this
+    // predicate's per-ray working while still calling THIS function rather than a second copy of it --
+    // a reimplementation in the command would measure a different predicate, which is the T26 defect
+    // one indirection later. When it is non-null the loop appends one entry per ray from the trace it
+    // was already making; the ray count, the reach, the eye height, the channel, the query params, the
+    // blocked threshold and the return value are untouched, and every placement caller passes nullptr.
+    // OutBlockedThreshold is optional for the same reason and exists for a specific rule: a diagnostic
+    // that printed "7 of 8" from a literal would be a measurement baked into a log string, printing the
+    // same claim in every world regardless of what the predicate is compiled with. When it is non-null
+    // it is written from the constant this call actually tested against.
+    bool IsSpotEnclosed(const FVector& At, int32& OutBlockedRays, int32& OutTotalRays,
+                        TArray<FNodeShuffleEnclosureRay>* OutRays = nullptr,
+                        int32* OutBlockedThreshold = nullptr) const;
 
     // Group-atomic spawn (design Q1's decision): core deferred-spawned first, then EVERY satellite
     // deferred-spawned with mCore pre-set, then all finished -- so a core can never exist without its
