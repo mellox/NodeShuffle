@@ -120,8 +120,10 @@ int32 ANodeShuffleSubsystem::ShowWellMemberMeshes(AFGResourceNodeBase* Node, int
         WellMeshPriorCollision.Remove(C);
         ++Restored;
     }
-    // Reached ONLY when the index had an entry, so this is the discharge of the mesh obligation. A gap
-    // between Restored and the recorded count is dead components, which cannot be restored by anyone.
+    // Reached ONLY when the index had an entry, so this is the discharge of the mesh obligation. The
+    // recorded count is hide EVENTS on distinct component instances, not live pieces, so it and Restored
+    // are NOT expected to match and a gap is not evidence of a lost rock: a component that streamed out
+    // and back is counted twice by the hide and once here. Nothing in this function measures which.
     WellMeshHiddenByUs.Remove(Path);
     WellMeshUnhideRetries.Remove(Path);
     return Restored;
@@ -177,17 +179,23 @@ bool ANodeShuffleSubsystem::UnhideWellMember(const FString& Path, FNodeShuffleWe
         ++Tries;
         const bool bBudgetSpent = (Tries >= WellMeshUnhideRetryBudget);
         UE_LOG(LogNodeShuffle, Warning,
-            TEXT("WELLH2-UNHIDE core='%s' %s='%s' (%s): we hid %d mesh piece(s) for this member this ")
-            TEXT("session and restored %d on this pass; the mesh index holds an entry for it: %d. The ")
-            TEXT("index currently covers %d member(s) that had at least one paired piece, out of %d well ")
-            TEXT("member(s) the last rebuild walked. Attempt %d of %d. %s"),
-            *CoreLabel, Kind, *WellShort(Path), Why, StillOwed, Restored, bIndexHadEntry ? 1 : 0,
+            TEXT("WELLH2-UNHIDE core='%s' %s='%s' (%s): the mesh index holds NO ENTRY for this member's ")
+            TEXT("path on this pass, and %d recorded mesh-hide(s) for it are still undischarged. THAT ")
+            TEXT("COUNT IS HIDE EVENTS ON DISTINCT COMPONENT INSTANCES, NOT A LIVE PIECE COUNT: a ")
+            TEXT("streaming round trip at the origin re-creates a rock as a NEW component and the next ")
+            TEXT("re-assertion hides it again, so it can exceed the number of rocks standing there. ")
+            TEXT("Pieces restored on this pass and the index-entry flag are BOTH implied by this branch ")
+            TEXT("rather than measured on it, so they are not printed. The index currently covers %d ")
+            TEXT("member(s) that had at least one paired piece, out of %d well member(s) the last ")
+            TEXT("rebuild walked. Attempt %d of %d. %s"),
+            *CoreLabel, Kind, *WellShort(Path), Why, StillOwed,
             WellMeshIndex.Num(), WellMeshIndexMembers, Tries, WellMeshUnhideRetryBudget,
             bBudgetSpent
                 ? TEXT("BUDGET SPENT -- discharging anyway. The member's ACTOR is restored and its rocks "
                        "may still be invisible and de-collided: check whether a Pressurizer will place "
                        "there. Holding it hidden forever is the worse failure, so it is not held.")
-                : TEXT("NOT discharged: the intent stays pending and is re-attempted every apply pass."));
+                : TEXT("NOT discharged: the member's ACTOR stays hidden and de-registered this pass, and "
+                       "the intent is re-attempted on every apply pass on which the origin resolves."));
         if (!bBudgetSpent) { return false; }
         WellMeshHiddenByUs.Remove(Path);
         WellMeshUnhideRetries.Remove(Path);
@@ -444,7 +452,9 @@ void ANodeShuffleSubsystem::EmitWellStrandedCensus()
             TEXT("the not-placed ones, in this classification order: relocation permanently FAILED %d, ")
             TEXT("nobody is working on it because relocation is switched off for this pass or for this ")
             TEXT("entry %d, keeps failing to assemble at its destination %d, has never been dealt a ")
-            TEXT("destination %d, no player near the destination %d, probing found no terrain %d, still ")
+            TEXT("destination %d (this is expected to be structurally zero: every writer that leaves an ")
+            TEXT("unplaced entry undealt also clears bRelocate, so a non-zero here means that invariant ")
+            TEXT("broke), no player near the destination %d, probing found no terrain %d, still ")
             TEXT("searching %d. ")
             TEXT("Entries carrying a deferred restore intent: %d. Longest wait so far: %d apply pass(es) ")
             TEXT("on core '%s' (~5 s per pass; the counter survives a reload)."),
@@ -471,13 +481,14 @@ void ANodeShuffleSubsystem::EmitWellStrandedCensus()
             TEXT("NO SEARCH FOR A DESTINATION IS RUNNING *** out of %d entr(ies) we suppressed and %d in ")
             TEXT("the layout. Which kind: relocation ")
             TEXT("permanently FAILED %d, relocation switched off while the original was already removed ")
-            TEXT("%d, keeps failing to assemble at its destination %d. These wells are absent from the ")
-            TEXT("world at BOTH ends right now. Named where we have names (the FAILED kind only): '%s'. ")
-            TEXT("THIS LINE DOES NOT TEST FOR PERMANENT LOSS AND MUST NOT BE READ AS ONE: %d of the %d ")
+            TEXT("%d, keeps failing to assemble at its destination %d. THE FIRST TWO KINDS ARE ABSENT AT ")
+            TEXT("BOTH ENDS. THE KEEPS-FAILING-TO-ASSEMBLE KIND IS NOT: an incomplete spawn leaves the ")
+            TEXT("members that DID spawn standing at the destination, so that bucket is a PARTIAL well, ")
+            TEXT("not an absent one. Named where we have names (the FAILED kind only): '%s'. THIS LINE ")
+            TEXT("DOES NOT TEST FOR PERMANENT LOSS AND MUST NOT BE READ AS ONE: %d of the %d ")
             TEXT("suppressed-and-unplaced entr(ies) carry a deferred restore intent that IS re-attempted ")
-            TEXT("every apply pass, and it completes only while the ORIGINAL site is loaded. A non-zero ")
-            TEXT("count here names a well the player cannot reach at either end; it must read zero in a ")
-            TEXT("healthy save."),
+            TEXT("every apply pass, and it completes only while the ORIGINAL site is loaded. It must read ")
+            TEXT("zero in a healthy save."),
             NoRouteBack, TotalSuppressed, TotalEntries, Failed, NotWorked, StuckAssembling,
             FailedNames.IsEmpty() ? TEXT("<none named>") : *FailedNames, UnhidePending,
             SuppressedUnplaced);
@@ -538,7 +549,11 @@ void ANodeShuffleSubsystem::EmitWellRollHideTestPair(bool bCommitAtRoll)
         TEXT("T23-A asserts that number is above zero, ")
         TEXT("T23-B asserts it is zero: they are exact complements over the same population, so exactly ")
         TEXT("one of them is red at any time and neither can be quietly skipped. VACUOUS means the ")
-        TEXT("population was empty and the question was never asked -- it is not a pass. Before roll-time ")
+        TEXT("population was empty and the question was never asked -- it is not a pass. ")
+        TEXT("LIMIT OF THIS INSTRUMENT (REVIEW-3 F-1): the phase stamp is not cleared at a re-enrolment, ")
+        TEXT("so a save that has EVER run with the toggle ON can show T23-A PASS while it now reads OFF. ")
+        TEXT("Verify the OFF half on a save that has never had the toggle on. ")
+        TEXT("Before roll-time ")
         TEXT("removal landed, T23-A was the DELIBERATELY RED one; after it lands they swap."),
         VerdictA, VerdictB, bCommitAtRoll ? TEXT("ON") : TEXT("OFF"), Candidates, SuppressedUnplaced);
 }

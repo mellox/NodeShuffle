@@ -1937,7 +1937,16 @@ private:
     // scratch, and the restore default (visible, default collision) is the safe direction.
     TMap<FString, int32> WellMeshHiddenByUs;
     TMap<FString, int32> WellMeshUnhideRetries;
-    static constexpr int32 WellMeshUnhideRetryBudget = 60; // ~5 min; then discharge LOUDLY, never never
+    // BOUNDED IN ATTEMPTS, NOT IN TIME -- and this is not a wording detail. An attempt is spent only on a
+    // pass where the ORIGIN actor resolves (FindOriginalBaseByPath reads a weak-pointer cache), i.e. only
+    // while a player is standing at the abandoned origin looking at the missing well. Kept SMALL on
+    // purpose: holding the retry open does not make pieces come back, because RebuildWellMeshIndex resets
+    // and re-walks the live world on EVERY apply pass -- if the pieces exist they are indexed on the next
+    // one, and if they were destroyed no amount of waiting recovers them. Meanwhile the member's ACTOR
+    // stays hidden and de-registered, which is the author's own FAIL state (absent, will not take a
+    // Pressurizer) and is strictly worse than the state this retry is trying to improve on (actor restored
+    // and buildable, rocks still invisible). 3 covers the one- or two-pass index lag and nothing else.
+    static constexpr int32 WellMeshUnhideRetryBudget = 3;
     // Once-per-member throttle for the un-hide's per-member lines.
     TSet<FString> WellUnhideLogged;
 
