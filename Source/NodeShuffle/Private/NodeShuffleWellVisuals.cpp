@@ -205,7 +205,8 @@ bool ANodeShuffleSubsystem::CaptureWellGroupVisuals(FNodeShuffleWellEntry& E)
 // ------------------------------------------------------------------------------------------------
 // ORIGIN-SIDE HIDE -- every piece, by every route
 // ------------------------------------------------------------------------------------------------
-int32 ANodeShuffleSubsystem::HideWellMemberMeshes(AFGResourceNodeBase* Node, int32& OutAlreadyHidden)
+int32 ANodeShuffleSubsystem::HideWellMemberMeshes(AFGResourceNodeBase* Node, int32& OutAlreadyHidden,
+                                                  bool bRecordPriorState)
 {
     if (!IsValid(Node)) { return 0; }
     const FString Path = WellPathOf(Node);
@@ -224,6 +225,22 @@ int32 ANodeShuffleSubsystem::HideWellMemberMeshes(AFGResourceNodeBase* Node, int
         // build-gun response that makes it an invisible snappable ghost. That is strictly worse than the
         // bug this packet fixes, and it is exactly what the comment below claims to prevent.
         const bool bWasVisible = C->IsVisible();
+        // ns-t23-rollhide -- THE ONLY RECORD OF WHAT THIS PIECE LOOKED LIKE BEFORE WE TOUCHED IT.
+        // Written once, on the pass that takes ownership of the member (bRecordPriorState), never on a
+        // re-assertion pass -- on those the piece is already invisible and de-collided BY US.
+        //
+        // SESSION-TRANSIENT AND UNAVOIDABLY SO. UStaticMeshComponent identity is not path-stable, so this
+        // cannot be persisted (H2b-review F-3 recorded the same limitation for the capture). Across a
+        // reload the un-hide therefore falls back to a documented default and COUNTS how many pieces it
+        // had to guess for, rather than pretending the restore was exact.
+        //
+        // Packed: low nibble = the ECollisionEnabled value, bit 7 = was visible. One map instead of two,
+        // because two maps keyed on the same component are two things that can disagree.
+        if (bRecordPriorState && !WellMeshPriorCollision.Contains(C))
+        {
+            WellMeshPriorCollision.Add(C, static_cast<uint8>(
+                (static_cast<uint8>(C->GetCollisionEnabled()) & 0x0F) | (bWasVisible ? 0x80 : 0x00)));
+        }
         if (C->GetCollisionEnabled() != ECollisionEnabled::NoCollision)
         {
             C->SetCollisionEnabled(ECollisionEnabled::NoCollision);

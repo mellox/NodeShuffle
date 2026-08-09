@@ -146,6 +146,23 @@ struct NODESHUFFLE_API FNodeShuffleConfigStruct
     UPROPERTY(BlueprintReadWrite)
     bool RerollRelocatedWells{false};
 
+    // T23 stage 3 (ns-t23-rollhide): WHEN is the vanilla well removed -- at the ROLL, or once the
+    // replacement has actually been built at the destination?
+    //
+    // DEFAULT OFF, and the default is the feature's own gate. With it off, suppression happens exactly
+    // where it always has (NodeShuffleWellRelocateApply.cpp, after a COMPLETE spawn), so the roll path
+    // behaves identically to a build without this packet. With it on, a well whose look can be captured
+    // at the roll is hidden at the roll, and the world holds it in NEITHER place until a player reaches
+    // the destination -- an interval that is genuinely unbounded (destinations are dealt uniformly over
+    // the whole map and the author rejected biasing them toward the player, T23 §6 stage 1).
+    //
+    // THE HALF THAT MAKES THIS SHIPPABLE IS THE UN-HIDE, not the hide. See
+    // FNodeShuffleWellSuppressionRecord in NodeShuffleSubsystem.h: without a persisted, re-attempted
+    // restore path, a well whose relocation terminally fails would be deleted from the save permanently.
+    // Inert unless BOTH ShuffleResourceWells and RelocateResourceWells are on.
+    UPROPERTY(BlueprintReadWrite)
+    bool CommitWellsAtRoll{false};
+
     // ns-h1b-notice: post one chat message when an extractor has been cleared for use on shuffled nodes
     // but needs a game restart before SF+ will permit it. DEFAULT TRUE -- the entire point is that the
     // player did not know, and the notice is structurally unable to nag (it is a STATE test that empties

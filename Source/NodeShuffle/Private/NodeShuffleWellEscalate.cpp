@@ -233,11 +233,41 @@ void ANodeShuffleSubsystem::EscalateWellPlacement(FNodeShuffleWellEntry& E, cons
     E.bRelocationFailed = true;
     E.bRelocate = false;
     E.bGroupPlaced = false;
+
+    // ns-t23-rollhide -- TERMINAL FAILURE SITE 1 OF 2, AND THE SHARPEST CORRECTNESS EDGE IN T23.
+    // The sentence this line used to print -- "the well is LEFT EXACTLY WHERE THE LEVEL AUTHOR PUT IT" --
+    // was true only while suppression happened AFTER a complete spawn. Under roll-time commitment the
+    // vanilla group may already be hidden, de-collided and de-registered at this point, so that sentence
+    // would be FALSE at the exact moment it is printed, and the well would be gone from the save
+    // permanently. It is now a CONDITIONAL statement of what this branch actually did, and the un-hide is
+    // what makes the "left where the author put it" half true again.
+    //
+    // ATTEMPTED, THEN PERSISTED. This branch fires wherever the PLAYER is, which under spawn-on-discovery
+    // is at the DESTINATION -- the origin can be kilometres away and unstreamed, in which case there is
+    // nothing here to un-hide. So the intent is recorded first and re-attempted on every apply pass until
+    // every member is discharged. A straight call would find nothing and silently drop the obligation.
+    const bool bOwedRestore = WellGroupHasSuppressedMember(E);
+    bool bRestoredNow = false;
+    if (bOwedRestore)
+    {
+        E.bUnhidePending = true;
+        bRestoredNow = TryUnhideWellGroup(E, TEXT("relocation gave up permanently"));
+    }
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("WELLH2-SEARCH core='%s': GIVING UP (%s) -- %d yaws x %d nudges x %d redeals all failed. The ")
-        TEXT("well is LEFT EXACTLY WHERE THE LEVEL AUTHOR PUT IT (our own spawned members at the abandoned ")
-        TEXT("destination were destroyed at the top of this escalation -- see any WELLH2-DESPAWN line ")
-        TEXT("above) and it will not be re-enrolled. This is the designed fail-safe: never a partial or ")
-        TEXT("broken well, only an untouched one."),
-        *CoreLabel, Why, WellYawSteps, WellMaxGroupNudges, WellMaxGroupRedeals);
+        TEXT("WELLH2-SEARCH core='%s': GIVING UP (%s) -- %d yaws x %d nudges x %d redeals all failed. Our ")
+        TEXT("own spawned members at the abandoned destination were destroyed at the top of this ")
+        TEXT("escalation (see any WELLH2-DESPAWN line above) and the well will not be re-enrolled. %s ")
+        TEXT("This is the designed fail-safe: never a partial or broken well, only an untouched one."),
+        *CoreLabel, Why, WellYawSteps, WellMaxGroupNudges, WellMaxGroupRedeals,
+        !bOwedRestore
+            ? TEXT("We hold no suppression record on this well's vanilla members, so it is standing ")
+              TEXT("exactly where the level author put it and nothing had to be given back.")
+            : (bRestoredNow
+                ? TEXT("We HAD suppressed this well's vanilla members and have just restored every one ")
+                  TEXT("of them, so it is standing where the level author put it again -- grep ")
+                  TEXT("WELLH2-UNHIDE on this core for what was restored member by member.")
+                : TEXT("*** WE HAD SUPPRESSED THIS WELL'S VANILLA MEMBERS AND NOT ALL OF THEM COULD BE ")
+                  TEXT("RESTORED ON THIS PASS *** so it is NOT yet standing where the level author put ")
+                  TEXT("it. The restore is persisted and re-attempted every apply pass; until it ")
+                  TEXT("completes this well is counted in WELLH2-STRANDED.")));
 }

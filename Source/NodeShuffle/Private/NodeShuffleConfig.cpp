@@ -209,6 +209,45 @@ void UNodeShuffleConfig::PostInitProperties()
         TEXT("Requires 'Shuffle Resource Wells' and 'Relocate Resource Wells' to be on as well, and ")
         TEXT("applies at ROLL time - turn it on, then use 'Re-roll Layout'."));
 
+    // T23 stage 3 (ns-t23-rollhide). A FOURTH well toggle. It changes no destination and no placement --
+    // only WHEN the original is removed -- which is why it is not folded into either of the two above.
+    //
+    // EVERY FACTUAL ASSERTION IN THE TEXT BELOW IS GRADED, because this panel has shipped false claims
+    // three times (workspace CLAUDE.md, "UI copy is a CLAIM"). Graded MEASURED-IN-CODE: the hide happens
+    // at the roll commit; the replacement is still gated on IsLocationNearAnyPlayer + a settled footprint,
+    // unchanged; a member reporting IsWellMemberInUse is refused by HideOne on both paths; an entry whose
+    // capture is incomplete at the roll takes the old path; a terminally-failed entry records a persisted
+    // un-hide intent that is re-attempted every apply pass and can only complete while the ORIGINAL actor
+    // is resident. NO DURATION IS CLAIMED anywhere in this text: the deferral window has never been
+    // measured to a bound, and stage 0 measured 0 of 17 dealt wells placed on the author's own save.
+    AddBool(TEXT("CommitWellsAtRoll"), false,
+        TEXT("Remove A Moved Well Immediately (EXPERIMENTAL)"),
+        TEXT("OFF by default. This changes WHEN the original well disappears. It does not change where ")
+        TEXT("wells go, how they are dealt, or whether they can be built on.\n\n")
+        TEXT("OFF: the original well keeps standing until its replacement has actually been built at the ")
+        TEXT("new location. Until that happens you can still see the original where it always was.\n\n")
+        TEXT("ON: the original well is removed at the moment of the re-roll. The replacement is still ")
+        TEXT("only built once a player travels to the new location and the terrain there loads - that ")
+        TEXT("part is unchanged. Between those two moments the well is in NEITHER place: it is absent ")
+        TEXT("from the world.\n\n")
+        TEXT("HOW LONG THAT LASTS IS NOT BOUNDED, and this option does not shorten it. Destinations are ")
+        TEXT("drawn at random across the whole map, on purpose, so a well dealt somewhere you never go ")
+        TEXT("stays absent for as long as you do not go there. All this option does is move the ")
+        TEXT("disappearance earlier.\n\n")
+        TEXT("WHAT IS STILL NEVER REMOVED: a well member you have built on. A Resource Well Pressurizer ")
+        TEXT("on the core, or a Resource Well Extractor on a satellite, leaves that member exactly as it ")
+        TEXT("is, with this option on or off.\n\n")
+        TEXT("IF A WELL'S LOOK CANNOT BE RECORDED AT THE ROLL, that well is left alone and behaves as if ")
+        TEXT("this option were off. Recording at the roll happens once and is not retried, so this is a ")
+        TEXT("real population, not an edge case. The log line 'WELLH2-ROLLHIDE' names which wells were ")
+        TEXT("removed at the roll and which fell back.\n\n")
+        TEXT("IF A WELL CAN NEVER BE PLACED ANYWHERE, its original is put back. That can only happen ")
+        TEXT("while the original's own area is loaded, which in practice means when you are near it ")
+        TEXT("again, so it is retried rather than done immediately. Until it completes, that well is ")
+        TEXT("counted in the log line 'WELLH2-STRANDED'.\n\n")
+        TEXT("Requires 'Shuffle Resource Wells' and 'Relocate Resource Wells' to be on as well, and ")
+        TEXT("applies at ROLL time - turn it on, then use 'Re-roll Layout'."));
+
     // ns-h1b-notice, anti-nag rule 7: the opt-out. Default TRUE deliberately -- see the struct comment.
     AddBool(TEXT("ShowCompatibilityNotices"), true,
         TEXT("Show Compatibility Notices In Chat"),
