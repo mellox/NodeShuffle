@@ -1271,3 +1271,54 @@ failure. That trade is the decision, and it belongs to the author.
 time. The cosmetic cost of T30 is therefore **not** "wrong biome tint" — it is **"may wear another
 resource's rocks"**, and it is bounded by whatever this entry is worth fixing. Full working:
 `_team/nodeshuffle-followups/T30-lookdiff.md`.
+
+### T32. RELOCATED WELL GROUPS END SESSIONS UNDRESSED — 11 of 79 core-instances, in 5 of 8 sessions, were still fully no-visual at their last observation. This ships TODAY; it is not a T30 risk.
+**Found 2026-08-09 by re-running an earlier measurement whose METHOD produced the answer.
+This is the POPULATION lens, and it is the eleventh sighting in this workspace: the arithmetic was
+right, the SET was wrong, and every gate passed.**
+
+**THE NUMBERS, each with its denominator, from 10 rotated logs / 8 sessions with hits on 2026-08-09:**
+* **11 of 79 core-instances still fully no-visual at their LAST observation, across 5 of 8 sessions**
+  (13 of 81 if counted per placement rather than per core).
+* **5 of those 11 were fully no-visual at EVERY observation in their session — never observed dressed
+  at all**, the worst running **19 minutes / 203 apply passes**.
+* Rate overall: **17 of 88 observations** carried ≥1 no-visual member; **133 of 672 member-chances**.
+  Every one of the 17 was whole-group (`NoVisual == Members`, `Pieces=0`, `FromTemplate=0`) — groups
+  fail to dress entirely, never partially.
+* Cases that DID resolve in place (n=4) took **125 / 125 / 130 / 135 s — 21 to 27 apply passes.** Two
+  apparent 1010–1030 s "resolves" were mid-session re-rolls to a new placement, not resolves, and are
+  excluded.
+
+**HOW THE PRIOR MEASUREMENT GOT 0.** `T30-killtest.md` reported **0 of 146 fatal** and was reproduced
+exactly — but only by deduping on core NAME **across all 8 sessions**, merging different saves and
+different rolls into one population. Per session the population is **79 group-instances / 602
+member-chances**, and **the prior's own best-state aggregator applied WITHIN a session yields 85 of
+602 no-visual, not 0 of 146.** **The cross-session merge alone produced the zero.** A group that was
+undressed for a whole session scored as clean because a same-named core in a *different save* had
+been dressed. Nothing about the arithmetic was wrong.
+
+**THE UNDER-COUNT IS ON THE SAFE SIDE, WHICH MAKES IT WORSE.** The tag throttles on
+`CorePath|Members|Pieces` and fires only on change, so absence of a later line means "no change
+observed", and a 0 → N → 0 sequence would not re-emit the trailing 0. **§1 and §3 are therefore
+lower bounds.**
+
+**Grades, honestly.**
+* The counts above — **measured**, and independently reproduced against the prior run's own figures.
+* **WHY any group failed to dress — UNTESTED.** Streaming, distance, capture order and a bug are all
+  live candidates and this log distinguishes none of them. **Do not write a cause into a fix.**
+* **Whether "no visual" also means UNBUILDABLE — NOT MEASURED HERE.** `NodeShuffleWellVisualsApply.cpp`
+  documents the empty-template outcome as invisible *and* unbuildable; that is the code's claim, and
+  this measurement only establishes the invisible half. **If it holds, a player has wells they cannot
+  build on, in 5 of 8 sessions.** Settling it costs one in-game attempt on an undressed core.
+* The log **cannot distinguish "no visual" from "not yet dressed"** — `NoVisual` is a true "no mesh at
+  this instant" and carries no information about whether one ever arrives.
+
+**WHAT TO DO, IN ORDER.** (1) Confirm or refute the unbuildable half in game — one attempt, and it
+decides whether this is cosmetic or a stranded-resource bug. (2) Instrument the capture path so a
+group that never dresses SAYS SO with a denominator; today the only evidence is the absence of a
+throttled line, which is exactly the [[lessons-zero-needs-a-denominator]] shape. (3) Only then fix.
+
+**WHAT THIS DOES TO T30.** It reorders the queue. An invented group rides the fallback 100% of the
+time, so T30 cannot be safer than this path is — **but T30 is no longer the reason to care.** Fix this
+first; T30's dressing question then answers itself. See also [[T31]] (the template is one global
+first-capture-wins pair). Full working: `_team/nodeshuffle-followups/T30-recount.md`.
