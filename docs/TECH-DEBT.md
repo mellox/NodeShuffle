@@ -1430,3 +1430,52 @@ same checks as we do for solids, or that solids are having the same issue."* Bot
 **Do not tune the predicate before the counter lands.** Widening the ray count or radius against an
 unmeasured baseline is how a gate gets tuned to satisfy the last screenshot. See [[T34]] for the
 in-game symptom and [[T15]] for the silent-shrink class this belongs to.
+
+### T36. `IsSpotEnclosed` IGNORES NOTHING — a PAWN standing near a candidate counts as blocking rays, and the shared predicate is used by BOTH the well and solid paths.
+**MEASURED in game 2026-08-09 on `2026-08-09-t35-1`. The author stood on relocated core
+`BP_FrackingCore13` (1 m away) and ran `NodeShuffle.Here`:**
+```
+enclosure ray 1..8 of 8: BLOCKED at 0 cm by Char_Player_C_2147475525
+verdict: 8 of 8 rays blocked ... ENCLOSED (a placement here would be refused by this gate)
+```
+**All eight rays were blocked by the AUTHOR'S OWN CHARACTER, at 0 cm, and the line asserted the spot
+was enclosed.** The trace originates inside the player's capsule, hence the zero distance.
+
+**The cause is in the predicate, not the diagnostic** (`NodeShuffleWellFootprint.cpp`, in
+`ANodeShuffleSubsystem::IsSpotEnclosed`):
+```
+FCollisionQueryParams EncParams(FName(TEXT("NodeShuffleEnclosure")), false);   // ignores NOTHING
+World->LineTraceSingleByChannel(EncHit, Eye, To, ECC_WorldStatic, EncParams);
+```
+No actor is ever added to the ignore list. A character blocks `ECC_WorldStatic`, so it is a hit.
+
+**GRADES.**
+* Eight rays blocked by the player, at that spot, on that build — **measured**.
+* The query params ignore nothing and the channel is `ECC_WorldStatic` — **measured from source**.
+* **That a pawn near a PLACEMENT candidate would likewise block rays — reasoned from those two, NOT
+  observed**, because [[T35]] establishes the gate has never been reached in placement. It is the same
+  function with the same params and no caller-supplied ignore list, so the inference is strong, but it
+  is an inference and must be tested, not assumed.
+* **Whether a creature (not the player) blocks `ECC_WorldStatic` — UNTESTED.** Do not generalise from
+  one `Char_Player_C` sighting to all pawns without checking; that is the POPULATION error this
+  workspace keeps repeating.
+
+**TWO SEPARATE FIXES, and they must not be conflated.**
+1. **The diagnostic is currently unusable for its only purpose.** `Here` tests where the player stands,
+   so measuring the spot under a core REQUIRES standing on it, which guarantees 8/8 blocked. This is a
+   catch-22 and the reading can never be obtained as shipped. **Fix: the Here probe must ignore the
+   calling player.** Low risk, diagnostics-only.
+2. **Whether PLACEMENT should ignore pawns is a BEHAVIOUR change to a gate** and owes a differential
+   review. The argument for is strong — a lizard doe wandering past a candidate should not make a spot
+   permanently "enclosed", and the gate refuses at 7 of 8 so two or three pawns could do it. The
+   argument for caution is that this predicate is SHARED with the ordinary-node path (T26), so a change
+   moves both populations at once. **SYMMETRY: whatever is decided applies to both, by construction.**
+
+**WHY IT HAS NOT BITTEN YET.** [[T35]]: the enclosure gate has been reached **zero** times on either
+path this session, so this defect is latent. **It becomes live the moment the void/settle gate stops
+dominating** — which is exactly what fixing T35 is meant to achieve. **Fix T36 before T35's cause, or
+the first thing the newly-reachable gate does is refuse spots because a creature walked past.**
+
+**THE DIAGNOSTIC EARNED ITS KEEP.** This was found only because the ray line prints the HIT ACTOR
+rather than a bare blocked count. A `blocked 8 of 8` line would have read as a correct, damning
+measurement of the terrain. **Print what you hit, not just that you hit.**
