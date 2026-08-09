@@ -330,7 +330,76 @@ cluster.
 > **Measure before choosing:** count how many active nodes currently sit within 90 m of a placed well
 > core. If it is a handful, (C) is defensible; if it is dozens, it is a placement bug.
 
-### T21. Well relocation is presence-gated only because we never baked SURFACE terrain — and we already bake CAVE terrain
+### ~~T21. Well relocation is presence-gated only because we never baked SURFACE terrain~~ — **CLOSED 2026-08-08. THE PREMISE IS FALSE. Do not reopen without reading why.**
+
+**Sized on request, and it never got as far as size.** Full working: `_team/nodeshuffle-followups/T21-surface-bake-sizing.md`.
+
+**`ValidateWellMemberSpot` (`NodeShuffleWellFootprint.cpp:48-127`) applies FIVE gates. Three are terrain
+and are bakeable. TWO are decided against LIVE ACTOR POPULATIONS and can never be:**
+
+| gate | how it decides | bakeable? |
+|---|---|---|
+| void / no terrain | ground trace | yes |
+| water | water-body test | yes |
+| cliff / slope | 4-probe normal ring | yes |
+| **node overlap, 800 cm** | `TActorIterator<AFGResourceNode>` (`:76`) | **NO** |
+| **buildable overlap, 600 cm** | live physics overlap (`:112`) | **NO** |
+
+The node-overlap gate reads **exactly T14's population** — the nodes other mods `SpawnActor` after boot,
+which T14 measured at 28 and about which it concluded a bake *"loses exactly this population"*. So T21's
+own argument — *"terrain can be baked precisely because nothing spawns it"* — is **true of three gates and
+false of two, inside one function**. A bake is a **partial oracle**, and a partial oracle cannot license
+hiding the original at roll time. The spawn-time backstop stays; **D1 is unchanged**.
+
+**The sharpest reason, and the one to quote if this is ever revived:** the ground trace is `ECC_WorldStatic`
+and **accepts buildable hits by design** (`NodeShuffleSubsystem.cpp:5971-5975`, *"nodes on foundations are
+allowed"*). So wherever a player has built, **baked vanilla terrain is not even the Z the game settles to** —
+the bake would be wrong precisely where the world is most developed.
+
+**Sizing, recorded so nobody re-derives it.** Resolution is driven to **≤350 cm** by `SmoothNormalRingCm`
+(`NodeShuffleSubsystem.cpp:119`) — the radius of the 4-probe ring the cliff normal is smoothed over; a
+coarser grid cannot represent the sampling pattern at all. 175 cm to be Nyquist-faithful; **≈24 cm vertical**
+to match the 60° cliff verdict within 1°. That is **4.6× finer than the cave atlas's 800 cm**. Over the
+measured 720,000 × 630,000 cm probed extent: **3.70 M cells** — **170 MB** in the shipped string-literal
+encoding (46 B/cell, measured), **~20 MB** as a packed int16 raster. **The entire deployed mod DLL is
+1,666 KB.** The cave atlas is 282,278 B = **16.7% of the DLL for 2,660 cells**, and it is **sparse** (1.8%
+fill); a surface atlas must be dense, so that encoding does not transfer.
+
+> **TWO CORRECTIONS TO THIS ENTRY'S ORIGINAL TEXT, both from inferring rather than measuring.**
+> 1. **"6656 cells" was never the shipped bake.** The DLL holds **2,660**. 6,656 is the author's *merged
+>    runtime* store (baked + locally learned), so **~60% of the figure quoted as evidence exists only on
+>    one machine**.
+> 2. **`Scripts/bake_maps.ps1` is a SNAPSHOTTER, not a generator** — it re-emits JSON the mod learned
+>    while playing. The real generator is `ExpandCaveFloorsBudgeted`: seeded 4-connected flood fill,
+>    **player-proximity gated at 30 km**, 120 traces/pass, capped at 25,000 cells. A surface variant is a
+>    **new offline tool with no precedent here** (~18.5 M traces, needing a headless commandlet against the
+>    cooked CSS map that may not be runnable at all).
+>
+> Both came from reading a log line and a filename and inferring the rest — the same *observe a value,
+> infer its meaning, state the inference as evidence* shape this file keeps recording.
+
+**STILL UNMEASURED, and it would close this twice over:** the rejection-reason distribution. There are
+**0 `WELLH2` lines across 15 MB of logs** — the feature post-dates every log in the repo. One diagnostics-on
+roll counting `WELLH2-SEARCH … REJECTED … (<reason>)` by category would say how much of the problem is even
+terrain-shaped. **Also never measured: how often D1 actually fires.** If it has never been observed, T21's
+motivation was hypothetical from the start.
+
+> **THE ALTERNATIVE THAT ACTUALLY SERVES THE STATED GOAL ("wells shuffle immediately"), and needs no oracle.**
+> The delay was never missing terrain data — it is that the **destination** is far from the player
+> (`NodeShuffleWellRelocateApply.cpp:441`) while the **origin** is provably resident. **Bias the 24-draw deal
+> loop to prefer candidates already within `SpawnRadiusCm` of a live pawn, falling back to uniform.** The well
+> then validates and spawns on the next apply pass. No DLL growth, no new tooling, every safety property
+> intact. **Trade-off is the author's call, not an engineering one: it biases spatial distribution toward
+> wherever the player stood at roll time, and randomisation is the product.** Put to the author 2026-08-08.
+>
+> **Seam flagged, graded `assumed`, not chased:** hiding the original at roll time would also have to re-home
+> `CaptureWellGroupVisuals`, which today runs inside `SuppressVanillaWellGroup`
+> (`NodeShuffleWellRelocateApply.cpp:284-285`) precisely because that is the one site provably reached with
+> the vanilla member still standing. Read at the call site only, not across every consumer.
+
+*Original entry retained below for the history.*
+
+### T21 (original entry, premise since falsified). Well relocation is presence-gated only because we never baked SURFACE terrain — and we already bake CAVE terrain
 **Raised by the mod author 2026-08-08, and it dissolves an assumption three explanations in this file
 were built on.** Their question: *"If a solid node can properly land on terrain, and we check the
 terrain is the right type, why are we not able to check that for the wells? The terrain is static."*
@@ -342,6 +411,30 @@ and not the other"*; it is only **failure tolerance**: a solid that cannot settl
 are *allowed* to disappear (`ActivePercent`), so nothing needs a fallback. A well that cannot place must
 fall back to its original, so the original must still exist — which is why it cannot be hidden on the
 roll. That is the real reason, and earlier answers in this file gave weaker ones.
+
+> ## ⚠ THE `ActivePercent` CLAUSE ABOVE IS FALSIFIED — measured 2026-08-08, see **T22**.
+> A solid that cannot settle on terrain is **deferred and retried forever**
+> (`NodeShuffleSubsystem.cpp:3972-4005`), **not dropped**. `ActivePercent` (`:1238`) and
+> `AllowVanillaDisappear` (`:1243-1246`) are **roll-time budget knobs** deciding how many pool slots start
+> `bActive`; they are **never consulted on a placement failure**. The only executable drop is the *overlap*
+> path after 8 failed visits (`:4140`).
+>
+> **The real asymmetry is in the HIDING, not the checking, and it is the opposite of tolerance.**
+> `SuppressOriginalNodes` (`:4497`) hides a solid's original unconditionally, on a loop that never reads
+> whether the replacement spawned, with its proximity gate deliberately removed (`:4509-4510`).
+> `SuppressVanillaWellGroup` has exactly two call sites, **both after a complete group spawn succeeded**.
+> **Solids do not tolerate failure — they do not DETECT it**, which is T22.
+>
+> Two further measurements that sharpen this entry rather than change its conclusion: **a solid applies SIX
+> gates and a well applies five of the same six** (the well lacks the enclosure test) — so **zero of the
+> well's gates lack an ordinary-node counterpart**, and the asymmetry is not in the gate set in either
+> direction. And the well's real difficulty is **footprint**: ~11 actors across up to 65 m must fit
+> *simultaneously*, searched over 36 yaws × 8 nudges × 3 redeals, all-or-nothing. **Footprint is why
+> placement fails often; the fail-safe is why failure cannot be pre-committed.**
+>
+> *The paragraph's headline claim — that solids do not validate terrain at roll time either — is CONFIRMED.
+> Both paths call the same `RaycastGroundAt`, and both spawns are gated by the same
+> `IsLocationNearAnyPlayer` at the same radius. Only its stated mechanism was wrong.*
 
 **The author's lever is the right one.** The blocker is not that terrain changes — it is that the only
 way we ask about terrain is a physics trace, and a trace needs the landscape **resident**. Static
@@ -393,7 +486,71 @@ bManaged=%d bPinned=%d`. **`bPinned=0` on that line is the defect firing.** That
 > **spawned actors first**. That dissolves this entry entirely and closes the proximity gate, at the cost
 > of writing two populations per well. Its own packet.
 
-### T19. The well acceptance gate cannot fail for a resource mismatch
+### ~~T19. The well acceptance gate cannot fail for a resource mismatch~~ — **FIXED 2026-08-08** (`32e3f38` + `ead59f9`, marker `2026-08-08-t19-2`)
+
+The gate now prints the layout's assignment (`res=`, meaning unchanged so committed review reports that
+grep it still resolve) **and** what the spawned core holds (`worldHolds=`), and `bHealthy` gates on their
+agreement **over the core AND every live spawned satellite** — a satellite left on the old resource is
+exactly as wrong as a core left on it, and exactly as invisible. A **pin-explained** disagreement is not a
+fault (T17 deliberately declines to retype an in-use group) and gets its own non-alarming token.
+**Reporting-only: `bHealthy` gates no behaviour** — re-derived independently three times.
+
+**F1, and read this before believing a `*** RESOURCE MISMATCH ***`:** the T17 retype is **proximity-gated**
+(`NodeShuffleWellRelocateApply.cpp:501`) while the audit sweep walks **every** placed group. On the
+`RerollRelocatedWells=OFF` default — what most users run — a shuffle re-deals every placed well and only the
+1–2 nearby ones are retyped, so an unguarded gate would fire **~15 warnings every 5 minutes on a CORRECT
+build**. Hence `retypeReachable=`. **Fifth sighting of one-rule-one-side** (T16, `ns-review-h2 F1`, T8, T20).
+
+> ## ⚠ FOUR PROSE ITERATIONS OF ONE LOG LINE. THREE SHIPPED A FALSE CLAIM. That is the entry.
+> 1. The cold review's **own F1 text** glossed `retypeReachable=0` as *"has not been VISITED since its
+>    assignment changed"* — the predicate tests presence **now**, not history.
+> 2. Its replacement asserted *"NO PLAYER IS WITHIN THAT RADIUS"* **unconditionally**, on a line that fires
+>    independent of that flag, so a `retypeReachable=1` line contradicted its own `%d`.
+> 3. The third still said *"the retype demonstrably reached and failed to fix"* — a **cause asserted from a
+>    proximity boolean**. Provably wrong: the `just-placed` audit (`:486`) runs in the `!bGroupPlaced` branch
+>    and never reaches the retype at `:501`, yet prints `retypeReachable=1`. And it **contained the literal
+>    token `retypeReachable=1`**, so the grep its own commit message recommended matched **every** mismatch
+>    line — the `provableOverlap=0` legend trap, second occurrence in this file family.
+>
+> **THE RISK CLASS IS NOT WHO TYPED IT — IT IS WHETHER THE AUTHOR WAS UNDER PRESSURE TO CLOSE A FINDING.**
+> All three were authored in response to a finding, by three different agents, and the orchestrator waved
+> #2 through reasoning *"an agent specified it verbatim, so it is low-risk."* That is not what the rule
+> means. Ask for verbatim text to avoid **re-derivation** — then still **verify it against the predicate it
+> describes**. The genuinely safe material is text that predates the finding.
+>
+> Also caught late, by the scoped review only: the `*** SHORT OR UNLINKED ***` arm had **no counter**, so
+> `12 not OK … 0, 0, 0, 0, 0` was printable — five reassuring zeros beside a dozen wells the Pressurizer
+> will under-report. And `%d fully linked` had quietly become **a label that lies**, since `bHealthy` now
+> also requires not-scattered / not-short / no-mismatch.
+
+### T22. A solid node dealt into true void has its ORIGINAL hidden and its REPLACEMENT never spawns — and nothing counts it
+**Found 2026-08-08 while answering *"we can do solid nodes, why can't we do wells"* — measured, not
+inferred. This is the same shape as T19: a failure with no detector.**
+
+`SuppressOriginalNodes` (`NodeShuffleSubsystem.cpp:4497`) hides **every** recorded original as soon as it
+resolves and is unoccupied (`:4612-4660`). That loop reads **nothing** about whether the replacement ever
+spawned — not `SpawnedNodes`, not `bActive`, not `bRayCasted` — and the proximity gate was **deliberately
+removed** from it (`:4509-4510`). Meanwhile a replacement that cannot settle on terrain is **deferred and
+retried forever** (`:3972-4005`), never dropped.
+
+So a node dealt into true void is **hidden at its origin and absent at its destination, indefinitely** —
+deleted from the world — and **no counter anywhere reports it.**
+
+> **This corrects the standing explanation.** It was believed solids "tolerate" placement failure because
+> nodes are *allowed* to disappear via `ActivePercent`. **Falsified:** `ActivePercent` (`:1238`) and
+> `AllowVanillaDisappear` (`:1243-1246`) are **roll-time budget knobs** that decide how many pool slots
+> start `bActive`; they are **never consulted on a placement failure**. The only executable drop is the
+> *overlap* path after 8 failed visits (`:4140`). **Solids do not tolerate failure — they do not DETECT
+> it.** The loss is real and unbudgeted, on top of whatever `ActivePercent` intended.
+>
+> **Unmeasured, and cheap to measure:** how often this fires. The instrument does not exist — count records
+> that are `hidden && !spawned` for N consecutive passes and name them. **Instrument before fixing**
+> (T4's doctrine); the fix shape is either to gate suppression on the replacement existing, as the well
+> path already does, or to return an unplaceable entry to the pool. Do not assume it is common: a deal box
+> that lands in true void may be rare, and **a zero here needs a denominator** like every other counter in
+> this file.
+
+### ~~T19 (original entry)~~. The well acceptance gate cannot fail for a resource mismatch
 **Found 2026-08-08 by the T17 cold review, and it is why T17 went unnoticed.**
 `NodeShuffleWellAudit.cpp:123-127` prints `res=` **from the layout**, while `:53` already holds the
 spawned core. `bHealthy` is computed from counts, positions and links and **never from resource** — so
