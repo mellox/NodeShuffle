@@ -86,12 +86,19 @@ namespace
 // ------------------------------------------------------------------------------------------------
 // MESH PIECES -- the inverse of HideWellMemberMeshes
 // ------------------------------------------------------------------------------------------------
-int32 ANodeShuffleSubsystem::ShowWellMemberMeshes(AFGResourceNodeBase* Node, int32& OutGuessed)
+int32 ANodeShuffleSubsystem::ShowWellMemberMeshes(AFGResourceNodeBase* Node, int32& OutGuessed,
+                                                  bool& bOutIndexHadEntry, int32& OutIndexedForMember)
 {
     if (!IsValid(Node)) { return 0; }
     const FString Path = WellPathOf(Node);
     const TArray<TWeakObjectPtr<UStaticMeshComponent>>* Pieces = WellMeshIndex.Find(Path);
-    if (!Pieces) { return 0; }
+    // ns-t23-rollhide REVIEW FIX (cold review F6): a bare 0 return here was indistinguishable from "this
+    // member genuinely has no pieces", and the deal-failure restore can run during the roll BEFORE the
+    // index exists. The caller must be able to tell the two apart or it discharges an obligation it never
+    // performed.
+    if (!Pieces) { bOutIndexHadEntry = false; return 0; }
+    bOutIndexHadEntry = true;
+    OutIndexedForMember = Pieces->Num();
     int32 Restored = 0;
     for (const TWeakObjectPtr<UStaticMeshComponent>& Weak : *Pieces)
     {
@@ -138,7 +145,34 @@ bool ANodeShuffleSubsystem::UnhideWellMember(const FString& Path, FNodeShuffleWe
     }
 
     int32 Guessed = 0;
-    const int32 Restored = ShowWellMemberMeshes(Node, Guessed);
+    bool bIndexHadEntry = false;
+    int32 IndexedForMember = 0;
+    const int32 Restored = ShowWellMemberMeshes(Node, Guessed, bIndexHadEntry, IndexedForMember);
+    // ns-t23-rollhide -- COLD REVIEW F6, APPLIED AS A DIAGNOSTIC ONLY. THE SPEC'S BEHAVIOUR HALF WAS
+    // DELIBERATELY NOT APPLIED, AND THIS COMMENT IS THE RECORD OF WHY, DATED 2026-08-09.
+    // The finding is correct: a bare 0 from ShowWellMemberMeshes cannot distinguish "this member has no
+    // pieces" from "the index has not been built yet", and the second case discharges an obligation that
+    // was never performed. The spec's remedy -- return false and keep the intent pending whenever the
+    // index holds no entry -- CANNOT BE APPLIED TO THIS TREE. WellMeshIndex entries are created only by
+    // AddPiece (NodeShuffleWellMeshIndex.cpp), i.e. only for a member with at least one PAIRED piece, so
+    // "no entry" is the ORDINARY case for a member with no rock, not the exceptional case. The packet's
+    // own stage-0 measurement on the author's save is 15 paired pieces across 135 members, so the guard
+    // would refuse to discharge the large majority of members -- leaving them hidden, never restored, and
+    // counted as stranded forever. That is a WORSE permanent-loss outcome than the one F6 fixes, and it is
+    // the exact failure this file exists to prevent, so it is reported instead of forced.
+    // The predicate is MEASURED and PRINTED here so the orchestrator can size the real population from a
+    // live log before choosing a remedy. It asserts no cause and changes no behaviour.
+    if (!bIndexHadEntry && FNodeShuffleModule::AreDiagnosticsEnabled())
+    {
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("WELLH2-UNHIDE core='%s' %s='%s' (%s): the mesh index holds NO ENTRY for this member's ")
+            TEXT("path on this pass, so zero pieces were restored and that zero cannot be read as ")
+            TEXT("'this member has no pieces'. The index covers %d member(s) that had at least one paired ")
+            TEXT("piece, out of %d well member(s) the last rebuild walked. The restore is being discharged ")
+            TEXT("anyway on this build: refusing here would strand every member with no paired piece. ")
+            TEXT("Cold review F6 is OPEN, not closed, by design."),
+            *CoreLabel, Kind, *WellShort(Path), Why, WellMeshIndex.Num(), WellMeshIndexMembers);
+    }
 
     // Actor level, from the RECORD, in the same order the hide wrote them.
     Node->SetActorEnableCollision(!Rec.bWasCollisionDisabledBefore);
@@ -169,14 +203,15 @@ bool ANodeShuffleSubsystem::UnhideWellMember(const FString& Path, FNodeShuffleWe
     {
         WellUnhideLogged.Add(Key);
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("WELLH2-UNHIDE core='%s' %s='%s' (%s): restored %d indexed mesh piece(s), %d of them to ")
+            TEXT("WELLH2-UNHIDE core='%s' %s='%s' (%s): restored %d of the %d indexed mesh piece(s) ")
+            TEXT("recorded for this member, %d of them to ")
             TEXT("the documented default because no pre-suppression state for that piece exists in this ")
             TEXT("session's record. Actor restored to the state recorded when we first hid it: hidden %d, ")
             TEXT("collision-disabled %d. We had de-registered it: %d; re-added to the node manager's ")
             TEXT("buildable list: %d (only an AFGResourceNode can be, and a fracking core is not one, so ")
             TEXT("a zero on a core is the engine's typing and not a missed step). ")
             TEXT("RemoveResourceNodeScan_Local has no inverse called here."),
-            *CoreLabel, Kind, *WellShort(Path), Why, Restored, Guessed,
+            *CoreLabel, Kind, *WellShort(Path), Why, Restored, IndexedForMember, Guessed,
             bRestoredHidden ? 1 : 0, bRestoredNoCollision ? 1 : 0,
             bWasDeregistered ? 1 : 0, bReRegistered ? 1 : 0);
     }
@@ -283,6 +318,8 @@ void ANodeShuffleSubsystem::EmitWellStrandedCensus()
 {
     int32 TotalEntries = 0, TotalPlaced = 0, TotalSuppressed = 0, SuppressedAndPlaced = 0;
     int32 Failed = 0, DeferredNoPlayer = 0, VoidProbing = 0, Searching = 0, UnhidePending = 0;
+    // ns-t23-rollhide REVIEW FIX (cold review F2): three buckets the old chain could not name.
+    int32 NotWorked = 0, StuckAssembling = 0, NoDestination = 0;
     int32 WorstPasses = 0;
     FString WorstCore, FailedNames;
 
@@ -297,8 +334,17 @@ void ANodeShuffleSubsystem::EmitWellStrandedCensus()
 
         // CLASSIFICATION ORDER IS FIXED AND STATED, because the buckets are not mutually exclusive by
         // construction and a reader summing them must know which one wins. Terminal failure first (it is
-        // the only bucket that is permanent); then no-player-near-the-destination (the search cannot even
-        // run); then void probing (the search ran and found no terrain); then searching.
+        // permanent); then nobody-is-working-on-it (relocation is off for this pass or for this entry, so
+        // no later bucket can be true of it); then stuck-assembling; then no destination dealt; then
+        // no-player-near-the-destination; then void probing (the search ran and found no terrain); then
+        // searching. Updated for cold review F2/F7 -- the previous order printed an entry with no
+        // destination as "no player near the destination" and an entry with relocation off as "still
+        // searching", which are labels that lie.
+        // ns-t23-rollhide REVIEW FIX (cold review F2): the warning population is "suppressed, unplaced and
+        // NOT BEING WORKED ON", not bRelocationFailed alone. Two states reach the same player outcome and
+        // set no failure flag: relocation switched off after a roll-time hide (the search never runs again,
+        // so terminal failure can never fire), and an entry whose spawn is permanently incomplete
+        // (NoteWellIncompleteSpawn retries indefinitely by design and never stops).
         if (E.bRelocationFailed)
         {
             ++Failed;
@@ -308,15 +354,24 @@ void ANodeShuffleSubsystem::EmitWellStrandedCensus()
                 FailedNames += WellShort(E.CorePath);
             }
         }
-        else if (!IsLocationNearAnyPlayer(E.DestCoreLocation, WellLastApplySpawnRadiusCm))
+        else if (!bWellLastApplyRelocationOn || !E.bRelocate)
         {
-            ++DeferredNoPlayer;
+            ++NotWorked;
         }
-        else if (const int32* Voids = WellVoidDefers.Find(E.CorePath))
+        else
         {
-            if (*Voids > 0) { ++VoidProbing; } else { ++Searching; }
+            const int32* Stuck = WellIncompleteSpawnCounts.Find(E.CorePath);
+            if (Stuck && *Stuck >= WellIncompleteSpawnWarnAt) { ++StuckAssembling; }
+            else if (!IsLocationNearAnyPlayer(E.DestCoreLocation, WellLastApplySpawnRadiusCm))
+            {
+                if (!E.bDestDealt) { ++NoDestination; } else { ++DeferredNoPlayer; }
+            }
+            else if (const int32* Voids = WellVoidDefers.Find(E.CorePath))
+            {
+                if (*Voids > 0) { ++VoidProbing; } else { ++Searching; }
+            }
+            else { ++Searching; }
         }
-        else { ++Searching; }
 
         if (E.PassesSinceSuppressed > WorstPasses)
         {
@@ -328,9 +383,16 @@ void ANodeShuffleSubsystem::EmitWellStrandedCensus()
     const int32 SuppressedUnplaced = TotalSuppressed - SuppressedAndPlaced;
     if (TotalSuppressed == 0) { return; } // nothing suppressed by us: this census has nothing to report
 
-    const FString Key = FString::Printf(TEXT("%d|%d|%d|%d|%d|%d|%d|%d|%d"), TotalEntries, TotalPlaced,
-                                        TotalSuppressed, SuppressedUnplaced, Failed, DeferredNoPlayer,
-                                        VoidProbing, Searching, UnhidePending);
+    // ns-t23-rollhide REVIEW FIX (cold review F2): the three new buckets are part of the picture, so they
+    // are part of the key -- a key that cannot see a bucket cannot re-print when that bucket changes.
+    // ns-t23-rollhide REVIEW FIX (cold review F9, option A -- the coarse bucket): WorstPasses grows every
+    // pass and was absent from the key entirely, so the printed "longest wait" froze at the last picture
+    // change while reading as current. Bucketed by 12 (~1 minute at ~5 s per pass) so a still-stranded
+    // well re-states its age about once a minute instead of never, without re-printing every pass.
+    const FString Key = FString::Printf(TEXT("%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d"), TotalEntries,
+                                        TotalPlaced, TotalSuppressed, SuppressedUnplaced, Failed,
+                                        NotWorked, StuckAssembling, NoDestination, DeferredNoPlayer,
+                                        VoidProbing, Searching, UnhidePending, WorstPasses / 12);
     // Captured BEFORE the assignment below. Testing the key against its own freshly-written value in the
     // warning block would make that term dead and silently turn the warning into a pure cadence timer.
     const bool bPictureChanged = (Key != WellStrandedCensusLastKey);
@@ -342,29 +404,42 @@ void ANodeShuffleSubsystem::EmitWellStrandedCensus()
             TEXT("suppression record on %d of them; %d of those are placed (correctly suppressed) and %d ")
             TEXT("are NOT placed -- for those the player has no well at either end right now. Split of ")
             TEXT("the not-placed ones, in this classification order: relocation permanently FAILED %d, ")
-            TEXT("no player near the destination %d, probing found no terrain %d, still searching %d. ")
+            TEXT("nobody is working on it because relocation is switched off for this pass or for this ")
+            TEXT("entry %d, keeps failing to assemble at its destination %d, has never been dealt a ")
+            TEXT("destination %d, no player near the destination %d, probing found no terrain %d, still ")
+            TEXT("searching %d. ")
             TEXT("Entries carrying a deferred restore intent: %d. Longest wait so far: %d apply pass(es) ")
             TEXT("on core '%s' (~5 s per pass; the counter survives a reload)."),
             WellAuditPasses, TotalEntries, TotalPlaced, TotalSuppressed, SuppressedAndPlaced,
-            SuppressedUnplaced, Failed, DeferredNoPlayer, VoidProbing, Searching, UnhidePending,
+            SuppressedUnplaced, Failed, NotWorked, StuckAssembling, NoDestination, DeferredNoPlayer,
+            VoidProbing, Searching, UnhidePending,
             WorstPasses, WorstCore.IsEmpty() ? TEXT("<none>") : *WorstCore);
     }
 
     // THE WARNING BUCKET. Must read zero in a healthy save. Re-printed when the picture changes and, if
     // it does not, on the slow audit cadence -- a stranded well that printed once at minute 3 and never
     // again is a detector that reports the defect exactly once and then hides it.
-    if (Failed > 0
+    // ns-t23-rollhide REVIEW FIX (cold review F2): the warning gate was bRelocationFailed alone, which is
+    // blind to two populations with the IDENTICAL player outcome -- well absent at both ends, and nothing
+    // running that could ever put it back. Only the FAILED bucket carries names, because it is the only
+    // one that names itself; the other two are counted and identified by bucket.
+    const int32 NoRouteBack = Failed + NotWorked + StuckAssembling;
+    if (NoRouteBack > 0
         && (bPictureChanged || WellAuditPasses - WellStrandedWarnLastPass >= WellLinkAuditCadence))
     {
         WellStrandedWarnLastPass = WellAuditPasses;
         UE_LOG(LogNodeShuffle, Warning,
-            TEXT("WELLH2-STRANDED *** %d WELL(S) SUPPRESSED WITH NO PLACEMENT AND NO REMAINING BUDGET *** ")
-            TEXT("out of %d entr(ies) we suppressed and %d in the layout. These wells are absent from the ")
-            TEXT("world at BOTH ends: '%s'. %d of the %d carry a deferred restore intent, which completes ")
+            TEXT("WELLH2-STRANDED *** %d WELL(S) SUPPRESSED WITH NO PLACEMENT AND NOTHING WORKING ON ")
+            TEXT("THEM *** out of %d entr(ies) we suppressed and %d in the layout. Which kind: relocation ")
+            TEXT("permanently FAILED %d, relocation switched off while the original was already removed ")
+            TEXT("%d, keeps failing to assemble at its destination %d. These wells are absent from the ")
+            TEXT("world at BOTH ends. Named where we have names (the FAILED kind only): '%s'. %d of the ")
+            TEXT("%d suppressed-and-unplaced entr(ies) carry a deferred restore intent, which completes ")
             TEXT("only while the ORIGINAL site is loaded. A non-zero count here names a well the player ")
             TEXT("has lost; it must read zero in a healthy save."),
-            Failed, TotalSuppressed, TotalEntries,
-            FailedNames.IsEmpty() ? TEXT("<none named>") : *FailedNames, UnhidePending, Failed);
+            NoRouteBack, TotalSuppressed, TotalEntries, Failed, NotWorked, StuckAssembling,
+            FailedNames.IsEmpty() ? TEXT("<none named>") : *FailedNames, UnhidePending,
+            SuppressedUnplaced);
     }
 }
 
@@ -392,6 +467,12 @@ void ANodeShuffleSubsystem::EmitWellRollHideTestPair(bool bCommitAtRoll)
     {
         if (E.bGroupPlaced) { continue; }
         if (!E.bDestDealt) { continue; }
+        // ns-t23-rollhide REVIEW FIX (cold review F4): a RE-ENROLLED entry is unplaced and dealt while
+        // carrying a suppression taken at APPLY time in an earlier cycle, so including it made T23-A read
+        // PASS with the toggle off -- the pair then measured "some unplaced entry is in the ledger", which
+        // was already true before roll-time hiding existed. Roll-time hiding is the only thing that can
+        // suppress an entry that has NEVER been placed, so that is the population the pair must ask about.
+        if (!E.PlacedCoreLocation.IsNearlyZero()) { continue; }
         ++Candidates;
         if (WellGroupHasSuppressedMember(E)) { ++SuppressedUnplaced; }
     }
@@ -408,6 +489,8 @@ void ANodeShuffleSubsystem::EmitWellRollHideTestPair(bool bCommitAtRoll)
 
     UE_LOG(LogNodeShuffle, Display,
         TEXT("[NodeShuffle][TEST] T23-A %s | T23-B %s -- toggle 'Remove A Moved Well Immediately' is %s. ")
+        TEXT("Entries that have been placed at least once are excluded: they can hold an apply-time ")
+        TEXT("suppression that predates roll-time removal. ")
         TEXT("Population: %d entr(ies) that are dealt a destination and not yet placed; of those, %d have ")
         TEXT("at least one member in our suppression ledger. T23-A asserts that number is above zero, ")
         TEXT("T23-B asserts it is zero: they are exact complements over the same population, so exactly ")

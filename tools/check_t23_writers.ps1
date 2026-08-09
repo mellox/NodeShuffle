@@ -29,7 +29,14 @@ $fail = $false
 
 # Any assignment of the flag to true. Matches `= true`, `=true`, and the `{ true }` brace form.
 $setPattern = 'bSuppressedByUs\s*(=\s*true|\{\s*true\s*\})'
-foreach ($hit in (Select-String -Path (Join-Path $src '*\*.cpp') -Pattern $setPattern)) {
+$setHits = @(Select-String -Path (Join-Path $src '*\*.cpp') -Pattern $setPattern)
+# SYMMETRY with the clearer half below (cold review F8): a lint half that matches nothing passes silently
+# and enforces nothing. Both halves assert they can still SEE their sanctioned site.
+if ($setHits.Count -eq 0) {
+    Write-Host "FAIL: no setter site matched at all -- this check has gone vacuous. The hide must take ownership of the record, and this pattern must be able to see it."
+    $fail = $true
+}
+foreach ($hit in $setHits) {
     $file = Split-Path -Leaf $hit.Path
     if ($file -ne $allowedSetTrue) {
         Write-Host "FAIL: bSuppressedByUs is set true in $file line $($hit.LineNumber) -- only $allowedSetTrue may do that, and only beneath the hide it records."
@@ -37,10 +44,16 @@ foreach ($hit in (Select-String -Path (Join-Path $src '*\*.cpp') -Pattern $setPa
     }
 }
 
-# The clearer. The whole-record reset (`Rec = FNodeShuffleWellSuppressionRecord()`) is the sanctioned
-# form and lives in the un-hide; a per-field `= false` anywhere is the smell.
-$clearPattern = 'bSuppressedByUs\s*=\s*false'
-foreach ($hit in (Select-String -Path (Join-Path $src '*\*.cpp') -Pattern $clearPattern)) {
+# The clearer. The sanctioned form is the WHOLE-RECORD RESET in the un-hide; a per-field `= false` is the
+# smell. BOTH forms are matched -- matching only the per-field form made this half VACUOUS (cold review
+# F8): the tree contains no per-field clear, so the loop never ran and the mirror was never enforced.
+$clearPattern = 'bSuppressedByUs\s*=\s*false|=\s*FNodeShuffleWellSuppressionRecord\s*\('
+$clearHits = @(Select-String -Path (Join-Path $src '*\*.cpp') -Pattern $clearPattern)
+if ($clearHits.Count -eq 0) {
+    Write-Host "FAIL: no clear site matched at all -- this check has gone vacuous. The un-hide must discharge the record, and this pattern must be able to see it."
+    $fail = $true
+}
+foreach ($hit in $clearHits) {
     $file = Split-Path -Leaf $hit.Path
     if ($file -ne $allowedClear) {
         Write-Host "FAIL: bSuppressedByUs is cleared in $file line $($hit.LineNumber) -- only $allowedClear may discharge the restore obligation."

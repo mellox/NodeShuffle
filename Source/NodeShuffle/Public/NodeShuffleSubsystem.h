@@ -1970,15 +1970,17 @@ private:
     // pairing problem: SuppressVanillaWellGroup used to call FindMeshActorForNode, whose cache is built
     // by a sweep that skips fracking actors outright, so five well groups out of six hid ZERO mesh
     // actors while reporting nothing pending. Returns the number of pieces newly hidden.
-    // ns-t23-rollhide: bRecordPriorState is true only on the pass that takes a member into the
-    // suppression ledger, and it is what makes the mesh un-hide an inverse rather than a guess. See the
-    // definition for why the record cannot be persisted.
-    int32 HideWellMemberMeshes(class AFGResourceNodeBase* Node, int32& OutAlreadyHidden,
-                               bool bRecordPriorState);
+    // ns-t23-rollhide REVIEW FIX (cold review F5): the prior-state gate is PER COMPONENT and lives in the
+    // definition, not a per-member flag passed in by the caller -- a member's first touch fires once ever
+    // and missed pieces that entered the index later or were re-created by a streaming round trip. See
+    // the definition for why the record cannot be persisted.
+    int32 HideWellMemberMeshes(class AFGResourceNodeBase* Node, int32& OutAlreadyHidden);
     // The origin-side inverse: restore every indexed piece of this member. Returns pieces restored;
     // OutGuessed accumulates pieces whose prior state was not in the session record and had to use the
-    // documented default.
-    int32 ShowWellMemberMeshes(class AFGResourceNodeBase* Node, int32& OutGuessed);
+    // documented default. bOutIndexHadEntry distinguishes "this member has no pieces" from "the index
+    // holds no entry for it yet" (cold review F6) -- a zero means nothing without it.
+    int32 ShowWellMemberMeshes(class AFGResourceNodeBase* Node, int32& OutGuessed,
+                               bool& bOutIndexHadEntry, int32& OutIndexedForMember);
 
     // Dress the RELOCATED actors: re-apply the captured pieces as static-mesh components on our spawned
     // core/satellites, with the collision recipe that makes them build-gun surfaces. Idempotent.

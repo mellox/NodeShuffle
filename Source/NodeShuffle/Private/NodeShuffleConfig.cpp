@@ -168,7 +168,7 @@ void UNodeShuffleConfig::PostInitProperties()
     // nitrogen well is now 4 km away". This one also carries a stage warning the other does not.
     AddBool(TEXT("RelocateResourceWells"), false,
         TEXT("Relocate Resource Wells (EXPERIMENTAL)"),
-        TEXT("OFF by default and still experimental — leave it off if you want a quiet save.\n\nWhen ON, a whole resource well (its core and every satellite) is MOVED to a new place as a rigid body: the satellites keep their exact spacing and pattern relative to the core, and the whole group is rotated together to find an orientation that fits the terrain. A well is moved all-or-nothing — if the full footprint cannot be placed, the well is left exactly where it was.\n\nA relocated well is DRESSED AND BUILDABLE: its rocks and cracks are re-created at the new site, and a Resource Well Pressurizer and its Extractors snap to it and produce.\n\nKNOWN LIMITS:\n- A well cannot actually move until you travel to its destination and the terrain loads. If you build on one while it is still waiting, you can end up with two wells — we never hide a well you have built on (see the mod's README).\n- Re-rolling does NOT move a well that has already moved, unless you turn on 'Re-roll Wells That Have Already Moved' below. With that option off, only wells that have not moved yet are dealt a new destination.\n- A well moves with the satellites that had loaded when it was enrolled. If more of its satellites load later, they are left out of the moved well permanently — the well is smaller, and produces less, until you reload the save.\n- A relocated well claims a large build area, and that has not been tested against ordinary resource nodes closer than about 15 m. If a Miner will not place on an ordinary node right beside a relocated well, please report it — that case is untested. (For a Miner that will not place anywhere near a well, see the note at the top of this panel.)\n- Desert-biome wells are unverified and may arrive without their rock graphics.\n\nRequires 'Shuffle Resource Wells' to be on as well, and applies at ROLL time — turn both on, then use 'Re-roll Layout'."));
+        TEXT("OFF by default and still experimental — leave it off if you want a quiet save.\n\nWhen ON, a whole resource well (its core and every satellite) is MOVED to a new place as a rigid body: the satellites keep their exact spacing and pattern relative to the core, and the whole group is rotated together to find an orientation that fits the terrain. A well is moved all-or-nothing — if the full footprint cannot be placed, the well is left exactly where it was. (With 'Remove A Moved Well Immediately' on, the original is removed first and only put back afterwards - see that option.)\n\nA relocated well is DRESSED AND BUILDABLE: its rocks and cracks are re-created at the new site, and a Resource Well Pressurizer and its Extractors snap to it and produce.\n\nKNOWN LIMITS:\n- A well cannot actually move until you travel to its destination and the terrain loads. If you build on one while it is still waiting, you can end up with two wells — we never hide a well you have built on (see the mod's README).\n- Re-rolling does NOT move a well that has already moved, unless you turn on 'Re-roll Wells That Have Already Moved' below. With that option off, only wells that have not moved yet are dealt a new destination.\n- A well moves with the satellites that had loaded when it was enrolled. If more of its satellites load later, they are left out of the moved well permanently — the well is smaller, and produces less, until you reload the save.\n- A relocated well claims a large build area, and that has not been tested against ordinary resource nodes closer than about 15 m. If a Miner will not place on an ordinary node right beside a relocated well, please report it — that case is untested. (For a Miner that will not place anywhere near a well, see the note at the top of this panel.)\n- Desert-biome wells are unverified and may arrive without their rock graphics.\n\nRequires 'Shuffle Resource Wells' to be on as well, and applies at ROLL time — turn both on, then use 'Re-roll Layout'."));
 
     // T7b (ns-t7b-reroll). A THIRD well toggle, and it earns its place for the same reason the second
     // one did: "a well may move" and "a well I have already found may move again" are different
@@ -224,8 +224,9 @@ void UNodeShuffleConfig::PostInitProperties()
         TEXT("Remove A Moved Well Immediately (EXPERIMENTAL)"),
         TEXT("OFF by default. This changes WHEN the original well disappears. It does not change where ")
         TEXT("wells go, how they are dealt, or whether they can be built on.\n\n")
-        TEXT("OFF: the original well keeps standing until its replacement has actually been built at the ")
-        TEXT("new location. Until that happens you can still see the original where it always was.\n\n")
+        TEXT("OFF: a well that has not moved yet keeps standing until its replacement has actually been ")
+        TEXT("built at the new location. (A well that has ALREADY moved and is being moved again is ")
+        TEXT("removed at the re-roll either way - see 'Re-roll Wells That Have Already Moved'.)\n\n")
         TEXT("ON: the original well is removed at the moment of the re-roll. The replacement is still ")
         TEXT("only built once a player travels to the new location and the terrain there loads - that ")
         TEXT("part is unchanged. Between those two moments the well is in NEITHER place: it is absent ")
@@ -241,10 +242,12 @@ void UNodeShuffleConfig::PostInitProperties()
         TEXT("this option were off. Recording at the roll happens once and is not retried, so this is a ")
         TEXT("real population, not an edge case. The log line 'WELLH2-ROLLHIDE' names which wells were ")
         TEXT("removed at the roll and which fell back.\n\n")
-        TEXT("IF A WELL CAN NEVER BE PLACED ANYWHERE, its original is put back. That can only happen ")
-        TEXT("while the original's own area is loaded, which in practice means when you are near it ")
-        TEXT("again, so it is retried rather than done immediately. Until it completes, that well is ")
-        TEXT("counted in the log line 'WELLH2-STRANDED'.\n\n")
+        TEXT("IF A WELL CAN NEVER BE PLACED ANYWHERE, the mod tries to put its original back. That ")
+        TEXT("attempt only runs while the original's own area is loaded, so in practice it completes ")
+        TEXT("when you are near it again. THERE ARE TWO CASES IT DOES NOT COVER: if you turn ")
+        TEXT("'Relocate Resource Wells' off while a well is still absent, and if a well keeps failing to ")
+        TEXT("assemble at its destination, nothing puts the original back. Both are counted in the log ")
+        TEXT("line 'WELLH2-STRANDED', which must read zero.\n\n")
         TEXT("Requires 'Shuffle Resource Wells' and 'Relocate Resource Wells' to be on as well, and ")
         TEXT("applies at ROLL time - turn it on, then use 'Re-roll Layout'."));
 

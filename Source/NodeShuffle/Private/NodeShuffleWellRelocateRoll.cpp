@@ -951,8 +951,19 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll, bool 
         // accidentally correct, which is why it has never been caught.
         //
         // Gated on the diagnostics flag because the rebuild is real new work on the roll path (see the
-        // measured cost printed by the probe itself). With diagnostics off this branch does nothing at
-        // all and the roll behaves exactly as it did before ns-t23-stage0.
+        // measured cost printed by the probe itself). With diagnostics off THIS branch does nothing at all.
+        //
+        // ns-t23-rollhide REVIEW FIX (cold review F10, comment-only -- the code is deliberately unchanged).
+        // The claim that used to end this paragraph -- "with diagnostics off the roll behaves exactly as it
+        // did before ns-t23-stage0" -- IS NO LONGER TRUE OF THE ROLL AS A WHOLE. The bCommitAtRoll branch
+        // below calls the same EnsureRollMeshIndexOnce latch and is NOT diagnostics-gated, so with
+        // 'Remove A Moved Well Immediately' ON the index rebuild happens on the roll path regardless of
+        // diagnostics. That is load-bearing, not incidental: the hide operates on INDEXED mesh pieces and a
+        // stale index would leave rock standing at the abandoned origin. The cost is bounded to players who
+        // opted into a default-OFF experimental toggle, so it is accepted rather than re-gated.
+        // The reviewer's other half of F10 -- that WELLH2B-ROLLPROBE's "the NEXT WELLH2B-INDEX line"
+        // promise could dangle -- does NOT reproduce: that summary is an ungated UE_LOG(Display) at
+        // NodeShuffleWellMeshIndex.cpp, so it prints on every rebuild whatever the diagnostics flag says.
         if (bStage0Diag)
         {
             EnsureRollMeshIndexOnce();

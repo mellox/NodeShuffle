@@ -205,8 +205,7 @@ bool ANodeShuffleSubsystem::CaptureWellGroupVisuals(FNodeShuffleWellEntry& E)
 // ------------------------------------------------------------------------------------------------
 // ORIGIN-SIDE HIDE -- every piece, by every route
 // ------------------------------------------------------------------------------------------------
-int32 ANodeShuffleSubsystem::HideWellMemberMeshes(AFGResourceNodeBase* Node, int32& OutAlreadyHidden,
-                                                  bool bRecordPriorState)
+int32 ANodeShuffleSubsystem::HideWellMemberMeshes(AFGResourceNodeBase* Node, int32& OutAlreadyHidden)
 {
     if (!IsValid(Node)) { return 0; }
     const FString Path = WellPathOf(Node);
@@ -225,18 +224,19 @@ int32 ANodeShuffleSubsystem::HideWellMemberMeshes(AFGResourceNodeBase* Node, int
         // build-gun response that makes it an invisible snappable ghost. That is strictly worse than the
         // bug this packet fixes, and it is exactly what the comment below claims to prevent.
         const bool bWasVisible = C->IsVisible();
-        // ns-t23-rollhide -- THE ONLY RECORD OF WHAT THIS PIECE LOOKED LIKE BEFORE WE TOUCHED IT.
-        // Written once, on the pass that takes ownership of the member (bRecordPriorState), never on a
-        // re-assertion pass -- on those the piece is already invisible and de-collided BY US.
-        //
-        // SESSION-TRANSIENT AND UNAVOIDABLY SO. UStaticMeshComponent identity is not path-stable, so this
-        // cannot be persisted (H2b-review F-3 recorded the same limitation for the capture). Across a
-        // reload the un-hide therefore falls back to a documented default and COUNTS how many pieces it
-        // had to guess for, rather than pretending the restore was exact.
-        //
-        // Packed: low nibble = the ECollisionEnabled value, bit 7 = was visible. One map instead of two,
-        // because two maps keyed on the same component are two things that can disagree.
-        if (bRecordPriorState && !WellMeshPriorCollision.Contains(C))
+        // ns-t23-rollhide REVIEW FIX (cold review F5) -- THE GATE IS PER COMPONENT, NOT PER MEMBER.
+        // It used to be the member's first touch, which fires once ever -- so a piece that entered the
+        // index later (measured: route 3 going 7 -> 8) or a piece RE-CREATED by a streaming round trip at
+        // the origin was hidden with no record and could only be restored to the documented default. Two
+        // guards make per-pass recording safe: a component already recorded is skipped, and a component
+        // that is already invisible AND de-collided carries nothing worth recording (it is
+        // indistinguishable from our own hide, and the restore default is strictly better than copying it).
+        // Packed: low nibble = the ECollisionEnabled value, bit 7 = was visible. One map, not two.
+        // SESSION-TRANSIENT AND UNAVOIDABLY SO: UStaticMeshComponent identity is not path-stable
+        // (H2b-review F-3), so across a reload the restore uses the default and COUNTS what it guessed.
+        const bool bLooksAlreadySuppressed =
+            !bWasVisible && C->GetCollisionEnabled() == ECollisionEnabled::NoCollision;
+        if (!bLooksAlreadySuppressed && !WellMeshPriorCollision.Contains(C))
         {
             WellMeshPriorCollision.Add(C, static_cast<uint8>(
                 (static_cast<uint8>(C->GetCollisionEnabled()) & 0x0F) | (bWasVisible ? 0x80 : 0x00)));

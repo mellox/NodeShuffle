@@ -375,13 +375,35 @@ void ANodeShuffleSubsystem::SuppressVanillaWellGroup(FNodeShuffleWellEntry& E, E
         // second one appears: writing that flag without performing the hide beneath it is the one-line
         // shortcut that turns the deliberately-red T23-A assertion green while changing nothing in the
         // world, and it would also fabricate an un-hide obligation for a member we never touched.
+        // ns-t23-rollhide REVIEW FIX (cold review F1): "first touch" is first touch OF THIS LEDGER, which
+        // is NOT the first hide. bSuppressedByUs is a new SaveGame field, so every save written before it
+        // existed holds members we hid under an earlier build with no record of it -- and reading the live
+        // flags there records OUR OWN hidden+de-collided state as "prior", so the restore would re-hide the
+        // well, report success and clear the obligation. When THIS ENTRY has ever been relocated by us, a
+        // hidden or de-collided member is ours by construction, so the vanilla state is recorded instead.
+        // The predicate is measured from this entry's own placement state, not inferred.
         const bool bFirstTouch = !Rec.bSuppressedByUs;
         if (bFirstTouch)
         {
-            Rec.bWasActorHiddenBefore = Node->IsHidden();
-            Rec.bWasCollisionDisabledBefore = !Node->GetActorEnableCollision();
+            const bool bEverRelocatedByUs =
+                E.bGroupPlaced || E.bDestDealt || !E.PlacedCoreLocation.IsNearlyZero();
+            const bool bLiveHidden = Node->IsHidden();
+            const bool bLiveNoCollision = !Node->GetActorEnableCollision();
+            Rec.bWasActorHiddenBefore = bEverRelocatedByUs ? false : bLiveHidden;
+            Rec.bWasCollisionDisabledBefore = bEverRelocatedByUs ? false : bLiveNoCollision;
             Rec.bSuppressedByUs = true;
             ++NewlyOwned;
+            if (bEverRelocatedByUs && (bLiveHidden || bLiveNoCollision))
+            {
+                UE_LOG(LogNodeShuffle, Display,
+                    TEXT("WELLH2-SUPPRESS core='%s' member='%s': taken into the ledger while ALREADY ")
+                    TEXT("hidden %d and de-collided %d, on an entry this mod has already relocated ")
+                    TEXT("(placed %d, dealt %d). Recorded as vanilla-visible and vanilla-colliding, ")
+                    TEXT("because a hide performed before this ledger existed left no record to copy. ")
+                    TEXT("This is what a later restore will hand back."),
+                    *WellShort(E.CorePath), *Node->GetName(), bLiveHidden ? 1 : 0,
+                    bLiveNoCollision ? 1 : 0, E.bGroupPlaced ? 1 : 0, E.bDestDealt ? 1 : 0);
+            }
         }
         bool bChanged = false;
         if (Node->GetActorEnableCollision()) { Node->SetActorEnableCollision(false); bChanged = true; }
@@ -391,11 +413,11 @@ void ANodeShuffleSubsystem::SuppressVanillaWellGroup(FNodeShuffleWellEntry& E, E
         // build gun is a ghost you can build on. The player-visible symptom this fixes is the core's
         // cracked-ground graphic still sitting at the original site after the well moved, with the
         // satellites correctly gone.
-        // ns-t23-rollhide: bFirstTouch is passed through so the per-piece prior state is recorded ONLY on
-        // the pass that takes ownership. On every later pass the pieces are already ours and already
-        // hidden, and recording THAT as "prior" would make the mesh un-hide restore invisible+no-collision
-        // -- a restore that reports success and hands the player nothing.
-        MeshesHidden += HideWellMemberMeshes(Node, MeshesAlready, bFirstTouch);
+        // ns-t23-rollhide REVIEW FIX (cold review F5): the prior-state gate is now PER COMPONENT inside
+        // HideWellMemberMeshes, so bFirstTouch is no longer passed through. A member's first touch fires
+        // once ever, so a piece that entered the index later -- or was re-created by a streaming round
+        // trip at the origin -- was hidden with no record at all and could only be restored to the default.
+        MeshesHidden += HideWellMemberMeshes(Node, MeshesAlready);
         if (bChanged) { ++Hidden; }
         // Take the hidden original out of the scanner and the node manager, once, so it cannot ping an
         // empty map spot or accept an extractor snap as an invisible ghost. Same idiom, same reasons,
