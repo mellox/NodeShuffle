@@ -1220,3 +1220,54 @@ unrun. They are log-only measurements — no build required, ~25 minutes in game
 Still gated on RT-6, which has not run. Round 9 established that it and `bPlacementClaimLive`
 are **different layers** — entry-owns-coordinate vs actor-identity — and that neither
 subsumes the other, so A3 shipping does not retire this.
+
+### T31. The last-resort visual template is ONE GLOBAL PAIR, first-capture-wins — so a fallback well can wear ANOTHER RESOURCE'S ROCKS. The code comment calls this a biome problem; the biome half is nearly harmless and the resource half is not.
+**Found 2026-08-09 while measuring whether T30 (invented core groups) could ship. Measured from the
+pak index, 18,094 anchored runtime observations across 8 sessions, and the source — not inferred.
+Triggered by the AUTHOR contradicting the existing comment from in-game observation:** *"I'm not sure
+the look is different between biomes, it still looks like a piece of rock in all that I saw."*
+**They were right about the mesh, and the investigation that confirmed them found something worse.**
+
+**The mechanism.** `NodeShuffleWellVisuals.cpp:174-176` selects between exactly two session members —
+`WellVisualTemplateCore` and `WellVisualTemplateSatellite` (`NodeShuffleSubsystem.h:2140-2141`) — and
+fills each with `if (Template.Num() == 0) { Template = Out; }`. So:
+* there is **one template per KIND for the whole session**, not one per resource and not one per biome;
+* it is **first-capture-wins** — whatever well happened to be dressed first owns the look; and
+* it is **never refreshed**, so a later, better-matched capture cannot replace it.
+
+**Why that is worse than the comment says.** The comment points at *"the wrong biome's rock"*.
+Measured: **the biome axis barely exists on the MESH.** The pak index holds exactly two resource
+families of three pieces — `SM_FrackingNode_{Crack,Mid,Small}_01` and
+`SM_Nitrogen_Node_{Crack,Mid,Small}` — and **no desert node mesh exists at all**; all 40 `SM_*Desert*`
+assets in the game are foliage, boulders and coral. At runtime, 2 distinct mesh names over **18,094**
+observations, and the *same* mesh appears under both `nodeMeshType=2` (MT_Crack) and `=5`
+(MT_DesertCrack) — 1,958 desert-typed observations carrying the identical mesh as 13,605
+grassland-typed ones. **The author's in-game read is confirmed on mesh.**
+
+**The RESOURCE axis is the real one, and nobody had named it.** `SM_Nitrogen_Node_*` and
+`SM_FrackingNode_*` are genuinely different mesh sets. Because the template is global and
+first-capture-wins, **a session whose first captured well is nitrogen dresses every later fallback
+well — water, oil — in nitrogen rocks.** This is not hypothetical: a companion measurement found
+**7 of 19 relocated groups (37%) never capture their own origin in ANY observation across 8 sessions**
+and ride the fallback permanently.
+
+**Grades, honestly.**
+* One global first-capture-wins template per kind — **provably provided** (source above, 0 other writers).
+* Two mesh families exist and differ — **measured** (pak index + runtime census).
+* No desert MESH variant exists — **measured**.
+* A desert MATERIAL split DOES exist (5 `MI_*Desert*` well instances paired against non-desert twins,
+  plus `TX_DesertRock_Cracked_01`) — **measured that the assets exist**; whether a desert-typed
+  instance actually *resolves* to the desert MI is **UNMEASURED**.
+* **Whether a player NOTICES a family mismatch — UNMEASURED, and it is an art judgment, not ours.**
+  The scoped render that would settle the material half is `MI_FrackingNodes_Water_01` vs
+  `..._Desert_Water_01` on the same mesh. Mesh comparison is closed by the asset list; do not re-run it.
+
+**Do not "fix" this by making the template per-resource until someone decides it is worth fixing** —
+the fallback exists precisely so a member is never left invisible-and-unbuildable, and a per-resource
+template makes an empty-template outcome MORE likely for rare resources, which is the strictly worse
+failure. That trade is the decision, and it belongs to the author.
+
+**What this does to T30.** An invented group has no origin, ever, so it rides this template 100% of the
+time. The cosmetic cost of T30 is therefore **not** "wrong biome tint" — it is **"may wear another
+resource's rocks"**, and it is bounded by whatever this entry is worth fixing. Full working:
+`_team/nodeshuffle-followups/T30-lookdiff.md`.
