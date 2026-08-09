@@ -1369,3 +1369,64 @@ discussion. A count that spans builds is not a count of anything.**
 relocated wells. Until then T31's frequency and all of T32 are **UNMEASURED ON THE CURRENT BUILD**, and
 neither may be cited as a live defect rate. The unbuildable question is unaffected and still worth one
 in-game attempt on any undressed core.
+
+### T34. A relocated well core can land far enough inside a rock that normal placement refuses — and the snap-mode toggle (H) then lets you build inside the rock anyway.
+**Reported in game by the author 2026-08-09 on build `2026-08-09-t27-3`, with screenshots. Author's
+call: ACCEPTABLE FOR NOW — filed, not scheduled.**
+
+Observed: at a water well group, the core sat far enough inside a rock formation that the Resource
+Well Extractor hologram refused normal placement. Pressing **H** (snap mode) turned the hologram blue
+and placement was allowed **inside the rock**. The author also found **only 3 wells in the group they
+could place on**, and saw the game offer placement on a well that was itself inside a rock — *"that
+won't help a player."*
+
+**What is measured and what is not.**
+* The behaviour is **observed in game**, twice, with screenshots. That is the evidence.
+* **Whether the snap-mode path bypasses a check our relocation relies on is UNTESTED.** H is a vanilla
+  build-gun affordance; it is not ours. Do not assume the mod caused it.
+* **Whether a vanilla (un-relocated) well behaves identically is UNTESTED and is the FIRST thing to
+  check** — if vanilla wells also allow this, it is not our defect and this entry closes.
+
+**Why it is not merely cosmetic.** A well the player can only reach by defeating the placement refusal
+is, for practical purposes, a well they cannot use — the same class as T15's permanent, log-invisible
+shrink. The group above yielded 3 usable members out of its full count.
+
+**Do not "fix" this by blocking the snap-mode path.** That is vanilla behaviour and blocking it would
+take a legitimate affordance away from players. The fix, if one is wanted, belongs at PLACEMENT time —
+do not deal a core where its members are unreachable — which is [[T35]]'s territory.
+
+### T35. THE ENCLOSURE GATE HAS NEVER REJECTED ANYTHING — 0 rejects across 2,961 census lines, on both the core and satellite sides — while the author stands in front of the exact defect it was built to prevent.
+**Measured 2026-08-09 from the live session on `2026-08-09-t27-3`, the first log this build ever
+produced. This is a ZERO WITHOUT A DENOMINATOR, and it is the gate T26/T27 exist to provide.**
+
+```
+core side:      enclosed:0  x2961 census lines
+satellite side: enclosed:0  x2961 census lines
+```
+
+**The zero is almost certainly NOT "nothing was enclosed".** In the same session **2,032 of 2,042
+attempts ended `DEFERRED-void`**, terminated on the core side with `void:1` — and **void is the FIRST
+gate while enclosure is the SIXTH**. So the overwhelming majority of probes die before the enclosure
+test is ever reached. **The census reports how often the gate REJECTED and never how often it RAN**,
+so today's `enclosed:0` is indistinguishable from a gate that never executed.
+
+**THE INSTRUMENTATION THIS NEEDS, and it is the whole first step.** Add a *gate-reached* counter beside
+each *gate-rejected* counter, so every rejection bucket prints `rejected of reached`. Without it no
+future session can tell a working gate from an unreachable one, and this entry will recur verbatim.
+`[[lessons-zero-needs-a-denominator]]`, fourth sighting in this file family.
+
+**THE AUTHOR'S HYPOTHESIS, which this entry exists to test** — *"we may find that we are not doing the
+same checks as we do for solids, or that solids are having the same issue."* Both halves are open:
+* T26 made `IsSpotEnclosed` shared, and the node path DELEGATES to it, so the two paths cannot hold
+  different *code*. **That is not the same as running it at the same rate**, and rate is exactly what
+  is unmeasured. **SYMMETRY, and the measurement must cover BOTH sides** — count gate-reached on the
+  solid path too, or this answers half the question.
+* The predicate itself is **8 horizontal rays at 500 cm from Z+200, rejecting at 7 of 8 blocked**. By
+  construction that **cannot detect a bowl wider than 5 m, a ledge under an overhang, or a spire top** —
+  and a core sitting inside a large rock formation, which is what the author is looking at, may be
+  exactly the shape it cannot see. **Whether the gate PASSED that core or never REACHED it is the
+  question**, and the counter above is what answers it.
+
+**Do not tune the predicate before the counter lands.** Widening the ray count or radius against an
+unmeasured baseline is how a gate gets tuned to satisfy the last screenshot. See [[T34]] for the
+in-game symptom and [[T15]] for the silent-shrink class this belongs to.
