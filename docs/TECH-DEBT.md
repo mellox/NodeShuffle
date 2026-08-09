@@ -330,6 +330,42 @@ cluster.
 > **Measure before choosing:** count how many active nodes currently sit within 90 m of a placed well
 > core. If it is a handful, (C) is defensible; if it is dozens, it is a placement bug.
 
+### T21. Well relocation is presence-gated only because we never baked SURFACE terrain — and we already bake CAVE terrain
+**Raised by the mod author 2026-08-08, and it dissolves an assumption three explanations in this file
+were built on.** Their question: *"If a solid node can properly land on terrain, and we check the
+terrain is the right type, why are we not able to check that for the wells? The terrain is static."*
+
+**First, a correction this entry exists to make.** Solid nodes do **not** validate terrain at roll time
+either. They settle through the same trace, which returns the same failure — *"no terrain / out of range
+(true void)"* (`NodeShuffleSubsystem.cpp:5904`). The solid/well asymmetry was never *"we check for one
+and not the other"*; it is only **failure tolerance**: a solid that cannot settle is one node, and nodes
+are *allowed* to disappear (`ActivePercent`), so nothing needs a fallback. A well that cannot place must
+fall back to its original, so the original must still exist — which is why it cannot be hidden on the
+roll. That is the real reason, and earlier answers in this file gave weaker ones.
+
+**The author's lever is the right one.** The blocker is not that terrain changes — it is that the only
+way we ask about terrain is a physics trace, and a trace needs the landscape **resident**. Static
+geometry we cannot query is still unqueryable.
+
+**But this mod already solves that exact problem for caves.** `NodeShuffleBakedData::CaveFloorsChunks`
+is a **baked cave-floor atlas embedded in the DLL**, merged at load by `EnsureCaveStoreLoaded` and usable
+with **no streaming** (6656 cells on the author's save). The technique — *terrain is static, so bake it
+once and query the bake* — is shipped, working, and pointed at caves only.
+
+> **Design option, not scheduled: bake a SURFACE height atlas and validate well footprints at roll time.**
+> Then a well's destination is *committed* like a solid node's, the original can be hidden immediately,
+> and the all-or-nothing fallback stops needing the original to survive — because failure is known
+> before the deal, not hours later when a player flies there.
+> **Costs and caveats, stated honestly:** an atlas at enough resolution to judge a footprint up to ~65 m
+> across (`WellMaxBoundRadiusCm`) is larger than the cave one; it must be generated offline in-editor;
+> and it can only describe **vanilla** terrain. That last point is fine — terrain is static — but note
+> the contrast with **T14**, where a bake is strictly *worse* than a live iterator because other mods
+> spawn nodes at runtime. **Terrain can be baked precisely because nothing spawns it.**
+>
+> **Do not start this without sizing the atlas first.** The question that decides it is resolution: what
+> cell size is needed to reject a footprint that a yaw search would have rejected? Measure against the
+> existing placement code's own tolerances before writing anything.
+
 ### T18. A pin found on a relocated well is never RECORDED — `bAlreadyApplied` measures the wrong actor
 **Found 2026-08-08 by the T17 cold review. Pre-existing T16 defect that T17 makes consequential.**
 Diagnostics for it shipped with T17; the fix did not.
