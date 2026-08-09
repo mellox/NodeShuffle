@@ -456,7 +456,9 @@ void ANodeShuffleSubsystem::RebuildWellMeshIndex()
     }
 
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("WELLH2B-INDEX pass %d: %d vanilla well member(s) indexed, %d mesh piece(s) paired ")
+        TEXT("WELLH2B-INDEX pass %d: %d vanilla well member(s) WALKED (not 'indexed' -- see the ")
+        TEXT("member(s)-with-at-least-one-piece count at the end of this line for that), ")
+        TEXT("%d mesh piece(s) paired ")
         TEXT("(%d own, %d via engine link, %d spatial), %d bystander reject(s), ")
         TEXT("%d narrowed-by-type of %d name-matching candidate(s) (%d of them in radius), ")
         TEXT("%d widened-by-type of %d type-matching candidate(s) (%d of them in radius), ")

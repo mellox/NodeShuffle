@@ -51,6 +51,7 @@
 #include "NodeShuffleSubsystem.h"
 
 #include "NodeShuffle.h"
+#include "NodeShuffleConfig.h"       // ns-t23-rollhide: CommitWellsAtRoll, read once per pass for the TEST line
 #include "NodeShuffleWellCensus.h"   // AFGResourceNodeFrackingCore / ...Satellite
 #include "NodeShuffleWellRetype.h"   // WellPathOf / WellShort
 #include "NodeShuffleWellRelocate.h" // the H2 pure helpers
@@ -303,9 +304,15 @@ bool ANodeShuffleSubsystem::TryPlaceWellGroup(FNodeShuffleWellEntry& E, UClass* 
 // visible satellite beside a hidden core is the well-shaped version of the orphan-rock ghost, so the
 // core, every satellite and their paired AFGNodeMeshActors are hidden as a UNIT (design §2.5).
 // Re-asserted every pass because a level actor streams back in un-hidden.
-void ANodeShuffleSubsystem::SuppressVanillaWellGroup(FNodeShuffleWellEntry& E)
+void ANodeShuffleSubsystem::SuppressVanillaWellGroup(FNodeShuffleWellEntry& E, EWellSuppressPhase Phase)
 {
     int32 Hidden = 0, MeshesHidden = 0, MeshesAlready = 0, Occupied = 0, Unstreamed = 0;
+    // ns-t23-rollhide: how many members this call newly took OWNERSHIP of (the false->true transition of
+    // bSuppressedByUs). Distinct from Hidden, which counts actor-flag changes and therefore also counts a
+    // re-assertion after a member streamed back in un-hidden. Both are printed: a zero in one beside a
+    // non-zero in the other is the difference between "first suppression" and "maintenance".
+    int32 NewlyOwned = 0;
+    const bool bRollPhase = (Phase == EWellSuppressPhase::Roll);
 
     // H2b -- THE INDEX FIRST, THEN CAPTURE, THEN HIDE, IN THAT ORDER AND FOR THAT REASON.
     //
@@ -322,10 +329,22 @@ void ANodeShuffleSubsystem::SuppressVanillaWellGroup(FNodeShuffleWellEntry& E)
     // and a fracking CORE is an AFGResourceNodeBase that iterator never visits -- so only the rarely
     // set engine back-link could ever pair a well member, and it happened to be set for exactly one
     // group. The meshes were never missing; nothing was looking for them.
-    EnsureWellMeshIndex();
-    CaptureWellGroupVisuals(E);
+    //
+    // ns-t23-rollhide: BOTH OF THOSE ARE SKIPPED ON THE ROLL PHASE, and skipping them is not an
+    // optimisation -- it is required for correctness and for cost. The roll's phase-3 commit has already
+    // called RebuildWellMeshIndex() ONCE for the whole roll and CaptureWellGroupVisuals() for this entry,
+    // and it had to: EnsureWellMeshIndex() early-returns only when WellMeshIndexPass == WellAuditPasses,
+    // and the roll does not increment WellAuditPasses, so on the FIRST roll of a session (defaults
+    // WellMeshIndexPass = -1, WellAuditPasses = 0) it would rebuild the whole-world index once PER
+    // ENROLLED WELL. Calling it here on the roll path would also silently re-run the capture the roll's
+    // completeness gate has already adjudicated.
+    if (!bRollPhase)
+    {
+        EnsureWellMeshIndex();
+        CaptureWellGroupVisuals(E);
+    }
 
-    const auto HideOne = [&](AFGResourceNodeBase* Node) -> void
+    const auto HideOne = [&](AFGResourceNodeBase* Node, FNodeShuffleWellSuppressionRecord& Rec) -> void
     {
         if (!IsValid(Node)) { ++Unstreamed; return; }
         // ns-review-h4 F1: the SAME two-part predicate the destructive paths use. Hiding is not
@@ -345,6 +364,63 @@ void ANodeShuffleSubsystem::SuppressVanillaWellGroup(FNodeShuffleWellEntry& E)
             }
             return;
         }
+        // ns-t23-rollhide -- THE PRIOR STATE IS READ BEFORE ANYTHING IS WRITTEN, AND ONLY ON THE
+        // FALSE->TRUE TRANSITION. This block is re-entered on every re-assertion pass (a level actor
+        // streams back in un-hidden), and on those passes the actor is already hidden BY US -- recording
+        // that as "prior" would make the un-hide restore hidden+no-collision and leave the well
+        // permanently invisible while reporting a successful restore. So the record is written exactly
+        // once, at the instant we take ownership, and never touched again until UnhideWellMember clears it.
+        //
+        // THE ONLY SITE THAT SETS bSuppressedByUs TRUE. tools/check_t23_writers.ps1 fails the tree if a
+        // second one appears: writing that flag without performing the hide beneath it is the one-line
+        // shortcut that turns the deliberately-red T23-A assertion green while changing nothing in the
+        // world, and it would also fabricate an un-hide obligation for a member we never touched.
+        // ns-t23-rollhide REVIEW FIX (cold review F1): "first touch" is first touch OF THIS LEDGER, which
+        // is NOT the first hide. bSuppressedByUs is a new SaveGame field, so every save written before it
+        // existed holds members we hid under an earlier build with no record of it -- and reading the live
+        // flags there records OUR OWN hidden+de-collided state as "prior", so the restore would re-hide the
+        // well, report success and clear the obligation. When THIS ENTRY has ever been relocated by us, a
+        // hidden or de-collided member is ours by construction, so the vanilla state is recorded instead.
+        // The predicate is measured from this entry's own placement state, not inferred.
+        const bool bFirstTouch = !Rec.bSuppressedByUs;
+        if (bFirstTouch)
+        {
+            const bool bEverRelocatedByUs =
+                E.bGroupPlaced || E.bDestDealt || !E.PlacedCoreLocation.IsNearlyZero();
+            const bool bLiveHidden = Node->IsHidden();
+            const bool bLiveNoCollision = !Node->GetActorEnableCollision();
+            Rec.bWasActorHiddenBefore = bEverRelocatedByUs ? false : bLiveHidden;
+            Rec.bWasCollisionDisabledBefore = bEverRelocatedByUs ? false : bLiveNoCollision;
+            Rec.bSuppressedByUs = true;
+            Rec.bSuppressedAtRoll = bRollPhase;
+            ++NewlyOwned;
+            if (bEverRelocatedByUs && (bLiveHidden || bLiveNoCollision))
+            {
+                UE_LOG(LogNodeShuffle, Display,
+                    TEXT("WELLH2-SUPPRESS core='%s' member='%s': taken into the ledger while ALREADY ")
+                    TEXT("hidden %d and de-collided %d. The predicate this branch tested is that we have ")
+                    TEXT("dealt or placed this entry (placed %d, dealt %d) -- at a roll-time commit the ")
+                    TEXT("deal is set moments earlier and NOTHING has been relocated, so this is NOT a ")
+                    TEXT("test of who hid the member and nothing here measured that. Recorded as ")
+                    TEXT("vanilla-visible and vanilla-colliding BY DESIGN: handing back a hidden member ")
+                    TEXT("is unrecoverable and handing back a visible one self-corrects. This is what a ")
+                    TEXT("later restore will hand back."),
+                    *WellShort(E.CorePath), *Node->GetName(), bLiveHidden ? 1 : 0,
+                    bLiveNoCollision ? 1 : 0, E.bGroupPlaced ? 1 : 0, E.bDestDealt ? 1 : 0);
+            }
+            else if (!bEverRelocatedByUs && (bLiveHidden || bLiveNoCollision))
+            {
+                UE_LOG(LogNodeShuffle, Warning,
+                    TEXT("WELLH2-SUPPRESS core='%s' member='%s': first touch on an entry that is NEITHER ")
+                    TEXT("placed NOR dealt and names no previous placement, and the member is already ")
+                    TEXT("hidden %d / de-collided %d. That LIVE state is being recorded as PRIOR, so a ")
+                    TEXT("later restore will hand it back exactly as it is now. Cold review REVIEW-2 F-E ")
+                    TEXT("could not construct this state from any call site; if this line prints, the F1 ")
+                    TEXT("predicate is live and the trade it encodes needs re-deciding."),
+                    *WellShort(E.CorePath), *Node->GetName(), bLiveHidden ? 1 : 0,
+                    bLiveNoCollision ? 1 : 0);
+            }
+        }
         bool bChanged = false;
         if (Node->GetActorEnableCollision()) { Node->SetActorEnableCollision(false); bChanged = true; }
         if (!Node->IsHidden()) { Node->SetActorHiddenInGame(true); bChanged = true; }
@@ -353,6 +429,10 @@ void ANodeShuffleSubsystem::SuppressVanillaWellGroup(FNodeShuffleWellEntry& E)
         // build gun is a ghost you can build on. The player-visible symptom this fixes is the core's
         // cracked-ground graphic still sitting at the original site after the well moved, with the
         // satellites correctly gone.
+        // ns-t23-rollhide REVIEW FIX (cold review F5): the prior-state gate is now PER COMPONENT inside
+        // HideWellMemberMeshes, so bFirstTouch is no longer passed through. A member's first touch fires
+        // once ever, so a piece that entered the index later -- or was re-created by a streaming round
+        // trip at the origin -- was hidden with no record at all and could only be restored to the default.
         MeshesHidden += HideWellMemberMeshes(Node, MeshesAlready);
         if (bChanged) { ++Hidden; }
         // Take the hidden original out of the scanner and the node manager, once, so it cannot ping an
@@ -366,13 +446,24 @@ void ANodeShuffleSubsystem::SuppressVanillaWellGroup(FNodeShuffleWellEntry& E)
             DeregisterNodeFromManager(Node);
             ScannerDeregistered.Add(Path);
             ++ScannerDeregisterCount;
+            // ns-t23-rollhide: the SaveGame half of the same fact. ScannerDeregistered is session-scoped,
+            // so after a reload it says nothing about a member suppressed in an earlier session -- and an
+            // un-hide that skipped the re-registration on that basis would hand back a well that is
+            // VISIBLE BUT NOT BUILDABLE, which is the gap RestoreOriginalsForReroll still has and a FAIL,
+            // not a pass. Set inside this guard so the two can never disagree about what ran.
+            Rec.bDeregisteredByUs = true;
         }
     };
 
-    HideOne(FindOriginalBaseByPath(E.CorePath));
-    for (const FNodeShuffleWellSatellite& S : E.Satellites)
+    // SYMMETRY: the core's record lives on the entry and each satellite's on its own record, and both are
+    // the SAME TYPE (FNodeShuffleWellSuppressionRecord), so HideOne cannot treat the two sides
+    // differently even by accident. An UNCAPTURED satellite is suppressed here exactly as before -- it is
+    // never spawned, so leaving it visible would strand it at the abandoned origin -- and it therefore
+    // acquires an un-hide obligation exactly like every other member.
+    HideOne(FindOriginalBaseByPath(E.CorePath), E.CoreSuppression);
+    for (FNodeShuffleWellSatellite& S : E.Satellites)
     {
-        HideOne(FindOriginalBaseByPath(S.SatellitePath));
+        HideOne(FindOriginalBaseByPath(S.SatellitePath), S.Suppression);
     }
 
     // H2b -- THE THROTTLE IS KEYED ON THE COUNTS, NOT ON THE CORE PATH.
@@ -386,9 +477,14 @@ void ANodeShuffleSubsystem::SuppressVanillaWellGroup(FNodeShuffleWellEntry& E)
     // explicable from the line itself. "0 hidden, 0 already hidden, 0 indexed" says nothing was
     // paired; "0 hidden, 8 already hidden" says the work was done on an earlier pass. The old line
     // could not tell those apart, and printed the first next to "0 not streamed yet".
-    const FString SuppressKey = FString::Printf(TEXT("%s|%d|%d|%d|%d|%d"), *E.CorePath, Hidden,
-                                                MeshesHidden, MeshesAlready, Occupied, Unstreamed);
-    if ((Hidden > 0 || MeshesHidden > 0 || Occupied > 0 || Unstreamed > 0)
+    //
+    // ns-t23-rollhide: the PHASE and the ownership count join the key. Without the phase a roll-time
+    // suppression and the first apply-pass re-assertion of the same group produce identical counts and
+    // the second would be swallowed, so the log would never show that the re-assertion is running.
+    const FString SuppressKey = FString::Printf(TEXT("%s|%d|%d|%d|%d|%d|%d|%d"), *E.CorePath, Hidden,
+                                                MeshesHidden, MeshesAlready, Occupied, Unstreamed,
+                                                NewlyOwned, bRollPhase ? 1 : 0);
+    if ((Hidden > 0 || MeshesHidden > 0 || Occupied > 0 || Unstreamed > 0 || NewlyOwned > 0)
         && !WellSuppressLogged.Contains(SuppressKey))
     {
         WellSuppressLogged.Add(SuppressKey);
@@ -404,15 +500,26 @@ void ANodeShuffleSubsystem::SuppressVanillaWellGroup(FNodeShuffleWellEntry& E)
                 IndexedPieces += P->Num();
             }
         }
+        // ns-t23-rollhide -- WHICH COORDINATE THIS LINE MAY NAME DEPENDS ON THE PHASE, and getting it
+        // wrong would make the line assert a world state that is not true. On the APPLY phase the group
+        // has spawned and PlacedCoreLocation is where it stands. At ROLL time PlacedCoreLocation is the
+        // PREVIOUS placement or zero and NOTHING has been built at the destination yet, so the roll
+        // wording names DestCoreLocation and says explicitly that nothing is there.
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("WELLH2-SUPPRESS core='%s': hid %d vanilla member(s) + %d mesh piece(s) (%d were already ")
-            TEXT("hidden; %d piece(s) indexed for this group across all %d indexed member(s) world-wide); ")
-            TEXT("%d occupied (left alone), %d not streamed yet (retried every pass). Visuals captured: ")
-            TEXT("core=%d, group=%s. The relocated group now lives at %s."),
-            *WellShort(E.CorePath), Hidden, MeshesHidden, MeshesAlready, IndexedPieces,
-            WellMeshIndexMembers, Occupied, Unstreamed, E.bCoreVisualsCaptured ? 1 : 0,
+            TEXT("WELLH2-SUPPRESS core='%s' phase=%s: hid %d vanilla member(s) + %d mesh piece(s) (%d were ")
+            TEXT("already hidden; %d piece(s) indexed for this group across all %d indexed member(s) ")
+            TEXT("world-wide); %d newly taken into our suppression ledger this call; %d occupied (left ")
+            TEXT("alone), %d not streamed yet (retried every pass). Visuals captured: core=%d, group=%s. %s"),
+            *WellShort(E.CorePath), bRollPhase ? TEXT("ROLL") : TEXT("APPLY"),
+            Hidden, MeshesHidden, MeshesAlready, IndexedPieces,
+            WellMeshIndexMembers, NewlyOwned, Occupied, Unstreamed, E.bCoreVisualsCaptured ? 1 : 0,
             E.bGroupVisualsComplete ? TEXT("COMPLETE") : TEXT("INCOMPLETE"),
-            *E.PlacedCoreLocation.ToCompactString());
+            bRollPhase
+                ? *FString::Printf(TEXT("The group is DEALT to %s and NOTHING has been built there yet -- ")
+                                   TEXT("it is built when a player reaches it."),
+                                   *E.DestCoreLocation.ToCompactString())
+                : *FString::Printf(TEXT("The relocated group now lives at %s."),
+                                   *E.PlacedCoreLocation.ToCompactString()));
     }
 }
 
@@ -467,6 +574,11 @@ void ANodeShuffleSubsystem::ApplyWellRelocation(bool bWellShuffleEnabled, bool b
     ++WellAuditPasses;
 
     int32 Searching = 0, PlacedNow = 0, Spawned = 0, Deferred = 0, Maintained = 0, IncompleteSpawns = 0;
+    // ns-t23-rollhide: how many UNPLACED entries had their suppression re-asserted this pass. A brand-new
+    // population -- before roll-time commitment no unplaced entry was ever suppressed, so nothing ever
+    // re-asserted for one, and a level actor that streams back in un-hidden would have undone the hide
+    // with nothing to notice.
+    int32 ReassertedUnplaced = 0;
 
     for (FNodeShuffleWellEntry& E : WellLayout)
     {
@@ -483,6 +595,28 @@ void ANodeShuffleSubsystem::ApplyWellRelocation(bool bWellShuffleEnabled, bool b
 
         if (!E.bGroupPlaced)
         {
+            // ================= ns-t23-rollhide: THE TWO OBLIGATIONS OF AN UNPLACED ENTRY =================
+            // BOTH sit above every `continue` below, and that placement is load-bearing. The un-hide
+            // intent is set at TERMINAL failure, which also sets bRelocationFailed -- so a drain placed
+            // after the guard below would never run for the exact population it exists for. The
+            // re-assertion likewise must cover an entry whose relocation is disabled, uncaptured or
+            // failed: what makes a member need re-hiding is that a LEVEL ACTOR STREAMS BACK IN UN-HIDDEN,
+            // and that has nothing to do with the entry's search state.
+            //
+            // MUTUALLY EXCLUSIVE, deliberately. An entry that owes a restore must not be re-suppressed on
+            // the same pass -- the two would fight every 5 s and the well would flicker rather than come
+            // back.
+            if (E.bUnhidePending)
+            {
+                TryUnhideWellGroup(E, TEXT("deferred intent, re-attempted"));
+            }
+            else if (WellGroupHasSuppressedMember(E))
+            {
+                ++E.PassesSinceSuppressed;
+                ++ReassertedUnplaced;
+                SuppressVanillaWellGroup(E, EWellSuppressPhase::Apply);
+            }
+
             if (!bOn || !E.bRelocate || !E.bOffsetsCaptured || !E.bDestDealt || E.bRelocationFailed)
             {
                 continue;
@@ -525,6 +659,10 @@ void ANodeShuffleSubsystem::ApplyWellRelocation(bool bWellShuffleEnabled, bool b
                 // 1 -- which makes 0 mean exactly one thing: no value was ever recorded for this entry.
                 E.PassesFromDealToPlaced = E.PassesSinceDealt;
                 E.PassesSinceDealt = 0;
+                // ns-t23-rollhide: the group is placed, so the player has the well again and the
+                // absence counter stops meaning anything. Zeroed so a non-zero value ALWAYS reads as
+                // "absent right now" and never as "was absent once".
+                E.PassesSinceSuppressed = 0;
                 ++Spawned;
                 ++WellGroupsPlacedThisSession;
                 WellIncompleteSpawnCounts.Remove(E.CorePath); // assembled -- the counter starts fresh
@@ -613,13 +751,14 @@ void ANodeShuffleSubsystem::ApplyWellRelocation(bool bWellShuffleEnabled, bool b
                                 bOn);
     }
 
-    if (Searching > 0 || PlacedNow > 0 || Spawned > 0 || IncompleteSpawns > 0)
+    if (Searching > 0 || PlacedNow > 0 || Spawned > 0 || IncompleteSpawns > 0 || ReassertedUnplaced > 0)
     {
         UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH2 pass: %d group(s) searching, %d newly validated, %d spawned COMPLETE, ")
             TEXT("%d spawned INCOMPLETE (not marked placed, nothing suppressed, retried next pass), ")
-            TEXT("%d maintained, %d deferred (no player near the destination). %d placed this session."),
-            Searching, PlacedNow, Spawned, IncompleteSpawns, Maintained, Deferred,
+            TEXT("%d maintained, %d deferred (no player near the destination), %d unplaced group(s) had ")
+            TEXT("an existing suppression re-asserted. %d placed this session."),
+            Searching, PlacedNow, Spawned, IncompleteSpawns, Maintained, Deferred, ReassertedUnplaced,
             WellGroupsPlacedThisSession);
     }
 
@@ -627,4 +766,13 @@ void ANodeShuffleSubsystem::ApplyWellRelocation(bool bWellShuffleEnabled, bool b
     // state it started in -- a group placed on this pass must appear in the placed population of this
     // pass's line, not in the next one's. Log only; see NodeShuffleWellStage0.cpp.
     EmitWellDeferralCensus();
+
+    // ns-t23-rollhide: the stranding detector and the opposite-polarity pair, LAST and in that order, for
+    // the same reason -- both must describe the state this pass ended in. Both are log-only.
+    // The toggle is read here, once per pass, ONLY so the test pair can name it: no decision in this
+    // packet reads it outside the roll, because the ledger -- not the config -- is the authority on what
+    // we suppressed. A player who turns the toggle off mid-save still owes the un-hide of what was
+    // already hidden, and gating the restore on the config would strand exactly that population.
+    EmitWellStrandedCensus();
+    EmitWellRollHideTestPair(FNodeShuffleConfigStruct::GetActiveConfig(this).CommitWellsAtRoll);
 }
