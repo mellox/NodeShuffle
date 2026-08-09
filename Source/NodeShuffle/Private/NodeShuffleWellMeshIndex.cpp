@@ -99,6 +99,9 @@ void ANodeShuffleSubsystem::EnsureWellMeshIndex()
 void ANodeShuffleSubsystem::RebuildWellMeshIndex()
 {
     WellMeshIndex.Reset();
+    // ns-t23-stage0: cleared with the index it shadows, on the same line, so the two can never describe
+    // different sweeps. See the declaration in NodeShuffleSubsystem.h for what the three components are.
+    WellMeshIndexRouteCounts.Reset();
     WellMeshIndexMembers = 0;
     WellMeshIndexPieces = 0;
     UWorld* World = GetWorld();
@@ -221,11 +224,18 @@ void ANodeShuffleSubsystem::RebuildWellMeshIndex()
     // pass summary are the whole measurement of what this change cost, in BOTH directions.
     // No new import: the Cast and mNodeMeshType are both already reached in this file.
 
-    const auto AddPiece = [&](const FString& Path, UStaticMeshComponent* C) -> bool
+    // ns-t23-stage0: Route is 0 = own, 1 = engine link, 2 = spatial -- the SAME three routes the three
+    // loops below implement and the same order the ByOwn/ByLink/BySpatial counters are declared in. It is
+    // recorded here, at the single point every accepted piece passes through, rather than at the three
+    // call sites, so a future fourth route cannot be added without touching this line.
+    const auto AddPiece = [&](const FString& Path, UStaticMeshComponent* C, int32 Route) -> bool
     {
         if (!IsValid(C) || Claimed.Contains(C)) { return false; }
         Claimed.Add(C);
         WellMeshIndex.FindOrAdd(Path).Add(C);
+        FIntVector* Routes = WellMeshIndexRouteCounts.Find(Path);
+        if (!Routes) { Routes = &WellMeshIndexRouteCounts.Add(Path, FIntVector::ZeroValue); }
+        if (Route == 0) { ++Routes->X; } else if (Route == 1) { ++Routes->Y; } else { ++Routes->Z; }
         ++WellMeshIndexPieces;
         return true;
     };
@@ -241,7 +251,7 @@ void ANodeShuffleSubsystem::RebuildWellMeshIndex()
         TInlineComponentArray<UStaticMeshComponent*> Own(M.Node);
         for (UStaticMeshComponent* C : Own)
         {
-            if (IsUsableMesh(C) && AddPiece(M.Path, C)) { ++ByOwn; }
+            if (IsUsableMesh(C) && AddPiece(M.Path, C, /*Route=*/0)) { ++ByOwn; }
         }
     }
 
@@ -260,7 +270,7 @@ void ANodeShuffleSubsystem::RebuildWellMeshIndex()
             TInlineComponentArray<UStaticMeshComponent*> Comps(LA);
             for (UStaticMeshComponent* C : Comps)
             {
-                if (IsUsableMesh(C) && AddPiece(M.Path, C)) { ++ByLink; }
+                if (IsUsableMesh(C) && AddPiece(M.Path, C, /*Route=*/1)) { ++ByLink; }
             }
         }
     }
@@ -413,7 +423,7 @@ void ANodeShuffleSubsystem::RebuildWellMeshIndex()
                 continue;
             }
             const bool bOwned = bInRadius;
-            if (bOwned && AddPiece(Best->Path, C))
+            if (bOwned && AddPiece(Best->Path, C, /*Route=*/2))
             {
                 ++BySpatial;
                 if (bDiag)

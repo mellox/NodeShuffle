@@ -391,6 +391,40 @@ struct FNodeShuffleWellEntry
     // The whole footprint validated and the group has been committed to these coordinates.
     UPROPERTY(SaveGame) bool bGroupPlaced = false;
 
+    // ======================= T23 STAGE 0 (ns-t23-stage0) -- MEASUREMENT ONLY =======================
+    // Both fields below are written by instrumentation and READ BY NOTHING THAT DECIDES ANYTHING.
+    // They exist to answer K3 of _team/nodeshuffle-followups/T23-rolltime-commit-design.md: how long a
+    // relocated well actually waits between being dealt a destination and being placed. That window has
+    // NEVER been measured (0 WELLH2 lines across 15 MB of logs), and under a future roll-time-commit
+    // design it is exactly the interval for which the well would be ABSENT FROM THE WORLD.
+    //
+    // WHAT THE NAME MEANS, EXACTLY, so the field cannot become a lie:
+    // "dealt" is the instant bDestDealt goes false -> true, which happens at ONE site
+    // (NodeShuffleWellRelocateRoll.cpp, the phase-3 commit). A re-deal inside the escalation ladder
+    // (NodeShuffleWellEscalate.cpp) rewrites DestCoreLocation while bDestDealt stays true, and
+    // DELIBERATELY does not reset this: the window K3 needs starts at the roll commit -- the point a
+    // roll-time design would hide the vanilla well -- not at the latest redeal.
+    //
+    // Counts APPLY PASSES (ApplyWellRelocation, ~5 s cadence -- NodeShuffleSubsystem.cpp:72), not
+    // seconds and not ticks, because the apply pass is the unit every other well counter in this mod
+    // uses and mixing units across a census is how a distribution stops being comparable.
+    //
+    // Incremented while bDestDealt && !bGroupPlaced -- INCLUDING while bRelocationFailed, because a
+    // permanently failed entry is precisely the population that would be absent forever, and the census
+    // splits that bucket out rather than hiding it in the total.
+    // ZEROED when the entry becomes placed, so the value on a placed entry is 0 = "not waiting" and the
+    // name stays literally true at every instant. The elapsed count is preserved in the field below.
+    UPROPERTY(SaveGame) int32 PassesSinceDealt = 0;
+
+    // The value PassesSinceDealt held at the pass this entry became placed. The increment above runs at
+    // the top of the apply pass and the placement happens later in the SAME pass, so the smallest value
+    // this can ever hold is 1. That makes 0 mean exactly one thing and never two: NO VALUE WAS EVER
+    // RECORDED -- the entry has not been placed since its last deal, or it was placed by a build older
+    // than ns-t23-stage0, whose save carries no such field. The census prints the count of placed
+    // entries carrying a zero beside the count carrying a value, so a thin sample reads as a thin
+    // sample instead of as a fast one.
+    UPROPERTY(SaveGame) int32 PassesFromDealToPlaced = 0;
+
     // ================================================================================================
     // A3 (ns-review-h2-r2 §5, ns-review-h2-r3 §6) -- THE PLACEMENT CLAIM, AS A STORED FACT.
     // ================================================================================================
@@ -1742,6 +1776,25 @@ private:
     void RebuildWellMeshIndex();
     void EnsureWellMeshIndex();
 
+    // ======================= T23 STAGE 0 (ns-t23-stage0): THREE INSTRUMENTS =======================
+    // MEASUREMENT ONLY. Defined in NodeShuffleWellStage0.cpp; read its header for what each one is for
+    // and what it deliberately does NOT do. Nothing here captures, suppresses, hides, spawns, destroys
+    // or writes a placement field, and nothing any of them writes is read by a decision.
+    //
+    // INSTRUMENT 1 (K1) -- the design-killer probe. Emits, for ONE enrolled entry, how many mesh pieces
+    // the index holds for each of its members and by which route, from an index rebuilt AT ROLL TIME.
+    // The caller must have rebuilt the index immediately before calling this (see the definition for why
+    // it must be RebuildWellMeshIndex and never EnsureWellMeshIndex). Const: reads the index, writes
+    // nothing.
+    void ProbeRollTimeWellMeshIndex(const FNodeShuffleWellEntry& E, double IndexRebuildMs,
+                                    int32 BuiltAtCommitOrdinal) const;
+
+    // INSTRUMENT 2 (K3) -- the deferral-window census, once per apply pass over the whole layout.
+    void EmitWellDeferralCensus();
+    // The last census tuple emitted, so the line can be throttled to changes when diagnostics are off
+    // without losing the every-pass cadence when they are on. Session-transient by design.
+    FString WellDeferCensusLastKey;
+
     // Capture the group's look from the LIVE VANILLA actors, before anything is hidden. Returns true
     // when the group is now completely captured. Idempotent and skipped once bGroupVisualsComplete.
     bool CaptureWellGroupVisuals(FNodeShuffleWellEntry& E);
@@ -1776,6 +1829,21 @@ private:
     // vanilla member path -> its look. Transient; rebuilt at most once per apply pass.
     TMap<FString, TArray<TWeakObjectPtr<class UStaticMeshComponent>>> WellMeshIndex;
     int32 WellMeshIndexPass = -1;
+
+    // ---- T23 STAGE 0 (ns-t23-stage0): WHICH ROUTE PAIRED EACH PIECE, PER MEMBER ----
+    // Same keys as WellMeshIndex, same lifetime, written by the same function. The value's three
+    // components hold the count of pieces this member gained from route 1 (the member's OWN components),
+    // route 2 (the engine forward/back link) and route 3 (the spatial nearest-wins contest), in that
+    // order. WellMeshIndex itself stores only components, so the route a piece arrived by is not
+    // recoverable from it afterwards -- and CaptureWellGroupVisuals' RouteTag deliberately conflates
+    // link and spatial into "link-or-spatial", which is exactly the distinction K1 turns on.
+    //
+    // K1 asks whether routes 2 and 3 still pair at ROLL time, where only the fracking ACTORS are proven
+    // resident; the design records that route 3 carries most of the load, so a roll-time collapse of the
+    // spatial component specifically is what kills the design. A per-member own/link/spatial split is
+    // the cheapest thing that can distinguish "the index is empty" from "the index lost route 3".
+    // READ BY NOTHING BUT THE PROBE. Not a UPROPERTY, exactly like WellMeshIndex beside it.
+    TMap<FString, FIntVector> WellMeshIndexRouteCounts;
     // Session-wide LAST-RESORT templates, filled opportunistically from any well member we did manage
     // to capture. Used only when a group's own origin never streamed. Deliberately a fallback and
     // deliberately logged as one: all vanilla wells share a mesh vocabulary, but the DESERT variants

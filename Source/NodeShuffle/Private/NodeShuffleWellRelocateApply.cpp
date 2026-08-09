@@ -54,6 +54,7 @@
 #include "NodeShuffleWellCensus.h"   // AFGResourceNodeFrackingCore / ...Satellite
 #include "NodeShuffleWellRetype.h"   // WellPathOf / WellShort
 #include "NodeShuffleWellRelocate.h" // the H2 pure helpers
+#include "NodeShuffleWellStage0.h"   // ns-t23-stage0: the per-attempt rejection census (LOG ONLY)
 
 #include "Resources/FGResourceDescriptor.h"
 #include "Components/StaticMeshComponent.h" // H2b: WellMeshIndex holds mesh-component weak pointers
@@ -70,6 +71,26 @@ bool ANodeShuffleSubsystem::TryPlaceWellGroup(FNodeShuffleWellEntry& E, UClass* 
     const bool bDiag = FNodeShuffleModule::AreDiagnosticsEnabled();
     const FString CoreLabel = WellShort(E.CorePath);
 
+    // ns-t23-stage0 INSTRUMENT 3 -- LOG ONLY. Counters for this ONE placement attempt, emitted on every
+    // return path below. Nothing here changes a decision, a budget, a cursor or a probe: each counter is
+    // incremented beside a call that was already being made. The emitted line's own text carries the
+    // asymmetry between the two probe populations; NodeShuffleWellStage0.h carries the reasoning.
+    FNodeShuffleWellProbeCensus Probes;
+    const auto EmitProbes = [&](const TCHAR* Outcome, const TCHAR* TerminatedBy) -> void
+    {
+        if (bDiag)
+        {
+            // ns-t23-stage0 REVIEW FIX (F2): how many CONSECUTIVE attempts a yaw-exhaustion outcome
+            // costs, against one for a core rejection -- the emission-rate asymmetry the line discloses.
+            // Computed here because both constants are private to this class and the emitter is free.
+            const int32 AttemptsToExhaust = (WellYawAttemptsPerPass > 0)
+                ? ((WellYawSteps + WellYawAttemptsPerPass - 1) / WellYawAttemptsPerPass)
+                : -1;
+            LogWellProbeCensus(CoreLabel, Probes, Outcome, TerminatedBy, E.YawCursor, WellYawSteps,
+                               ExpectedRelocatedSatelliteCount(E), AttemptsToExhaust);
+        }
+    };
+
     // ---- STEP 1: settle and validate the CORE at the dealt spot ----
     // ns-review-h4 style: zero-initialised. ValidateWellMemberSpot writes OutLoc only on a hit, and the
     // failure path below passes CoreLoc straight to EscalateWellPlacement -- which ignores it when
@@ -79,8 +100,10 @@ bool ANodeShuffleSubsystem::TryPlaceWellGroup(FNodeShuffleWellEntry& E, UClass* 
     FRotator CoreRot = FRotator::ZeroRotator;
     FString CoreReason;
     const float StartZ = static_cast<float>(E.DestCoreLocation.Z);
+    ++Probes.CoreProbes; // ns-t23-stage0: the core is probed exactly once per attempt -- the denominator
     if (!ValidateWellMemberSpot(E.DestCoreLocation, StartZ, CoreLoc, CoreRot, CoreReason))
     {
+        ++Probes.CoreRejects[WellRejectGateIndex(CoreReason)];
         if (CoreReason.StartsWith(TEXT("void")))
         {
             // Terrain not streamed. DEFER without spending any budget -- charging a nudge here would
@@ -89,6 +112,7 @@ bool ANodeShuffleSubsystem::TryPlaceWellGroup(FNodeShuffleWellEntry& E, UClass* 
             // from a working feature that has simply not been reached, so a genuinely undiscoverable
             // destination (a probe that will never hit terrain) would retry silently forever.
             NoteWellVoidDefer(E, TEXT("core"), E.DestCoreLocation, TEXT("<core>"), bDiag);
+            EmitProbes(TEXT("DEFERRED-void"), TEXT("core"));
             return false;
         }
         // ns-review-h2 F3 (HIGH): a real rejection of the core's spot escalates through the SAME
@@ -103,6 +127,10 @@ bool ANodeShuffleSubsystem::TryPlaceWellGroup(FNodeShuffleWellEntry& E, UClass* 
             TEXT("WELLH2-SEARCH core='%s': CORE rejected at %s (%s) -- escalating (nudge %d/%d, redeal %d/%d)."),
             *CoreLabel, *E.DestCoreLocation.ToCompactString(), *CoreReason,
             E.GroupNudges + 1, WellMaxGroupNudges, E.GroupRedeals, WellMaxGroupRedeals);
+        // ns-t23-stage0 REVIEW FIX: emit BEFORE the ladder. EscalateWellPlacement sets E.YawCursor = 0
+        // (NodeShuffleWellEscalate.cpp), so emitting after it prints "cursor now 0" on every escalating
+        // line and deletes the one field that says how far this search had got.
+        EmitProbes(TEXT("ESCALATED-core-rejected"), TEXT("core"));
         EscalateWellPlacement(E, CoreLoc, /*bHaveSettledCore=*/false, TEXT("core-spot rejected"));
         return false;
     }
@@ -121,6 +149,7 @@ bool ANodeShuffleSubsystem::TryPlaceWellGroup(FNodeShuffleWellEntry& E, UClass* 
         const int32 YawIdx = YawOrder[E.YawCursor];
         const float YawDeg = WellYawDegForIndex(YawIdx, WellYawSteps);
         ++Attempts;
+        Probes.YawsTried = Attempts; // ns-t23-stage0
 
         // ---- THE FULL FOOTPRINT, VALIDATED BEFORE ANYTHING IS COMMITTED ----
         TArray<FVector> MemberLocs;
@@ -144,11 +173,13 @@ bool ANodeShuffleSubsystem::TryPlaceWellGroup(FNodeShuffleWellEntry& E, UClass* 
             const FVector2D RotXY = RotateWellOffsetXY(S.LocalOffset, YawDeg);
             const FVector Probe(CoreLoc.X + RotXY.X, CoreLoc.Y + RotXY.Y, CoreLoc.Z);
             FVector SatLoc; FRotator SatRot = FRotator::ZeroRotator; FString Reason;
+            ++Probes.SatProbes; // ns-t23-stage0: the satellite-side denominator, counted per PROBE
             // Z is re-settled PER MEMBER from the core's Z. H0 measured four wells with more than 12 m
             // of vertical spread, so carrying the captured Z across would bury or float those members.
             if (!ValidateWellMemberSpot(Probe, static_cast<float>(CoreLoc.Z), SatLoc, SatRot, Reason))
             {
                 bAllOk = false;
+                ++Probes.SatRejects[WellRejectGateIndex(Reason)]; // ns-t23-stage0
                 bVoid = Reason.StartsWith(TEXT("void"));
                 FailReason = Reason;
                 FailWho = WellShort(S.SatellitePath);
@@ -215,6 +246,7 @@ bool ANodeShuffleSubsystem::TryPlaceWellGroup(FNodeShuffleWellEntry& E, UClass* 
                 *CoreLabel, *CoreLoc.ToCompactString(), YawDeg, YawIdx, WellYawSteps, E.YawCursor,
                 YawSeed, E.GroupNudges, E.GroupRedeals, ExpectedRelocatedSatelliteCount(E),
                 E.Satellites.Num());
+            EmitProbes(TEXT("VALIDATED"), TEXT("no-side(footprint fit)"));
             return true;
         }
 
@@ -224,6 +256,7 @@ bool ANodeShuffleSubsystem::TryPlaceWellGroup(FNodeShuffleWellEntry& E, UClass* 
             // a fair retry once the terrain is there, and advancing would silently consume the search.
             // ns-review-h2 F8: bounded and audible, same as the core-probe defer above.
             NoteWellVoidDefer(E, TEXT("satellite"), FailProbe, *FailWho, bDiag);
+            EmitProbes(TEXT("DEFERRED-void"), TEXT("satellite"));
             return false;
         }
 
@@ -245,10 +278,18 @@ bool ANodeShuffleSubsystem::TryPlaceWellGroup(FNodeShuffleWellEntry& E, UClass* 
                 TEXT("WELLH2-SEARCH core='%s': %d yaws tried this pass, cursor now %d/%d -- resuming next pass."),
                 *CoreLabel, Attempts, E.YawCursor, WellYawSteps);
         }
+        // The per-pass yaw budget ended this attempt, not a rejection: the search is unfinished and
+        // resumes next pass from the same cursor. Named apart from exhaustion so the two are never
+        // summed together as "failed".
+        EmitProbes(TEXT("BUDGET-SPENT-resuming"), TEXT("no-side(per-pass budget)"));
         return false;
     }
 
     // ---- STEP 3/4/5: all K yaws failed here -> the shared escalation ladder ----
+    // Every refusal counted in THIS attempt came from the satellite side: the core settled at the top
+    // of this call and was not re-probed. Yaws refused on EARLIER attempts of the same search are on
+    // those attempts' own lines. Emitted BEFORE the ladder, which resets E.YawCursor to 0.
+    EmitProbes(TEXT("ESCALATED-yaws-exhausted"), TEXT("satellite"));
     EscalateWellPlacement(E, CoreLoc, /*bHaveSettledCore=*/true,
         *FString::Printf(TEXT("all %d yaws failed"), WellYawSteps));
     return false;
@@ -429,6 +470,17 @@ void ANodeShuffleSubsystem::ApplyWellRelocation(bool bWellShuffleEnabled, bool b
 
     for (FNodeShuffleWellEntry& E : WellLayout)
     {
+        // ns-t23-stage0 INSTRUMENT 2 (K3) -- THE ONLY INCREMENT SITE, AND IT IS BEFORE EVERY `continue`
+        // BELOW ON PURPOSE. The window this measures is how long a well waits between being dealt a
+        // destination and being placed, and the waiting a roll-time commit design would make expensive
+        // is dominated by the passes an entry spends deferred with no player near its destination --
+        // exactly the passes the `continue`s below skip. Counted for a relocation-FAILED entry too: that
+        // is the population that would be absent permanently, and the census splits it out rather than
+        // folding it into the total. Counted while the toggles are off as well, because an entry that is
+        // dealt and unplaced is waiting regardless of what the config now says. Diagnostic only -- no
+        // branch anywhere in this mod reads either field.
+        if (E.bDestDealt && !E.bGroupPlaced) { ++E.PassesSinceDealt; }
+
         if (!E.bGroupPlaced)
         {
             if (!bOn || !E.bRelocate || !E.bOffsetsCaptured || !E.bDestDealt || E.bRelocationFailed)
@@ -467,6 +519,12 @@ void ANodeShuffleSubsystem::ApplyWellRelocation(bool bWellShuffleEnabled, bool b
             if (SpawnWellGroup(E, ResourceClass))
             {
                 E.bGroupPlaced = true;
+                // ns-t23-stage0 INSTRUMENT 2: freeze the elapsed window, then zero the live counter so
+                // its name stays literally true (a placed entry is not waiting). The increment above
+                // runs before this line in the same pass, so the smallest value this can ever record is
+                // 1 -- which makes 0 mean exactly one thing: no value was ever recorded for this entry.
+                E.PassesFromDealToPlaced = E.PassesSinceDealt;
+                E.PassesSinceDealt = 0;
                 ++Spawned;
                 ++WellGroupsPlacedThisSession;
                 WellIncompleteSpawnCounts.Remove(E.CorePath); // assembled -- the counter starts fresh
@@ -564,4 +622,9 @@ void ANodeShuffleSubsystem::ApplyWellRelocation(bool bWellShuffleEnabled, bool b
             Searching, PlacedNow, Spawned, IncompleteSpawns, Maintained, Deferred,
             WellGroupsPlacedThisSession);
     }
+
+    // ns-t23-stage0 INSTRUMENT 2 (K3). LAST, so it reports the state this pass ended in rather than the
+    // state it started in -- a group placed on this pass must appear in the placed population of this
+    // pass's line, not in the next one's. Log only; see NodeShuffleWellStage0.cpp.
+    EmitWellDeferralCensus();
 }

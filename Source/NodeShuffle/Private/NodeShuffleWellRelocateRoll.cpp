@@ -652,6 +652,16 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll, bool 
     int32 Enrolled = 0, ReEnrolled = 0, AbortedInUse = 0, RefusedNoHandles = 0, AbortedAfterTeardown = 0,
           TeardownMembers = 0;
 
+    // ns-t23-stage0 INSTRUMENT 1 (K1) -- LOG ONLY, AND ONLY WHEN DIAGNOSTICS ARE ON.
+    // State for the roll-time mesh-index probe below. Declared out here so the index is rebuilt ONCE per
+    // roll rather than once per enrolled well: the rebuild is a two-iterator sweep of the whole world,
+    // and charging it per well would both cost more and misreport the design's cost. The three locals
+    // carry the measurement to every probe call so each printed line names the same rebuild.
+    const bool bStage0Diag = FNodeShuffleModule::AreDiagnosticsEnabled();
+    bool bStage0IndexBuilt = false;
+    double Stage0IndexMs = 0.0;
+    int32 Stage0BuiltAtCommit = 0;
+
     for (const FNodeShuffleWellPendingCapture& P : Pending)
     {
         FNodeShuffleWellEntry& E = WellLayout[P.EntryIndex];
@@ -861,6 +871,51 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll, bool 
 
         E.DestCoreLocation = P.Dest;
         E.bDestDealt = true;
+        // ns-t23-stage0 INSTRUMENT 2 (K3): the deferral window starts HERE, at the one site in the mod
+        // where bDestDealt goes false -> true, and it is the same instant a roll-time commit design would
+        // hide the vanilla well. Zeroed rather than left alone so a re-enrolment restarts the clock; the
+        // previous enrolment's elapsed value has already been recorded in PassesFromDealToPlaced if that
+        // enrolment ever placed. Diagnostic field, read by no decision.
+        E.PassesSinceDealt = 0;
+        E.PassesFromDealToPlaced = 0;
+
+        // ns-t23-stage0 INSTRUMENT 1 (K1) -- THE DESIGN-KILLER PROBE. LOG ONLY. NOTHING BELOW CAPTURES,
+        // SUPPRESSES OR HIDES ANYTHING; it counts what a roll-time capture WOULD have had to work with.
+        //
+        // RebuildWellMeshIndex, NEVER EnsureWellMeshIndex. The Ensure wrapper early-returns when
+        // WellMeshIndexPass == WellAuditPasses (NodeShuffleWellMeshIndex.cpp), and this roll runs BEFORE
+        // ApplyLayout increments WellAuditPasses -- so on a mid-session re-roll the wrapper would hand
+        // back an index built before this roll's decisions and the probe would measure the wrong world.
+        // That is Appendix item 1 of the T23 design, and it is a PRE-EXISTING defect of the wrapper, not
+        // one this packet introduces: on the FIRST roll of a session the defaults make the wrapper
+        // accidentally correct, which is why it has never been caught.
+        //
+        // Gated on the diagnostics flag because the rebuild is real new work on the roll path (see the
+        // measured cost printed by the probe itself). With diagnostics off this branch does nothing at
+        // all and the roll behaves exactly as it did before ns-t23-stage0.
+        if (bStage0Diag)
+        {
+            if (!bStage0IndexBuilt)
+            {
+                // ns-t23-stage0 REVIEW FIX: RebuildWellMeshIndex prints its WELLH2B-INDEX summary keyed
+                // on WellAuditPasses, which the roll does NOT increment. On a mid-session re-roll --
+                // the path this instrument requires you to exercise -- that is the PREVIOUS apply
+                // pass's number, so the roll-time summary and that pass's summary are indistinguishable
+                // by pass number. Name the roll-time one, rather than changing the shared line.
+                UE_LOG(LogNodeShuffle, Display,
+                    TEXT("WELLH2B-ROLLPROBE: the NEXT WELLH2B-INDEX line was produced by this ROLL, not ")
+                    TEXT("by an apply pass. It prints pass=%d because the roll does not increment ")
+                    TEXT("WellAuditPasses; on a mid-session re-roll that is the previous apply pass's ")
+                    TEXT("number."),
+                    WellAuditPasses);
+                const double Stage0T0 = FPlatformTime::Seconds();
+                RebuildWellMeshIndex();
+                Stage0IndexMs = (FPlatformTime::Seconds() - Stage0T0) * 1000.0;
+                bStage0IndexBuilt = true;
+                Stage0BuiltAtCommit = Enrolled + 1;
+            }
+            ProbeRollTimeWellMeshIndex(E, Stage0IndexMs, Stage0BuiltAtCommit);
+        }
 
         ++Enrolled;
         if (P.bWasPlaced) { ++ReEnrolled; }
