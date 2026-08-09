@@ -61,6 +61,23 @@ foreach ($hit in $clearHits) {
     }
 }
 
+# ns-t23-rollhide REVIEW-2 (F4): the phase flag the T23 pair now measures is a SECOND thing someone could
+# write without doing the hide -- and writing it alone turns the deliberately-red half green. Same census,
+# same single sanctioned file, same non-vacuity assertion.
+$rollPattern = 'bSuppressedAtRoll\s*='
+$rollHits = @(Select-String -Path (Join-Path $src '*\*.cpp') -Pattern $rollPattern)
+if ($rollHits.Count -eq 0) {
+    Write-Host "FAIL: no bSuppressedAtRoll writer matched at all -- this check has gone vacuous. The hide must stamp the phase, and this pattern must be able to see it."
+    $fail = $true
+}
+foreach ($hit in $rollHits) {
+    $file = Split-Path -Leaf $hit.Path
+    if ($file -ne $allowedSetTrue) {
+        Write-Host "FAIL: bSuppressedAtRoll is written in $file line $($hit.LineNumber) -- only $allowedSetTrue may write it, and only beneath the hide it records."
+        $fail = $true
+    }
+}
+
 # The test pair itself must not be weakened into always-true. A verdict computed from anything other than
 # the measured population is the second shortcut.
 foreach ($hit in (Select-String -Path (Join-Path $src 'Private\NodeShuffleWellUnhide.cpp') -Pattern 'VerdictA\s*=\s*TEXT|VerdictB\s*=\s*TEXT')) {

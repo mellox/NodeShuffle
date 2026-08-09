@@ -256,6 +256,14 @@ struct FNodeShuffleWellSuppressionRecord
     //   turn the deliberately-red T23-A assertion green while changing nothing in the world.
     UPROPERTY(SaveGame) bool bSuppressedByUs = false;
 
+    // ns-t23-rollhide REVIEW-2 (F4): WHICH PHASE TOOK THIS MEMBER. The T23 pair asks about ROLL-time
+    // hiding specifically, and NO placement field can answer that: re-enrolment calls
+    // ClearAbandonedWellPlacement AFTER clearing bGroupPlaced, and that function ZEROES
+    // PlacedCoreLocation -- so "has this entry ever been placed" is not recoverable from the entry once
+    // it has been re-rolled. Written at the same single site as bSuppressedByUs and discharged by the
+    // same whole-record reset, so it cannot drift from it.
+    UPROPERTY(SaveGame) bool bSuppressedAtRoll = false;
+
     // The member's state at the instant we FIRST suppressed it. Written only on the false->true
     // transition of bSuppressedByUs, never on a re-assertion pass -- on a re-assertion the actor is
     // already hidden BY US, and recording that as "prior" would make the un-hide a no-op that leaves the
@@ -1885,6 +1893,11 @@ private:
     // commitment no unplaced entry was ever suppressed, so nothing re-asserted for that population.
     bool WellGroupHasSuppressedMember(const FNodeShuffleWellEntry& E) const;
 
+    // ns-t23-rollhide REVIEW-2 (F4): the T23 pair's population, asked of the RECORD's phase rather than
+    // of any placement coordinate. See bSuppressedAtRoll's declaration for why no coordinate can answer
+    // this. Narrower than WellGroupHasSuppressedMember above, which stays the stranded census's question.
+    bool WellGroupHasRollSuppressedMember(const FNodeShuffleWellEntry& E) const;
+
     // Roll-time capture is ONE SHOT (the apply-time capture retries every pass while the origin
     // streams). So an entry whose look is not COMPLETELY captured at the roll does not get roll-time
     // suppression and falls back to today's spawn-then-suppress -- counted and named, never silent.
@@ -1915,6 +1928,16 @@ private:
     // default and SAYS SO with a count. Keyed on the component itself; entries expire naturally as the
     // weak pointers go stale.
     TMap<TWeakObjectPtr<class UStaticMeshComponent>, uint8> WellMeshPriorCollision;
+
+    // ns-t23-rollhide REVIEW-2 (F6): member path -> mesh pieces WE hid for it and have not restored.
+    // THIS, not WellMeshIndex, is the record of what the un-hide owes. The index holds an entry only for
+    // a member with at least one PAIRED piece (measured 15 across 135 members), so "no index entry" is
+    // the ORDINARY case and can never gate the discharge -- gating on it would strand the majority.
+    // Session-scoped deliberately: across a reload nothing was recorded, the apply pass re-hides from
+    // scratch, and the restore default (visible, default collision) is the safe direction.
+    TMap<FString, int32> WellMeshHiddenByUs;
+    TMap<FString, int32> WellMeshUnhideRetries;
+    static constexpr int32 WellMeshUnhideRetryBudget = 60; // ~5 min; then discharge LOUDLY, never never
     // Once-per-member throttle for the un-hide's per-member lines.
     TSet<FString> WellUnhideLogged;
 

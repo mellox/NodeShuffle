@@ -392,17 +392,33 @@ void ANodeShuffleSubsystem::SuppressVanillaWellGroup(FNodeShuffleWellEntry& E, E
             Rec.bWasActorHiddenBefore = bEverRelocatedByUs ? false : bLiveHidden;
             Rec.bWasCollisionDisabledBefore = bEverRelocatedByUs ? false : bLiveNoCollision;
             Rec.bSuppressedByUs = true;
+            Rec.bSuppressedAtRoll = bRollPhase;
             ++NewlyOwned;
             if (bEverRelocatedByUs && (bLiveHidden || bLiveNoCollision))
             {
                 UE_LOG(LogNodeShuffle, Display,
                     TEXT("WELLH2-SUPPRESS core='%s' member='%s': taken into the ledger while ALREADY ")
-                    TEXT("hidden %d and de-collided %d, on an entry this mod has already relocated ")
-                    TEXT("(placed %d, dealt %d). Recorded as vanilla-visible and vanilla-colliding, ")
-                    TEXT("because a hide performed before this ledger existed left no record to copy. ")
-                    TEXT("This is what a later restore will hand back."),
+                    TEXT("hidden %d and de-collided %d. The predicate this branch tested is that we have ")
+                    TEXT("dealt or placed this entry (placed %d, dealt %d) -- at a roll-time commit the ")
+                    TEXT("deal is set moments earlier and NOTHING has been relocated, so this is NOT a ")
+                    TEXT("test of who hid the member and nothing here measured that. Recorded as ")
+                    TEXT("vanilla-visible and vanilla-colliding BY DESIGN: handing back a hidden member ")
+                    TEXT("is unrecoverable and handing back a visible one self-corrects. This is what a ")
+                    TEXT("later restore will hand back."),
                     *WellShort(E.CorePath), *Node->GetName(), bLiveHidden ? 1 : 0,
                     bLiveNoCollision ? 1 : 0, E.bGroupPlaced ? 1 : 0, E.bDestDealt ? 1 : 0);
+            }
+            else if (!bEverRelocatedByUs && (bLiveHidden || bLiveNoCollision))
+            {
+                UE_LOG(LogNodeShuffle, Warning,
+                    TEXT("WELLH2-SUPPRESS core='%s' member='%s': first touch on an entry that is NEITHER ")
+                    TEXT("placed NOR dealt and names no previous placement, and the member is already ")
+                    TEXT("hidden %d / de-collided %d. That LIVE state is being recorded as PRIOR, so a ")
+                    TEXT("later restore will hand it back exactly as it is now. Cold review REVIEW-2 F-E ")
+                    TEXT("could not construct this state from any call site; if this line prints, the F1 ")
+                    TEXT("predicate is live and the trade it encodes needs re-deciding."),
+                    *WellShort(E.CorePath), *Node->GetName(), bLiveHidden ? 1 : 0,
+                    bLiveNoCollision ? 1 : 0);
             }
         }
         bool bChanged = false;

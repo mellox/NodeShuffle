@@ -261,5 +261,6 @@ int32 ANodeShuffleSubsystem::HideWellMemberMeshes(AFGResourceNodeBase* Node, int
             TEXT("SNAPPABLE GHOST at the abandoned origin, reported as 'already hidden' and never revisited."),
             *WellShort(Path), DecolliedAlreadyHidden);
     }
+    if (HiddenNow > 0) { WellMeshHiddenByUs.FindOrAdd(Path) += HiddenNow; }
     return HiddenNow;
 }

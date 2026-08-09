@@ -120,6 +120,10 @@ int32 ANodeShuffleSubsystem::ShowWellMemberMeshes(AFGResourceNodeBase* Node, int
         WellMeshPriorCollision.Remove(C);
         ++Restored;
     }
+    // Reached ONLY when the index had an entry, so this is the discharge of the mesh obligation. A gap
+    // between Restored and the recorded count is dead components, which cannot be restored by anyone.
+    WellMeshHiddenByUs.Remove(Path);
+    WellMeshUnhideRetries.Remove(Path);
     return Restored;
 }
 
@@ -148,30 +152,45 @@ bool ANodeShuffleSubsystem::UnhideWellMember(const FString& Path, FNodeShuffleWe
     bool bIndexHadEntry = false;
     int32 IndexedForMember = 0;
     const int32 Restored = ShowWellMemberMeshes(Node, Guessed, bIndexHadEntry, IndexedForMember);
-    // ns-t23-rollhide -- COLD REVIEW F6, APPLIED AS A DIAGNOSTIC ONLY. THE SPEC'S BEHAVIOUR HALF WAS
-    // DELIBERATELY NOT APPLIED, AND THIS COMMENT IS THE RECORD OF WHY, DATED 2026-08-09.
+    // ns-t23-rollhide -- COLD REVIEW F6. THE BEHAVIOUR HALF NOW LANDS, IN A DIFFERENT FORM, AND THIS
+    // COMMENT IS THE RECORD OF WHY THE FIRST FORM WAS REFUSED, DATED 2026-08-09.
     // The finding is correct: a bare 0 from ShowWellMemberMeshes cannot distinguish "this member has no
     // pieces" from "the index has not been built yet", and the second case discharges an obligation that
-    // was never performed. The spec's remedy -- return false and keep the intent pending whenever the
-    // index holds no entry -- CANNOT BE APPLIED TO THIS TREE. WellMeshIndex entries are created only by
-    // AddPiece (NodeShuffleWellMeshIndex.cpp), i.e. only for a member with at least one PAIRED piece, so
-    // "no entry" is the ORDINARY case for a member with no rock, not the exceptional case. The packet's
-    // own stage-0 measurement on the author's save is 15 paired pieces across 135 members, so the guard
-    // would refuse to discharge the large majority of members -- leaving them hidden, never restored, and
-    // counted as stranded forever. That is a WORSE permanent-loss outcome than the one F6 fixes, and it is
-    // the exact failure this file exists to prevent, so it is reported instead of forced.
-    // The predicate is MEASURED and PRINTED here so the orchestrator can size the real population from a
-    // live log before choosing a remedy. It asserts no cause and changes no behaviour.
-    if (!bIndexHadEntry && FNodeShuffleModule::AreDiagnosticsEnabled())
+    // was never performed. The FIRST spec's remedy -- return false and keep the intent pending whenever
+    // the index holds no entry -- COULD NOT BE APPLIED TO THIS TREE. WellMeshIndex entries are created
+    // only by AddPiece (NodeShuffleWellMeshIndex.cpp), i.e. only for a member with at least one PAIRED
+    // piece, so "no entry" is the ORDINARY case for a member with no rock, not the exceptional case. The
+    // packet's own stage-0 measurement on the author's save is 15 paired pieces across 135 members, so
+    // that guard would have refused to discharge the large majority of members -- leaving them hidden,
+    // never restored, and counted as stranded forever. That is a WORSE permanent-loss outcome than the
+    // one F6 fixes, so it was reported instead of forced.
+    // REVIEW-2 replaces the KEY rather than the guard: the obligation is now keyed on the pieces WE
+    // ACTUALLY HID (WellMeshHiddenByUs, written by HideWellMemberMeshes), which is zero for a member with
+    // no rock and therefore never gates it. The retry is BOUNDED and discharges LOUDLY when the budget is
+    // spent, so no member can be held hidden forever by this path either.
+    // ns-t23-rollhide REVIEW-2 (F6, THE BEHAVIOUR HALF). Keyed on pieces WE HID, never on the index.
+    const int32* Owed = WellMeshHiddenByUs.Find(Path);
+    const int32 StillOwed = Owed ? *Owed : 0;
+    if (StillOwed > 0)
     {
-        UE_LOG(LogNodeShuffle, Display,
-            TEXT("WELLH2-UNHIDE core='%s' %s='%s' (%s): the mesh index holds NO ENTRY for this member's ")
-            TEXT("path on this pass, so zero pieces were restored and that zero cannot be read as ")
-            TEXT("'this member has no pieces'. The index covers %d member(s) that had at least one paired ")
-            TEXT("piece, out of %d well member(s) the last rebuild walked. The restore is being discharged ")
-            TEXT("anyway on this build: refusing here would strand every member with no paired piece. ")
-            TEXT("Cold review F6 is OPEN, not closed, by design."),
-            *CoreLabel, Kind, *WellShort(Path), Why, WellMeshIndex.Num(), WellMeshIndexMembers);
+        int32& Tries = WellMeshUnhideRetries.FindOrAdd(Path);
+        ++Tries;
+        const bool bBudgetSpent = (Tries >= WellMeshUnhideRetryBudget);
+        UE_LOG(LogNodeShuffle, Warning,
+            TEXT("WELLH2-UNHIDE core='%s' %s='%s' (%s): we hid %d mesh piece(s) for this member this ")
+            TEXT("session and restored %d on this pass; the mesh index holds an entry for it: %d. The ")
+            TEXT("index currently covers %d member(s) that had at least one paired piece, out of %d well ")
+            TEXT("member(s) the last rebuild walked. Attempt %d of %d. %s"),
+            *CoreLabel, Kind, *WellShort(Path), Why, StillOwed, Restored, bIndexHadEntry ? 1 : 0,
+            WellMeshIndex.Num(), WellMeshIndexMembers, Tries, WellMeshUnhideRetryBudget,
+            bBudgetSpent
+                ? TEXT("BUDGET SPENT -- discharging anyway. The member's ACTOR is restored and its rocks "
+                       "may still be invisible and de-collided: check whether a Pressurizer will place "
+                       "there. Holding it hidden forever is the worse failure, so it is not held.")
+                : TEXT("NOT discharged: the intent stays pending and is re-attempted every apply pass."));
+        if (!bBudgetSpent) { return false; }
+        WellMeshHiddenByUs.Remove(Path);
+        WellMeshUnhideRetries.Remove(Path);
     }
 
     // Actor level, from the RECORD, in the same order the hide wrote them.
@@ -274,6 +293,18 @@ bool ANodeShuffleSubsystem::WellGroupHasSuppressedMember(const FNodeShuffleWellE
     return false;
 }
 
+// ns-t23-rollhide REVIEW-2 (F4): the T23 pair's population, asked of the RECORD's phase rather than of
+// any placement coordinate. See bSuppressedAtRoll's declaration for why no coordinate can answer this.
+bool ANodeShuffleSubsystem::WellGroupHasRollSuppressedMember(const FNodeShuffleWellEntry& E) const
+{
+    if (E.CoreSuppression.bSuppressedByUs && E.CoreSuppression.bSuppressedAtRoll) { return true; }
+    for (const FNodeShuffleWellSatellite& S : E.Satellites)
+    {
+        if (S.Suppression.bSuppressedByUs && S.Suppression.bSuppressedAtRoll) { return true; }
+    }
+    return false;
+}
+
 // ------------------------------------------------------------------------------------------------
 // THE ROLL-TIME CAPTURE GATE
 // ------------------------------------------------------------------------------------------------
@@ -362,9 +393,16 @@ void ANodeShuffleSubsystem::EmitWellStrandedCensus()
         {
             const int32* Stuck = WellIncompleteSpawnCounts.Find(E.CorePath);
             if (Stuck && *Stuck >= WellIncompleteSpawnWarnAt) { ++StuckAssembling; }
+            // ns-t23-rollhide REVIEW-2 (F-C): TESTED BEFORE THE PROXIMITY TEST, NOT NESTED INSIDE IT.
+            // An entry with no destination has DestCoreLocation at the world origin, so nested inside,
+            // this bucket was decided by whether a player happened to be standing near (0,0,0) -- and the
+            // stated order above claimed otherwise. IF THIS BUCKET NEVER READS NON-ZERO IN A REAL
+            // SESSION, DELETE IT: a permanently-zero field that reads as a measurement is worse than an
+            // absent one (TECH-DEBT T5).
+            else if (!E.bDestDealt) { ++NoDestination; }
             else if (!IsLocationNearAnyPlayer(E.DestCoreLocation, WellLastApplySpawnRadiusCm))
             {
-                if (!E.bDestDealt) { ++NoDestination; } else { ++DeferredNoPlayer; }
+                ++DeferredNoPlayer;
             }
             else if (const int32* Voids = WellVoidDefers.Find(E.CorePath))
             {
@@ -429,14 +467,17 @@ void ANodeShuffleSubsystem::EmitWellStrandedCensus()
     {
         WellStrandedWarnLastPass = WellAuditPasses;
         UE_LOG(LogNodeShuffle, Warning,
-            TEXT("WELLH2-STRANDED *** %d WELL(S) SUPPRESSED WITH NO PLACEMENT AND NOTHING WORKING ON ")
-            TEXT("THEM *** out of %d entr(ies) we suppressed and %d in the layout. Which kind: relocation ")
+            TEXT("WELLH2-STRANDED *** %d WELL(S) ARE SUPPRESSED BY US, NOT PLACED, AND IN A STATE WHERE ")
+            TEXT("NO SEARCH FOR A DESTINATION IS RUNNING *** out of %d entr(ies) we suppressed and %d in ")
+            TEXT("the layout. Which kind: relocation ")
             TEXT("permanently FAILED %d, relocation switched off while the original was already removed ")
             TEXT("%d, keeps failing to assemble at its destination %d. These wells are absent from the ")
-            TEXT("world at BOTH ends. Named where we have names (the FAILED kind only): '%s'. %d of the ")
-            TEXT("%d suppressed-and-unplaced entr(ies) carry a deferred restore intent, which completes ")
-            TEXT("only while the ORIGINAL site is loaded. A non-zero count here names a well the player ")
-            TEXT("has lost; it must read zero in a healthy save."),
+            TEXT("world at BOTH ends right now. Named where we have names (the FAILED kind only): '%s'. ")
+            TEXT("THIS LINE DOES NOT TEST FOR PERMANENT LOSS AND MUST NOT BE READ AS ONE: %d of the %d ")
+            TEXT("suppressed-and-unplaced entr(ies) carry a deferred restore intent that IS re-attempted ")
+            TEXT("every apply pass, and it completes only while the ORIGINAL site is loaded. A non-zero ")
+            TEXT("count here names a well the player cannot reach at either end; it must read zero in a ")
+            TEXT("healthy save."),
             NoRouteBack, TotalSuppressed, TotalEntries, Failed, NotWorked, StuckAssembling,
             FailedNames.IsEmpty() ? TEXT("<none named>") : *FailedNames, UnhidePending,
             SuppressedUnplaced);
@@ -467,14 +508,14 @@ void ANodeShuffleSubsystem::EmitWellRollHideTestPair(bool bCommitAtRoll)
     {
         if (E.bGroupPlaced) { continue; }
         if (!E.bDestDealt) { continue; }
-        // ns-t23-rollhide REVIEW FIX (cold review F4): a RE-ENROLLED entry is unplaced and dealt while
-        // carrying a suppression taken at APPLY time in an earlier cycle, so including it made T23-A read
-        // PASS with the toggle off -- the pair then measured "some unplaced entry is in the ledger", which
-        // was already true before roll-time hiding existed. Roll-time hiding is the only thing that can
-        // suppress an entry that has NEVER been placed, so that is the population the pair must ask about.
-        if (!E.PlacedCoreLocation.IsNearlyZero()) { continue; }
+        // ns-t23-rollhide REVIEW-2 (F4) -- REPLACING A FILTER THAT DID NOT WORK. The first attempt
+        // excluded entries whose PlacedCoreLocation was non-zero. That filter is defeated by the exact
+        // case it was written for: re-enrolment calls ClearAbandonedWellPlacement AFTER clearing
+        // bGroupPlaced, and that function ZEROES PlacedCoreLocation -- so a previously-placed entry
+        // carrying an APPLY-time suppression looked never-placed, and T23-A read PASS with the toggle
+        // OFF. The pair now asks the suppression record which phase took it; nothing rewrites that.
         ++Candidates;
-        if (WellGroupHasSuppressedMember(E)) { ++SuppressedUnplaced; }
+        if (WellGroupHasRollSuppressedMember(E)) { ++SuppressedUnplaced; }
     }
 
     const TCHAR* VerdictA = (Candidates == 0) ? TEXT("VACUOUS")
@@ -489,10 +530,12 @@ void ANodeShuffleSubsystem::EmitWellRollHideTestPair(bool bCommitAtRoll)
 
     UE_LOG(LogNodeShuffle, Display,
         TEXT("[NodeShuffle][TEST] T23-A %s | T23-B %s -- toggle 'Remove A Moved Well Immediately' is %s. ")
-        TEXT("Entries that have been placed at least once are excluded: they can hold an apply-time ")
-        TEXT("suppression that predates roll-time removal. ")
-        TEXT("Population: %d entr(ies) that are dealt a destination and not yet placed; of those, %d have ")
-        TEXT("at least one member in our suppression ledger. T23-A asserts that number is above zero, ")
+        TEXT("Only a suppression taken on the ROLL phase counts: an apply-time suppression predates ")
+        TEXT("this feature and answers a different question, and no placement coordinate can tell the ")
+        TEXT("two apart after a re-roll. ")
+        TEXT("Population: %d entr(ies) that are dealt a destination and not yet placed; of those, %d ")
+        TEXT("have at least one member whose suppression was taken AT THE ROLL. ")
+        TEXT("T23-A asserts that number is above zero, ")
         TEXT("T23-B asserts it is zero: they are exact complements over the same population, so exactly ")
         TEXT("one of them is red at any time and neither can be quietly skipped. VACUOUS means the ")
         TEXT("population was empty and the question was never asked -- it is not a pass. Before roll-time ")
