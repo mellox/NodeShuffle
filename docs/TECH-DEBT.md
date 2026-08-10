@@ -1607,3 +1607,46 @@ MEANS, made without testing what the solid was.** It was a building. **The only 
 is that the ray line prints the HIT ACTOR** — a bare "8 of 8 blocked" would have been read as proof of
 a buried member and sent the next packet at the wrong target. Same lesson as [[T36]]: **print what you
 hit, not just that you hit.**
+
+### T41. THE ENCLOSURE PREDICATE IS BLIND TO A MEMBER INSIDE A ROCK FACE — it casts 8 HORIZONTAL rays at ONE height and has NO vertical sampling at all. A member the extractor snaps to *inside a cliff* reads 0 of 8 blocked.
+**MEASURED 2026-08-09/10 on `2026-08-09-t39-1`. This closes the question T35–T40 were circling, and it
+resolves AGAINST the cheap outcome the orchestrator predicted.**
+
+**The evidence, from three commands in one session.**
+* The author photographed a Resource Well Extractor hologram **snapping to a well member inside a
+  vertical rock face**, and the log shows `HOLOGRAMHOOK ... snapped=1 disq=[<none>]` at that moment.
+* `NodeShuffle.PointAtHere`, aimed at that face: the aim ray hit `FGCliffActor_1637`, component
+  `CliffMesh`, at 1030 cm. **The enclosure predicate at that impact point returned 0 of 8 rays blocked,
+  eye-inside-solid NO.** The same line reports the ground slope there as **68.3 deg, which the cliff
+  gate (60 deg) WOULD REJECT** — so a different gate sees the problem this one cannot.
+* `NodeShuffle.WellProbe` over that group had already probed **`BP_FrackingSatellite81` at its own
+  location** — `V(X=101626.38, Y=159434.02, Z=1863.36)` — and returned **0 of 8 blocked, eye NO, "not
+  refused"**. That member is **~6.4 m from the aim impact**, and is the nearest probed member to it.
+
+**THE MECHANISM, read from the predicate rather than inferred from the symptom.** `IsSpotEnclosed`
+casts **8 rays on the horizontal plane** (bearings 0–315 deg) from `Z + 200`, each **500 cm**, and
+refuses at 7 of 8. **There is no up-ray, no down-ray, and no vertical component of any kind.** A member
+at the base of a face, under an overhang, or set into a wall therefore has open air in most horizontal
+directions at eye height and reads CLEAR — while being visually and practically inside the rock. **This
+is not a threshold problem and not a tuning problem; the sampling geometry cannot represent the case.**
+
+**A SECOND CONTRIBUTOR, measured and not to be conflated with the first.** The aim trace runs
+`ECC_Visibility` with **complex** collision; the enclosure rays run `ECC_WorldStatic` with **simple**.
+A cliff's simple hull can differ substantially from the mesh the player sees and the hologram snaps to,
+so even a horizontally-enclosed spot may read clear on the gate's channel. **Which of the two dominates
+here is UNTESTED.**
+
+**WHAT THIS OVERTURNS.** [[T40]] concluded from three members inside an extractor's collision that "the
+predicate detects fully-inside-a-solid, therefore the fix is [[T35]] — make the gate run." **The first
+half is still true and the inference is now FALSIFIED:** it detects being inside a **primitive-collision
+building**, and does not detect being inside a **cliff**. The orchestrator's on-record prediction —
+*">=7 blocked means the predicate already works and this is only plumbing"* — is **wrong**. Making the
+gate run would NOT have fixed the author's case, and shipping that conclusion would have closed the
+investigation on a defect that remains.
+
+**WHAT IS STILL NOT MEASURED.** Whether adding vertical sampling would refuse the spots the author WANTS
+kept — a partially embedded member reads 3 of 8 today ([[T40]] sat 86) and **the author has ruled those
+must keep passing** ([[T34]]/[[T37]] ruling). **Any fix must be checked against that ruling before it
+ships, and `WellProbe` is now the instrument that can do it.** Also unmeasured: whether the ordinary
+node path has the same blindness — `IsSpotEnclosed` is shared, so **by construction it does**, but its
+consequences there are untested.
