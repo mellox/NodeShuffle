@@ -1650,3 +1650,36 @@ must keep passing** ([[T34]]/[[T37]] ruling). **Any fix must be checked against 
 ships, and `WellProbe` is now the instrument that can do it.** Also unmeasured: whether the ordinary
 node path has the same blindness — `IsSpotEnclosed` is shared, so **by construction it does**, but its
 consequences there are untested.
+
+### T43. `TActorIterator<AFGResourceNode>` CANNOT SEE FRACKING CORES — or any modded node class deriving directly from `AFGResourceNodeBase`. Confirmed from the engine headers, twice, independently.
+**The `Foo*`-excludes-`FooBase` signature, which this workspace has shipped before. Found in passing by
+`ns-t42-centreshadow` and CONFIRMED by an independent cold review from the headers:**
+* `AFGResourceNodeFrackingCore : public AFGResourceNodeBase` (`FGResourceNodeFrackingCore.h:14`)
+* `AFGResourceNode : public AFGResourceNodeBase` (`FGResourceNode.h:66`)
+* `AFGResourceNodeFrackingSatellite : public AFGResourceNode` — **satellites DO appear; cores do not.**
+
+`BuildWellNodeScanCache` and `ValidateWellMemberSpot` iterate `TActorIterator<AFGResourceNode>`, so the
+node-overlap gate is **blind to every fracking core in the world**, and blind to any node class a mod
+declares directly under `AFGResourceNodeBase`. An in-repo comment already stated this; nobody had
+verified it or drawn the consequence.
+
+**This is a POPULATION defect, not a predicate defect** — the gate's arithmetic is fine and it is
+looking at the wrong set, which is the failure this workspace's own review rules single out because
+every other gate passes while it happens.
+
+**IT IS LOAD-BEARING FOR A STANDING AUTHOR CONSTRAINT.** The author (2026-08-09): *"We've already
+worked on them [lithium, lead, chlorine] and have them going, I just don't want them excluded in new
+things we do."* A modded resource whose node class derives from `AFGResourceNodeBase` rather than
+`AFGResourceNode` is **silently outside this gate**, and no vanilla-only test session can reveal it —
+tonight's log contains 13 descriptors and every one is vanilla. See
+[[nodeshuffle-modded-nodes-in-scope]].
+
+**It also plausibly explains an older finding** — `docs/TECH-DEBT.md` records a solid Sulfur node
+appearing **45.9 m** from a relocated chlorine well core, with the note *"node placement does not know
+wells exist"*. A core invisible to the iterator is a concrete mechanism for that. **PLAUSIBLE, NOT
+MEASURED — do not write it up as the cause until someone tests it.**
+
+**Before fixing:** widening the iterator to `AFGResourceNodeBase` changes the POPULATION of a live gate
+and would move both the well and ordinary-node paths at once. It needs a differential review and a
+before/after count, not a one-line type change. **Measure what the gate currently sees and what it
+would then see, first.**

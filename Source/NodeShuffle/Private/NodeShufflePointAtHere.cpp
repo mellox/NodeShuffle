@@ -30,6 +30,7 @@
 #include "NodeShuffleSubsystem.h"
 
 #include "NodeShuffle.h"
+#include "NodeShuffleCentreShadow.h" // ns-t42-centreshadow: the one shadow-reading emitter
 
 #include "EngineUtils.h"
 #include "HAL/IConsoleManager.h"
@@ -279,6 +280,23 @@ void ANodeShuffleSubsystem::LogPointAtHereCensus() const
         bEnclosed ? TEXT("ENCLOSED (this predicate, called with this command's exclusion, refuses this point)")
                   : TEXT("not enclosed (this predicate, called with this command's exclusion, does not refuse this point)"),
         (TestAt.Z - ViewLoc.Z) / 100.0);
+
+    // ns-t42-centreshadow: THE SHADOW CENTRE-CONTAINMENT CANDIDATE, AT THE AIMED POINT.
+    // Added to all three probe commands and not only to WellProbe: a check present on one probe and
+    // absent on its siblings is this project's most-repeated defect. NOTHING GATES ON IT. Note what the
+    // point IS on this command: an aim trace terminates ON a surface, so the point handed here sits on
+    // that surface rather than at any member's centre, and a reading taken on it describes that surface.
+    {
+        FNodeShufflePointInsideReading Centre;
+        const bool bCentreInside = IsPointInsideSolidShadowForDiag(TestAt, Pawn, Centre);
+        LogCentreShadowReading(
+            TEXT("POINTAT"),
+            FString(TEXT("the aim trace's own impact point, which was not settled and is not a member's ")
+                    TEXT("centre")),
+            Centre, bCentreInside,
+            (Pawn != nullptr) ? Pawn->GetName() : FString(TEXT("<none: no pawn resolved>")),
+            bEnclosed, Blocked, Total, Threshold);
+    }
 
     // SLOPE + CLIFF VERDICT at the aimed point, mirroring NodeShuffle.Here's line so the two commands'
     // output compares line for line. This runs the ground trace the enclosure call above deliberately

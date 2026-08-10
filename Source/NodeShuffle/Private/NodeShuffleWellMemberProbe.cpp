@@ -39,6 +39,7 @@
 #include "NodeShuffleSubsystem.h"
 
 #include "NodeShuffle.h"
+#include "NodeShuffleCentreShadow.h" // ns-t42-centreshadow: the one shadow-reading emitter
 #include "NodeShuffleWellCensus.h"   // AFGResourceNodeFrackingCore / ...Satellite
 #include "NodeShuffleWellRetype.h"   // WellShort
 
@@ -193,6 +194,12 @@ void ANodeShuffleSubsystem::LogWellMemberProbeCensus() const
     int32 Probed = 0, Unresolved = 0, FromLiveActor = 0, FromLayout = 0;
     int32 RefusedByPredicate = 0, EyeInsideSolid = 0, EyeNotMeasured = 0, PredicateCastNoRays = 0;
     int32 ThresholdSeen = -1;
+    // ns-t42-centreshadow: the shadow candidate's own tallies, all with the same `Probed` denominator the
+    // line above uses. They are counted so the group summary can say how many members EACH test would
+    // refuse rather than only how many the shipped one did -- a per-member disagreement that never gets
+    // added up is a disagreement nobody can size.
+    int32 ShadowInside = 0, ShadowNotMeasured = 0, ShadowControlDidNotDemonstrate = 0;
+    int32 AgreeWithGate = 0, CandidateWouldAddRefusal = 0, CandidateWouldDropRefusal = 0;
 
     for (int32 MemberIdx = 0; MemberIdx < MembersInGroup; ++MemberIdx)
     {
@@ -351,6 +358,40 @@ void ANodeShuffleSubsystem::LogWellMemberProbeCensus() const
                 : TEXT("not refused (this predicate, called with this command's exclusion, does not ")
                   TEXT("refuse this point)"));
 
+        // ---- THE SHADOW CENTRE-CONTAINMENT READING, AND AN EXPLICIT AGREE/DISAGREE ----
+        // ns-t42-centreshadow. NOTHING GATES ON THIS. It is printed AFTER the shipped verdict above, on
+        // its own lines, so the two can be compared member by member without either being mistaken for
+        // the other. The candidate rule it evaluates is the author's: a member whose OWN CENTRE is inside
+        // solid geometry is the defect, and a centre on the surface -- a partly embedded member -- is
+        // wanted and must keep passing.
+        {
+            const AActor* Subject = IsValid(LiveActor) ? LiveActor : nullptr;
+            FNodeShufflePointInsideReading Centre;
+            const bool bCentreInside = IsPointInsideSolidShadowForDiag(MemberLoc, Subject, Centre);
+            if (!Centre.bRan) { ShadowNotMeasured++; }
+            else
+            {
+                if (bCentreInside) { ShadowInside++; }
+                if (!Centre.bControlInside) { ShadowControlDidNotDemonstrate++; }
+            }
+
+            const ECentreShadowAgreement Agreement = LogCentreShadowReading(
+                TEXT("WELLPROBE"),
+                FString::Printf(TEXT("member %d of %d"), MemberIdx + 1, MembersInGroup),
+                Centre, bCentreInside,
+                Subject ? Subject->GetName()
+                        : FString(TEXT("<none: this member resolved from the saved record>")),
+                bEnclosed, Blocked, Total, Threshold);
+            switch (Agreement)
+            {
+                case ECentreShadowAgreement::AgreeRefuse:
+                case ECentreShadowAgreement::AgreePass:      AgreeWithGate++; break;
+                case ECentreShadowAgreement::CandidateAdds:  CandidateWouldAddRefusal++; break;
+                case ECentreShadowAgreement::CandidateDrops: CandidateWouldDropRefusal++; break;
+                case ECentreShadowAgreement::NotComparable:  break;
+            }
+        }
+
         // ---- SLOPE + CLIFF VERDICT AT THIS MEMBER ----
         // The same long downward ground trace NodeShuffle.Here and NodeShuffle.PointAtHere run, from this
         // member's own position, so the three commands' slope lines compare. Its landing point is NOT
@@ -408,4 +449,22 @@ void ANodeShuffleSubsystem::LogWellMemberProbeCensus() const
         Probed, RefusedByPredicate, ThresholdSeen, PredicateCastNoRays,
         Probed, EyeInsideSolid, EyeNotMeasured,
         E->Satellites.Num());
+
+    // ns-t42-centreshadow: THE TWO TESTS SIDE BY SIDE OVER THE WHOLE GROUP, WITH THE SAME DENOMINATOR.
+    UE_LOG(LogNodeShuffle, Display,
+        TEXT("WELLPROBE: group '%s' shadow summary -- of the %d member(s) probed, the SHIPPED enclosure ")
+        TEXT("gate would refuse %d and the SHADOW centre-containment candidate would refuse %d. They ")
+        TEXT("agree on %d member(s) and disagree on %d: on %d the candidate would refuse a member the ")
+        TEXT("shipped gate accepts, and on %d it would accept a member the shipped gate refuses. For %d ")
+        TEXT("member(s) the shadow walks did not run at all, and those are in neither column. For %d ")
+        TEXT("member(s) the positive control did NOT read inside -- for those, a CENTRE NOT INSIDE is a ")
+        TEXT("reading this method did not demonstrate it could have contradicted, so treat it as ")
+        TEXT("unproven rather than as open air. NO PLACEMENT BEHAVIOUR IN THIS BUILD DEPENDS ON THE ")
+        TEXT("CANDIDATE COLUMN: it is computed and printed and nothing reads it. This line counts ")
+        TEXT("verdicts; it states no cause for any of them."),
+        *WellShort(E->CorePath),
+        Probed, RefusedByPredicate, ShadowInside,
+        AgreeWithGate, CandidateWouldAddRefusal + CandidateWouldDropRefusal,
+        CandidateWouldAddRefusal, CandidateWouldDropRefusal,
+        ShadowNotMeasured, ShadowControlDidNotDemonstrate);
 }

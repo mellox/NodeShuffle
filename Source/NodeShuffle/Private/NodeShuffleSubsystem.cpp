@@ -4,6 +4,7 @@
 #include "NodeShuffleNodeAssets.h"
 #include "NodeShuffleResourceNode.h"
 #include "NodeShuffleNodeComponent.h"
+#include "NodeShuffleCentreShadow.h" // ns-t42-centreshadow: the one shadow-reading emitter
 
 #include "EngineUtils.h"
 #include "TimerManager.h"
@@ -6725,6 +6726,22 @@ void ANodeShuffleSubsystem::LogHereCensus() const
                 // 21 m gap seen on the previous build is UNEXPLAINED and this number does not explain
                 // it; it only stops a reader having to compute it from two other lines.
                 (TestAt.Z - P.Z) / 100.0);
+
+            // ns-t42-centreshadow: THE SHADOW CENTRE-CONTAINMENT CANDIDATE, AT THE SAME POINT.
+            // Added to all three probe commands and not only to WellProbe: a check present on one probe
+            // and absent on its siblings is this project's most-repeated defect. NOTHING GATES ON IT.
+            {
+                FNodeShufflePointInsideReading Centre;
+                const bool bCentreInside = IsPointInsideSolidShadowForDiag(TestAt, Pawn, Centre);
+                LogCentreShadowReading(
+                    TEXT("HERE"),
+                    FString(bHaveSettled
+                        ? TEXT("the point a long downward ground trace from your position landed on")
+                        : TEXT("your own position, that ground trace having found nothing to settle on")),
+                    Centre, bCentreInside,
+                    (Pawn != nullptr) ? Pawn->GetName() : FString(TEXT("<none: no pawn resolved>")),
+                    bEnclosed, Blocked, Total, Threshold);
+            }
         }
     }
 

@@ -66,6 +66,61 @@ struct FNodeShuffleProbeEyeReading
     FString BlockingActors;              // names of the first few blocking overlaps, or an explicit sentinel
 };
 
+// ns-t42-centreshadow: ONE READING of the CANDIDATE containment test -- "is this world point itself
+// inside solid geometry", as opposed to "is the point 200 cm above it walled in horizontally", which is
+// what the shipped enclosure predicate asks. It is a SHADOW METRIC: it is computed and printed and
+// NOTHING READS IT. No gate, no placement path, no refusal consults any field of this struct.
+//
+// It is deliberately NOT well-specific and holds no well, node, layout or record identity: the reading is
+// about a POINT. A caller supplies a world location and, optionally, the one actor that IS the thing
+// being tested (so its own body is not mistaken for the world around it). Plain struct for the same
+// reasons FNodeShuffleEnclosureRay is one: no UObject, never saved, never replicated.
+//
+// HOW TO READ THE FIELDS. Entries/Exits are surface crossings between a start point high above and the
+// tested point, classified by the sign of each hit's impact normal against the direction of travel. A
+// point is reported inside when the segment enters solid more times than it leaves it. bControlInside is
+// the load-bearing one: it is the same test run on a point deliberately placed BELOW the first surface
+// above the tested point, so a run where the control does NOT read inside is a run where this method
+// demonstrably could not detect containment in that geometry -- and a negative reading from it there is
+// not evidence of open air. Every field is written from the traces this call made.
+struct FNodeShufflePointInsideReading
+{
+    bool bRan = false;                    // false = the walk was NOT run; no count below is a reading
+    FVector Point = FVector::ZeroVector;  // the point tested, exactly as handed in
+    FVector SkyStart = FVector::ZeroVector;  // where the inbound segment began
+    double SkyOffsetCm = 0.0;             // how far above the point that start sits, from its constant
+    double StepEpsilonCm = 0.0;           // how far past each hit the walk resumes, from its constant
+    int32 MaxHitsPerSegment = 0;          // the per-segment iteration cap, from its constant
+
+    int32 HitsSeen = 0;                   // DENOMINATOR: every blocking hit both segments reported
+    int32 ExcludedBuildableHits = 0;      // of those, hits on an AFGBuildable (docs/TECH-DEBT.md T40)
+    int32 ExcludedPawnHits = 0;           // of those, hits on an APawn (docs/TECH-DEBT.md T36)
+    int32 ExcludedSubjectHits = 0;        // of those, hits on the actor the caller named as the subject
+    int32 CountedCrossings = 0;           // HitsSeen minus the three exclusions above
+
+    int32 InboundFrontFaces = 0;          // counted crossings whose normal opposed the inbound travel
+    int32 InboundBackFaces = 0;           // counted crossings whose normal ran with the inbound travel
+    int32 OutboundFrontFaces = 0;         // same, on the segment walked back out to the start
+    int32 OutboundBackFaces = 0;
+    int32 Entries = 0;                    // InboundFrontFaces
+    int32 Exits = 0;                      // the larger of InboundBackFaces and OutboundFrontFaces
+    int32 Net = 0;                        // Entries minus Exits
+    bool bInside = false;                 // Net >= 1
+
+    bool bBackFacesObserved = false;      // did ANY segment report a hit whose normal ran with travel
+    bool bSegmentCapHit = false;          // a segment stopped at MaxHitsPerSegment, so it is truncated
+    bool bFirstInboundCountedWasBackFace = false;  // the first counted inbound crossing led OUT of solid
+
+    bool bControlRan = false;             // was the positive control built and walked at all
+    FVector ControlPoint = FVector::ZeroVector;
+    double ControlDepthCm = 0.0;          // how far below the first surface the control sits
+    int32 ControlNet = 0;
+    bool bControlInside = false;          // THE RELIABILITY SIGNAL -- see the paragraph above
+    FString ControlDetail;                // what the control was built from, or why it was not built
+
+    FString CrossingActors;               // names of the first few counted crossings, or a sentinel
+};
+
 // One node-pool entry of the per-save layout. The layout is rolled exactly
 // once per save (seeded) and afterwards only ever *applied*; it is the single
 // source of truth for which nodes exist, are active, and what they carry.
@@ -1675,6 +1730,30 @@ private:
     // and no call site of it changes, and nothing any gate reads consults this result.
     bool IsProbeEyeInsideSolidForDiag(const FVector& At, const AActor* IgnoreActor,
                                       FNodeShuffleProbeEyeReading& Out) const;
+
+    // ns-t42-centreshadow: THE CANDIDATE CONTAINMENT TEST, AS A SHADOW METRIC. NOTHING GATES ON IT.
+    //
+    // The author's rule this evaluates: a member whose OWN CENTRE POINT is inside solid world geometry is
+    // the defect; a centre on the surface, with the body partly embedded, is wanted and must keep passing.
+    // The shipped enclosure predicate cannot express that -- it has no vertical component at all, and
+    // docs/TECH-DEBT.md T41 records a satellite an extractor snaps into a cliff reading 0 of 8 blocked.
+    //
+    // DELIBERATELY NODE-TYPE-AGNOSTIC. It takes a world location and knows nothing about wells, cores,
+    // satellites, layout records, resource classes or node classes; a caller with a solid node, an oil
+    // node or a modded node class supplies the same two arguments. Defined in its own translation unit
+    // (NodeShuffleCentreContainment.cpp) rather than beside the enclosure predicate, so it shares no
+    // constant with it and cannot be mistaken for part of it.
+    //
+    // SubjectActor is the actor that IS the thing being tested, when there is one -- the member actor, or
+    // the pawn for a probe run where the player stands. Hits on it are COUNTED AND REPORTED as excluded
+    // rather than silently ignored, because an exclusion with no denominator is an exclusion nobody can
+    // check. AFGBuildable and APawn hits are excluded the same way, for the two measured reasons in
+    // docs/TECH-DEBT.md T40 and T36. Pass nullptr when the tested point is not an actor's.
+    //
+    // IsSpotEnclosed is NOT touched by this: no parameter, no statement, no constant and no call site of
+    // it changes, this function never calls it, and no placement path reads this result.
+    bool IsPointInsideSolidShadowForDiag(const FVector& At, const AActor* SubjectActor,
+                                         FNodeShufflePointInsideReading& Out) const;
 
     // ns-t39-wellprobe: THE ONE nearest-placed-well search, shared by NodeShuffle.Here and
     // NodeShuffle.WellProbe. It was inline in LogHereCensus; a second copy in the new command is the
