@@ -398,9 +398,22 @@ bool FNodeShuffleModule::EmitPendingNotice(UWorld* World, const TArray<FNodeShuf
     // ---- pending copy ----
     if (Pending.Num() > 0)
     {
+        // ns-t55-copy (T55, author directive 2026-08-10): OPTION 2 -- the state stays transient and the
+        // COPY carries the change. Two assertions were removed because they were measured false, not
+        // because they read badly:
+        //   * "%d NEW building(s)" -- the same two AlkaLib extractors were announced on the 17.13.38 boot
+        //     and again two boots later. They were pending both times, and both notices were correct; the
+        //     word "new" was the only false part. This says "still need", which is true on a repeat and
+        //     equally true the first time.
+        //   * "this is normal after a mod update or reinstall" -- a CAUSE the notice never tested. The
+        //     measured cause of the repeat on the author's machine was neither: the generated pack is
+        //     cleared and rebuilt from the loaded world's managed node groups every pass (see
+        //     NodeShuffleAutoAllowExtractors.cpp's clear-and-rebuild and its PACKCHURN line), so loading
+        //     a different save deletes documents that save does not need. The replacement sentence states
+        //     THAT, and only for the net mode where the player can act on it.
         FString Body = FString::Printf(
-            TEXT("NODE SHUFFLE - restart required for %d new building(s)\n\n")
-            TEXT("Compatibility patches were written for extractors that Satisfactory Plus does not yet\n")
+            TEXT("NODE SHUFFLE - %d building(s) still need a restart\n\n")
+            TEXT("Compatibility patches are written for extractors that Satisfactory Plus does not yet\n")
             TEXT("permit on shuffled nodes. They take effect the NEXT time you start the game.\n"),
             Pending.Num());
         for (int32 i = 0; i < Pending.Num() && i < MaxNamedBuildings; ++i)
@@ -430,8 +443,9 @@ bool FNodeShuffleModule::EmitPendingNotice(UWorld* World, const TArray<FNodeShuf
         }
         else
         {
-            Body += TEXT("on those nodes. Nothing is broken and nothing needs fixing - this is normal after a\n")
-                    TEXT("mod update or reinstall. Just restart the game once.");
+            Body += TEXT("on those nodes. Nothing is broken and nothing needs fixing - restart the game once\n")
+                    TEXT("and they work. You can see this again on a later load: the patch set is rebuilt for\n")
+                    TEXT("whichever save you open, so loading a different save can re-create it.");
         }
         PostMessage(Body);
     }

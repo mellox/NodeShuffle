@@ -7,7 +7,7 @@ this list, the entry has failed — fix the entry, not just the bug.**
 Each item records what it is, how we know, and why it is not fixed. Items with a
 **pre-scoped fix** have had the work sized already — start there, don't redesign.
 
-Last updated 2026-08-10 (T58 filed in P1 after T55 — SF+ destroys third-party nodes on new games;
+Last updated 2026-08-10 (T55 CLOSED + T59 split out of it; T56 discriminated — packet ns-t55-t56-reload. Earlier: T58 filed in P1 after T55 — SF+ destroys third-party nodes on new games;
 DECIDED the same day by the author and implemented as the default-ON protect veto, pending build,
 review and in-game — see the T58 STATUS block; source
 `_team/nodeshuffle-followups/veto-spawnwindow-regression.md`.
@@ -174,7 +174,7 @@ record is hidden with its group and never spawned at the destination; immediate 
 population because a satellite can now stream in and be hidden while no destination group exists yet.
 The `WELLH2-IMMEDIATE` census reports uncaptured-hidden over total-satellite-records-hidden.
 
-### T55. The SF+ allow-list chat notice RE-ANNOUNCES THE SAME PENDING EXTRACTORS ON EVERY LOAD — its dedup is session-scoped **by documented design**, so the player is told the same thing every time they load. The pre-scoped "persist the signature" fix is **forbidden by that same design comment** and must be re-decided, not applied.
+### T55. The SF+ allow-list chat notice RE-ANNOUNCES THE SAME PENDING EXTRACTORS ON EVERY LOAD **— MECHANISM CORRECTED 2026-08-10: the set is RE-CREATED, not re-announced; see the T55 STATUS block and [[T59]]. CLOSED as option 2.** — its dedup is session-scoped **by documented design**, so the player is told the same thing every time they load. The pre-scoped "persist the signature" fix is **forbidden by that same design comment** and must be re-decided, not applied.
 **Measured 2026-08-10 across eight loads of build `2026-08-10-t54-1`** (the author's real multi-mod
 save; evidence `lithium-probe-extract.md` §"4th follow-up: morning save-reload investigation" Q1, plus
 a direct re-grep of `%LOCALAPPDATA%\FactoryGame\Saved\Logs\`). Every `decision=EMIT` line in every
@@ -226,6 +226,70 @@ own. The design says PENDING *"empties itself one boot after the documents land"
 were pending on F **and** on H (two loads apart), which is the first datum against that claim and the
 cheapest next measurement. Do that before choosing an option: if PENDING never empties, this is not a
 dedup defect at all but a stuck allow-list write, and every option above is the wrong fix.
+
+#### T55 STATUS: **MEASURED, THEN DECIDED — OPTION 2. IMPLEMENTED, PENDING BUILD AND COLD REVIEW** (packet `ns-t55-t56-reload`, 2026-08-10, boot marker `2026-08-10-t5556-1`). **The measurement above was taken and it CHANGED the answer.**
+
+`grep "AUTOALLOW extractor='/AlkaLib" *.log` over the surviving logs, per boot:
+
+| boot | AlkaLib ReactiveOreExtractor Mk2/Mk3 |
+|---|---|
+| `…-17.13.38` (F) | `sfPlusAlreadyAllows=0 decision=ADD` → WROTE, announced |
+| `…-17.15.16` (G) | **`sfPlusAlreadyAllows=1`** `decision=SKIP reason=no-managed-node-type-natively-accepted` |
+| `…-18.05.58` (the log this entry called "H") | `sfPlusAlreadyAllows=0 decision=ADD` → WROTE, announced again |
+
+**PENDING DOES empty itself one boot later, exactly as the design comment claims — and then REFILLS.**
+So the third option in the "not yet measured" paragraph (a stuck write) is falsified too, and so is this
+entry's own headline mechanism. The set is not being *re-announced*; it is being *re-created*. The cause
+is `NodeShuffleAutoAllowExtractors.cpp:759` (`if (FM.DirectoryExists(*PackDir) && !FM.DeleteDirectory(...))`)
+— the pack directory is **cleared and rebuilt every completed pass** from `ToGenerate`, which is a pure function of *the loaded save's* managed node groups, while the
+directory itself is per-INSTALL. G loaded a save whose layout has no lithium/alkali group, so AlkaLib
+matched nothing, so its two documents were deleted; the next boot of the other save had to write them
+again. Filed as its own entry, **[[T59]]**, because it is a real defect and this one is not its fix.
+
+**Therefore option 1 is REFUSED ON EVIDENCE, not on deference.** Persisting `AnnouncedPendingKeys` would
+have suppressed the third row above — a notice that was CORRECT, for buildings the player genuinely could
+not place until a restart. That is verbatim the failure the header comment predicted
+(`NodeShuffleSubsystem.h`, "could suppress a notice the player genuinely needs"), now observed.
+
+**Option 2 shipped.** No state change; the copy carries it. Two assertions in the chat body were measured
+false and are gone: *"%d **new** building(s)"* (they were announced two boots earlier) and *"this is normal
+after a mod update or reinstall"* (a cause the notice never tested; the measured cause was a save switch).
+The header comment at `NodeShuffleSubsystem.h:1147` now records the measurement and forbids the reversal by
+name. New diagnostic: `AUTOALLOW PACKCHURN:` — docs before/now, unchanged/added/removed, with the removed
+filenames — so a repeat notice is explained by one line instead of a cross-log diff.
+
+### T59. THE GENERATED SF+ ALLOW-LIST PACK IS PER-INSTALL BUT ITS CONTENT IS PER-SAVE, so loading save B deletes the compatibility documents save A needs — and the extractors A had working go back to "Invalid aim location!" for one boot, every time the player alternates saves. **Split out of [[T55]] 2026-08-10 when the measurement showed T55's symptom was this. UNFIXED — AWAITING AUTHOR DECISION — not yet put to the author (T59 created 2026-08-10 by packet `ns-t55-t56-reload`).**
+**MEASURED**, three consecutive boots, table in the T55 STATUS block above: written+announced → allowed →
+deleted → not allowed → written+announced again. **THE MECHANISM IS TWO LINES, BOTH DELIBERATE:**
+`NodeShuffleAutoAllowExtractors.cpp:759` deletes the whole pack directory on every completed pass, and
+`ToGenerate` (same file, add-site `:679`, declared `:355`) is built from **this world's** managed node groups. Neither is a bug on
+its own — the clear-and-rebuild exists to stop stale entries, and its own header comment explains at length
+why reading the pack back would reintroduce an oscillation. The defect is that the two together make a
+GLOBAL artifact a function of a PER-SAVE input, which nothing in that file's reasoning accounts for.
+
+**Blast radius is wider than the chat notice.** Anything the pass writes is affected the same way, for any
+player with more than one save — which is the ordinary case, and the author's own setup (`Test_02_*`,
+`TestAllMinables`, `Reshuffle_01`).
+
+**Options, unranked, none costed:**
+1. **Namespace the pack by save** (subdirectory or filename prefix keyed on the save's identity). Needs KDF
+   to read more than one pack dir, or a stable per-save path — unverified, and KDF is third-party.
+2. **Union, don't replace** — keep documents from other saves and only add. Reintroduces exactly the stale
+   entry the clear-and-rebuild was written to prevent; needs its own invalidation rule. **READ
+   `NodeShuffleAutoAllowExtractors.cpp:63-75` BEFORE PICKING THIS.** Union requires reading the pack
+   directory back, and that file records three measured boots (2026-07-30) where an input derived from the
+   pass's own previous output oscillated the pack every other boot — closing *"AN INPUT DERIVED FROM THIS
+   PASS'S OWN PREVIOUS OUTPUT IS A FEEDBACK LOOP, NOT A SHORT-CIRCUIT. Do not add one back."* Same class.
+3. **Make the written set save-independent** — generate for every extractor×resource pairing the *installed
+   mods* permit, not only what this save's layout currently manages. No churn, and the pending notice then
+   fires once per install instead of once per save switch. **Its real cost is correctness, not size:** it
+   widens SF+'s allow-list to nodes NodeShuffle never shuffled, i.e. a balance change to SF+ on unshuffled
+   vanilla nodes. That is this option's strongest argument against it.
+4. **Accept it and say so** — the copy shipped for T55 already tells the player a later load can re-create
+   the state. Cheapest; leaves a real one-boot regression in place.
+
+**Do not "fix" this by persisting the announce set** — see the T55 STATUS block for why that suppresses a
+true notice.
 
 ### T58. ON A NEW GAME, SF+ DESTROYS EVERY THIRD-PARTY RESOURCE NODE ~0.9 s AFTER WORLD INIT — before our roll can enumerate them — so lead, lithium/Alkali and AllMinable's `Res_*2_C` family are EXTINCT on new saves. **NOT a NodeShuffle regression. Status: DECIDED 2026-08-10 (author: protect veto, option 1, DEFAULT ON) → IMPLEMENTED-PENDING-BUILD-REVIEW-AND-INGAME — see the T58 STATUS block at the end of this entry.**
 **AUTHORITATIVE SOURCE for every claim, quote and option below:
@@ -1188,7 +1252,7 @@ binary was rebuilt from the reviewed commit so nothing unsafe is in the DLL.
 
 ## P2 — real unknowns, cheap to close
 
-### T56. TEN well groups read `groupComplete=0 coreCaptured=0 corePieces=0` at load — the SAME ten, on every one of eight loads, in BOTH save files. The code's own comment says that state "must NOT" occur on a reload of a dressed well. **[[T54]]'s hide is NOT implicated — do not conflate them.**
+### T56. TEN well groups read `groupComplete=0 coreCaptured=0 corePieces=0` at load — the SAME ten, on every one of eight loads, in BOTH save files. **— "the same ten" is FALSIFIED by a third save; see the T56 STATUS block. Resolved to capture COVERAGE, not persistence.** The code's own comment says that state "must NOT" occur on a reload of a dressed well. **[[T54]]'s hide is NOT implicated — do not conflate them.**
 **Measured 2026-08-10, build `2026-08-10-t54-1`** (evidence `lithium-probe-extract.md` §"4th
 follow-up" Q2, extended by a direct re-grep of all eight `FactoryGame*.log` files). The reading comes
 from `WELLH2B-ADOPT`, `Source/NodeShuffle/Private/NodeShuffleWellVisuals.cpp:107-113`, whose own text
@@ -1221,6 +1285,43 @@ code:**
 **Cheapest discriminator:** load, confirm the ten read zero, walk to one of them until
 `WELLH2B-CAPTURE` reports it complete, **save manually**, reload, and read that core's `WELLH2B-ADOPT`
 line. Non-zero ⇒ mechanism 2 (coverage). Zero ⇒ mechanism 1 (round trip), and it is then a P1.
+
+#### T56 STATUS: **DISCRIMINATED — MECHANISM 2 (CAPTURE COVERAGE). Mechanism 1 (lost on the way out) is FALSIFIED. No round-trip fix is needed or shipped; the INVARIANT TEXT was the defect and is corrected.** (packet `ns-t55-t56-reload`, 2026-08-10, marker `2026-08-10-t5556-1`.)
+
+The discriminating in-game walk was **not needed** — a session the author started at 15:07 on a fourth save
+(`loadgame=Reshuffle_01`, build `2026-08-10-t58-1`, live `FactoryGame.log`) answers it two ways:
+
+1. **The zero set is NOT a fixed ten. It is per-save, and it moves in BOTH directions.** In `Reshuffle_01`
+   the zero cores are `BP_FrackingCore2/3/6/7/9/10/11/12/13/14/_8` — **13 and 14 are in it**, and those two
+   are among the seven this entry cites as *proof the round trip works* (`13 corePieces=2`, `14 =5`) in the
+   other save files. Meanwhile `4`, `5` and `18` — three of "the ten" — read back **non-zero** here. A
+   per-core persistence fault cannot flip in both directions across save files.
+2. **Nothing was captured that a save could have dropped.** Every core reading zero in that load's
+   `WELLH2B-ADOPT` block also logs, IN THE SAME SESSION, a `WELLH2B-CAPTURE` line reporting **`0 member(s)
+   captured, 7–11 still empty -> group INCOMPLETE`**. The correspondence is exact and one-to-one: every
+   zero-ADOPT core appears in that incomplete list, and no non-zero-ADOPT core does.
+
+**This entry's supporting datum for mechanism 1 was a misread.** *"`BP_FrackingCore10` does log
+`WELLH2B-CAPTURE` … so it IS captured at some point"* — that core's CAPTURE line reads `0 member(s)
+captured, 8 still empty`. **A `WELLH2B-CAPTURE` line is emitted for FAILURE as well as success**; its
+presence is not evidence of capture. (Filed as a specimen: the log line said what it measured, and the
+reader supplied the meaning.)
+
+**SO THE ZEROS ARE TRUTHFUL AND THE COMMENT WAS WRONG.** `NodeShuffleWellVisuals.cpp:89-96` already said a
+well can be dressed from the session template with the persisted fields empty — and then its own log line
+said a dressed well's fields *"must NOT"* be zero. The two halves contradicted each other and T56 was filed
+against the wrong half. **Shipped:** the `WELLH2B-ADOPT` text now states what zero and non-zero mean without
+claiming an invariant it cannot hold, and carries the measurement above.
+
+**WHAT REMAINS OPEN, and it is a coverage question, not a persistence one:** why those members never
+resolve. `CaptureMember` needs BOTH `FindOriginalBaseByPath` to return a live node AND a `WellMeshIndex`
+entry with pieces; the single `MembersMissing` counter conflated three different absences, so no log said
+which input was missing. **Shipped:** `WELLH2B-CAPTURE`'s group summary now splits it — how many members had
+no node from `FindOriginalBaseByPath`, how many had a live node but no indexed mesh piece, and how many had
+indexed pieces that yielded no visual. **One reading of that line on a next boot decides whether this is a
+streaming question or a mesh-index question.** Also corrected there: the per-member Verbose line printed
+*"is NOT streamed"* for `!IsValid(Node)`, which tests path resolution and never tested streaming — the
+[[lessons-log-asserted-a-cause]] class, second sighting in this file family.
 
 **WHAT THIS ENTRY IS NOT.** [[T54]]'s immediate-hide **holds across all eight loads**: the
 `WELLH2-IMMEDIATE` (*"ORIGIN HIDDEN NOW"*) count is A=3, B=18, C-H=**0** — no first-touch re-hides

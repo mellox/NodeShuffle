@@ -737,6 +737,25 @@ bool FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled(UWorld* World,
         return false;
     }
     IFileManager& FM = IFileManager::Get();
+    // ns-t55-churn (T55, 2026-08-10): READ THE PACK BEFORE WE DESTROY IT, so the log can say what this
+    // pass CHANGED rather than only what it wrote. MEASUREMENT ONLY -- nothing below reads PriorDocNames
+    // for a decision, and ToGenerate is computed above without ever consulting the pack (the oscillation
+    // fix depends on that and is not being touched here).
+    //
+    // WHY THIS EXISTS. T55 was filed as "the chat notice re-announces the same extractors every load,
+    // because the announced-key set is session-scoped". The logs say otherwise: on the author's machine
+    // /AlkaLib/...ReactiveOreExtractorMk2+Mk3 were WRITTEN and announced on the 17.13.38 boot, read back
+    // sfPlusAlreadyAllows=1 on the 17.15.16 boot (so the document DID take effect), and were pending
+    // again -- sfPlusAlreadyAllows=0 -- on the next boot. The pending state is genuinely re-created, not
+    // merely re-announced. This directory is per-INSTALL while ToGenerate is a function of the layout of
+    // whichever SAVE is loaded, so loading save X after save Y deletes every document Y needed and X
+    // does not. These counts are what makes that visible in one line instead of a cross-log diff.
+    TArray<FString> PriorDocFiles;
+    if (FM.DirectoryExists(*PackDir))
+    {
+        FM.FindFiles(PriorDocFiles, *FPaths::Combine(PackDir, TEXT("*.cdo.yml")), /*Files=*/true, /*Directories=*/false);
+    }
+    const TSet<FString> PriorDocNames(PriorDocFiles);
     if (FM.DirectoryExists(*PackDir) && !FM.DeleteDirectory(*PackDir, /*RequireExists=*/false, /*Tree=*/true))
     {
         UE_LOG(LogNodeShuffle, Error,
@@ -788,6 +807,7 @@ bool FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled(UWorld* World,
     // builder sees them in one pass and cannot accidentally report a failure as a restart.
     TArray<FNodeShufflePendingRaw> NoticeRaw;
     int32 AlreadyAllowedCount = 0;
+    TSet<FString> WrittenDocNames; // ns-t55-churn: measurement only -- compared against PriorDocNames below
     for (const FGeneratedDoc& Doc : ToGenerate)
     {
         FString HasModLines = TEXT("    - SatisfactoryPlus\n    - NodeShuffle\n");
@@ -827,6 +847,7 @@ bool FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled(UWorld* World,
         if (FFileHelper::SaveStringToFile(DocYaml, *DocPath))
         {
             ++WrittenCount;
+            WrittenDocNames.Add(FileName); // ns-t55-churn
             UE_LOG(LogNodeShuffle, Display,
                 TEXT("AUTOALLOW extractor='%s' decision=ADD -- WROTE '%s' (verified), takes effect NEXT boot"),
                 *Doc.ExtractorPath, *FileName);
@@ -867,6 +888,31 @@ bool FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled(UWorld* World,
         TEXT("AUTOALLOW: pass complete -- %d matched, %d document(s) WRITTEN, %d FAILED, at '%s' ")
         TEXT("(0 matched is a valid, harmless state, not an error; a nonzero FAILED count is an error)"),
         ToGenerate.Num(), WrittenCount, FailedCount, *PackDir);
+
+    // ns-t55-churn (T55): the one line that explains a repeat "restart required" notice without a
+    // cross-log diff. Counts only -- it reports what the two directory listings were, never why the
+    // sets differ; the per-extractor SKIP lines above carry each reason in their own words.
+    {
+        int32 Unchanged = 0;
+        for (const FString& N : WrittenDocNames) { if (PriorDocNames.Contains(N)) { ++Unchanged; } }
+        TArray<FString> RemovedNames;
+        for (const FString& N : PriorDocNames) { if (!WrittenDocNames.Contains(N)) { RemovedNames.Add(N); } }
+        RemovedNames.Sort();
+        const int32 MaxNamed = 6;
+        FString RemovedCsv = FString::Join(
+            TArray<FString>(RemovedNames.GetData(), FMath::Min(RemovedNames.Num(), MaxNamed)), TEXT(", "));
+        if (RemovedNames.Num() > MaxNamed)
+        {
+            RemovedCsv += FString::Printf(TEXT(", +%d more"), RemovedNames.Num() - MaxNamed);
+        }
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("AUTOALLOW PACKCHURN: docsBefore %d, docsNow %d -- unchanged %d, added %d, removed %d. ")
+            TEXT("Removed: [%s]. This directory is cleared and rebuilt every completed pass from THIS ")
+            TEXT("world's managed node groups, so a removed document stops applying at the next boot and ")
+            TEXT("its extractor can become pending again. Counts, not a diagnosis."),
+            PriorDocNames.Num(), WrittenDocNames.Num(), Unchanged,
+            WrittenDocNames.Num() - Unchanged, RemovedNames.Num(), *RemovedCsv);
+    }
 
     // ns-h1b-notice: the pass's own one-line answer to "what was the player told, and why".
     UE_LOG(LogNodeShuffle, Display,

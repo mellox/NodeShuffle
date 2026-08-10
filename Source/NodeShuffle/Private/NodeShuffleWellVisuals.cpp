@@ -94,6 +94,22 @@ bool ANodeShuffleSubsystem::CaptureWellGroupVisuals(FNodeShuffleWellEntry& E)
     // session that any code looks at this group's visuals, which on a reload is before a single piece
     // can have been re-captured. Non-zero piece counts here ARE the round trip; zeros with a dressed
     // well afterwards mean the well was rebuilt from the world or the template, not from the save.
+    //
+    // ns-t56-cover (T56, 2026-08-10): THE LINE BELOW USED TO END "on a reload of an already-dressed well
+    // it MUST NOT be [zeros]", and T56 was filed against that sentence as an invariant violated by ten
+    // well groups. THE SENTENCE WAS THE DEFECT. Zeros on a reload are also the correct, truthful reading
+    // for a group that was never captured in the first place -- the paragraph directly above already says
+    // a well can be dressed from the session template without any capture, so "dressed" never implied
+    // "captured", and the two halves of this comment contradicted each other.
+    // MEASURED (build 2026-08-10-t58-1, save Reshuffle_01, FactoryGame.log 15:09): every core reading zero here
+    // also logs a WELLH2B-CAPTURE line reporting 0 members captured and 7-11 still empty IN THE SAME
+    // SESSION, so nothing was captured that a save could have dropped. The set is not a fixed ten either:
+    // BP_FrackingCore13 and 14 read non-zero in the earlier save files and zero in this one, which rules
+    // out a per-core persistence fault and leaves capture COVERAGE. The round trip itself is proven by the
+    // groups that do read back non-zero in the same load.
+    // So: non-zero here still IS the round trip. Zero means "nothing was captured before this save was
+    // written" and says nothing on its own about why -- the split counts on the WELLH2B-CAPTURE summary
+    // below are what narrow that.
     const FString AdoptKey = E.CorePath + TEXT("|adopt");
     if (!WellVisualCaptureLogged.Contains(AdoptKey))
     {
@@ -107,8 +123,10 @@ bool ANodeShuffleSubsystem::CaptureWellGroupVisuals(FNodeShuffleWellEntry& E)
         UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH2B-ADOPT core='%s': as loaded, groupComplete=%d coreCaptured=%d corePieces=%d, ")
             TEXT("%d/%d satellite(s) captured with %d piece(s) total. This is the state BEFORE any capture ")
-            TEXT("runs this session -- on a fresh roll it is all zeros, on a reload of an already-dressed ")
-            TEXT("well it must NOT be. Said once per group per session."),
+            TEXT("runs this session. Non-zero means the save carried this group's captured look. Zero means ")
+            TEXT("nothing was captured before that save was written -- which is the ordinary reading for a ")
+            TEXT("group whose members were never available to capture, and is NOT by itself a lost save. ")
+            TEXT("Said once per group per session."),
             *WellShort(E.CorePath), E.bGroupVisualsComplete ? 1 : 0, E.bCoreVisualsCaptured ? 1 : 0,
             E.CoreVisuals.Num(), SatCaptured, E.Satellites.Num(), SatPieces);
     }
@@ -117,6 +135,11 @@ bool ANodeShuffleSubsystem::CaptureWellGroupVisuals(FNodeShuffleWellEntry& E)
     EnsureWellMeshIndex();
 
     int32 NewPieces = 0, MembersDone = 0, MembersMissing = 0, CrackPieces = 0;
+    // ns-t56-cover (T56, 2026-08-10): MembersMissing is one number for three different absences, and T56
+    // could not be discriminated without splitting them. Which of the two inputs was absent decides
+    // whether a coverage gap is a streaming question or a mesh-index question, and no existing line said.
+    // Reported in the group summary below; nothing reads these for a decision.
+    int32 MissNoNode = 0, MissNoPieces = 0, MissNoVisuals = 0;
 
     const auto CaptureMember = [&](const FString& Path, TArray<FNodeShuffleWellVisual>& Out,
                                    bool& bFlag, const TCHAR* Kind) -> void
@@ -127,15 +150,21 @@ bool ANodeShuffleSubsystem::CaptureWellGroupVisuals(FNodeShuffleWellEntry& E)
         if (!IsValid(Node) || !Pieces || Pieces->Num() == 0)
         {
             ++MembersMissing;
+            if (!IsValid(Node)) { ++MissNoNode; } else { ++MissNoPieces; } // ns-t56-cover
             if (FNodeShuffleModule::AreDiagnosticsEnabled()
                 && !WellVisualCaptureLogged.Contains(Path))
             {
                 WellVisualCaptureLogged.Add(Path);
+                // ns-t56-cover: the old text printed "is NOT streamed" for !IsValid(Node). Streaming was
+                // never tested here -- FindOriginalBaseByPath resolves a PATH against this subsystem's
+                // original-node records, and an unresolved path can equally be a record for an actor that
+                // no longer exists or never did. Print the predicate; do not name a cause for it.
                 UE_LOG(LogNodeShuffle, Verbose,
-                    TEXT("WELLH2B-CAPTURE %s '%s': NOTHING CAPTURED -- node %s, indexed pieces %d. ")
-                    TEXT("A zero here means the member is not streamed OR no mesh piece was paired to ")
-                    TEXT("it by any of the three routes; the WELLH2B-INDEX lines above say which. Said once."),
-                    Kind, *WellShort(Path), IsValid(Node) ? TEXT("IS live") : TEXT("is NOT streamed"),
+                    TEXT("WELLH2B-CAPTURE %s '%s': NOTHING CAPTURED -- FindOriginalBaseByPath %s, indexed ")
+                    TEXT("pieces %d. Both inputs are required; the WELLH2B-INDEX lines above say what the ")
+                    TEXT("index held. Said once."),
+                    Kind, *WellShort(Path),
+                    IsValid(Node) ? TEXT("returned a live node") : TEXT("returned nothing"),
                     Pieces ? Pieces->Num() : 0);
             }
             return;
@@ -175,7 +204,7 @@ bool ANodeShuffleSubsystem::CaptureWellGroupVisuals(FNodeShuffleWellEntry& E)
                 (Kind[0] == TEXT('c')) ? WellVisualTemplateCore : WellVisualTemplateSatellite;
             if (Template.Num() == 0) { Template = Out; }
         }
-        else { ++MembersMissing; }
+        else { ++MembersMissing; ++MissNoVisuals; } // ns-t56-cover: pieces were indexed, none yielded a visual
     };
 
     CaptureMember(E.CorePath, E.CoreVisuals, E.bCoreVisualsCaptured, TEXT("core"));
@@ -188,16 +217,26 @@ bool ANodeShuffleSubsystem::CaptureWellGroupVisuals(FNodeShuffleWellEntry& E)
     const bool bComplete = E.bCoreVisualsCaptured && MembersMissing == 0;
     if (bComplete && !E.bGroupVisualsComplete) { E.bGroupVisualsComplete = true; }
 
-    if (NewPieces > 0 || (MembersMissing > 0 && !WellVisualCaptureLogged.Contains(E.CorePath + TEXT("|grp"))))
+    // ns-review-t5556 F2: the split IS the T56 discriminator, and the once-per-group latch sampled it on
+    // the FIRST pass -- when FindOriginalBaseByPath is most likely to return nothing simply because the
+    // originals have not resolved yet. For a group that never captures anything (NewPieces stays 0 every
+    // pass) that first sample was also the ONLY sample, so MissNoNode would dominate by construction and
+    // answer "streaming" to a question that may be a mesh-index one. Re-emit when the classification
+    // CHANGES, so the LAST line for a group reports its settled state. Read the last one.
+    const FString MissKey = FString::Printf(TEXT("%s|grp|%d/%d/%d"),
+        *E.CorePath, MissNoNode, MissNoPieces, MissNoVisuals);
+    if (NewPieces > 0 || (MembersMissing > 0 && !WellVisualCaptureLogged.Contains(MissKey)))
     {
-        WellVisualCaptureLogged.Add(E.CorePath + TEXT("|grp"));
+        WellVisualCaptureLogged.Add(MissKey);
         UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH2B-CAPTURE core='%s': +%d piece(s) this pass (%d of them MT_Crack), %d member(s) ")
-            TEXT("captured, %d still empty -> group %s. An empty member is retried every pass while its ")
-            TEXT("original streams; a group that never completes is dressed from the session template ")
-            TEXT("and says so."),
+            TEXT("captured, %d still empty -> group %s. Of the empty ones: %d had no node from ")
+            TEXT("FindOriginalBaseByPath, %d had a live node but no indexed mesh piece, %d had indexed ")
+            TEXT("pieces that yielded no visual. An empty member is retried every pass; a group that ")
+            TEXT("never completes is dressed from the session template and says so."),
             *WellShort(E.CorePath), NewPieces, CrackPieces, MembersDone, MembersMissing,
-            bComplete ? TEXT("COMPLETE") : TEXT("INCOMPLETE"));
+            bComplete ? TEXT("COMPLETE") : TEXT("INCOMPLETE"),
+            MissNoNode, MissNoPieces, MissNoVisuals);
     }
     return bComplete;
 }

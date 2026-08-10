@@ -1149,6 +1149,26 @@ private:
     // MINUS what SF+ already allows); it empties itself one boot after the documents land, which is the
     // only reason this notice cannot nag. Persisting any of this across boots would fight that mechanism
     // and could suppress a notice the player genuinely needs after a rebuild.
+    //
+    // ns-t55 (T55, author directive 2026-08-10 "these reload-after-shuffle defects should be fixed"):
+    // THE DIRECTIVE WAS SETTLED WITHOUT REVERSING THIS -- and the paragraph above was CONFIRMED by
+    // measurement rather than merely respected. T55 was filed as "the announced-key set is session-scoped,
+    // so the same extractors are re-announced on every load", with "persist AnnouncedPendingKeys" as its
+    // cheapest option. The author's own logs say the pending state is genuinely RE-CREATED, not merely
+    // re-announced: /AlkaLib/...ReactiveOreExtractorMk2+Mk3 were written and announced on the 17.13.38
+    // boot; the NEXT boot (17.15.16) read them back sfPlusAlreadyAllows=1, so the documents took effect
+    // and PENDING did empty itself exactly as this comment says; the boot after that had them at
+    // sfPlusAlreadyAllows=0 and pending again. The cause is not this block: the generated pack lives in
+    // the game INSTALL while the set of documents to write is a function of the LOADED SAVE's managed node
+    // groups, and NodeShuffleAutoAllowExtractors.cpp clears and rebuilds the whole directory every
+    // completed pass -- so alternating between two saves deletes each other's documents. The new
+    // "AUTOALLOW PACKCHURN" line measures that per pass.
+    // THEREFORE: persisting AnnouncedPendingKeys would have suppressed a notice that was CORRECT, for
+    // buildings the player really could not place until a restart -- precisely the failure named above,
+    // now observed rather than predicted. T55 is closed as option 2 (state stays transient; the chat copy
+    // was rewritten to read as status and to drop two measured-false claims -- see ns-t55-copy in
+    // NodeShufflePendingNotice.cpp). The per-save/per-install pack churn is a SEPARATE, unfixed defect and
+    // is filed as such in docs/TECH-DEBT.md; do not "fix" it by persisting anything in this block.
     TArray<FNodeShufflePendingEntry> PendingNoticeQueue;
     // LOG-ONLY BREADCRUMB -- NOT a decision input. ns-review-notice2 F-C: this used to claim it was what
     // stopped the measured double-pass from double-messaging. It WAS, until F4 moved that job to
