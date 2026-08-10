@@ -332,18 +332,49 @@ public:
     // The optional NodeShuffleVetoKBFL module registers its per-world arm entry point here from its
     // StartupModule. Function-pointer indirection keeps the dependency arrow one-way (veto -> main):
     // this module has ZERO KBFL includes/links and never sees the veto module's headers.
-    static void SetKBFLVetoArmFunction(void (*ArmFn)(class UWorld* World));
-    // T58 R1 (scoped re-review 2): the DISARM counterpart. Our requirement class stays prepended on
-    // the KBFL CDO for the life of the process (the arm pass's own "already present" branch proves
-    // it), so a world that loads with NodeShuffle.DestroyerVeto=0 still runs IsRequirementMet with
-    // whatever session state the previous world left behind. Registering a disarm entry point lets
-    // the OFF branch CLEAR that state (latch false, protect set emptied) instead of merely not
-    // arming — otherwise "takes effect at world load" is false in the OFF direction.
-    static void SetKBFLVetoDisarmFunction(void (*DisarmFn)());
+    // T61: the arm function now receives the world's two POLICY BOOLEANS, both decided in THIS module
+    // (it owns both CVars) — bObserveOnly, and whether foreign protection is in force. The veto module
+    // reads neither CVar, so "protection is off whenever the master gate is off" is one expression at
+    // one call site rather than an agreement between two modules. T58's separate DISARM entry point is
+    // GONE: a world with the master gate off now arms in observe mode, and the arm pass's first two
+    // statements are exactly what the disarm did — see the block above StartupModule in
+    // NodeShuffleVetoKBFL.cpp for the full parity argument.
+    static void SetKBFLVetoArmFunction(
+        void (*ArmFn)(class UWorld* World, bool bObserveOnly, bool bProtectForeignNodes));
     // Called once per world init (subsystem BeginPlay, authority only): reads the
     // NodeShuffle.DestroyerVeto CVar, checks KBFL presence by module NAME, loads the veto module on
     // demand, and invokes its registered arm function for this world.
+    // T61: it ARMS EITHER WAY. The CVar selects the MODE (observing / enforcing), not whether the hook
+    // exists — the author's ruling is quoted at the function and in docs/TECH-DEBT.md T61.
     static void ArmDestroyerVetoIfEnabled(class UWorld* World);
+
+    // ---- T61: the mode this world is running in, for the player-facing copy ----
+    // Both are written once per world init by ArmDestroyerVetoIfEnabled and are false/inert until then.
+    // They report the LATCHED decision, not the CVars' current values: a console flip after world init
+    // changes neither, because it changes nothing about what this world is doing.
+    static bool IsVetoObservingOnlyThisWorld();
+    static bool IsForeignProtectionActingThisWorld();
+
+    // ---- T61: the "this resource is not in your list yet" chat notice ----
+    // Called from SyncForeignResourceRowsToConfig at the point a row has ACTUALLY been added for a
+    // resource that had none. Not from the sighting: the message reports the row, so it must be queued
+    // after the write, and "already has a row" is the whole cross-load dedup. Do not move this call.
+    static void NoteUnlistedForeignResourceForNotice(const FString& ResourceClassPath,
+        const FString& DisplayName);
+    // World init: clears the queue, the announced set and the gate. Called from
+    // ResetSeenForeignResources so the notice state and the sighting registry can never disagree.
+    static void ResetForeignNoticeState();
+    // Called every RefreshTick from the subsystem, with the player's "show compatibility notices"
+    // setting. Runs the SAME four gates as the pending notice (config off / nothing unannounced / no
+    // player yet / one more tick) and posts through the one shared chat emitter.
+    static void TickForeignNoticeEmitter(class UWorld* World, bool bNoticesEnabled);
+    // THE ONE CHAT EMITTER. Extracted from EmitPendingNotice so both notices post identically (same
+    // message type, sender, colour and route logging) and neither can drift into its own wording of the
+    // same mechanics. It composes nothing — the caller owns the body text. Returns FALSE when the chat
+    // manager was not available (the caller decides whether to retry); it never queues or drops.
+    // SourceTag names the CALLER in every line this emits (cold review F1): both notices now share these
+    // log lines, so without it a log carrying both cannot attribute either.
+    static bool PostChatNotice(class UWorld* World, const FString& Body, const TCHAR* SourceTag);
 
     // Packet G (ns-automatch): "allow an extractor if it natively accepts a node type NodeShuffle
     // manages" -- generates a machine-written KDataForge pack under DataForge/NodeShuffleAutoAllow/ that

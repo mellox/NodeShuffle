@@ -51,16 +51,45 @@ namespace
     }
 
     // The per-world arm entry point, registered with the main module by StartupModule below.
-    void NodeShuffleVetoArmForWorld(UWorld* World)
+    //
+    // T61 (ns-t61-observe-always, 2026-08-10): THIS PASS NOW RUNS FOR EVERY WORLD, including one that
+    // loaded with NodeShuffle.DestroyerVeto=0 — the caller passes bObserveOnly=true for that world and
+    // the requirement then returns true for every target (see the invariant comment in
+    // NodeShuffleDestroyerVetoRequirement.cpp). BOTH POLICY BOOLEANS ARE COMPUTED BY THE CALLER and
+    // merely latched here. That is deliberate: before T61 this pass read NodeShuffle.ProtectForeignNodes
+    // itself while the caller read NodeShuffle.DestroyerVeto, so the two halves of one policy were
+    // decided in two modules and "protection is off whenever the master gate is off" had to hold by
+    // coincidence. It is now one expression, at one call site, in the module that owns both CVars.
+    void NodeShuffleVetoArmForWorld(UWorld* World, bool bObserveOnly, bool bProtectForeignNodes)
     {
-        // Fresh world session: "this session" veto counters restart. T58 also LATCHES the foreign-node
-        // protection policy here — one read of NodeShuffle.ProtectForeignNodes for the whole world.
-        const bool bProtectForeign = FNodeShuffleModule::IsForeignNodeProtectionEnabled();
-        UNodeShuffleDestroyerVetoRequirement::ResetSessionCounters(bProtectForeign);
+        // Fresh world session: "this session" veto counters restart, and the mode + protection policy
+        // for the whole world are latched — one decision per world, never re-read mid-sweep.
+        const bool bProtectForeign = bProtectForeignNodes;
+        UNodeShuffleDestroyerVetoRequirement::ResetSessionCounters(bProtectForeign, bObserveOnly);
         UNodeShuffleDestroyerVetoRequirement::ResetForeignProtectAssets(); // T58 F1: rebuilt by this pass
-        // Announced ONLY when the amendment is active. With NodeShuffle.ProtectForeignNodes=0 this
-        // module must emit not one line the pre-T58 build did not — the OFF state's only new evidence
-        // is the VETOCENSUS line, which reports protectCvar=0 honestly.
+        if (bObserveOnly)
+        {
+            // T61: the observing world's arm announcement. It states what this mode DOES (measure, fill
+            // the list) and what it does NOT do (change anything in the world), because the previous
+            // build's behaviour for this CVar state was "no hook at all" and a reader of an old log
+            // would otherwise carry that model forward.
+            // COLD REVIEW F10, applied here rather than inside the string: the deleted OFF branch was
+            // the only place that named coexist-1 as the coexistence path, and without it a reader of a
+            // t61 log concludes this hook covers it. The clause below is therefore part of the message;
+            // the finding that produced it is not, because a shipped Display line must not end in
+            // review bookkeeping.
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("veto: OBSERVE-ONLY mode for this world — NodeShuffle.DestroyerVeto was 0 at world ")
+                TEXT("init, so the requirement is armed but returns true for EVERY target, including ")
+                TEXT("NodeShuffle's own nodes. Nothing is vetoed and nothing in the world changes; the ")
+                TEXT("hook classifies what other mods' cleanups judge, fills the per-resource list in ")
+                TEXT("the mod settings, and emits VETOCENSUS. Set NodeShuffle.DestroyerVeto 1 and load ")
+                TEXT("again to act on it (T61). Coexistence this session is handled by the coexist-1 ")
+                TEXT("external-destroy tombstone backoff, exactly as it was before this hook existed."));
+        }
+        // Announced ONLY when the amendment is active. With protection latched off this module must
+        // emit not one line the pre-T58 build did not — the OFF state's only new evidence is the
+        // VETOCENSUS line, which reports the mode and the latch honestly.
         if (bProtectForeign)
         {
             UE_LOG(LogNodeShuffle, Display,
@@ -337,16 +366,30 @@ namespace
 
         if (ArmedCount > 0)
         {
-            UE_LOG(LogNodeShuffle, Display,
-                TEXT("veto: armed on %d asset(s) — destroys of NodeShuffle-managed nodes will be vetoed"),
-                ArmedCount);
+            // T61: the sentence differs by MODE because the two states do different things, and the old
+            // sentence would be false in the new one. Each branch states only what its own latch does.
+            if (bObserveOnly)
+            {
+                UE_LOG(LogNodeShuffle, Display,
+                    TEXT("veto: armed on %d asset(s) in OBSERVE-ONLY mode — nothing is vetoed this ")
+                    TEXT("world; evaluations are counted and classified only"), ArmedCount);
+            }
+            else
+            {
+                UE_LOG(LogNodeShuffle, Display,
+                    TEXT("veto: armed on %d asset(s) — destroys of NodeShuffle-managed nodes will be vetoed"),
+                    ArmedCount);
+            }
         }
         else
         {
             UE_LOG(LogNodeShuffle, Display, TEXT("veto: armed, 0 node-destroyer assets found — idle"));
         }
 
-        // ---- T58: schedule the per-world census. Two one-shot world timers, never a repeating one:
+        // ---- T58: schedule the per-world census. T61: SCHEDULED IN BOTH MODES, deliberately and with
+        // no bObserveOnly term anywhere in this block — an observing world's census IS the deliverable
+        // the mode exists for, and a mode-gated timer would reproduce the blindness T61 removes.
+        // Two one-shot world timers, never a repeating one:
         // the sweep this measures lands ~1 s after world init, so T+30 s captures it with margin, and
         // T+300 s exists to expose a LATER wave. F3: the second line prints only when foreignSeen moved
         // after T+30 s — that is all it reports; it does NOT identify a retry loop, and nothing here
@@ -372,23 +415,30 @@ namespace
     }
 }
 
-// T58 R1: called by the main module when a world initialises with NodeShuffle.DestroyerVeto=0 after
-// this module has already armed earlier in the process. Our requirement instance stays in the KBFL
-// chain (the prepend is not undone), so the only way OFF can mean off is to clear the session state
-// it reads. Managed-node vetoing is deliberately NOT changed here — that is the pre-T58 behaviour of
-// a stale prepend and is outside T58's surface.
-static void NodeShuffleVetoDisarmSessionState()
-{
-    UNodeShuffleDestroyerVetoRequirement::ResetSessionCounters(/*bProtectForeignNodes=*/false);
-    UNodeShuffleDestroyerVetoRequirement::ResetForeignProtectAssets();
-}
+// T61 REPLACED T58's R1 DISARM LEVER WITH THE ARM PASS ITSELF, and this note is here because deleting
+// a safety lever deserves an argument rather than a diff.
+//
+// WHAT R1 GUARANTEED: our requirement class stays prepended on the KBFL CDO for the life of the process
+// (the "already present" branch above proves it), so a world loading with NodeShuffle.DestroyerVeto=0
+// after an earlier world armed would otherwise evaluate against the PREVIOUS world's latch and protect
+// set, with no census and stale per-class first-seen flags. R1 cleared that state from the main
+// module's OFF branch.
+//
+// HOW T61 PROVIDES IT: that OFF branch no longer exists — a world with the master gate off calls THIS
+// pass with bObserveOnly=true, and the first two statements of this function are exactly the two calls
+// R1 made (ResetSessionCounters, which now also latches the mode, and ResetForeignProtectAssets). The
+// pass additionally rebuilds the broad-node-sweep set for this world and schedules the census timers,
+// so the stale-state window R1 closed is closed by strictly more of the same work, on ONE path instead
+// of two. R1's own failure mode — the disarm being a no-op when the veto module never loaded — cannot
+// arise either: if the module never loaded, nothing was ever prepended and there is no state to clear.
+// The census now prints the mode, so an observing world is distinguishable in the log from a world that
+// never armed (that one prints no VETOCENSUS line at all).
 
 void FNodeShuffleVetoKBFLModule::StartupModule()
 {
     // Hand the main module our per-world arm entry point. This runs synchronously inside the main
     // module's LoadModulePtr call, so the pointer is set before ArmDestroyerVetoIfEnabled proceeds.
     FNodeShuffleModule::SetKBFLVetoArmFunction(&NodeShuffleVetoArmForWorld);
-    FNodeShuffleModule::SetKBFLVetoDisarmFunction(&NodeShuffleVetoDisarmSessionState);
     UE_LOG(LogNodeShuffle, Display,
         TEXT("veto: NodeShuffleVetoKBFL module loaded (KBFL present) — arm hook registered"));
 }
@@ -396,7 +446,6 @@ void FNodeShuffleVetoKBFLModule::StartupModule()
 void FNodeShuffleVetoKBFLModule::ShutdownModule()
 {
     FNodeShuffleModule::SetKBFLVetoArmFunction(nullptr);
-    FNodeShuffleModule::SetKBFLVetoDisarmFunction(nullptr);
 }
 
 IMPLEMENT_GAME_MODULE(FNodeShuffleVetoKBFLModule, NodeShuffleVetoKBFL);

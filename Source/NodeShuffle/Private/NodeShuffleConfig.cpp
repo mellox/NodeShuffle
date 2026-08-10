@@ -281,9 +281,15 @@ void UNodeShuffleConfig::PostInitProperties()
     // ns-h1b-notice, anti-nag rule 7: the opt-out. Default TRUE deliberately -- see the struct comment.
     AddBool(TEXT("ShowCompatibilityNotices"), true,
         TEXT("Show Compatibility Notices In Chat"),
+        // T61 WIDENED THIS TOOLTIP because a second notice now rides on this same switch, and a
+        // description that named only the first would have understated what the switch turns off.
+        // Both sentences describe what the code does: the extractor notice is the ns-h1b-notice pass,
+        // the resource notice is queued only when a row is actually added to the list below.
         TEXT("Posts a one-off chat message when a mod's extractor has been cleared for use on shuffled ")
-        TEXT("nodes but needs a game restart to take effect. It appears at most once per new situation ")
-        TEXT("and says nothing at all when there is nothing to say. Turn off to silence it."));
+        TEXT("nodes but needs a game restart to take effect. It also tells you once when another mod's ")
+        TEXT("resource has been added to the protection list further down this page, so you can decide ")
+        TEXT("whether to protect it. Both appear at most once per new situation and say nothing at all ")
+        TEXT("when there is nothing to say. Turn off to silence them."));
 
     AddBool(TEXT("EnableExperimentalFeatures"), false,
         TEXT("Enable Experimental Features"),
@@ -353,8 +359,16 @@ void UNodeShuffleConfig::PostInitProperties()
             TEXT("NOTHING HERE APPLIES unless the protection feature is on, and it needs BOTH console ")
             TEXT("variables: NodeShuffle.DestroyerVeto is OFF by default and must be set to 1, and ")
             TEXT("NodeShuffle.ProtectForeignNodes is already 1. Both take effect at the next world load. ")
-            TEXT("While NodeShuffle.DestroyerVeto is 0 this list also stays EMPTY — nothing is ever ")
-            TEXT("added to it. ")
+            // T61 REPLACED THE SENTENCE THAT USED TO SIT HERE. It said the list "stays EMPTY" while
+            // NodeShuffle.DestroyerVeto is 0 — true of the build that shipped it, and made FALSE by
+            // T61, which arms the detection hook in either state precisely so the list fills before a
+            // player has to decide anything. Both replacement claims are MEASURED, not assumed: rows
+            // are added from the same population pass in both modes (NodeShuffleForeignProtectConfig
+            // .cpp), and the ticks are only ever read by the veto's consumption predicate, which is
+            // never reached while the hook is observing.
+            TEXT("The list still FILLS UP while NodeShuffle.DestroyerVeto is 0 — that is what lets you ")
+            TEXT("choose before turning protection on — but every tick in it does nothing at all until ")
+            TEXT("you set that variable to 1 and load again. ")
             TEXT("Resource wells that NodeShuffle itself changed to a modded resource are ")
             TEXT("deliberately NOT listed here, and unticking a row can never affect one — they are ")
             TEXT("NodeShuffle's own doing, not another mod's."));

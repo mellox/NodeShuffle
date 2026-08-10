@@ -315,28 +315,23 @@ bool FNodeShuffleModule::EmitPendingNotice(UWorld* World, const TArray<FNodeShuf
         (E.bWriteFailed ? Failed : Pending).Add(&E);
     }
 
-    const auto PostMessage = [Chat](const FString& Body)
+    // T61 MOVED THE BODY OF THIS LAMBDA INTO FNodeShuffleModule::PostChatNotice
+    // (NodeShuffleObserveNotice.cpp) so the T61 notice posts through the SAME emitter rather than a
+    // second copy of these five field assignments. PARITY (cold review F1 — the first draft of this
+    // comment claimed the log lines were unchanged, and they are not): the same message construction and
+    // the same BroadcastChatMessage call; the two route log lines were RENAMED `PENDINGNOTICE…` →
+    // `CHATNOTICE[<source>]…` because they are now shared — a pre-T61 log grep for
+    // `PENDINGNOTICE: EMITTED` finds nothing on this build. The chat manager is fetched inside the
+    // callee; this call site still fetches it first, because the null branch above is this function's
+    // own early-out.
+    // F9: the emitter's bool is RETURNED, not discarded. If the manager were non-null above and null
+    // inside the callee, dropping it would mark the keys announced and lose the notice for the session.
+    bool bAllDelivered = true;
+    const auto PostMessage = [World, &bAllDelivered](const FString& Body)
     {
-        FChatMessageStruct Msg;
-        Msg.MessageText = FText::FromString(Body);
-        // ASSUMED (test item, not a claim): FGChatManager.h:38 says "System and ADA messages override the
-        // sender", so CMT_SystemMessage/CMT_AdaMessage would discard our sender name. CMT_CustomMessage is
-        // the type that plausibly honours it -- but the rendering lives in Blueprint UI we cannot read.
-        // If the sender does not show, switch to CMT_SystemMessage and drop MessageSender.
-        Msg.MessageType = EFGChatMessageType::CMT_CustomMessage;
-        Msg.MessageSender = FText::FromString(TEXT("NODE SHUFFLE"));
-        Msg.MessageSenderColor = FLinearColor(1.0f, 0.55f, 0.10f); // FICSIT orange
-        // ServerTimeStamp / bIsLocalPlayerMessage are set by the chat manager -- do not touch.
-        Chat->BroadcastChatMessage(Msg, nullptr);
-        UE_LOG(LogNodeShuffle, Display,
-            TEXT("PENDINGNOTICE: EMITTED via AFGChatManager::BroadcastChatMessage (type=%d sender='NODE SHUFFLE' bodyChars=%d)"),
-            (int32)EFGChatMessageType::CMT_CustomMessage, Body.Len());
-        // ASSUMED: a NetMulticast RPC executes locally in Standalone, so the host sees this without a
-        // separate local echo. If in-game testing shows it does not, add AddChatMessageToReceived(Msg)
-        // HERE -- this comment names the exact line so the fix needs no re-investigation.
-        UE_LOG(LogNodeShuffle, Display,
-            TEXT("PENDINGNOTICE ROUTE: BroadcastChatMessage taken; local echo NOT separately added ")
-            TEXT("(multicast is expected to execute locally -- if it does not, add AddChatMessageToReceived here)."));
+        const bool bOk = FNodeShuffleModule::PostChatNotice(World, Body, TEXT("PENDING"));
+        bAllDelivered = bAllDelivered && bOk;
+        return bOk;
     };
 
     // ---- failure copy first: it is the louder, rarer, actionable one ----
@@ -480,5 +475,8 @@ bool FNodeShuffleModule::EmitPendingNotice(UWorld* World, const TArray<FNodeShuf
         PostMessage(Body);
     }
 
-    return true;
+    // F9: the composed calls' results drive this function's result. TRUE still means "every message this
+    // call composed reached BroadcastChatMessage"; a false makes the caller keep the queue and retry
+    // under its existing bounded budget instead of marking the keys announced.
+    return bAllDelivered;
 }

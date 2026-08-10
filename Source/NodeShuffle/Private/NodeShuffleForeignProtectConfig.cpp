@@ -6,7 +6,9 @@
 //                 SML config tree for every foreign resource the veto has seen. Never removes a row,
 //                 never reorders one; a player's tick is never touched by this side.
 //   CONSUMPTION — IsForeignResourceProtectedByConfig, called from the veto's requirement evaluation,
-//                 which runs hundreds of times inside one ~0.9 s KBFL sweep. It reads a LATCHED
+//                 which runs hundreds of times inside the KBFL sweep that begins ~0.9 s AFTER world
+//                 init (scoped re-review: that figure is a LATENCY, not the sweep's duration, which is
+//                 unmeasured). It reads a LATCHED
 //                 TSet<FString> and nothing else: no config-tree walk, no UObject traversal, no
 //                 allocation. The set is built ONCE per world init by
 //                 LatchForeignResourceOptOutsFromConfig, before the veto arms.
@@ -80,6 +82,9 @@ static FString NodeShuffleMakeForeignResourceLabel(const FString& ResourceClassP
 
 void FNodeShuffleModule::ResetSeenForeignResources()
 {
+    // T61: the notice queue is reset from HERE rather than from its own world-init call site, so the
+    // queue and the sighting registry can never describe two different world sessions.
+    ResetForeignNoticeState();
     GNodeShuffleSeenForeignResources.Empty();
     GNodeShuffleSeenForeignRevision = 0;
     GNodeShuffleLastSyncedRevision = -1;
@@ -393,6 +398,13 @@ void FNodeShuffleModule::SyncForeignResourceRowsToConfig(UObject* WorldContext)
             TEXT("'%s', %d sighting(s) so far). It starts PROTECTED; untick it in the mod settings and ")
             TEXT("reload the save to hand this resource back to the other mod's cleanup."),
             *Pair.Key, *Pair.Value.DisplayName, *Pair.Value.FirstNodeClassName, Pair.Value.Sightings);
+
+        // T61 (ns-t61-observe-always): TELL THE PLAYER, once. The queue point is HERE and not at the
+        // sighting on purpose -- reaching this line means the row was actually written, so the notice's
+        // "it is now in your settings list" sentence is a report rather than a prediction. It is also
+        // the whole cross-session dedup: a resource that already has a row never reaches this branch,
+        // so it is never announced twice, with nothing persisted to remember it.
+        FNodeShuffleModule::NoteUnlistedForeignResourceForNotice(Pair.Key, Pair.Value.DisplayName);
     }
 
     if (SharedWithTemplateRows > 0 || SharedBetweenRows > 0)

@@ -11,6 +11,12 @@
 // DeferedCall typically performs the destroy) is never even evaluated for that actor; for every
 // other actor this returns true and the asset behaves exactly as if NodeShuffle were absent.
 //
+// T61 (2026-08-10): the hook is now PREPENDED AND EVALUATED EVEN WHEN THE MASTER GATE
+// (NodeShuffle.DestroyerVeto) IS OFF — see ResetSessionCounters' bObserveOnly below. In that state the
+// sentence above holds for EVERY actor without exception: the requirement returns true for managed
+// nodes too, so the asset behaves exactly as if NodeShuffle were absent while we measure. The author's
+// ruling that put it there is quoted in docs/TECH-DEBT.md T61.
+//
 // ABI SAFETY: ZERO added member fields — the instance layout is EXACTLY the (stubbed, verbatim)
 // UKBFLCDOCallRequirement base, and all veto state lives in the NodeShuffle module, reached via its
 // exported static API. The arm pass additionally size-guards the base class layout at runtime.
@@ -40,7 +46,15 @@ public:
     // T58: also LATCHES the foreign-node protection policy for the whole world session (read once from
     // NodeShuffle.ProtectForeignNodes by the caller), so a console flip mid-sweep can never split one
     // KBFL sweep across two policies — the same "takes effect at world load" rule DestroyerVeto uses.
-    static void ResetSessionCounters(bool bProtectForeignNodes);
+    //
+    // T61 (ns-t61-observe-always, 2026-08-10) ADDED bObserveOnly. THE OBSERVE-ONLY INVARIANT: while it
+    // is true, IsRequirementMet returns TRUE for EVERY target class — managed nodes included — so the
+    // armed hook returns exactly what the un-hooked chain would have returned and NOTHING in the world
+    // changes. The classification, the counters, the per-resource row population and the census still
+    // run: that is the entire point of the mode. It is latched here, once per world, exactly like the
+    // protection policy beside it. bProtectForeignNodes is passed FALSE by the arm pass whenever
+    // bObserveOnly is true, so the two can never disagree about whether protection is in force.
+    static void ResetSessionCounters(bool bProtectForeignNodes, bool bObserveOnly);
 
     // T58 F1 (cold review, 2026-08-10): foreign-node protection is evaluable ONLY on assets whose own
     // target list is a BROAD node sweep (FGResourceNodeBase itself or a superclass of it). An asset

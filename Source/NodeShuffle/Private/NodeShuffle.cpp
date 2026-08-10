@@ -85,7 +85,10 @@ static FAutoConsoleVariableRef CVarNodeShuffleDestroyerVeto(
     GNodeShuffleDestroyerVeto,
     TEXT("EXPERIMENTAL. 1 = when KBFL is installed, veto KBFL-based actor destroyers/listeners for the ")
     TEXT("nodes NodeShuffle spawned (instead of letting them be destroyed and tombstoned per session). ")
-    TEXT("0 = off (default). Takes effect at world load."),
+    TEXT("0 = OBSERVE ONLY (default): the hook is still installed and still classifies every node those ")
+    TEXT("destroyers judge — which is what fills the per-resource list in the mod settings and the ")
+    TEXT("VETOCENSUS log line — but it vetoes NOTHING, including NodeShuffle's own nodes, so the game ")
+    TEXT("behaves as if the hook were absent. Takes effect at world load."),
     ECVF_Default);
 
 // T58 (ns-t58-foreign-protect, 2026-08-10): foreign-node protection gate. DEFAULT ON — the author
@@ -101,7 +104,8 @@ static int32 GNodeShuffleProtectForeignNodes = 1;
 static FAutoConsoleVariableRef CVarNodeShuffleProtectForeignNodes(
     TEXT("NodeShuffle.ProtectForeignNodes"),
     GNodeShuffleProtectForeignNodes,
-    TEXT("1 = while the KBFL destroyer veto is armed (NodeShuffle.DestroyerVeto is 1), also ")
+    TEXT("1 = while the KBFL destroyer veto is ENFORCING (NodeShuffle.DestroyerVeto is 1 — with it at 0 ")
+    TEXT("the hook is armed but observing, and this setting does nothing at all that world), also ")
     TEXT("short-circuit node-sweeping KBFL assets for resource nodes whose class or resource is not ")
     TEXT("stock (another mod's nodes, plus any vanilla well NodeShuffle itself retyped to a modded ")
     TEXT("resource), so those nodes are not removed at that hook. 0 = only ")
@@ -180,9 +184,22 @@ ENodeShuffleNodeOrigin FNodeShuffleModule::ClassifyResourceNodeOrigin(const AAct
 static TSet<FObjectKey> GNodeShuffleManagedNodes;
 
 // The veto module's per-world arm entry point (null until/unless NodeShuffleVetoKBFL loads).
-static void (*GNodeShuffleKBFLVetoArmFn)(UWorld* World) = nullptr;
-// T58 R1: the disarm counterpart (null until/unless NodeShuffleVetoKBFL has loaded this process).
-static void (*GNodeShuffleKBFLVetoDisarmFn)() = nullptr;
+// T61: it now takes the two POLICY BOOLEANS for the world, both decided here — see
+// ArmDestroyerVetoIfEnabled. (T58's separate disarm entry point is gone; the arm pass in observe mode
+// does everything it did and more. The argument is written out in NodeShuffleVetoKBFL.cpp.)
+static void (*GNodeShuffleKBFLVetoArmFn)(UWorld* World, bool bObserveOnly, bool bProtectForeignNodes) = nullptr;
+
+// ---- T61 (ns-t61-observe-always, 2026-08-10): the MODE this world is running in, published for the
+// player-facing notice. Written once per world init by ArmDestroyerVetoIfEnabled, BEFORE anything can
+// read it, and reset to the inert pair at the top of that function so a world where arming never
+// happened can never report the previous world's mode. The chat notice's copy branches on these: a
+// message that offered protection while the world is only observing would be a false promise, which is
+// the class of claim this project grades before shipping.
+static bool GNodeShuffleVetoObserveOnlyThisWorld = true;
+static bool GNodeShuffleForeignProtectActingThisWorld = false;
+
+bool FNodeShuffleModule::IsVetoObservingOnlyThisWorld() { return GNodeShuffleVetoObserveOnlyThisWorld; }
+bool FNodeShuffleModule::IsForeignProtectionActingThisWorld() { return GNodeShuffleForeignProtectActingThisWorld; }
 
 void FNodeShuffleModule::RegisterManagedNode(const AActor* Node)
 {
@@ -217,46 +234,45 @@ bool FNodeShuffleModule::IsSpawningManagedNode()
     return GNodeShuffleSpawningDepth > 0;
 }
 
-void FNodeShuffleModule::SetKBFLVetoArmFunction(void (*ArmFn)(UWorld* World))
+void FNodeShuffleModule::SetKBFLVetoArmFunction(
+    void (*ArmFn)(UWorld* World, bool bObserveOnly, bool bProtectForeignNodes))
 {
     GNodeShuffleKBFLVetoArmFn = ArmFn;
 }
 
-void FNodeShuffleModule::SetKBFLVetoDisarmFunction(void (*DisarmFn)())
-{
-    GNodeShuffleKBFLVetoDisarmFn = DisarmFn;
-}
-
 void FNodeShuffleModule::ArmDestroyerVetoIfEnabled(UWorld* World)
 {
-    if (GNodeShuffleDestroyerVeto == 0)
-    {
-        UE_LOG(LogNodeShuffle, Verbose,
-            TEXT("veto: NodeShuffle.DestroyerVeto=0 (off) — coexist-1 tombstone backoff is the coexistence path this session"));
-        // T58 R1: OFF must be STATEFUL, not merely un-armed. The requirement class stays prepended on
-        // the KBFL CDO across worlds in-process, so without this a world loaded after the CVar is set
-        // to 0 would keep vetoing on the PREVIOUS world's latch and protect set — with no census (the
-        // timers are never scheduled) and no per-class line (the first-seen flags are stale). The
-        // Display line below is the OFF state's only evidence, so it is not Verbose. The predicate is
-        // MODULE-LOADED, not armed — they diverge when a previous world aborted at the ABI guard, and
-        // the line says loaded because that is what is tested. Both this branch
-        // and the disarm call are no-ops when the veto module was never loaded, which keeps the
-        // never-armed case byte-identical to the pre-T58 log.
-        if (GNodeShuffleKBFLVetoDisarmFn)
-        {
-            GNodeShuffleKBFLVetoDisarmFn();
-            UE_LOG(LogNodeShuffle, Display,
-                TEXT("veto: NodeShuffle.DestroyerVeto=0 at world init after the veto module had loaded ")
-                TEXT("earlier this session — session state cleared (foreign-node protection latch off, ")
-                TEXT("protect-asset set emptied). No VETOCENSUS line is produced for this world."));
-        }
-        return;
-    }
-    UE_LOG(LogNodeShuffle, Display, TEXT("veto: NodeShuffle.DestroyerVeto=1 at world init — arming"));
+    // ---- T61 (ns-t61-observe-always, 2026-08-10). THE AUTHOR'S RULING, verbatim: "default off, but we
+    // need detection if off or on to build our list and show in chat if not in our list and to show in
+    // config the list for allowing users to opt in."
+    //
+    // So the master gate no longer decides WHETHER to arm — it decides WHAT AN ARMED HOOK DOES. Both
+    // policy booleans for this world are decided here, in the module that owns both CVars, and handed
+    // to the arm pass; the veto module reads neither CVar. That is what makes "protection is off
+    // whenever the master gate is off" a single expression instead of an agreement between two modules.
+    const bool bObserveOnly = (GNodeShuffleDestroyerVeto == 0);
+    const bool bProtectForeignNodes = !bObserveOnly && IsForeignNodeProtectionEnabled();
+    // Published BEFORE anything can arm or evaluate, and rewritten on every world init — a world that
+    // fails to arm below therefore reports the inert pair rather than the previous world's mode.
+    GNodeShuffleVetoObserveOnlyThisWorld = bObserveOnly;
+    GNodeShuffleForeignProtectActingThisWorld = bProtectForeignNodes;
+
+    UE_LOG(LogNodeShuffle, Display,
+        TEXT("veto: NodeShuffle.DestroyerVeto=%d NodeShuffle.ProtectForeignNodes=%d at world init — ")
+        TEXT("arming in %s mode (T61: the hook arms either way; in observing mode it returns true for ")
+        TEXT("every target and changes nothing in the world)"),
+        GNodeShuffleDestroyerVeto,
+        IsForeignNodeProtectionEnabled() ? 1 : 0,
+        bObserveOnly ? TEXT("OBSERVE-ONLY") : TEXT("ENFORCING"));
+
     if (!FModuleManager::Get().IsModuleLoaded(TEXT("KBFL")))
     {
+        // NOT ARMED AT ALL — the one remaining blind state, and it is blind because there is nothing to
+        // observe: the hook exists only inside KBFL's requirement chain. No census line is produced for
+        // such a world, which is how a reader tells it from an observing one.
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("veto: enabled but KBFL is not installed — inactive (nothing to veto)"));
+            TEXT("veto: KBFL is not installed — the hook has nowhere to arm, so this world produces no ")
+            TEXT("VETOCENSUS line, no per-resource rows and no notice (T61)"));
         return;
     }
     UE_LOG(LogNodeShuffle, Display, TEXT("veto: KBFL module present"));
@@ -273,7 +289,7 @@ void FNodeShuffleModule::ArmDestroyerVetoIfEnabled(UWorld* World)
             return;
         }
     }
-    GNodeShuffleKBFLVetoArmFn(World);
+    GNodeShuffleKBFLVetoArmFn(World, bObserveOnly, bProtectForeignNodes);
 }
 
 namespace
@@ -514,7 +530,7 @@ using FNodeShuffleActorExtractorLoggedSet = TSet<FNodeShuffleActorExtractorKey>;
 void FNodeShuffleModule::StartupModule()
 {
     UE_LOG(LogNodeShuffle, Log, TEXT("NodeShuffle module loaded"));
-    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle 1.3.0 LOADED (2026-08-10-t59-1) ====="));
+    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle 1.3.0 LOADED (2026-08-10-t61-1) ====="));
     FNodeShuffleModule::LogAutoAllowExtractorsState(); // Packet G: log the CVar state once at startup
 
 #if !WITH_EDITOR

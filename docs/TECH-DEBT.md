@@ -7,7 +7,11 @@ this list, the entry has failed — fix the entry, not just the bug.**
 Each item records what it is, how we know, and why it is not fixed. Items with a
 **pre-scoped fix** have had the work sized already — start there, don't redesign.
 
-Last updated 2026-08-10 (T59 DECIDED + IMPLEMENTED as a per-SESSION pack namespace, and a pre-scoped
+Last updated 2026-08-10 (**T61 filed and IMPLEMENTED — the KBFL hook now arms whether or not
+`NodeShuffle.DestroyerVeto` is on, in OBSERVE-ONLY mode when it is off: it measures, fills the T60
+opt-in list and posts one chat notice, and vetoes nothing at all. Author's ruling; it deliberately
+REVERSES T58's R1 "off means blind" paragraph and closes the ship-default decision. Packet
+ns-t61-observe-always, neither built nor reviewed.** Earlier: T59 DECIDED + IMPLEMENTED as a per-SESSION pack namespace, and a pre-scoped
 DESIGN ITEM added to T14 for auto-enrolling newly-surviving foreign resources — packet
 ns-t59-pack-namespace, neither built nor reviewed. Earlier: T55 CLOSED + T59 split out of it; T56 discriminated — packet ns-t55-t56-reload. Earlier: T58 filed in P1 after T55 — SF+ destroys third-party nodes on new games;
 DECIDED the same day by the author and implemented as the default-ON protect veto, pending build,
@@ -377,6 +381,91 @@ here.
 with `otherNamespaceDocsBefore` on the same line as its denominator. A nonzero cross figure is a
 regression to this entry.
 
+### T61. THE HOOK NOW ARMS WHETHER OR NOT THE MASTER GATE IS ON — DEFAULT OFF MEANS *OBSERVE*, NOT *BLIND*. **Status: IMPLEMENTED-PENDING-BUILD-REVIEW-AND-INGAME (packet `ns-t61-observe-always`, 2026-08-10, marker `2026-08-10-t61-1`). NOT BUILT, NOT COLD-REVIEWED, NOT SEEN IN GAME — no build ran in this packet.**
+
+**THE AUTHOR'S RULING, verbatim (2026-08-10):** *"default off, but we need detection if off or on to
+build our list and show in chat if not in our list and to show in config the list for allowing users to
+opt in."*
+
+**WHAT THIS REVERSES, deliberately.** [[T58]]'s R1 paragraph below documents the opposite behaviour:
+with `NodeShuffle.DestroyerVeto 0` the veto module was either never armed or actively disarmed, so a
+default install measured **nothing** — no census, no per-resource rows, no evidence at all. That was
+correct for T58's question (does the veto work) and wrong for the author's (what is out there, before I
+decide). The ship default is unchanged: **`NodeShuffle.DestroyerVeto` stays 0.** What changed is what 0
+*does*.
+
+**THE OBSERVE-ONLY INVARIANT — the load-bearing claim, and the only one worth reviewing hard.** While
+the mode is observing, `IsRequirementMet` returns **true for every target class, managed nodes
+included**, from a single guard placed above every veto return. Nothing on the path above that guard
+mutates an actor, a component or the requirement chain — it counts, classifies, offers a config row and
+queues a chat notice. So an armed-but-observing world differs from an un-hooked world **only** in log
+lines, config rows and one chat message. `tools/check_t61_lint.ps1` pins the guard, its position
+relative to every `return false`, the unconditional arm call, the `!bObserveOnly &&` protection term and
+the mode field (6 mutants, all caught).
+
+**THE SIX CELLS.** The four-cell matrix T58's review used is now six, because the master gate has two
+meanings and two states can produce no measurement at all.
+
+| # | `DestroyerVeto` | `ProtectForeignNodes` | KBFL | mode | managed nodes | foreign nodes | list rows | chat notice | census |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | 0 (default) | 0 | present | observing | **not vetoed** | not protected | added, ticked | fires ("not protecting them; here is how to opt in") | yes, `mode=observing` |
+| 2 | 0 (default) | 1 | present | observing | **not vetoed** | not protected — the CVar is **not latched** this world | added, ticked | same as 1 | yes, `protectLatched=0` while the CVar reads 1 |
+| 3 | 1 | 0 | present | enforcing | vetoed | classified + counted, never protected | added, ticked | fires ("not protecting them; set `ProtectForeignNodes 1`") | yes, `mode=enforcing` |
+| 4 | 1 | 1 | present | enforcing | vetoed | protected (broad-sweep assets only, F1) | added, ticked | fires ("ticked means NodeShuffle steps in") | yes |
+| 5 | 1 | 1, row **unticked** | present | enforcing | vetoed | that resource allowed through ([[T60]]) | row kept, never re-ticked | not re-announced (it already has a row) | yes, `foreignAllowedPlayerUnticked` moves |
+| 6 | either | either | **absent / ABI guard trip / module load fail** | **not armed** | not vetoed | nothing seen | none | none | **no line at all** |
+
+Cell 6 is the remaining blind state and is blind for a structural reason: the hook exists only inside
+KBFL's requirement chain. It is distinguishable in the log — an observing world prints a `VETOCENSUS`
+line, a never-armed one prints none, and the arm entry point says which happened.
+
+**WHAT OBSERVE MODE MEASURABLY DOES.** (a) one `VETOCENSUS` line per world at T+30 s (and T+300 s if
+`foreignSeen` moved) carrying `mode`, the armed-asset denominator and the full partition; (b) a row per
+foreign resource in the settings list, default ticked, through the same [[T60]] population pass as
+enforcing mode; (c) one chat notice naming the resources that got a **new** row, pointing at the list,
+and saying plainly that nothing is being protected; (d) one `Display` line the first time a managed node
+passes through un-vetoed, so the invariant is visible in the log rather than inferred from an absence.
+
+**R1 IS SUPERSEDED, NOT DROPPED, and the disarm entry point is DELETED.** T58's R1 hazard was a world
+loading with the gate off and evaluating against the *previous* world's latch and protect set. The
+observing arm pass's first two statements are exactly the two calls R1's disarm made
+(`ResetSessionCounters` — which now also latches the mode — and `ResetForeignProtectAssets`), plus it
+rebuilds the broad-sweep set and schedules the census. R1's own weakness (the disarm was a no-op when
+the veto module had never loaded) cannot arise: no module, no prepend, no state. One path instead of two.
+
+**FIELD RENAMES IN `VETOCENSUS`, both because the old names became untrue in the new mode:**
+`protectCvar` → `protectLatched` (in observe mode the CVar can read 1 while the latch is 0), and
+`managedVetoed` → `managedSeen` **plus a new `managedVetoed`** that only ever moves on a real
+short-circuit. `partitionSum` uses `managedSeen`. A grep for an old name now finds nothing rather than
+the wrong number.
+
+**THE CHAT NOTICE IS QUEUED FROM THE ROW ADD, NOT THE SIGHTING** — so its sentence *"it is now in your
+settings list"* is a report, not a prediction (the population pass can be capped or the config tree
+unreachable). That also supplies the cross-load dedup for free: a resource that already has a row is
+never re-added, so it is never re-announced, with **nothing persisted** — the same self-clearing state
+test [[T55]] is built on. Within a session an announced-set makes it delta-only. It rides the existing
+`ShowCompatibilityNotices` setting and posts through ONE extracted chat emitter shared with the pending
+notice.
+
+**CONSEQUENCE ACCEPTED: the hook now evaluates on every armed asset on every load, for every player, by
+default.** T58's cost figures were conditional on the gate being on. **T61 adds NOTHING per evaluation —
+that delta is zero — but on a default install the WHOLE cost is new, and it is more than "two path
+compares" (cold review F7).** The foreign branch fills two `FString` out-params per node target, builds a
+full object path with `GetPathNameSafe(From)` **per foreign evaluation**, and does **two `FString`
+copy-assigns per evaluation** into `GNodeShuffleForeignByClass.FindOrAdd` (the resource path and the
+last-asset path; the node-type field is an `int32`) **plus one key copy on insert only**, on top of the
+`TMap<FString>` sighting write — so a world with N foreign nodes now does **O(N) path-string allocations
+inside the KBFL sweep that begins ~0.9 s AFTER world init, on every KBFL install**, where it previously
+did zero. (That figure is a latency; the sweep's own duration is unmeasured.) One sweep per world, not
+per frame. **Unmeasured on this machine — grade the `evals` field against THAT model, not against the
+per-evaluation delta.**
+
+**IMPORTS BASELINE — THE NEXT RECAPTURE MUST EXPECT `2 REMOVED + 1 RENAMED` (cold review F6).**
+`NodeShuffleVetoKBFL` loses `IsForeignNodeProtectionEnabled` and `SetKBFLVetoDisarmFunction`, and
+`SetKBFLVetoArmFunction`'s parameter list changed, so its **decorated** name changed — a naive diff shows
+1 removed + 1 added on top of the two deletions. Expect **2 removed, 1 renamed, 0 otherwise-new**; any
+other new NodeShuffle import is a finding, and must not be absorbed into this explanation.
+
 ### T60. THE T58 PROTECTION IS ALL-OR-NOTHING, SO A PLAYER WHO WANTS SF+'s RESEARCH GATING BACK FOR **ONE** RESOURCE HAS TO GIVE IT UP FOR ALL OF THEM. **Status: IMPLEMENTED-PENDING-BUILD-REVIEW-AND-INGAME (packet `ns-t60-protect-checkboxes`, 2026-08-10, marker `2026-08-10-t60-1`). NOT BUILT — no build ran in this packet.**
 
 [[T58]] ships one CVar, `NodeShuffle.ProtectForeignNodes`, and it governs every foreign resource at
@@ -623,6 +712,14 @@ re-destroyed by SF+ once it is off, and go through the external-destroy tombston
 **REVIEWER'S DISSENT, RECORDED:** the cold review recommended shipping default OFF for one measured run
 and flipping after. The author reaffirmed default ON. If the first measured run grades badly, default
 OFF is the pre-agreed fallback and needs no new design.
+**SHIP DEFAULT — DECIDED 2026-08-10 (author, decision 3 of the ship list; this CLOSES it) and implemented
+by [[T61]]:** *"default off, but we need detection if off or on to build our list and show in chat if not
+in our list and to show in config the list for allowing users to opt in."* So the shipped state is
+**`NodeShuffle.DestroyerVeto 0`, `NodeShuffle.ProtectForeignNodes 1`** — cell 2 of T61's matrix: nothing
+in the world is changed, the detection runs, the opt-in list fills, and the player is told once per new
+resource. `ProtectForeignNodes`' own default stays 1 because it only has meaning once the master gate is
+on. **The reviewer's dissent above is satisfied by this shape rather than overruled: the first measured
+run now happens with the feature inert.**
 **Option 2 (the KDF research patch) was NOT built** — it is per-resource and does not generalise;
 **option 3 (adopt-early) was declined** — it invents an "adopted but never dealt" node state;
 **option 4 remains rejected outright.** The **discriminating measurement (new game, NodeShuffle
@@ -695,19 +792,31 @@ because the level re-instantiates the foreign level-placed nodes every load (mea
 nodes were never removed from the level, only destroyed at runtime. A save whose foreign nodes were
 *runtime-spawned* by their own mod is not covered by that argument and may not recover.
 
-**THE OFF DIRECTION IS STATEFUL (R1).** Our requirement stays prepended on the KBFL CDO for the life
+**THE OFF DIRECTION IS STATEFUL (R1). ⚠ SUPERSEDED BY [[T61]] 2026-08-10 — READ T61 FIRST; THE
+PARAGRAPH BELOW DESCRIBES A BUILD THAT NO LONGER EXISTS AND IS KEPT ONLY FOR THE HAZARD IT NAMES.**
+Our requirement stays prepended on the KBFL CDO for the life
 of the process, so a world that loads with `NodeShuffle.DestroyerVeto 0` after the veto armed earlier
-would otherwise keep vetoing on the previous world's latch and protect set, censusless. The main module
+would otherwise keep vetoing on the previous world's latch and protect set, censusless. ~~The main module
 now calls a registered DISARM entry point on that branch (latch false, protect set emptied) and logs
 one `Display` line naming the cleared state (its predicate is "the veto MODULE has loaded this
 session", not "the veto armed" — those diverge when a world aborts at the ABI guard, and the line says
 loaded) — that line is the only foreign-protect evidence such a
-world produces.
+world produces.~~
+**AS OF T61 THAT DISARM ENTRY POINT IS DELETED and `DestroyerVeto 0` no longer means "no hook".** The
+world arms in OBSERVE-ONLY mode: the requirement returns true for every target class including managed
+nodes, and the arm pass's first two statements do everything the disarm did, plus rebuild the
+broad-sweep set and schedule the census. So the R1 hazard is closed by strictly more work on ONE path,
+and such a world now produces a full `VETOCENSUS` line (`mode=observing`) instead of a single cleared-state
+line. **The claim in this entry that an OFF world measures nothing is therefore FALSE for the current
+build — that reversal is deliberate and is the author's ruling quoted in T61.**
 
 **DIAGNOSTICS.** One `VETOCENSUS` line per world session at T+30 s (and again at T+300 s only if
 `foreignSeen` moved — that is ALL a second line reports; it does not identify a retry loop, and nothing
 measures one), carrying the full partition with denominators —
-`protectCvar / armedAssets / evals = managedVetoed + foreignSeen + vanillaAllowed + nonNodeAllowed`,
+`protectCvar / armedAssets / evals = managedVetoed + foreignSeen + vanillaAllowed + nonNodeAllowed`
+(**[[T61]] RENAMED TWO OF THESE**: the line now reads `mode`, `protectLatched`, and `managedSeen` as the
+partition member with a separate `managedVetoed` that only moves on a real short-circuit — grep for the
+new names, the old ones are gone),
 plus `foreignProtected`/`foreignAllowed` and a per-class breakdown. Plus one
 `veto: FOREIGN-PROTECT first requirement evaluation vetoed` line per DISTINCT class, naming the asset
 that was evaluating (29 nodes must not become 29 lines). **Every one of these texts says "requirement

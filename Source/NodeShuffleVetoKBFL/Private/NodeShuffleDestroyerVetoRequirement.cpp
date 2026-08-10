@@ -6,17 +6,37 @@
 
 // Session veto counters (file-static; reset by the arm pass at each world init). Game-thread only,
 // like every KBFL requirement evaluation (actor spawn/destroy delegates + next-tick timers).
-static int32 GNodeShuffleVetoCount = 0;
+//
+// T61 SPLIT ONE COUNTER INTO TWO, and the reason is the honesty rule, not tidiness. Before T61 the
+// managed bucket could only ever be incremented on the line that returned false, so ONE counter meant
+// both "a managed node was judged here" and "we short-circuited its chain". In observe mode the second
+// is never true, and a field named for a veto that reports a non-zero count while nothing was vetoed is
+// the wrong-label failure this project has already paid for. So: ManagedSeen is the PARTITION member
+// (it counts judgments) and ManagedVetoed counts the short-circuits. In enforcing mode they are equal
+// by construction; in observing mode ManagedVetoed stays 0 for the whole world.
+static int32 GNodeShuffleManagedSeen = 0;
+static int32 GNodeShuffleManagedVetoed = 0;
 static int32 GNodeShuffleVetoNextSummaryAt = 4;   // powers-of-4-ish summary thresholds: 4, 16, 64, ...
 static double GNodeShuffleVetoLastSummaryTime = 0.0;
 static TSet<FObjectKey> GNodeShuffleVetoDistinctNodes;
+
+// ---- T61 (ns-t61-observe-always, 2026-08-10) ----
+// THE OBSERVE-ONLY LATCH. True for a world that loaded with NodeShuffle.DestroyerVeto=0: the hook is
+// armed and measuring, and IsRequirementMet returns TRUE for every target class, managed nodes
+// included. Latched once per world by the arm pass, beside the protection policy, so one KBFL sweep can
+// never be split across two modes. Read on every evaluation; never written from anywhere else.
+static bool GNodeShuffleVetoObserveOnly = true;
+// One-shot: the first managed-node judgment that passed through un-vetoed because of the mode above.
+// It exists so a log from an observing world SHOWS the invariant executing rather than implying it from
+// an absence of veto lines (an absence is also what "the hook never armed" looks like).
+static bool GNodeShuffleObservePassThroughLogged = false;
 
 // ---- T58 (ns-t58-foreign-protect, 2026-08-10) session state. Same game-thread-only contract. ----
 // The protection policy for THIS world session, latched by the arm pass (see the header).
 static bool GNodeShuffleProtectForeignLatched = false;
 static int32 GNodeShuffleVetoArmedAssets = 0;
 // Evaluation partition. Every IsRequirementMet call lands in EXACTLY ONE of the four buckets:
-//   managed (GNodeShuffleVetoCount) + foreign + vanilla + non-node == GNodeShuffleVetoEvalCount.
+//   managed (GNodeShuffleManagedSeen) + foreign + vanilla + non-node == GNodeShuffleVetoEvalCount.
 // F10: in THIS build partitionSum cannot disagree with evals — there is no early return between the
 // eval increment and the bucket increment, so a match proves nothing about today's code. It is printed
 // so that a FUTURE edit which adds an early return shows up in the log as a mismatch.
@@ -66,12 +86,20 @@ static TMap<FString, FNodeShuffleForeignClassTally> GNodeShuffleForeignByClass;
 // reader would misread as a later wave of foreign-node activity.
 static int32 GNodeShuffleLastCensusForeignSeen = -1;
 
-void UNodeShuffleDestroyerVetoRequirement::ResetSessionCounters(bool bProtectForeignNodes)
+void UNodeShuffleDestroyerVetoRequirement::ResetSessionCounters(bool bProtectForeignNodes, bool bObserveOnly)
 {
-    GNodeShuffleVetoCount = 0;
+    GNodeShuffleManagedSeen = 0;
+    GNodeShuffleManagedVetoed = 0;
     GNodeShuffleVetoNextSummaryAt = 4;
     GNodeShuffleVetoLastSummaryTime = 0.0;
     GNodeShuffleVetoDistinctNodes.Empty();
+
+    // T61: the mode for THIS world. Reset before anything can be judged, by the same call that clears
+    // the counters — which is what makes the old R1 stale-state hazard structurally impossible: a world
+    // that loads with the master gate off now runs this reset (it arms in observe mode) instead of
+    // skipping the arm pass and inheriting the previous world's latch.
+    GNodeShuffleVetoObserveOnly = bObserveOnly;
+    GNodeShuffleObservePassThroughLogged = false;
 
     GNodeShuffleProtectForeignLatched = bProtectForeignNodes;
     GNodeShuffleVetoArmedAssets = 0;
@@ -133,17 +161,29 @@ void UNodeShuffleDestroyerVetoRequirement::EmitForeignCensus(const TCHAR* Phase)
     }
     if (GNodeShuffleForeignByClass.Num() == 0) { ClassList = TEXT("none"); }
 
+    // T61 ADDED THE MODE FIELD, and it is printed from THIS run's latch — never from a constant and
+    // never from the CVar's current value (a console flip after world init does not change what this
+    // world is doing, and a line that said otherwise would be a false claim about the run it describes).
+    // TWO FIELD RENAMES CAME WITH IT, both because the old NAMES became untrue in observe mode:
+    //   protectCvar   -> protectLatched: it was always the latch, and in observe mode the CVar can read
+    //                    1 while the latch is 0, so the old name would name the wrong thing exactly when
+    //                    the two diverge.
+    //   managedVetoed -> managedSeen (+ a NEW managedVetoed): see the counter comments at the top.
+    // A grep that counted the old names finds nothing rather than finding the wrong number.
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("VETOCENSUS %s: protectCvar=%d armedAssets=%d evals=%d managedVetoed=%d foreignSeen=%d ")
+        TEXT("VETOCENSUS %s: mode=%s protectLatched=%d armedAssets=%d evals=%d managedSeen=%d ")
+        TEXT("managedVetoed=%d foreignSeen=%d ")
         TEXT("foreignProtected=%d foreignAllowed=%d foreignAllowedAssetNotInBroadSet=%d ")
         TEXT("foreignAllowedPlayerUnticked=%d vanillaAllowed=%d ")
         TEXT("nonNodeAllowed=%d partitionSum=%d ")
         TEXT("distinctForeignClasses=%d [%s]"),
         Phase,
+        GNodeShuffleVetoObserveOnly ? TEXT("observing") : TEXT("enforcing"),
         GNodeShuffleProtectForeignLatched ? 1 : 0,
         GNodeShuffleVetoArmedAssets,
         GNodeShuffleVetoEvalCount,
-        GNodeShuffleVetoCount,
+        GNodeShuffleManagedSeen,
+        GNodeShuffleManagedVetoed,
         GNodeShuffleForeignSeen,
         GNodeShuffleForeignProtected,
         GNodeShuffleForeignAllowed,
@@ -151,7 +191,7 @@ void UNodeShuffleDestroyerVetoRequirement::EmitForeignCensus(const TCHAR* Phase)
         GNodeShuffleForeignAllowedPlayerUnticked,
         GNodeShuffleVanillaSeen,
         GNodeShuffleNonNodeSeen,
-        GNodeShuffleVetoCount + GNodeShuffleForeignSeen + GNodeShuffleVanillaSeen + GNodeShuffleNonNodeSeen,
+        GNodeShuffleManagedSeen + GNodeShuffleForeignSeen + GNodeShuffleVanillaSeen + GNodeShuffleNonNodeSeen,
         GNodeShuffleForeignByClass.Num(),
         *ClassList);
 }
@@ -170,6 +210,14 @@ bool UNodeShuffleDestroyerVetoRequirement::IsRequirementMet_Implementation(
     const bool bManaged = bRegistered || bSpawnWindow;
 
     GNodeShuffleVetoEvalCount++;
+    // T61: the managed bucket is counted HERE, at the judgment, not at the veto return — so it stays a
+    // partition member in a mode that never vetoes. The distinct-node set is a measurement of what was
+    // judged and is filled in both modes for the same reason.
+    if (bManaged)
+    {
+        GNodeShuffleManagedSeen++;
+        GNodeShuffleVetoDistinctNodes.Add(FObjectKey(TargetActor));
+    }
 
     // ---- T58 (ns-t58-foreign-protect): the THIRD outcome. Only reached for a target that is NOT ours,
     // so nothing about the managed-node path above changed. See NodeShuffle.h's declaration comment for
@@ -326,9 +374,39 @@ bool UNodeShuffleDestroyerVetoRequirement::IsRequirementMet_Implementation(
     {
         UE_LOG(LogNodeShuffle, Verbose, TEXT("veto: IsRequirementMet target='%s' class='%s' -> %s"),
             *GetNameSafe(Target), Target ? *Target->GetClass()->GetName() : TEXT("<null>"),
-            bSpawnWindow ? TEXT("VETO (spawn-window)")
+            // T61: the observe branch is tested FIRST here for the same reason it returns first below —
+            // in that mode none of the VETO verdicts can be reached, and printing one would describe a
+            // short-circuit that did not happen.
+            GNodeShuffleVetoObserveOnly ? TEXT("allow (OBSERVE-ONLY: master gate off this world)")
+                : bSpawnWindow ? TEXT("VETO (spawn-window)")
                 : bManaged ? TEXT("VETO (managed node)")
                 : bProtectForeign ? TEXT("VETO (foreign-node protect)") : TEXT("allow (not ours)"));
+    }
+
+    // ---- T61 THE OBSERVE-ONLY INVARIANT, and it is the whole feature: ONE return, ABOVE every veto
+    // return in this function, taken for EVERY target class including managed nodes. Everything above
+    // this line only counts, classifies and offers config rows; nothing above it mutates an actor, a
+    // component or the requirement chain. So while the mode is latched on, this function's observable
+    // result is `true` for every call — byte-identical to the result the chain would produce with our
+    // requirement absent — and the ONLY difference an armed-but-observing world can make is log lines,
+    // config rows and one chat notice. Do not add a `return false` above this guard; do not narrow the
+    // guard to a subset of targets (tools/check_t61_lint.ps1 pins both).
+    if (GNodeShuffleVetoObserveOnly)
+    {
+        if (bManaged && !GNodeShuffleObservePassThroughLogged)
+        {
+            GNodeShuffleObservePassThroughLogged = true;
+            // NOT diagnostics-gated, and Display, for the reason the T58 lines beside it are not: the
+            // sweep this witnesses lands ~0.9 s after world init and the diagnostics flag is pushed
+            // seconds later. One line per world session. It reports the branch that ran, not a cause.
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("veto: OBSERVE-ONLY — first requirement evaluation on a NodeShuffle-managed node ")
+                TEXT("('%s') was allowed through un-vetoed because NodeShuffle.DestroyerVeto was 0 at ")
+                TEXT("world init. The hook is armed and counting only; the VETOCENSUS line carries the ")
+                TEXT("totals and names the mode. Later managed evaluations are counted, not logged."),
+                *GetNameSafe(Target));
+        }
+        return true;
     }
 
     if (bProtectForeign)
@@ -347,8 +425,10 @@ bool UNodeShuffleDestroyerVetoRequirement::IsRequirementMet_Implementation(
     // VETO. Note KBFL corroborates independently in its own categories: the listener logs
     // "OnActorEvent: Requirements not met for actor X" (LogKBFLActorListener, Log) and the destroyer
     // "HandleDestroyActor: Requirements not met for actor X" (LogKBFLActorDestroyer, Verbose).
-    GNodeShuffleVetoCount++;
-    GNodeShuffleVetoDistinctNodes.Add(FObjectKey(TargetActor));
+    // T61: ManagedSeen and the distinct-node set were already incremented at the judgment above (they
+    // are measurements of what was judged, and must keep their meaning in a mode that never vetoes).
+    // THIS counter is the short-circuit itself, so it can only ever move on the enforcing path.
+    GNodeShuffleManagedVetoed++;
     const double Now = FPlatformTime::Seconds();
 
     // 'From' is declaration-only here (deliberate one-class stub surface). UKBFLCDOOverwriteBase sits
@@ -356,20 +436,20 @@ bool UNodeShuffleDestroyerVetoRequirement::IsRequirementMet_Implementation(
     // address is the UObject subobject — cast is for LOGGING only, never dereferenced as the derived.
     const UObject* FromAsObject = reinterpret_cast<const UObject*>(From);
 
-    if (GNodeShuffleVetoCount == 1)
+    if (GNodeShuffleManagedVetoed == 1)
     {
         UE_LOG(LogNodeShuffle, Display, TEXT("veto: first destroy vetoed for %s by %s"),
             *TargetActor->GetName(), *GetPathNameSafe(FromAsObject));
         GNodeShuffleVetoLastSummaryTime = Now;
     }
-    else if (GNodeShuffleVetoCount >= GNodeShuffleVetoNextSummaryAt
+    else if (GNodeShuffleManagedVetoed >= GNodeShuffleVetoNextSummaryAt
              && (Now - GNodeShuffleVetoLastSummaryTime) >= 60.0)
     {
         // Threshold + 60 s rate limit: informative under a persistent destroyer, never a firehose.
         UE_LOG(LogNodeShuffle, Display,
             TEXT("veto: spared %d destroy attempts on %d distinct nodes so far this session"),
-            GNodeShuffleVetoCount, GNodeShuffleVetoDistinctNodes.Num());
-        while (GNodeShuffleVetoNextSummaryAt <= GNodeShuffleVetoCount)
+            GNodeShuffleManagedVetoed, GNodeShuffleVetoDistinctNodes.Num());
+        while (GNodeShuffleVetoNextSummaryAt <= GNodeShuffleManagedVetoed)
         {
             GNodeShuffleVetoNextSummaryAt *= 4;
         }

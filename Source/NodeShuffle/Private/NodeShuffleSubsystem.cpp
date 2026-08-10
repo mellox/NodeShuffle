@@ -388,6 +388,10 @@ void ANodeShuffleSubsystem::RefreshTick()
             }
         }
         EmitPendingNoticeIfReady(Config.ShowCompatibilityNotices);
+        // T61 (ns-t61-observe-always): the second notice source, gated by the SAME player setting and
+        // running the same four gates. It costs one array-length compare on every pass that has nothing
+        // to say, which is every pass after the first sighting wave.
+        FNodeShuffleModule::TickForeignNoticeEmitter(GetWorld(), Config.ShowCompatibilityNotices);
         // scanregen-1 consume point (P2 §4 touch-point 3, §9 AMENDMENT — binding): do NOT clear
         // bScannerClusterRefreshPending on the SKIPPED branch. The flag clears ONLY when
         // RefreshScannersAndRadarTowers() actually runs from HERE (it sets bScannerRefreshedThisPass
