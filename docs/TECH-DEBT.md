@@ -7,8 +7,10 @@ this list, the entry has failed — fix the entry, not just the bug.**
 Each item records what it is, how we know, and why it is not fixed. Items with a
 **pre-scoped fix** have had the work sized already — start there, don't redesign.
 
-Last updated 2026-08-10 (T58 filed in P1 after T55 — SF+ destroys third-party nodes on new games,
-DECISION PENDING; source `_team/nodeshuffle-followups/veto-spawnwindow-regression.md`.
+Last updated 2026-08-10 (T58 filed in P1 after T55 — SF+ destroys third-party nodes on new games;
+DECIDED the same day by the author and implemented as the default-ON protect veto, pending build,
+review and in-game — see the T58 STATUS block; source
+`_team/nodeshuffle-followups/veto-spawnwindow-regression.md`.
 T54 filed at the top of P1 by author ruling; supersedes D1's coupling.
 T51/T52/T53 filed at the end of P3 — they were cited across the code and the state file and had
 never been defined here, which is exactly the failure the paragraph above describes).
@@ -225,7 +227,7 @@ were pending on F **and** on H (two loads apart), which is the first datum again
 cheapest next measurement. Do that before choosing an option: if PENDING never empties, this is not a
 dedup defect at all but a stuck allow-list write, and every option above is the wrong fix.
 
-### T58. ON A NEW GAME, SF+ DESTROYS EVERY THIRD-PARTY RESOURCE NODE ~0.9 s AFTER WORLD INIT — before our roll can enumerate them — so lead, lithium/Alkali and AllMinable's `Res_*2_C` family are EXTINCT on new saves. **NOT a NodeShuffle regression. Status: DECISION PENDING — the author picks the route.**
+### T58. ON A NEW GAME, SF+ DESTROYS EVERY THIRD-PARTY RESOURCE NODE ~0.9 s AFTER WORLD INIT — before our roll can enumerate them — so lead, lithium/Alkali and AllMinable's `Res_*2_C` family are EXTINCT on new saves. **NOT a NodeShuffle regression. Status: DECIDED 2026-08-10 (author: protect veto, option 1, DEFAULT ON) → IMPLEMENTED-PENDING-BUILD-REVIEW-AND-INGAME — see the T58 STATUS block at the end of this entry.**
 **AUTHORITATIVE SOURCE for every claim, quote and option below:
 `_team/nodeshuffle-followups/veto-spawnwindow-regression.md` (read-only investigation, 2026-08-10, at
 `f84930d`). Read it before acting on this entry; nothing here is re-derived.** The investigation was
@@ -342,6 +344,122 @@ T43's warning applies verbatim: **that changes a POPULATION, and needs a before/
 differential review, not a one-line type change.** [[T54]]/[[T55]]/[[T56]]/[[T57]] are the same
 2026-08-10 multi-mod-save investigation block; T55 shares this entry's shape — a documented design
 decision, not a bug, that must be **re-decided** rather than patched.
+
+#### T58 STATUS: **IMPLEMENTED-PENDING-BUILD-REVIEW-AND-INGAME** (packet `ns-t58-foreign-protect`, 2026-08-10, boot marker `2026-08-10-t58-1`). **NOT CLOSED — no build has been run, no reviewer has seen it, and nothing has been observed in game.**
+
+**THE AUTHOR'S DECISION (2026-08-10, verbatim): *"we are keeping shuffle mod active. we need both
+active to work this situation."*** That selects **option 1, the non-vanilla protect veto — but DEFAULT
+ON, not the investigator's recommended opt-in default OFF.** The balance consequence stands as
+documented (SF+'s research gating of third-party resources is overridden while this is on) and is now
+the shipped default. **`NodeShuffle.ProtectForeignNodes 0` restores the pre-T58 DECISION for every
+evaluation, but it is NOT a clean revert for a save that has already run with it ON** (cold review F6):
+layout entries persist `NodeClassPath`/`OriginalResourceClassPath`/`VanillaNodePath` as `SaveGame`
+(`NodeShuffleSubsystem.h:198-234`), so foreign nodes enrolled while it was on stay in the layout, get
+re-destroyed by SF+ once it is off, and go through the external-destroy tombstone into
+`DormantThisSession` on every later load. Contained by coexist-1, but the entries do not disappear.
+**REVIEWER'S DISSENT, RECORDED:** the cold review recommended shipping default OFF for one measured run
+and flipping after. The author reaffirmed default ON. If the first measured run grades badly, default
+OFF is the pre-agreed fallback and needs no new design.
+**Option 2 (the KDF research patch) was NOT built** — it is per-resource and does not generalise;
+**option 3 (adopt-early) was declined** — it invents an "adopted but never dealt" node state;
+**option 4 remains rejected outright.** The **discriminating measurement (new game, NodeShuffle
+disabled, SF+ on) was NOT run before implementing** — the author ruled on the outcome wanted rather
+than on the provenance of the change, so this ships as new capability, which is what the entry above
+already said any fix would be.
+
+**WHAT LANDED.** The existing veto predicate gains a THIRD outcome at its existing interception point
+only (KBFL `IsRequirementMet`); every other destroy path in the game is untouched.
+`FNodeShuffleModule::ClassifyResourceNodeOrigin` (`Source/NodeShuffle/Private/NodeShuffle.cpp`) sorts
+one target into `NotAResourceNode` / `VanillaOriginal` / `Foreign`, reusing the roll's own two-sided
+`/Game/` test (`NodeShuffleSubsystem.cpp:7720-7722`) so the veto and the roll can never disagree about
+what "vanilla" means. **PROTECTED SET: an `AFGResourceNodeBase`-derived target whose ACTOR class path
+or RESOURCE class path is outside `/Game/`. Vanilla originals (both sides `/Game/`) are never
+protected** — SF+ keeps managing those per its overhaul, exactly as the founding contract intends.
+
+**S1 — THE ONE EXCEPTION TO "VANILLA IS NEVER AFFECTED", stated because that claim appears in the CVar
+help, the arm log and this file (scoped re-review 3).** The predicate reads `GetResourceClass()`, which
+consults `mResourceClassOverride` — and **NodeShuffle's own well retype WRITES that field** (SaveGame,
+`NodeShuffleWellRetype.cpp:53`) on **LEVEL** wells that `NodeShuffleWellLink.cpp:275` never registers as
+managed. So a stock `BP_FrackingCore*`/`BP_FrackingSatellite*` that we retyped to a **modded** resource
+grades `Foreign` and IS protected. That is NodeShuffle protecting its own retype, not another mod's
+node — the veto's *managed* path cannot see it because the retype never registered it. **Recognition in
+the grading run: a census `[...]` entry whose class name is a stock `BP_Fracking*` but whose `res` path
+is not `/Game/`.** Deliberately left as a documented exception: a null/registry check that re-graded
+such a well as vanilla would be self-authored logic on the well-registration seam, written under
+pressure to close a review finding — the exact thing this project refuses to ship unreviewed.
+A node reporting a NULL resource class is judged on its actor class alone — a null resource is no
+evidence of a foreign resource, so a `/Game/` actor class with a null resource class stays
+`VanillaOriginal` and is never protected (R3; real `AFGResourceNodeBase` targets do report null — the
+roll carries a dedicated rejection reason for it). Node TYPE is not filtered
+(a foreign fracking core or geyser is protected too, and its type is printed in the census).
+
+**BREADTH SCOPING (cold review F1, HIGH — applied).** Protection is offered ONLY on armed assets whose
+own target list is a **broad node sweep** (they target `FGResourceNodeBase` itself or a SUPERCLASS of
+it). An asset targeting a strict SUBCLASS is that mod's own handler for its own nodes: measured in this
+modset, RefinedPower's `ActorListner_RPTurbine` targets `RPWaterTurbine`/`RPWaterTurbineNode`, is armed
+because it overlaps `FGResourceNodeBase`, and its node class is not `/Game/` — so without this scoping a
+**default-ON** flag would have short-circuited that listener's whole requirement chain for every water
+turbine node and silently disabled another installed mod. The set is declared at arm time and consulted
+per evaluation. **THE ACCEPTED SET IS EXACTLY ONE SHAPE: an asset with a target class that IS
+`FGResourceNodeBase`** (scoped re-review 2, R2). A strict SUBCLASS target is that mod's own handler
+(rejected — F1's measured collateral); a strict ANCESTOR target such as `AActor` is a generic actor
+tracker that merely overlaps nodes and is rejected as TOO BROAD — the arm pass's own comment records
+that assets "as broad as `AActor`" do get armed, and short-circuiting one of those for every foreign
+node would be F1 all over again. An unrecognised FUTURE listener therefore joins ONLY on an exact
+`FGResourceNodeBase` target, and is otherwise never foreign-protected. The veto for NodeShuffle's OWN
+managed nodes is unchanged and still applies on every node-relevant asset. The arm log now prints `broadNodeTarget=` per asset and the
+census counts `foreignAllowedAssetNotInBroadSet`, so a breadth mistake is visible in the log either way.
+
+**MODDED WELLS ARE INSIDE THE PROTECTED POPULATION — stated because the packet's first handoff said the
+opposite (cold review F5).** `BaseNode_FrackingCore_KLib_C` / `BaseNode_FrackingSat_KLib_C_*` (documented as modded wells in this
+file's **T14** entry — cited by heading, not by line number, because this block's own insertion already
+invalidated one line-number citation once) grade Foreign under the T58 predicate. That is intended —
+the author wants modded wells alive — but it means T54's immediate-hide, the well occupancy gate and the
+T14 late-discovery residue all meet the protected population, and must be re-checked under that
+assumption rather than assumed absent.
+
+**TWO POPULATION ESCAPES, documented not fixed (cold review F7).** (a) UNDER-COVERAGE: a mod that
+patches vanilla assets in place (KDataForge — which this workspace itself uses) or ships node BPs under
+`/Game/` grades `VanillaOriginal` and is never protected; the feature silently under-covers it.
+(b) OVER-REACH: if an overhaul re-points a node's `GetResourceClass()` to its own descriptor, that node
+grades `Foreign` and NodeShuffle would veto **the owning mod's own removal of its own node**. The F1
+breadth set does not cure (b) — only reading the per-class `res` paths in the census does, which is why
+the runtime checklist requires that read.
+
+**PREDICTION TO CHECK IN GAME, stated before the test so it can fail:** existing new-game saves
+(`TestAllMinables`) should **recover** their lead/Alkali population on the next load with this build,
+because the level re-instantiates the foreign level-placed nodes every load (measured, above) — those
+nodes were never removed from the level, only destroyed at runtime. A save whose foreign nodes were
+*runtime-spawned* by their own mod is not covered by that argument and may not recover.
+
+**THE OFF DIRECTION IS STATEFUL (R1).** Our requirement stays prepended on the KBFL CDO for the life
+of the process, so a world that loads with `NodeShuffle.DestroyerVeto 0` after the veto armed earlier
+would otherwise keep vetoing on the previous world's latch and protect set, censusless. The main module
+now calls a registered DISARM entry point on that branch (latch false, protect set emptied) and logs
+one `Display` line naming the cleared state (its predicate is "the veto MODULE has loaded this
+session", not "the veto armed" — those diverge when a world aborts at the ABI guard, and the line says
+loaded) — that line is the only foreign-protect evidence such a
+world produces.
+
+**DIAGNOSTICS.** One `VETOCENSUS` line per world session at T+30 s (and again at T+300 s only if
+`foreignSeen` moved — that is ALL a second line reports; it does not identify a retry loop, and nothing
+measures one), carrying the full partition with denominators —
+`protectCvar / armedAssets / evals = managedVetoed + foreignSeen + vanillaAllowed + nonNodeAllowed`,
+plus `foreignProtected`/`foreignAllowed` and a per-class breakdown. Plus one
+`veto: FOREIGN-PROTECT first requirement evaluation vetoed` line per DISTINCT class, naming the asset
+that was evaluating (29 nodes must not become 29 lines). **Every one of these texts says "requirement
+evaluation", never "destroy" (cold review F2): this hook vetoes an EVALUATION, and F1 proves an armed
+asset that never destroys anything.** Both are `Display` and deliberately **not** diagnostics-gated: the
+sweep lands ~0.9 s after
+world init and the diagnostics flag is pushed seconds later, so a gated line is silent exactly when it
+matters — which is why no log in the investigation above could quote the decisive trace.
+
+**THE ONE PREMISE THIS PACKET COULD NOT VERIFY, AND THE CENSUS EXISTS TO SETTLE IT.** That SF+'s 29
+destroys pass through *our* `IsRequirementMet` at all is an **inference, not a measurement** — the
+entry's own sourcing caveat says the decisive trace lines do not exist in any log. If the
+`ResearchNodeRemover` lives in an asset the arm pass never armed, this change does **nothing** and the
+census will show `armedAssets` > 0 with `foreignSeen=0` while the SF+ `Destroy:` lines still appear.
+That is the first thing to check in the log, before judging the feature.
 
 ### ~~T1. The Relocate Resource Wells tooltip states the opposite of what the feature does~~ — FIXED 2026-08-08
 The settings UI described a relocated well as *"functional but INVISIBLE"* and labelled the

@@ -6,6 +6,7 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
 #include "Engine/World.h"
+#include "TimerManager.h" // T58: the per-world VETOCENSUS timers (FTimerManager/FTimerDelegate/FTimerHandle)
 #include "UObject/TopLevelAssetPath.h"
 #include "UObject/UObjectHash.h"
 #include "UObject/UnrealType.h"
@@ -52,8 +53,24 @@ namespace
     // The per-world arm entry point, registered with the main module by StartupModule below.
     void NodeShuffleVetoArmForWorld(UWorld* World)
     {
-        // Fresh world session: "this session" veto counters restart.
-        UNodeShuffleDestroyerVetoRequirement::ResetSessionCounters();
+        // Fresh world session: "this session" veto counters restart. T58 also LATCHES the foreign-node
+        // protection policy here — one read of NodeShuffle.ProtectForeignNodes for the whole world.
+        const bool bProtectForeign = FNodeShuffleModule::IsForeignNodeProtectionEnabled();
+        UNodeShuffleDestroyerVetoRequirement::ResetSessionCounters(bProtectForeign);
+        UNodeShuffleDestroyerVetoRequirement::ResetForeignProtectAssets(); // T58 F1: rebuilt by this pass
+        // Announced ONLY when the amendment is active. With NodeShuffle.ProtectForeignNodes=0 this
+        // module must emit not one line the pre-T58 build did not — the OFF state's only new evidence
+        // is the VETOCENSUS line, which reports protectCvar=0 honestly.
+        if (bProtectForeign)
+        {
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("veto: NodeShuffle.ProtectForeignNodes=1 latched for this world — at this hook, ")
+                TEXT("requirement chains of node-sweeping KBFL assets are short-circuited for resource ")
+                TEXT("nodes belonging to OTHER mods (T58). A stock node is unaffected unless NodeShuffle ")
+                TEXT("itself retyped it to a modded resource (well retype writes mResourceClassOverride, ")
+                TEXT("which GetResourceClass reads). Set it to 0 for the pre-T58 behaviour on a save that ")
+                TEXT("has never run with it on."));
+        }
 
         // ---- (a) ABI guard. StaticClass() here resolves through our import table into the REAL
         // installed KBFL DLL, so GetPropertiesSize() is the RUNTIME layout size of the base class;
@@ -158,6 +175,21 @@ namespace
             }
             FString TargetList;
             bool bNodeRelevant = false;
+            // T58 F1 + R2: which assets may offer FOREIGN-node protection.
+            // ACCEPTED SET, exactly: an asset with a target class that IS `FGResourceNodeBase` —
+            // nothing narrower, nothing wider. Measured shape of the real node sweep: SF+'s
+            // ActorListner_ResearchNodeRemover has targets=[FGResourceNodeBase].
+            //   - a strict SUBCLASS (RefinedPower's RPWaterTurbineNode) is that mod's own handler for
+            //     its own nodes  -> rejected (F1's measured collateral);
+            //   - a strict ANCESTOR (AActor, AFGStaticReplicatedActor, UObject-level) is a generic
+            //     actor tracker that happens to overlap nodes -> rejected as TOO BROAD (R2): the arm
+            //     pass's own comment already notes assets "as broad as AActor" get armed, and
+            //     short-circuiting such a listener for every foreign node is F1's failure again.
+            // An unrecognised FUTURE listener therefore joins ONLY on an exact FGResourceNodeBase
+            // target; anything else is absent from the set and can never be foreign-protected. The
+            // veto for our OWN managed nodes is unchanged and still applies on every armed asset.
+            bool bBroadNodeTarget = false;
+            bool bAncestorTargetRejected = false;
             for (UClass* TargetClass : TargetClasses)
             {
                 TargetList += (TargetClass ? TargetClass->GetName() : FString(TEXT("<null>"))) + TEXT(" ");
@@ -166,6 +198,8 @@ namespace
                 {
                     bNodeRelevant = true;
                 }
+                if (TargetClass == NodeBaseClass) { bBroadNodeTarget = true; }
+                else if (TargetClass && NodeBaseClass->IsChildOf(TargetClass)) { bAncestorTargetRejected = true; }
             }
             TargetList.TrimEndInline();
             if (!bNodeRelevant)
@@ -281,12 +315,25 @@ namespace
                 }
             }
 
+            // T58 F1: declare the foreign-protect set. Done for the already-present case too, because
+            // re-arming the same asset in a new world must restore the same set.
+            if (bBroadNodeTarget)
+            {
+                UNodeShuffleDestroyerVetoRequirement::AddForeignProtectAsset(Asset);
+            }
+
             UE_LOG(LogNodeShuffle, Display,
-                TEXT("veto: asset '%s' class=%s targets=[%s] requirements %d -> %d (%s)"),
-                *Asset->GetPathName(), *AssetClass->GetName(), *TargetList,
+                TEXT("veto: asset '%s' class=%s targets=[%s] broadNodeTarget=%d ancestorTargetRejected=%d requirements %d -> %d (%s)"),
+                *Asset->GetPathName(), *AssetClass->GetName(), *TargetList, bBroadNodeTarget ? 1 : 0,
+                bAncestorTargetRejected ? 1 : 0,
                 CountBefore, CountAfter, bAlreadyPresent ? TEXT("already present") : TEXT("prepended"));
             ArmedCount++;
         }
+
+        // T58: the census denominator — how many assets we are actually inside. Recorded whatever the
+        // count, INCLUDING zero, so "0 foreign destroy attempts seen" can be told apart from "we were
+        // never in the chain that destroys them".
+        UNodeShuffleDestroyerVetoRequirement::SetArmedAssetCount(ArmedCount);
 
         if (ArmedCount > 0)
         {
@@ -298,7 +345,42 @@ namespace
         {
             UE_LOG(LogNodeShuffle, Display, TEXT("veto: armed, 0 node-destroyer assets found — idle"));
         }
+
+        // ---- T58: schedule the per-world census. Two one-shot world timers, never a repeating one:
+        // the sweep this measures lands ~1 s after world init, so T+30 s captures it with margin, and
+        // T+300 s exists to expose a LATER wave. F3: the second line prints only when foreignSeen moved
+        // after T+30 s — that is all it reports; it does NOT identify a retry loop, and nothing here
+        // tests for one. World timers die with the world; the callbacks touch only module statics.
+        if (World)
+        {
+            FTimerHandle EarlyHandle;
+            FTimerHandle LateHandle;
+            World->GetTimerManager().SetTimer(EarlyHandle, FTimerDelegate::CreateLambda([]()
+            {
+                UNodeShuffleDestroyerVetoRequirement::EmitForeignCensus(TEXT("T+30s"));
+            }), 30.0f, /*bLoop=*/false);
+            World->GetTimerManager().SetTimer(LateHandle, FTimerDelegate::CreateLambda([]()
+            {
+                UNodeShuffleDestroyerVetoRequirement::EmitForeignCensus(TEXT("T+300s"));
+            }), 300.0f, /*bLoop=*/false);
+        }
+        else
+        {
+            UE_LOG(LogNodeShuffle, Warning,
+                TEXT("veto: armed with a null world — the VETOCENSUS timers were not scheduled this session"));
+        }
     }
+}
+
+// T58 R1: called by the main module when a world initialises with NodeShuffle.DestroyerVeto=0 after
+// this module has already armed earlier in the process. Our requirement instance stays in the KBFL
+// chain (the prepend is not undone), so the only way OFF can mean off is to clear the session state
+// it reads. Managed-node vetoing is deliberately NOT changed here — that is the pre-T58 behaviour of
+// a stale prepend and is outside T58's surface.
+static void NodeShuffleVetoDisarmSessionState()
+{
+    UNodeShuffleDestroyerVetoRequirement::ResetSessionCounters(/*bProtectForeignNodes=*/false);
+    UNodeShuffleDestroyerVetoRequirement::ResetForeignProtectAssets();
 }
 
 void FNodeShuffleVetoKBFLModule::StartupModule()
@@ -306,6 +388,7 @@ void FNodeShuffleVetoKBFLModule::StartupModule()
     // Hand the main module our per-world arm entry point. This runs synchronously inside the main
     // module's LoadModulePtr call, so the pointer is set before ArmDestroyerVetoIfEnabled proceeds.
     FNodeShuffleModule::SetKBFLVetoArmFunction(&NodeShuffleVetoArmForWorld);
+    FNodeShuffleModule::SetKBFLVetoDisarmFunction(&NodeShuffleVetoDisarmSessionState);
     UE_LOG(LogNodeShuffle, Display,
         TEXT("veto: NodeShuffleVetoKBFL module loaded (KBFL present) — arm hook registered"));
 }
@@ -313,6 +396,7 @@ void FNodeShuffleVetoKBFLModule::StartupModule()
 void FNodeShuffleVetoKBFLModule::ShutdownModule()
 {
     FNodeShuffleModule::SetKBFLVetoArmFunction(nullptr);
+    FNodeShuffleModule::SetKBFLVetoDisarmFunction(nullptr);
 }
 
 IMPLEMENT_GAME_MODULE(FNodeShuffleVetoKBFLModule, NodeShuffleVetoKBFL);

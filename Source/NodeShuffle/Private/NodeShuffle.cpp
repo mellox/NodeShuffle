@@ -88,6 +88,88 @@ static FAutoConsoleVariableRef CVarNodeShuffleDestroyerVeto(
     TEXT("0 = off (default). Takes effect at world load."),
     ECVF_Default);
 
+// T58 (ns-t58-foreign-protect, 2026-08-10): foreign-node protection gate. DEFAULT ON — the author
+// ruled "we are keeping shuffle mod active. we need both active to work this situation", which
+// DELIBERATELY AMENDS coexist-veto-1's founding as-if-absent contract (288d416) for one narrow class of
+// target: a resource node that is neither ours nor vanilla. See docs/TECH-DEBT.md T58 for the measured
+// mechanism (SF+ kills third-party nodes ~0.9 s after world init, ~6 s before our first spawn) and for
+// the balance consequence this accepts (SF+'s research gating of those resources is overridden).
+// Latched ONCE per world init by the veto's arm pass, like NodeShuffle.DestroyerVeto, so a mid-sweep
+// console flip can never split one KBFL sweep across two policies. Has NO effect unless
+// NodeShuffle.DestroyerVeto=1 — the veto must be armed for this outcome to exist at all.
+static int32 GNodeShuffleProtectForeignNodes = 1;
+static FAutoConsoleVariableRef CVarNodeShuffleProtectForeignNodes(
+    TEXT("NodeShuffle.ProtectForeignNodes"),
+    GNodeShuffleProtectForeignNodes,
+    TEXT("1 = while the KBFL destroyer veto is armed (NodeShuffle.DestroyerVeto is 1), also ")
+    TEXT("short-circuit node-sweeping KBFL assets for resource nodes whose class or resource is not ")
+    TEXT("stock (another mod's nodes, plus any vanilla well NodeShuffle itself retyped to a modded ")
+    TEXT("resource), so those nodes are not removed at that hook. 0 = only ")
+    TEXT("NodeShuffle's own nodes are vetoed (the pre-T58 behaviour; note a save that already enrolled ")
+    TEXT("foreign nodes keeps those layout entries and they go dormant instead). Default 1. Takes ")
+    TEXT("effect at world load."),
+    ECVF_Default);
+
+bool FNodeShuffleModule::IsForeignNodeProtectionEnabled()
+{
+    return GNodeShuffleProtectForeignNodes != 0;
+}
+
+// T58: see the declaration comment in NodeShuffle.h. Lives in the MAIN module (not the veto module) on
+// purpose: NodeShuffleVetoKBFL deliberately has no FactoryGame dependency, and every symbol this
+// function touches (AFGResourceNodeBase via Cast, GetResourceClass, GetResourceNodeType,
+// UObject::GetPathName/GetName, FString::StartsWith) ALREADY has a call site in this same module
+// (GetResourceClass at DbgLogAcceptance below; GetResourceNodeType in NodeShuffleSubsystem.cpp, same
+// module). EXPECTED import-table delta: none. That is a static expectation, NOT a measurement — the
+// standing rule is that import surface is measured, so run tools/check_imports.ps1 (or dumpbin) against
+// the built DLL before trusting it ([[ue-import-table-must-be-measured]]).
+ENodeShuffleNodeOrigin FNodeShuffleModule::ClassifyResourceNodeOrigin(const AActor* Actor,
+    FString* OutNodeClassName, FString* OutResourceClassPath, int32* OutResourceNodeType)
+{
+    // F8 (cold review): the Cast comes FIRST and the out-params are written only for a real node.
+    // Writing them up front cost two FString heap allocations for every non-node actor an armed asset
+    // ever evaluates -- thousands per load on a broad initial sweep. Callers must therefore initialise
+    // their own out-variables to their "<null>"/-1 defaults; this function leaves them untouched on the
+    // NotAResourceNode path.
+    const AFGResourceNodeBase* Node = Cast<AFGResourceNodeBase>(Actor);
+    if (!Node)
+    {
+        return ENodeShuffleNodeOrigin::NotAResourceNode;
+    }
+    if (OutNodeClassName) { *OutNodeClassName = Actor->GetClass()->GetName(); }
+    // GetResourceClass() — declared const and virtual at FGResourceNodeBase.h:144; its body is
+    // closed-source, so nothing here assumes WHAT it resolves to. It is used because it is the SAME
+    // accessor the roll's eligibility predicate reads (NodeShuffleSubsystem.cpp:7706), which is what
+    // keeps the veto and the roll from ever disagreeing about a node's resource.
+    const UClass* ResClass = Node->GetResourceClass();
+    if (OutResourceClassPath) { *OutResourceClassPath = ResClass ? ResClass->GetPathName() : TEXT("<null>"); }
+    // (OutResourceNodeType below; both are written only past the Cast -- see the F8 note above.)
+    if (OutResourceNodeType) { *OutResourceNodeType = (int32)Node->GetResourceNodeType(); }
+
+    // THE SAME TWO-SIDED /Game/ TEST the roll uses (NodeShuffleSubsystem.cpp:7720-7722). A node counts
+    // as a vanilla original only when BOTH sides are stock. Compared by MOUNT ROOT, not by a class
+    // allow-list: a mod's content lives under its own mount root by construction, and a class
+    // allow-list would silently mis-file every unseen mod.
+    // R3 (scoped re-review 2): a NULL resource class is NO EVIDENCE of a foreign resource, and must
+    // not push a /Game/ actor class into Foreign — real AFGResourceNodeBase targets do report null
+    // (the roll carries a dedicated "no resource class" rejection at NodeShuffleSubsystem.cpp:7706),
+    // and protecting one would falsify the claim that a stock node is unaffected (see the S1 note
+    // below for the ONE case where that claim genuinely does not hold).
+    // A null resource class on a MODDED actor class is still Foreign: that verdict comes from the
+    // actor-class side, which is evidence.
+    // S1 (scoped re-review 3) — THE ONE PLACE "vanilla is never affected" IS NOT TRUE: this reads
+    // GetResourceClass(), which consults mResourceClassOverride, and NodeShuffleWellRetype.cpp:53
+    // WRITES that field (SaveGame) on LEVEL wells that NodeShuffleWellLink.cpp:275 never registers as
+    // managed. So a VANILLA-class well we retyped to a MODDED resource grades Foreign here and is
+    // protected — protecting our own retype, not another mod's node. Left as a documented exception
+    // rather than a self-authored null/registry check: see docs/TECH-DEBT.md T58.
+    const bool bResourceVanilla = (ResClass == nullptr) || ResClass->GetPathName().StartsWith(TEXT("/Game/"));
+    const bool bNodeClassVanilla = Actor->GetClass()->GetPathName().StartsWith(TEXT("/Game/"));
+    return (bResourceVanilla && bNodeClassVanilla)
+        ? ENodeShuffleNodeOrigin::VanillaOriginal
+        : ENodeShuffleNodeOrigin::Foreign;
+}
+
 // Managed-node registry. FObjectKey (object index + serial) is stable across GC, cheap to hash, and
 // never matches a different (later) actor even if the memory slot is reused — safe against stale
 // entries. Game-thread only by contract (see NodeShuffle.h).
@@ -95,6 +177,8 @@ static TSet<FObjectKey> GNodeShuffleManagedNodes;
 
 // The veto module's per-world arm entry point (null until/unless NodeShuffleVetoKBFL loads).
 static void (*GNodeShuffleKBFLVetoArmFn)(UWorld* World) = nullptr;
+// T58 R1: the disarm counterpart (null until/unless NodeShuffleVetoKBFL has loaded this process).
+static void (*GNodeShuffleKBFLVetoDisarmFn)() = nullptr;
 
 void FNodeShuffleModule::RegisterManagedNode(const AActor* Node)
 {
@@ -134,12 +218,34 @@ void FNodeShuffleModule::SetKBFLVetoArmFunction(void (*ArmFn)(UWorld* World))
     GNodeShuffleKBFLVetoArmFn = ArmFn;
 }
 
+void FNodeShuffleModule::SetKBFLVetoDisarmFunction(void (*DisarmFn)())
+{
+    GNodeShuffleKBFLVetoDisarmFn = DisarmFn;
+}
+
 void FNodeShuffleModule::ArmDestroyerVetoIfEnabled(UWorld* World)
 {
     if (GNodeShuffleDestroyerVeto == 0)
     {
         UE_LOG(LogNodeShuffle, Verbose,
             TEXT("veto: NodeShuffle.DestroyerVeto=0 (off) — coexist-1 tombstone backoff is the coexistence path this session"));
+        // T58 R1: OFF must be STATEFUL, not merely un-armed. The requirement class stays prepended on
+        // the KBFL CDO across worlds in-process, so without this a world loaded after the CVar is set
+        // to 0 would keep vetoing on the PREVIOUS world's latch and protect set — with no census (the
+        // timers are never scheduled) and no per-class line (the first-seen flags are stale). The
+        // Display line below is the OFF state's only evidence, so it is not Verbose. The predicate is
+        // MODULE-LOADED, not armed — they diverge when a previous world aborted at the ABI guard, and
+        // the line says loaded because that is what is tested. Both this branch
+        // and the disarm call are no-ops when the veto module was never loaded, which keeps the
+        // never-armed case byte-identical to the pre-T58 log.
+        if (GNodeShuffleKBFLVetoDisarmFn)
+        {
+            GNodeShuffleKBFLVetoDisarmFn();
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("veto: NodeShuffle.DestroyerVeto=0 at world init after the veto module had loaded ")
+                TEXT("earlier this session — session state cleared (foreign-node protection latch off, ")
+                TEXT("protect-asset set emptied). No VETOCENSUS line is produced for this world."));
+        }
         return;
     }
     UE_LOG(LogNodeShuffle, Display, TEXT("veto: NodeShuffle.DestroyerVeto=1 at world init — arming"));
@@ -404,7 +510,7 @@ using FNodeShuffleActorExtractorLoggedSet = TSet<FNodeShuffleActorExtractorKey>;
 void FNodeShuffleModule::StartupModule()
 {
     UE_LOG(LogNodeShuffle, Log, TEXT("NodeShuffle module loaded"));
-    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle 1.3.0 LOADED (2026-08-10-t54-1) ====="));
+    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle 1.3.0 LOADED (2026-08-10-t58-1) ====="));
     FNodeShuffleModule::LogAutoAllowExtractorsState(); // Packet G: log the CVar state once at startup
 
 #if !WITH_EDITOR

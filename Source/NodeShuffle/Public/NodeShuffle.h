@@ -99,6 +99,28 @@ struct NODESHUFFLE_API FNodeShuffleExtractorAcceptance
     }
 };
 
+// ---- T58 (ns-t58-foreign-protect, 2026-08-10): origin classification for ONE resource-node actor ----
+// Used ONLY by the KBFL destroyer-veto requirement, to decide whether a destroy of a node that is NOT
+// ours should be vetoed anyway (foreign-node protection). Deliberately NOT a general "is this modded"
+// service: it answers exactly the question the veto asks, at the veto's own call site.
+// The vanilla test is the SAME one the roll's eligibility predicate uses
+// (NodeShuffleSubsystem.cpp:7720-7722, DiagnoseModdedNodeEligibility:7847-7849): a node is a VANILLA
+// ORIGINAL only when its ACTOR CLASS **and** its RESOURCE CLASS both live under /Game/. Anything else
+// with at least one non-/Game/ side is FOREIGN — some other mod put it there.
+enum class ENodeShuffleNodeOrigin : uint8
+{
+    NotAResourceNode,  // target is not AFGResourceNodeBase-derived (or null) — never protected
+    VanillaOriginal,   // actor class AND resource class both under /Game/ — NEVER protected (SF+ owns these)
+                       // S1 CAVEAT: "vanilla actor class" does NOT imply "untouched by NodeShuffle".
+                       // GetResourceClass() consults mResourceClassOverride, which our well retype
+                       // WRITES (SaveGame) on LEVEL wells it does not register as managed
+                       // (NodeShuffleWellRetype.cpp:53 / NodeShuffleWellLink.cpp:275), so a retyped
+                       // vanilla BP_FrackingCore*/BP_FrackingSatellite* whose new resource is MODDED
+                       // grades Foreign here and IS protected. Measured-shape recognition: vanilla
+                       // class name, non-/Game/ 'res' path in the census.
+    Foreign,           // actor class OR resource class outside /Game/ — protectable under T58
+};
+
 // Forward-declared rather than included: FNodeShuffleManagedGroup lives in NodeShuffleSubsystem.h,
 // which includes THIS header. Only references to it appear below, so the incomplete type is enough and
 // the include arrow stays one-way (subsystem -> module).
@@ -231,10 +253,39 @@ public:
     // so a scoped flag is a sound identity signal for the veto to honor alongside the registry.
     static bool IsSpawningManagedNode();
 
+    // ---- T58 (ns-t58-foreign-protect, 2026-08-10): foreign-node protection ----
+    // DELIBERATE AMENDMENT to the founding as-if-absent contract of coexist-veto-1 (288d416: "for every
+    // other actor this returns true and the asset behaves exactly as if NodeShuffle were absent").
+    // MEASURED CAUSE (see docs/TECH-DEBT.md T58 and _team/nodeshuffle-followups/veto-spawnwindow-
+    // regression.md): on a NEW game SF+'s KBFL ResearchNodeRemover destroys every third-party resource
+    // node ~0.9 s after world init — ~6 s before NodeShuffle spawns anything — so the registry is empty,
+    // the veto correctly says "not ours", and the lead/Alkali/AllMinable population is extinct before the
+    // roll can enumerate it. The author ruled (2026-08-10) that both mods must work together, so the veto
+    // now has a THIRD outcome: a foreign resource node is protected. SCOPE: this hook's interception
+    // point ONLY (KBFL WorldRequirement/IsRequirementMet); a mod destroying its own nodes through any
+    // other path is untouched. Reads the NodeShuffle.ProtectForeignNodes CVar (default ON).
+    static bool IsForeignNodeProtectionEnabled();
+    // Classifies ONE actor for the veto. Out-params are optional and filled for LOGGING only:
+    // OutNodeClassName = actor class NAME, OutResourceClassPath = resource-class PATH ("<null>" when the
+    // node reports none). THEY ARE LEFT UNTOUCHED when the target is not a resource node (F8: writing
+    // them up front cost two FString allocations per non-node evaluation) — the CALLER supplies those
+    // defaults. Pure apart from those writes — no logging, no engine mutation. Game-thread only, like
+    // every KBFL requirement evaluation.
+    static ENodeShuffleNodeOrigin ClassifyResourceNodeOrigin(const class AActor* Actor,
+        FString* OutNodeClassName = nullptr, FString* OutResourceClassPath = nullptr,
+        int32* OutResourceNodeType = nullptr);
+
     // The optional NodeShuffleVetoKBFL module registers its per-world arm entry point here from its
     // StartupModule. Function-pointer indirection keeps the dependency arrow one-way (veto -> main):
     // this module has ZERO KBFL includes/links and never sees the veto module's headers.
     static void SetKBFLVetoArmFunction(void (*ArmFn)(class UWorld* World));
+    // T58 R1 (scoped re-review 2): the DISARM counterpart. Our requirement class stays prepended on
+    // the KBFL CDO for the life of the process (the arm pass's own "already present" branch proves
+    // it), so a world that loads with NodeShuffle.DestroyerVeto=0 still runs IsRequirementMet with
+    // whatever session state the previous world left behind. Registering a disarm entry point lets
+    // the OFF branch CLEAR that state (latch false, protect set emptied) instead of merely not
+    // arming — otherwise "takes effect at world load" is false in the OFF direction.
+    static void SetKBFLVetoDisarmFunction(void (*DisarmFn)());
     // Called once per world init (subsystem BeginPlay, authority only): reads the
     // NodeShuffle.DestroyerVeto CVar, checks KBFL presence by module NAME, loads the veto module on
     // demand, and invokes its registered arm function for this world.
