@@ -170,6 +170,59 @@ record is hidden with its group and never spawned at the destination; immediate 
 population because a satellite can now stream in and be hidden while no destination group exists yet.
 The `WELLH2-IMMEDIATE` census reports uncaptured-hidden over total-satellite-records-hidden.
 
+### T55. The SF+ allow-list chat notice RE-ANNOUNCES THE SAME PENDING EXTRACTORS ON EVERY LOAD — its dedup is session-scoped **by documented design**, so the player is told the same thing every time they load. The pre-scoped "persist the signature" fix is **forbidden by that same design comment** and must be re-decided, not applied.
+**Measured 2026-08-10 across eight loads of build `2026-08-10-t54-1`** (the author's real multi-mod
+save; evidence `lithium-probe-extract.md` §"4th follow-up: morning save-reload investigation" Q1, plus
+a direct re-grep of `%LOCALAPPDATA%\FactoryGame\Saved\Logs\`). Every `decision=EMIT` line in every
+load carries `lastSignature=''`:
+
+| load | log | timestamp | what was announced |
+|---|---|---|---|
+| A | `…-07.37.43` | `07.29.43` | bam-renew pump set, `lastSignature=''` |
+| A (2nd) | `…-07.37.43` | `07.34.06` | AlkaLib set — `lastSignature` POPULATED, emitted because the keys were genuinely new |
+| D | `…-17.09.45` | `17.09.33` | MinerMk1/2/3, `lastSignature=''` |
+| F | `…-17.13.38` | `17.13.21` | AlkaLib ReactiveOreExtractor Mk2/Mk3, `lastSignature=''` |
+| H | live (opened 12:29:49) | `17.30.34` | AlkaLib ReactiveOreExtractor Mk2/Mk3 again, `lastSignature=''`, *"2 of them not previously announced"* |
+
+B, C, E, G emitted nothing (`PENDING=0` — nothing to say, the gate working). The player-visible
+defect is the last row: **the same two AlkaLib extractors announced on F were announced again on H
+as "not previously announced".**
+
+**THE EVIDENCE FILE'S ROOT CAUSE IS ONE FIELD OFF, AND THE DIFFERENCE DECIDES THE FIX.** It reads
+`lastSignature=''` as *"the dedup memory never loads"*. `LastNotifiedSignature`
+(`Source/NodeShuffle/Public/NodeShuffleSubsystem.h:1159`) is documented **LOG-ONLY — NOT a decision
+input**; it is written once and read only by format strings. The actual gate is the unannounced-key
+test at `Source/NodeShuffle/Private/NodeShufflePendingNoticeEmit.cpp:68-86` over
+`AnnouncedPendingKeys` (`NodeShuffleSubsystem.h:1166`). Both are transient, so a blank
+`lastSignature` on a first-of-session EMIT is the **expected** print, not the malfunction. The
+malfunction is only that the *set* is session-scoped.
+
+**AND THAT IS DELIBERATE.** `NodeShuffleSubsystem.h:1147-1151`, verbatim: *"ALL THREE MEMBERS ARE
+TRANSIENT BY DESIGN — no UPROPERTY(SaveGame) anywhere in this block, and that is load-bearing, not an
+omission… Persisting any of this across boots would fight that mechanism and could suppress a notice
+the player genuinely needs after a rebuild."* So the pre-scoped fix (make the signature a SaveGame
+UPROPERTY) is **a reversal of a written decision, in the [[T54]]/D1 class** — it must be re-decided in
+this entry, not slipped in as a bug fix. The sibling pattern the fix would lean on *does* exist and is
+not the issue: `ANodeShuffleSubsystem` carries plenty of top-level `UPROPERTY(SaveGame)` state
+(`NodeShuffleSubsystem.h:1616`, `:1701`, `:2049`), so persisting is mechanically trivial. It is the
+semantics that are contested.
+
+**Options, with the trade-off each buys:**
+1. **Persist `AnnouncedPendingKeys` (not the signature).** Silences the repeat. Directly contradicts
+   the comment above; needs an invalidation rule so a player who rebuilds/reinstalls SF+ still gets
+   told. Cheapest to write, most expensive to get *right*.
+2. **Leave the state transient; make the MESSAGE non-alarming.** Reword to a status line ("N
+   extractor(s) still need an SF+ restart") so a per-load restatement reads as status, not news. No
+   design reversal. Player copy is a graded claim — see the T1 block below.
+3. **Persist only a "player has been told about this exact set" hash, cleared whenever the written
+   document set changes.** Splits the difference; most code.
+
+**Not yet measured, and it bounds how bad this is:** whether the announced items ever clear on their
+own. The design says PENDING *"empties itself one boot after the documents land"* — but AlkaLib Mk2/Mk3
+were pending on F **and** on H (two loads apart), which is the first datum against that claim and the
+cheapest next measurement. Do that before choosing an option: if PENDING never empties, this is not a
+dedup defect at all but a stuck allow-list write, and every option above is the wrong fix.
+
 ### ~~T1. The Relocate Resource Wells tooltip states the opposite of what the feature does~~ — FIXED 2026-08-08
 The settings UI described a relocated well as *"functional but INVISIBLE"* and labelled the
 toggle *"(INCOMPLETE - stage H2)"*. True before H2b; false since. Now reads EXPERIMENTAL, states
@@ -896,6 +949,105 @@ binary was rebuilt from the reviewed commit so nothing unsafe is in the DLL.
 ---
 
 ## P2 — real unknowns, cheap to close
+
+### T56. TEN well groups read `groupComplete=0 coreCaptured=0 corePieces=0` at load — the SAME ten, on every one of eight loads, in BOTH save files. The code's own comment says that state "must NOT" occur on a reload of a dressed well. **[[T54]]'s hide is NOT implicated — do not conflate them.**
+**Measured 2026-08-10, build `2026-08-10-t54-1`** (evidence `lithium-probe-extract.md` §"4th
+follow-up" Q2, extended by a direct re-grep of all eight `FactoryGame*.log` files). The reading comes
+from `WELLH2B-ADOPT`, `Source/NodeShuffle/Private/NodeShuffleWellVisuals.cpp:107-113`, whose own text
+is the invariant being violated: *"on a fresh roll it is all zeros, on a reload of an already-dressed
+well it must NOT be"* (comment at `:89-96`).
+
+**The ten are identical, by name, on every load** — `BP_FrackingCore3/4/5/7/9/10/11/12/18` and
+`BP_FrackingCore6_UAID_40B076DF2F79D3DF01_1961476789`. Verified by set-diff, not by count, across
+`…-07.37.43`, `…-17.13.38`, `…-17.15.16` and the live log (opened 12:29:49). Count per load: 10 on
+seven of the eight; **13 on load A** — A additionally had the three `BaseNode_FrackingCore*` entries
+zeroed on what was their first-ever session (see [[T57]]).
+
+**THE ROUND TRIP IS NOT BROKEN IN GENERAL, WHICH IS WHY THIS IS A REAL UNKNOWN AND NOT A ONE-LINE
+FIX.** In the same load lines, seven other groups read back **non-zero** (`BP_FrackingCore13`
+`corePieces=2`, `14` `=5`, `15` `=3`, `17` `=3`, `2` `=1`, `6` `=5`). The fields are all
+`UPROPERTY(SaveGame)` and reachable — `bGroupVisualsComplete` `NodeShuffleSubsystem.h:760`,
+`bCoreVisualsCaptured`/`CoreVisuals` `:726-727`, inside `WellLayout` `:1701`. So persistence works;
+these ten specifically do not carry it.
+
+**Two candidate mechanisms, NEITHER measured. They demand different fixes, so measure before writing
+code:**
+1. **Lost on the way out** — captured in-session, absent from the save. `BP_FrackingCore10` does log
+   `WELLH2B-CAPTURE` and `WELLH2B-APPLY` in the live session, so it *is* captured at some point after
+   the zero reading.
+2. **Never captured at all** — the zeros are TRUTHFUL and the comment's premise ("already-dressed")
+   is false for these ten, i.e. this is a capture-coverage gap, not a persistence gap. **Nothing in
+   the evidence establishes those ten were ever dressed at the moment either save file was written**,
+   and no save was observed being written during these short sessions.
+
+**Cheapest discriminator:** load, confirm the ten read zero, walk to one of them until
+`WELLH2B-CAPTURE` reports it complete, **save manually**, reload, and read that core's `WELLH2B-ADOPT`
+line. Non-zero ⇒ mechanism 2 (coverage). Zero ⇒ mechanism 1 (round trip), and it is then a P1.
+
+**WHAT THIS ENTRY IS NOT.** [[T54]]'s immediate-hide **holds across all eight loads**: the
+`WELLH2-IMMEDIATE` (*"ORIGIN HIDDEN NOW"*) count is A=3, B=18, C-H=**0** — no first-touch re-hides
+after load B — and the T54-A/T54-B opposite-polarity pair passes on every load (evidence §Q2). B's 18
+is consistent with those groups being treated as new once, on the second-ever load, before settling.
+A capture-state defect and a hide defect are separate populations; T54 is not re-opened by this.
+
+### T57. The "well ledger oscillates 17↔20 and never converges" finding is **FALSIFIED — the ±3 is WHICH SAVE FILE WAS LOADED.** It is deterministic, 8 loads for 8. What survives is a smaller, real question: three modded-looking well cores enrol ~28 apply passes into a session.
+**This entry exists because the measurement was right and the POPULATION was wrong** — the defect
+class in `CLAUDE.md`'s POPULATION lens, caught here by re-grepping rather than by anyone's arithmetic.
+
+**The original reading** (evidence `lithium-probe-extract.md` §"4th follow-up" Q3): `WELLH2-DEFERCENSUS
+… layout holds N` (`Source/NodeShuffle/Private/NodeShuffleWellStage0.cpp:283-284`) gave A 17→20,
+B 20, C 20, D 17, E 17, F 20, G 17 — read as *"the same ±3 entries appear and vanish, never
+converging."*
+
+**What the loads actually opened** (`loadgame=` in each log's travel URL, plus the well-core names in
+each load's `WELLH2B-ADOPT` block):
+
+| load | log | save file | ledger | `BaseNode_*` cores present |
+|---|---|---|---|---|
+| A | `…-07.37.43` | `Test_02_autosave_0` | 17 → **20 at pass 28** | enrolled mid-session (log lines 42226-42265) |
+| B | `…-07.45.49` | `Test_02_100826` | 20 | 3 |
+| C | `…-17.08.47` | `Test_02_100826` | 20 | 3 |
+| D | `…-17.09.45` | `Test_02_autosave_0` | 17 | 0 |
+| E | `…-17.12.31` | `Test_02_autosave_2` | 17 | 0 |
+| F | `…-17.13.38` | `Test_02_100826` | 20 | 3 |
+| G | `…-17.15.16` | `Test_02_autosave_0` | 17 | 0 |
+| H | live, opened 12:29:49 | `Test_02_100826` | 20 | 3 |
+
+`Test_02_100826` holds 20 every time; the autosaves hold 17 every time. **Zero exceptions in eight
+loads.** The ±3 is always exactly `BaseNode_FrackingCore1_0`, `BaseNode_FrackingCore2_1`,
+`BaseNode_FrackingCore_2` — a naming family disjoint from the vanilla `BP_FrackingCore*` set. The
+ledger is stable per file and there is nothing to converge.
+
+**The residue is real and is the whole item.** On load A those three were enrolled **at runtime, at
+apply pass 28** — the ledger printed 17 through pass 27 and 20 at pass 28 — and that growth was never
+saved back, which is why `autosave_0` still loads at 17 on D, G. Sessions that ended earlier never saw
+them: E printed its last census at pass 23, still 17. So a well population exists in the world that the
+mod does not know about for roughly the first two minutes of every session, and permanently in any
+session shorter than that.
+
+**HYPOTHESIS, NOT FACT — the [[T14]] class.** T14 measured that other mods `SpawnActor` their nodes
+during their own init/research gating, after our roll, and that this is the mod's only real discovery
+gap. `BaseNode_*` cores enrolling at pass 28 *looks* like the same mechanism. **It has not been
+tested.** Two alternatives are equally live and cheaper to check first: (a) ordinary level streaming —
+those three sit somewhere the author only reaches late; (b) they are in the ledger from the start and
+only their `WELLH2B-ADOPT`/census *print* is late. **Measure which, before treating this as T14's
+recurrence.** The discriminator is whether the three cores' actors exist in the world before pass 28 —
+`ROLLCENSUS:`'s `runtimeSpawnedByOtherMods` field (T14's own instrument) answers it directly.
+
+**Cross-links, stated as hypothesis:**
+- **[[T56]]** — the ten zero-capture cores are the SAME ten in both save files, so T56 is **not**
+  explained by this. The only overlap is load A's 13 (10 + these 3, on their first session).
+- **[[T55]]** — the "same 3 miners announced on D and again on G" that made the chat repeat look
+  worse is partly this: D and G are the same autosave loaded twice. T55's defect stands on its own
+  (F→H announced the same AlkaLib pair across two *different* saves), but its severity narrative
+  should not lean on the D/G pair.
+- **The evidence file's own STRANDED sequence** (8→18→18→0→18→7→8→18→7) was read as tracking a
+  17↔20 oscillation. It tracks the save file instead. Any conclusion drawn from that sequence needs
+  re-deriving per save file before it is used.
+
+**RULE, PAID FOR TWICE NOW:** before calling a cross-load reading unstable, **verify every load opened
+the same save.** One `grep -o "loadgame=[A-Za-z0-9_]*"` per log would have retired this finding before
+it was written up as the deepest of the three.
 
 ### T2. Desert-biome well meshes are unverified
 H2b's mesh pairing narrows on `Contains("Frack")`. That is corroborated **only** for
