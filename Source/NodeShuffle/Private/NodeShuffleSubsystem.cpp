@@ -6637,6 +6637,25 @@ void ANodeShuffleSubsystem::LogHereCensus() const
             // player's own capsule and the verdict measured the player rather than the world. Only THIS
             // caller passes it; the placement paths still pass nothing.
             const bool bEnclosed = IsSpotEnclosed(TestAt, Blocked, Total, &Rays, &Threshold, Pawn);
+            // ns-t39-wellprobe (T38 cold review F1): THE PROBE-EYE READING, PRINTED BEFORE THE VERDICT.
+            // Added to all three probe commands rather than only to the new one: a check present on one
+            // probe and absent on its siblings is this project's most-repeated defect.
+            FNodeShuffleProbeEyeReading Eye;
+            const bool bEyeInside = IsProbeEyeInsideSolidForDiag(TestAt, Pawn, Eye);
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("HERE: probe eye inside solid geometry: %s. The eye sits at %s, which is where the ")
+                TEXT("enclosure predicate below starts its rays. One sphere of radius %.0f cm was ")
+                TEXT("overlapped there on the same channel those rays are cast on, with the same one ")
+                TEXT("actor on the ignore list; it returned %d result(s), %d of which report blocking on ")
+                TEXT("that channel: %s. WHY THIS COMES FIRST: an eye that starts inside a blocking body ")
+                TEXT("makes every ray below terminate at once, and the verdict then reads as a confident ")
+                TEXT("full refusal containing no terrain. A negative reading is a statement about this ")
+                TEXT("channel at this radius and is not a claim that the eye stands in open air. This ")
+                TEXT("line states no cause."),
+                !Eye.bRan ? TEXT("UNMEASURED -- the overlap did not run, so neither answer is reported")
+                          : (bEyeInside ? TEXT("YES") : TEXT("NO")),
+                *Eye.Eye.ToCompactString(), Eye.ProbeRadiusCm,
+                Eye.OverlapResults, Eye.BlockingOverlaps, *Eye.BlockingActors);
             UE_LOG(LogNodeShuffle, Display,
                 TEXT("HERE: enclosure probe exclusions -- %d of the 1 actor this command has to offer ")
                 TEXT("(the pawn it resolved for you, named here) was handed to the trace's ignore list ")
@@ -6776,18 +6795,15 @@ void ANodeShuffleSubsystem::LogHereCensus() const
     // group merely flagged bRelocate has no destination a player can walk to, so printing a distance for
     // it would be a fiction.
     {
-        const int32 WellsTotal = WellLayout.Num();
-        int32 WellsRelocateFlagged = 0, WellsPlaced = 0;
-        const FNodeShuffleWellEntry* NearestWell = nullptr;
-        double NearestWellD2 = 0.0;
-        for (const FNodeShuffleWellEntry& W : WellLayout)
-        {
-            if (W.bRelocate) { WellsRelocateFlagged++; }
-            if (!W.bGroupPlaced || !W.bPlacementClaimLive || W.PlacedCoreLocation.IsNearlyZero()) { continue; }
-            WellsPlaced++;
-            const double D2 = FVector::DistSquared2D(W.PlacedCoreLocation, P);
-            if (!NearestWell || D2 < NearestWellD2) { NearestWell = &W; NearestWellD2 = D2; }
-        }
+        // ns-t39-wellprobe: the loop that used to sit here is now ANodeShuffleSubsystem::
+        // FindNearestPlacedWellForDiag (NodeShuffleWellProbe.cpp), because NodeShuffle.WellProbe needs the
+        // same answer and two copies of one question that must agree is T26's defect one indirection
+        // later. Lifted unchanged in what it tests, which group it picks and how it breaks a tie; this
+        // line reads the same three counters the loop produced.
+        int32 WellsTotal = 0, WellsRelocateFlagged = 0, WellsPlaced = 0;
+        double NearestWellDistCm = 0.0;
+        const FNodeShuffleWellEntry* NearestWell =
+            FindNearestPlacedWellForDiag(P, WellsTotal, WellsRelocateFlagged, WellsPlaced, NearestWellDistCm);
         if (!NearestWell)
         {
             UE_LOG(LogNodeShuffle, Display,
@@ -6816,7 +6832,7 @@ void ANodeShuffleSubsystem::LogHereCensus() const
                 TEXT("WELLH2B-COLLISION are the lines for that."),
                 *ShortName(NearestWell->CorePath), *ShortName(NearestWell->AssignedResourceClassPath),
                 *NearestWell->PlacedCoreLocation.ToCompactString(),
-                FMath::Sqrt(NearestWellD2) / 100.0, D.Z / 100.0, D.X / 100.0, D.Y / 100.0, Turn,
+                NearestWellDistCm / 100.0, D.Z / 100.0, D.X / 100.0, D.Y / 100.0, Turn,
                 WellsPlaced, WellsTotal, WellsRelocateFlagged,
                 NearestWell->CapturedSatelliteCount, NearestWell->Satellites.Num());
         }

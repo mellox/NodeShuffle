@@ -51,6 +51,11 @@ namespace
     constexpr float WellEnclosureReachCm = 500.0f;
     constexpr int32 WellEnclosureRayCount = 8;
     constexpr int32 WellEnclosureBlockedThreshold = 7;
+
+    // ns-t39-wellprobe: the radius of the DIAGNOSTIC eye overlap below. It belongs to no gate: nothing
+    // that decides a placement reads it, and IsSpotEnclosed neither knows about it nor changes because
+    // of it. Named so the log line prints it back from the constant the overlap was built from.
+    constexpr float DiagEyeOverlapRadiusCm = 1.0f;
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -144,6 +149,67 @@ void ANodeShuffleSubsystem::GetEnclosureProbeGeometryForDiag(float& OutEyeHeight
 {
     OutEyeHeightCm = WellEnclosureEyeHeightCm;
     OutReachCm = WellEnclosureReachCm;
+}
+
+// ns-t39-wellprobe (T38 cold review F1): IS THE PROBE EYE INSIDE SOLID GEOMETRY -- MEASURED, NOT INFERRED.
+//
+// The predicate above raises its eye WellEnclosureEyeHeightCm in Z above whatever point it is handed and
+// casts its 8 rays from there. An eye that starts inside a body which blocks ECC_WorldStatic makes every
+// one of those rays report a hit immediately, and the predicate then returns a confident "8 of 8 blocked,
+// ENCLOSED" -- a verdict with no terrain in it. That reading is the one most likely to be taken as proof
+// the gate already answers the buried-member question, so it is measured on its own line rather than
+// left for a reader to infer from ray distances.
+//
+// WHAT IS MEASURED: one sphere overlap, centred on the eye derived from the SAME constant the loop above
+// uses (same translation unit, so it cannot drift), on the SAME ECC_WorldStatic channel those rays are
+// cast on, with the SAME optional ignore actor the caller hands the predicate. A true return means the
+// sphere overlapped at least one component reported as blocking on that channel. A false return means it
+// overlapped none of them -- a statement about that channel at that radius, and NOT a claim that the eye
+// stands in open air. This function states no cause: it reports what the overlap returned and never why
+// the world is shaped that way.
+//
+// IsSpotEnclosed IS UNCHANGED BY ITS EXISTENCE: no parameter, statement, constant, ray, threshold or
+// call site of it is touched, and no gate reads this result.
+bool ANodeShuffleSubsystem::IsProbeEyeInsideSolidForDiag(const FVector& At, const AActor* IgnoreActor,
+                                                         FNodeShuffleProbeEyeReading& Out) const
+{
+    Out = FNodeShuffleProbeEyeReading();
+    Out.Eye = FVector(At.X, At.Y, At.Z + WellEnclosureEyeHeightCm);
+    Out.ProbeRadiusCm = DiagEyeOverlapRadiusCm;
+
+    UWorld* World = GetWorld();
+    if (!World)
+    {
+        // Left bRan false and the counts at zero: a caller must be able to tell "the overlap was not run"
+        // from "the overlap ran and found nothing", and a zero that cannot say which is a zero with no
+        // denominator behind it.
+        Out.BlockingActors = TEXT("<the overlap was NOT run: this subsystem has no world>");
+        return false;
+    }
+
+    TArray<FOverlapResult> EyeHits;
+    FCollisionQueryParams EyeParams(FName(TEXT("NodeShuffleProbeEyeInside")), false);
+    if (IgnoreActor) { EyeParams.AddIgnoredActor(IgnoreActor); }
+    World->OverlapMultiByChannel(EyeHits, Out.Eye, FQuat::Identity, ECC_WorldStatic,
+                                 FCollisionShape::MakeSphere(DiagEyeOverlapRadiusCm), EyeParams);
+    Out.bRan = true;
+    Out.OverlapResults = EyeHits.Num();
+    for (const FOverlapResult& H : EyeHits)
+    {
+        if (!H.bBlockingHit) { continue; }
+        Out.BlockingOverlaps++;
+        if (Out.BlockingOverlaps <= 3)
+        {
+            const AActor* OverlapActor = H.GetActor();
+            Out.BlockingActors += FString::Printf(TEXT("'%s' "),
+                OverlapActor ? *OverlapActor->GetName() : TEXT("<blocking overlap with no actor>"));
+        }
+    }
+    if (Out.BlockingOverlaps == 0)
+    {
+        Out.BlockingActors = TEXT("<no blocking overlap to name>");
+    }
+    return Out.BlockingOverlaps > 0;
 }
 
 // ------------------------------------------------------------------------------------------------

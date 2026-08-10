@@ -48,6 +48,24 @@ struct FNodeShuffleEnclosureRay
     FString HitActor;             // the hit actor's name, or an explicit sentinel when there was none
 };
 
+// ns-t39-wellprobe: ONE READING of "does the enclosure predicate's probe eye start inside something
+// that blocks the channel its rays are cast on". T38's cold review (F1): IsSpotEnclosed raises its eye
+// a fixed distance above the point it is handed, so an eye that starts inside a blocking body makes all
+// 8 rays terminate at once and the predicate returns a confident "8 of 8 blocked, ENCLOSED" that
+// contains no terrain -- and that is exactly the verdict a reader hoping the gate already works would
+// read as confirmation. Measured rather than inferred from ray distances, and printed on its own
+// labelled line BEFORE every verdict, on all three probe commands. Plain struct for the same reasons
+// FNodeShuffleEnclosureRay is one: no UObject, never saved, never replicated.
+struct FNodeShuffleProbeEyeReading
+{
+    FVector Eye = FVector::ZeroVector;   // where the overlap was centred, derived from the same constant
+    double ProbeRadiusCm = 0.0;          // the sphere's radius, read back from the constant it was built from
+    int32 OverlapResults = 0;            // everything the overlap returned, blocking or not
+    int32 BlockingOverlaps = 0;          // of those, how many block the channel the enclosure rays use
+    bool bRan = false;                   // false = the overlap was NOT run; the counts are then not readings
+    FString BlockingActors;              // names of the first few blocking overlaps, or an explicit sentinel
+};
+
 // One node-pool entry of the per-save layout. The layout is rolled exactly
 // once per save (seeded) and afterwards only ever *applied*; it is the single
 // source of truth for which nodes exist, are active, and what they carry.
@@ -679,6 +697,23 @@ public:
     // cannot be stood on, so LogHereCensus structurally cannot probe one. NodeShuffle.Here is untouched
     // and both commands remain available. Log-only; safe anywhere.
     void LogPointAtHereCensus() const;
+
+    // ns-t39-wellprobe: `NodeShuffle.WellProbe` console command (registered in
+    // NodeShuffleWellMemberProbe.cpp).
+    // THE NAME IS DELIBERATELY NOT `LogWellProbeCensus`, WHICH IS TAKEN. NodeShuffleWellStage0.h declares
+    // a FREE function of that name (the placement-probe gate census) and member functions of this class
+    // call it unqualified. A member of the same name HIDES that free function at every such call site --
+    // measured, not predicted: the first build of this packet failed with C2660 at
+    // NodeShuffleWellRelocateApply.cpp's 10-argument call to it. `Member` here means one member of a well
+    // group, which is what this command iterates.
+    // Takes NO arguments and no typed coordinates: it finds the nearest PLACED relocated well group to
+    // the player and runs the enclosure + slope diagnostics at EACH MEMBER'S OWN recorded location --
+    // the core and every satellite -- naming, per member, which source that location came from. It
+    // exists because the other two probes structurally cannot reach a member fully inside a rock:
+    // LogHereCensus tests where the player stands and nobody can stand inside a rock, and
+    // LogPointAtHereCensus tests where an aim ray terminates, which is the rock's near face. Log-only:
+    // it spawns nothing, moves nothing and writes no layout field. Both other commands are untouched.
+    void LogWellMemberProbeCensus() const;
 
     // cave-nodes-1: `NodeShuffle.SeedHere` console command. Plants a manual cave seed at the player's
     // feet — for roofed spots vanilla never put a node under (rock bridges, shelves, side tunnels).
@@ -1631,6 +1666,29 @@ private:
     // this: no parameter, no statement and no constant of it changes, and every existing caller of it
     // stays textually identical.
     void GetEnclosureProbeGeometryForDiag(float& OutEyeHeightCm, float& OutReachCm) const;
+
+    // ns-t39-wellprobe (T38 cold review F1): the probe-eye reading described on FNodeShuffleProbeEyeReading.
+    // Defined in NodeShuffleWellFootprint.cpp beside IsSpotEnclosed so it derives its eye from the SAME
+    // eye-height constant in the SAME translation unit and cannot drift from the predicate it describes.
+    // It runs ONE sphere overlap on the same channel, with the same optional ignore actor the caller
+    // hands the predicate. IsSpotEnclosed is NOT touched by this: no parameter, no statement, no constant
+    // and no call site of it changes, and nothing any gate reads consults this result.
+    bool IsProbeEyeInsideSolidForDiag(const FVector& At, const AActor* IgnoreActor,
+                                      FNodeShuffleProbeEyeReading& Out) const;
+
+    // ns-t39-wellprobe: THE ONE nearest-placed-well search, shared by NodeShuffle.Here and
+    // NodeShuffle.WellProbe. It was inline in LogHereCensus; a second copy in the new command is the
+    // T26 defect (two copies of one question that must agree) one indirection later, so it is a single
+    // definition both call. Returns the nearest group by 2D distance from `From` among groups that are
+    // actually PLACED (bGroupPlaced && bPlacementClaimLive && a non-zero PlacedCoreLocation), or null
+    // when there is none -- which is a different statement from a distance of zero. The three counters
+    // are the denominators every caller's line needs; OutNearestDist2DCm is valid only on a non-null
+    // return. Read-only: it traces nothing and writes no layout field.
+    const FNodeShuffleWellEntry* FindNearestPlacedWellForDiag(const FVector& From,
+                                                             int32& OutTotalGroups,
+                                                             int32& OutRelocateFlagged,
+                                                             int32& OutPlacedGroups,
+                                                             double& OutNearestDist2DCm) const;
     // Same idea for the cliff gate's slope threshold, whose constant lives in NodeShuffleSubsystem.cpp's
     // anonymous namespace. Read-only; the cliff gate itself is unchanged.
     float GetCliffSlopeDegForDiag() const;

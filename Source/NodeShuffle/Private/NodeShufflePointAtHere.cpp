@@ -214,6 +214,27 @@ void ANodeShuffleSubsystem::LogPointAtHereCensus() const
     int32 Blocked = 0, Total = 0, Threshold = -1;
     const bool bEnclosed = IsSpotEnclosed(TestAt, Blocked, Total, &Rays, &Threshold, Pawn);
 
+    // ns-t39-wellprobe (T38 cold review F1): THE PROBE-EYE READING, PRINTED BEFORE THE VERDICT. It
+    // matters most on THIS command: an aim ray terminates ON a surface, so the point handed to the
+    // predicate sits on that surface and the eye above it can land inside the body behind it. Added to
+    // all three probe commands rather than only to the new one -- a check present on one probe and
+    // absent on its siblings is this project's most-repeated defect.
+    FNodeShuffleProbeEyeReading Eye;
+    const bool bEyeInside = IsProbeEyeInsideSolidForDiag(TestAt, Pawn, Eye);
+    UE_LOG(LogNodeShuffle, Display,
+        TEXT("POINTAT: probe eye inside solid geometry: %s. The eye sits at %s, which is where the ")
+        TEXT("enclosure predicate below starts its rays. One sphere of radius %.0f cm was overlapped ")
+        TEXT("there on the same channel those rays are cast on, with the same one actor on the ignore ")
+        TEXT("list; it returned %d result(s), %d of which report blocking on that channel: %s. WHY THIS ")
+        TEXT("COMES FIRST: an eye that starts inside a blocking body makes every ray below terminate at ")
+        TEXT("once, and the verdict then reads as a confident full refusal containing no terrain. A ")
+        TEXT("negative reading is a statement about this channel at this radius and is not a claim that ")
+        TEXT("the eye stands in open air. This line states no cause."),
+        !Eye.bRan ? TEXT("UNMEASURED -- the overlap did not run, so neither answer is reported")
+                  : (bEyeInside ? TEXT("YES") : TEXT("NO")),
+        *Eye.Eye.ToCompactString(), Eye.ProbeRadiusCm,
+        Eye.OverlapResults, Eye.BlockingOverlaps, *Eye.BlockingActors);
+
     UE_LOG(LogNodeShuffle, Display,
         TEXT("POINTAT: enclosure probe exclusions -- %d of the 1 actor this command has to offer (the ")
         TEXT("pawn it resolved for you, named here) was handed to the trace's ignore list for the rays ")

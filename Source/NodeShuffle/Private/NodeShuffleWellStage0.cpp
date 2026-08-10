@@ -50,11 +50,17 @@
 // MEASURED after the build and every symbol that moves is named. Three predictions have been falsified
 // on this machine.
 
+// ns-t39-wellprobe: this file's OWN header must be included first -- UBT's IWYU check requires it and
+// this is the order it asks for. The violation is older than this packet and was masked: adding one
+// .cpp to this module re-cut the unity-build buckets, and the check only fires on the file that ends up
+// leading its bucket. Nothing else here changed; the header includes only CoreMinimal.h, so it does not
+// depend on the two that used to precede it.
+#include "NodeShuffleWellStage0.h"
+
 #include "NodeShuffleSubsystem.h"
 
 #include "NodeShuffle.h"
 #include "NodeShuffleWellRetype.h"   // WellShort
-#include "NodeShuffleWellStage0.h"
 
 #include "Components/StaticMeshComponent.h" // WellMeshIndex holds mesh-component weak pointers
 
