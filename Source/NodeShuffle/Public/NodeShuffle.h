@@ -121,6 +121,20 @@ enum class ENodeShuffleNodeOrigin : uint8
     Foreign,           // actor class OR resource class outside /Game/ — protectable under T58
 };
 
+// ---- T60 (ns-t60-protect-checkboxes, 2026-08-10): one candidate ROW of the per-resource opt-out list ----
+// ROW IDENTITY IS THE RESOURCE CLASS PATH, not the node actor class and not a display string: it is the
+// only key that is stable across loads, unique across mods (a mod's content lives under its own mount
+// root by construction) and shared by every node actor class that yields that resource. Two mods may
+// both ship something a player would call "Lithium"; they cannot share a path.
+struct NODESHUFFLE_API FNodeShuffleSeenForeignResource
+{
+    FString ResourceClassPath;      // the identity. Written to the config row's 'Resource' string.
+    FString DisplayName;            // the resource DESCRIPTOR CLASS name (path leaf, trailing "_C"
+                                    // removed). NOT the in-game item name — nothing here reads one.
+    FString FirstNodeClassName;     // diagnostics only: the node actor class of the first sighting.
+    int32   Sightings = 0;          // how many foreign evaluations named this resource this session.
+};
+
 // Forward-declared rather than included: FNodeShuffleManagedGroup lives in NodeShuffleSubsystem.h,
 // which includes THIS header. Only references to it appear below, so the incomplete type is enough and
 // the include arrow stays one-way (subsystem -> module).
@@ -271,9 +285,49 @@ public:
     // them up front cost two FString allocations per non-node evaluation) — the CALLER supplies those
     // defaults. Pure apart from those writes — no logging, no engine mutation. Game-thread only, like
     // every KBFL requirement evaluation.
+    // T60 added OutNodeClassIsVanilla: TRUE when the ACTOR CLASS path is under /Game/. It is written
+    // (like the other out-params) only past the AFGResourceNodeBase cast, so the caller supplies the
+    // default. It exists to separate the S1 exception from a genuine third-party node — see
+    // NoteForeignResourceSighting below.
     static ENodeShuffleNodeOrigin ClassifyResourceNodeOrigin(const class AActor* Actor,
         FString* OutNodeClassName = nullptr, FString* OutResourceClassPath = nullptr,
-        int32* OutResourceNodeType = nullptr);
+        int32* OutResourceNodeType = nullptr, bool* OutNodeClassIsVanilla = nullptr);
+
+    // ---- T60 (ns-t60-protect-checkboxes, 2026-08-10): the per-resource opt-out list ----
+    // WHAT IT IS: the T58 protection is all-or-nothing today (one CVar, every foreign resource). T60
+    // adds a per-resource checkbox list to the mod-config panel, populated from what the veto has
+    // actually SEEN, so a player can hand ONE resource back to SF+'s cleanup while the rest stay
+    // protected. Definitions live in NodeShuffleForeignProtectConfig.cpp.
+    //
+    // POLICY (author's both-mods-work ruling, 2026-08-10): a resource with NO row, or a row the player
+    // has not touched, is PROTECTED. Only an explicitly unchecked row opts out.
+    //
+    // Called from the veto's requirement evaluation for every FOREIGN sighting. Records the resource as
+    // a candidate row. bNodeClassIsVanilla SUPPRESSES the row: that is the S1 case (a VANILLA well whose
+    // resource NodeShuffle itself retyped to a modded one — see the ENodeShuffleNodeOrigin comment).
+    // Those are not another mod's resources and must never appear as a checkbox the player can use to
+    // switch off protection for our own retype. Suppressed sightings are COUNTED, not discarded.
+    // Game-thread only, like every other veto-path call.
+    static void NoteForeignResourceSighting(const FString& ResourceClassPath,
+        const FString& NodeClassName, bool bNodeClassIsVanilla);
+    // The consumption side, called on the same evaluation. Reads the LATCHED opt-out set (a TSet<FString>
+    // built once per world init) — one hash lookup, never a config-tree walk. Returns TRUE (protected)
+    // for any path not in that set, which is the default-protected policy.
+    static bool IsForeignResourceProtectedByConfig(const FString& ResourceClassPath);
+
+    // World-init latch. Reads the LIVE config tree (not the struct mirror) once, before the veto arms,
+    // and installs the unchecked-path set. Deliberately latched rather than live-polled: it matches
+    // NodeShuffle.ProtectForeignNodes' own "takes effect at world load" rule, and the sweep this governs
+    // runs ~0.9 s after world init, so a live edit could not affect it in the session it was made.
+    static void LatchForeignResourceOptOutsFromConfig(class UObject* WorldContext);
+    // Population pass, called from ApplyLayout. Adds a row for every seen resource the config does not
+    // already carry, refreshes each row's UI label, and emits the T60 census line. Cheap in steady state:
+    // it early-outs unless the seen-registry revision moved or the labels have not been set this load.
+    static void SyncForeignResourceRowsToConfig(class UObject* WorldContext);
+    // World init: the registry is module-static and outlives worlds, like the managed-node registry.
+    static void ResetSeenForeignResources();
+    // Snapshot for callers that want the raw sightings (the sync pass; diagnostics).
+    static void GetSeenForeignResources(TArray<FNodeShuffleSeenForeignResource>& Out);
 
     // The optional NodeShuffleVetoKBFL module registers its per-world arm entry point here from its
     // StartupModule. Function-pointer indirection keeps the dependency arrow one-way (veto -> main):

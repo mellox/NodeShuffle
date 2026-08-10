@@ -5,6 +5,32 @@
 #include "Configuration/ConfigManager.h"
 #include "NodeShuffleConfig.generated.h"
 
+// T60 (ns-t60-protect-checkboxes, 2026-08-10): ONE row of the dynamically-populated per-resource
+// opt-out list. Mirrors the two properties of the config array's element section, BY NAME.
+//
+// THIS STRUCT IS NOT OPTIONAL AND ITS UPROPERTY FLAGS ARE NOT COSMETIC. UConfigPropertyArray::
+// FillConfigStruct_Implementation does `check(NewElementIndex >= 0)` on the value returned by
+// FReflectedObjectState_Array::AddNewArrayElement, and that function returns -1 whenever the mirror
+// field is absent OR lacks CPF_BlueprintVisible (SML BlueprintReflectedObject.cpp:21-29). Since
+// FillConfigurationStruct runs on every ApplyLayout pass, a missing/incorrectly-flagged mirror field
+// is a hard assert in normal play, not a silent no-op. BlueprintReadWrite sets that flag.
+USTRUCT(BlueprintType)
+struct NODESHUFFLE_API FNodeShuffleForeignResourceRow
+{
+    GENERATED_BODY()
+
+    // THE ROW IDENTITY: the resource descriptor class PATH, e.g.
+    // "/AlkaLib/.../Desc_OreLithium.Desc_OreLithium_C". Matched exactly; never re-derived from the label.
+    UPROPERTY(BlueprintReadWrite)
+    FString Resource;
+
+    // TRUE = NodeShuffle's T58 veto keeps this resource's nodes alive at the KBFL sweep.
+    // FALSE = the player handed this resource back, and the sweeping mod removes those nodes as it
+    // would with NodeShuffle absent. Default TRUE — an unlisted or untouched resource is protected.
+    UPROPERTY(BlueprintReadWrite)
+    bool Protected{true};
+};
+
 // Plain struct mirror of the configuration. Field names MUST match the
 // section property keys registered in UNodeShuffleConfig exactly —
 // UConfigManager::FillConfigurationStruct maps them by name.
@@ -187,6 +213,15 @@ struct NODESHUFFLE_API FNodeShuffleConfigStruct
     // regression, so it is not optional. NOTHING is currently gated by this flag.
     UPROPERTY(BlueprintReadWrite)
     bool EnableExperimentalFeatures{false};
+
+    // T60: the per-resource opt-out list. PRESENT BECAUSE THE SCHEMA HAS THE MATCHING ARRAY PROPERTY —
+    // see the check() note on FNodeShuffleForeignResourceRow. NOTHING IN THE MOD READS THIS FIELD:
+    // both the world-init latch and the population pass walk the LIVE config tree
+    // (UConfigManager::GetConfigurationRootSection) instead, because that path is the one the research
+    // verified end-to-end and it removes array-of-struct reflection from the critical path entirely.
+    // If a future consumer wants to read it, prove it fills correctly first.
+    UPROPERTY(BlueprintReadWrite)
+    TArray<FNodeShuffleForeignResourceRow> ProtectedForeignResources;
 
     static FNodeShuffleConfigStruct GetActiveConfig(UObject* WorldContext);
 };

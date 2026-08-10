@@ -124,7 +124,8 @@ bool FNodeShuffleModule::IsForeignNodeProtectionEnabled()
 // standing rule is that import surface is measured, so run tools/check_imports.ps1 (or dumpbin) against
 // the built DLL before trusting it ([[ue-import-table-must-be-measured]]).
 ENodeShuffleNodeOrigin FNodeShuffleModule::ClassifyResourceNodeOrigin(const AActor* Actor,
-    FString* OutNodeClassName, FString* OutResourceClassPath, int32* OutResourceNodeType)
+    FString* OutNodeClassName, FString* OutResourceClassPath, int32* OutResourceNodeType,
+    bool* OutNodeClassIsVanilla)
 {
     // F8 (cold review): the Cast comes FIRST and the out-params are written only for a real node.
     // Writing them up front cost two FString heap allocations for every non-node actor an armed asset
@@ -165,6 +166,9 @@ ENodeShuffleNodeOrigin FNodeShuffleModule::ClassifyResourceNodeOrigin(const AAct
     // rather than a self-authored null/registry check: see docs/TECH-DEBT.md T58.
     const bool bResourceVanilla = (ResClass == nullptr) || ResClass->GetPathName().StartsWith(TEXT("/Game/"));
     const bool bNodeClassVanilla = Actor->GetClass()->GetPathName().StartsWith(TEXT("/Game/"));
+    // T60: the SAME boolean the S1 note above describes, published for the caller. It is what tells a
+    // retyped VANILLA well (vanilla actor class, modded resource) apart from a third-party mod's node.
+    if (OutNodeClassIsVanilla) { *OutNodeClassIsVanilla = bNodeClassVanilla; }
     return (bResourceVanilla && bNodeClassVanilla)
         ? ENodeShuffleNodeOrigin::VanillaOriginal
         : ENodeShuffleNodeOrigin::Foreign;
@@ -510,7 +514,7 @@ using FNodeShuffleActorExtractorLoggedSet = TSet<FNodeShuffleActorExtractorKey>;
 void FNodeShuffleModule::StartupModule()
 {
     UE_LOG(LogNodeShuffle, Log, TEXT("NodeShuffle module loaded"));
-    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle 1.3.0 LOADED (2026-08-10-t5556-1) ====="));
+    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle 1.3.0 LOADED (2026-08-10-t60-1) ====="));
     FNodeShuffleModule::LogAutoAllowExtractorsState(); // Packet G: log the CVar state once at startup
 
 #if !WITH_EDITOR

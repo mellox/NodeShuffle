@@ -233,6 +233,11 @@ void ANodeShuffleSubsystem::BeginPlay()
     // the registry only fills on the authority side, so a client-side arm would veto nothing anyway.
     FNodeShuffleModule::ResetManagedNodes();
     PreRegisterRestoredNodesForVeto(); // FIX A: fill the registry BEFORE arming (first-load sweep gap)
+    // T60 (ns-t60-protect-checkboxes): latch the player's per-resource opt-outs BEFORE arming, for the
+    // same reason the veto latches its own policy in the arm pass -- the KBFL sweep this governs begins
+    // ~0.9 s from here, and the set it consults must be complete and immutable before the first
+    // evaluation. This also clears the sighting registry for the new world session.
+    FNodeShuffleModule::LatchForeignResourceOptOutsFromConfig(this);
     FNodeShuffleModule::ArmDestroyerVetoIfEnabled(GetWorld());
     GetWorldTimerManager().SetTimer(TickTimerHandle, this, &ANodeShuffleSubsystem::RefreshTick,
         TickIntervalSeconds, true, TickIntervalSeconds);
@@ -2101,6 +2106,11 @@ void ANodeShuffleSubsystem::ApplyLayout()
     // Push the diagnostics toggle to the module so the HOLOGRAMHOOK logging gate tracks the
     // config live (this pass runs on the discovery tick). OFF by default → clean user logs.
     FNodeShuffleModule::SetDiagnosticsEnabled(Config.EnableDiagnostics);
+    // T60: offer a config row for every foreign resource the veto has seen since this world loaded.
+    // This is the POPULATION half only -- it never changes what the veto is acting on this session
+    // (that was latched at BeginPlay). Early-outs on an unchanged sighting revision, so a steady-state
+    // pass costs one integer compare.
+    FNodeShuffleModule::SyncForeignResourceRowsToConfig(this);
     // Spawn-on-discovery radius (config metres -> cm). Clamp to a sane floor so a
     // mis-set 0 never disables all spawning.
     const float SpawnRadiusCm = FMath::Max(10000.f, static_cast<float>(Config.SpawnRadiusMeters) * 100.f);

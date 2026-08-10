@@ -29,6 +29,13 @@ static int32 GNodeShuffleForeignProtected = 0;  // vetoed because protection was
 // GNodeShuffleForeignAllowed) and must never be added into partitionSum.
 static int32 GNodeShuffleForeignAllowed = 0;
 static int32 GNodeShuffleForeignAllowedAssetNotInBroadSet = 0;
+// T60 (ns-t60-protect-checkboxes): the THIRD reason a foreign node is allowed through -- the player
+// unticked that resource in the mod-config list, so protection was declined for this resource only.
+// Like the counter above it is a SUBSET of GNodeShuffleForeignAllowed and must never be added into
+// partitionSum. It is its own bucket rather than being folded into AssetNotInBroadSet because those two
+// mean opposite things: one says the mod could not evaluate the asset, the other says the player asked
+// us not to. Mutually exclusive by construction -- see the three-conjunct predicate below.
+static int32 GNodeShuffleForeignAllowedPlayerUnticked = 0;
 static int32 GNodeShuffleVanillaSeen = 0;       // vanilla originals: ALWAYS allowed, never protected
 static int32 GNodeShuffleNonNodeSeen = 0;       // target was null or not AFGResourceNodeBase-derived
 
@@ -73,6 +80,7 @@ void UNodeShuffleDestroyerVetoRequirement::ResetSessionCounters(bool bProtectFor
     GNodeShuffleForeignProtected = 0;
     GNodeShuffleForeignAllowed = 0;
     GNodeShuffleForeignAllowedAssetNotInBroadSet = 0;
+    GNodeShuffleForeignAllowedPlayerUnticked = 0; // T60
     GNodeShuffleVanillaSeen = 0;
     GNodeShuffleNonNodeSeen = 0;
     GNodeShuffleForeignByClass.Empty();
@@ -127,7 +135,8 @@ void UNodeShuffleDestroyerVetoRequirement::EmitForeignCensus(const TCHAR* Phase)
 
     UE_LOG(LogNodeShuffle, Display,
         TEXT("VETOCENSUS %s: protectCvar=%d armedAssets=%d evals=%d managedVetoed=%d foreignSeen=%d ")
-        TEXT("foreignProtected=%d foreignAllowed=%d foreignAllowedAssetNotInBroadSet=%d vanillaAllowed=%d ")
+        TEXT("foreignProtected=%d foreignAllowed=%d foreignAllowedAssetNotInBroadSet=%d ")
+        TEXT("foreignAllowedPlayerUnticked=%d vanillaAllowed=%d ")
         TEXT("nonNodeAllowed=%d partitionSum=%d ")
         TEXT("distinctForeignClasses=%d [%s]"),
         Phase,
@@ -139,6 +148,7 @@ void UNodeShuffleDestroyerVetoRequirement::EmitForeignCensus(const TCHAR* Phase)
         GNodeShuffleForeignProtected,
         GNodeShuffleForeignAllowed,
         GNodeShuffleForeignAllowedAssetNotInBroadSet,
+        GNodeShuffleForeignAllowedPlayerUnticked,
         GNodeShuffleVanillaSeen,
         GNodeShuffleNonNodeSeen,
         GNodeShuffleVetoCount + GNodeShuffleForeignSeen + GNodeShuffleVanillaSeen + GNodeShuffleNonNodeSeen,
@@ -179,10 +189,15 @@ bool UNodeShuffleDestroyerVetoRequirement::IsRequirementMet_Implementation(
     FString ForeignResourcePath = TEXT("<null>");
     FString FromAssetPath = TEXT("<none>");
     int32 ForeignNodeType = -1;
+    // T60: TRUE means the ACTOR CLASS is stock. The classifier leaves it untouched for a non-node
+    // target, so like the strings above the default here is the caller's. It is only read on the
+    // Foreign branch, where it separates the S1 case (a vanilla well NodeShuffle retyped) from a
+    // genuine third-party node.
+    bool bNodeClassIsVanilla = false;
     if (!bManaged)
     {
         const ENodeShuffleNodeOrigin Origin = FNodeShuffleModule::ClassifyResourceNodeOrigin(
-            TargetActor, &ForeignClassName, &ForeignResourcePath, &ForeignNodeType);
+            TargetActor, &ForeignClassName, &ForeignResourcePath, &ForeignNodeType, &bNodeClassIsVanilla);
         switch (Origin)
         {
         case ENodeShuffleNodeOrigin::Foreign:
@@ -194,11 +209,51 @@ bool UNodeShuffleDestroyerVetoRequirement::IsRequirementMet_Implementation(
             // The 'From -> UObject' reinterpret_cast is the same LOGGING-ONLY conversion justified
             // further down this file — the address is the UObject subobject and is used for identity
             // and path only, never dereferenced as the derived type.
+            //
+            // T60 (ns-t60-protect-checkboxes) SPLIT THE PREDICATE INTO NAMED CONJUNCTS. It used to be
+            // two terms, so "we allowed it" implied "the asset was not in the broad set" and the R4
+            // counter below could ride on the else-branch. With a THIRD conjunct that implication is
+            // gone, and folding the new case into R4's counter would make it report a breadth mistake
+            // that did not happen. Each conjunct is now tested by name, once.
+            //
+            // THE BRACE OPENED HERE SPANS THE WHOLE CASE and closes just before `break`. It is required,
+            // not stylistic: a declaration with an initialiser directly inside a switch case is
+            // "jump to case label crosses initialization" and does not compile.
+            {
+            bool bAssetInBroadSet = false;
+            bool bResourceProtectedByConfig = true;
             {
                 const UObject* FromAsObj = reinterpret_cast<const UObject*>(From);
                 FromAssetPath = GetPathNameSafe(FromAsObj);
+                bAssetInBroadSet = FromAsObj
+                    && GNodeShuffleForeignProtectAssets.Contains(FObjectKey(FromAsObj));
+                // T60 POPULATION: offer this resource as a config row. Called on every foreign sighting
+                // (not only protected ones) so the list also fills while protection is latched OFF --
+                // otherwise the player could never untick anything they had not first been protected
+                // from. The S1 filter lives inside this call, keyed on the vanilla-actor-class flag.
+                FNodeShuffleModule::NoteForeignResourceSighting(
+                    ForeignResourcePath, ForeignClassName, bNodeClassIsVanilla);
+                // T60 CONSUMPTION: one TSet<FString> hash lookup against a set latched at world init.
+                // No config-tree walk here -- see the header comment in NodeShuffleForeignProtectConfig.cpp.
+                // T60 SYMMETRY (cold review F1): the S1 exception is enforced on BOTH sides. Population
+                // never offers a vanilla-ACTOR-CLASS node as a row (it is a well NodeShuffle itself
+                // retyped), so consumption must never let a row for that same RESOURCE path opt it out:
+                // the row key is the resource, and a third-party node can share a resource with our
+                // retype. Vanilla actor class ⇒ not the player's to hand back.
+                //
+                // LOAD-BEARING TOGETHER WITH THE UI COPY — DO NOT REMOVE EITHER ALONE (scoped
+                // re-review, the condition on which keying rows by RESOURCE was accepted instead of
+                // rekeying to node actor class). This conjunct is what MAKES the array tooltip's
+                // sentence "unticking a row can never affect one [of NodeShuffle's own retyped wells]"
+                // true, and that sentence is what CORRECTS the same tooltip's "you hand back every node
+                // type that yields that resource". Delete this term and the tooltip becomes a false
+                // claim; delete that sentence and this term becomes an undocumented surprise. Either
+                // way the resource key stops being defensible and the fallback is alternative D
+                // (key rows by node actor class) — see docs/TECH-DEBT.md T60.
+                bResourceProtectedByConfig = bNodeClassIsVanilla
+                    || FNodeShuffleModule::IsForeignResourceProtectedByConfig(ForeignResourcePath);
                 bProtectForeign = GNodeShuffleProtectForeignLatched
-                    && FromAsObj && GNodeShuffleForeignProtectAssets.Contains(FObjectKey(FromAsObj));
+                    && bAssetInBroadSet && bResourceProtectedByConfig;
             }
             if (bProtectForeign)
             {
@@ -210,7 +265,17 @@ bool UNodeShuffleDestroyerVetoRequirement::IsRequirementMet_Implementation(
                 // R4: the latch is ON but the evaluating asset is not in the broad-node-sweep set --
                 // which INCLUDES a null 'From' (no asset is identifiable, so it cannot be in the set).
                 // The name states exactly that test and nothing about why the asset is absent.
-                if (GNodeShuffleProtectForeignLatched) { GNodeShuffleForeignAllowedAssetNotInBroadSet++; }
+                if (GNodeShuffleProtectForeignLatched && !bAssetInBroadSet)
+                {
+                    GNodeShuffleForeignAllowedAssetNotInBroadSet++;
+                }
+                // T60: the latch is ON, the asset WAS evaluable, and the player's own list declined
+                // protection for this resource. Disjoint from the counter above by the !bAssetInBroadSet
+                // / bAssetInBroadSet split, so the two can never double-count one evaluation.
+                if (GNodeShuffleProtectForeignLatched && bAssetInBroadSet && !bResourceProtectedByConfig)
+                {
+                    GNodeShuffleForeignAllowedPlayerUnticked++;
+                }
             }
             {
                 FNodeShuffleForeignClassTally& Tally = GNodeShuffleForeignByClass.FindOrAdd(ForeignClassName);
@@ -239,6 +304,7 @@ bool UNodeShuffleDestroyerVetoRequirement::IsRequirementMet_Implementation(
                     }
                 }
             }
+            } // closes the case-spanning brace opened above the T60 conjuncts
             break;
         case ENodeShuffleNodeOrigin::VanillaOriginal:
             // NEVER protected: removing vanilla originals is the overhaul mod's own intended behaviour

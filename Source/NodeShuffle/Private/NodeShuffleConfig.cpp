@@ -1,8 +1,10 @@
 #include "NodeShuffleConfig.h"
 
 #include "Configuration/Properties/ConfigPropertySection.h"
+#include "Configuration/Properties/ConfigPropertyArray.h"
 #include "Configuration/Properties/ConfigPropertyBool.h"
 #include "Configuration/Properties/ConfigPropertyInteger.h"
+#include "Configuration/Properties/ConfigPropertyString.h"
 #include "Configuration/Properties/WidgetExtension/CP_Integer.h"
 #include "Configuration/Properties/WidgetExtension/CP_Section.h"
 #include "Engine/Engine.h"
@@ -50,6 +52,17 @@ void UNodeShuffleConfig::PostInitProperties()
     UClass* BoolClass = LoadClass<UConfigPropertyBool>(nullptr,
         TEXT("/SML/Interface/UI/Menu/Mods/ConfigProperties/BP_ConfigPropertyBool.BP_ConfigPropertyBool_C"));
     if (!BoolClass) { BoolClass = UConfigPropertyBool::StaticClass(); }
+
+    // T60: the two extra SML BP property classes the opt-out list needs. Same fallback shape as the
+    // three above — the raw native class serializes correctly but renders as empty space in the UI, so
+    // a fallback means "the list persists but you cannot see it", not "the list is broken".
+    UClass* ArrayClass = LoadClass<UConfigPropertyArray>(nullptr,
+        TEXT("/SML/Interface/UI/Menu/Mods/ConfigProperties/BP_ConfigPropertyArray.BP_ConfigPropertyArray_C"));
+    if (!ArrayClass) { ArrayClass = UConfigPropertyArray::StaticClass(); }
+
+    UClass* StringClass = LoadClass<UConfigPropertyString>(nullptr,
+        TEXT("/SML/Interface/UI/Menu/Mods/ConfigProperties/BP_ConfigPropertyString.BP_ConfigPropertyString_C"));
+    if (!StringClass) { StringClass = UConfigPropertyString::StaticClass(); }
 
     UClass* IntegerClass = LoadClass<UConfigPropertyInteger>(nullptr,
         TEXT("/SML/Interface/UI/Menu/Mods/ConfigProperties/BP_ConfigPropertyInteger.BP_ConfigPropertyInteger_C"));
@@ -278,6 +291,136 @@ void UNodeShuffleConfig::PostInitProperties()
         // TODO(pre-release) sites in NodeShuffleAutoAllowExtractors.cpp plan to gate on it -- update
         // this string in the same commit that does.
         TEXT("A separate developer gate — it is NOT what the word EXPERIMENTAL means in other options' names. Nothing in this version is gated by this switch, so leaving it off changes nothing. A feature marked EXPERIMENTAL elsewhere in this list carries its own toggle and is not controlled from here."));
+
+    // ---- T60 (ns-t60-protect-checkboxes, 2026-08-10): the per-resource protection opt-out list ----
+    // A UConfigPropertyArray whose element TEMPLATE is a section of {Resource: String, Protected: Bool}.
+    // The SCHEMA is fixed here at build time (SML has no dynamic-key section: UConfigPropertySection's
+    // Serialize AND Deserialize both iterate SectionProperties, so a key hand-added to NodeShuffle.cfg
+    // is ignored on load and deleted on the next save). The CONTENTS are dynamic: array Deserialize
+    // empties Values and re-allocates one element per JSON entry, so runtime-added rows round-trip.
+    //
+    // DefaultValues is deliberately left EMPTY, so a Reset CLEARS the list rather than restoring some
+    // canned set. The rows come back on the next sighting; a player's unticks do not.
+    //
+    // COLD REVIEW F10: bRequiresWorldReload is TRUE on all three T60 properties, unlike every other
+    // property on this panel. In SML C++ that flag gates CanResetNow() (ConfigProperty.cpp:39-59), so
+    // false would permit an in-world Reset that wipes the whole list -- and TRUE is also the honest
+    // value here, because these settings genuinely do not apply until the next world load (the opt-out
+    // set is latched in BeginPlay). The root section stays false so the rest of the panel is still
+    // editable in the pause menu; the comment at the top of this function records that SML's BP classes
+    // grey out a bRequiresWorldReload property in the pause menu, so expect this list to be editable
+    // from the MAIN MENU. That greying is a Blueprint-side behaviour this file cannot verify --
+    // runtime test step 11 is what settles it.
+    {
+        UConfigPropertyArray* Rows = NewObject<UConfigPropertyArray>(Root, ArrayClass,
+            TEXT("ProtectedForeignResources"));
+        Rows->bRequiresWorldReload = true; // F10
+        Rows->DisplayName = FText::FromString(TEXT("Protect Other Mods' Resources (Per Resource)"));
+
+        // EVERY FACTUAL ASSERTION BELOW IS GRADED, per the workspace rule that UI copy is a claim.
+        // MEASURED-IN-CODE: rows are added only from foreign sightings inside the KBFL requirement
+        // evaluation (NodeShuffleDestroyerVetoRequirement.cpp) via NoteForeignResourceSighting;
+        // an unlisted resource is protected (IsForeignResourceProtectedByConfig returns true for any
+        // path not in the latched opt-out set); the opt-out set is read ONCE per world init, before the
+        // veto arms (LatchForeignResourceOptOutsFromConfig, called from the subsystem's BeginPlay);
+        // a removed row is re-added by the next population pass that sees that resource again; the
+        // effect is confined to the KBFL requirement hook, which is the only place this is consulted.
+        // NOT CLAIMED, because nothing tests it: that unticking brings back nodes already removed;
+        // that the list is a complete inventory of the other mod's resources; any timing in seconds.
+        Rows->Tooltip = FText::FromString(
+            TEXT("THIS LIST FILLS ITSELF IN — you do not add to it. A resource appears here after ")
+            TEXT("NodeShuffle has seen another mod's cleanup try to remove nodes of that resource at ")
+            TEXT("least once, so the list starts empty and grows as you play with other mods.\n\n")
+            TEXT("TICKED (the default for everything, including anything not listed yet): NodeShuffle ")
+            TEXT("stops that removal, so the other mod's ore nodes survive.\n\n")
+            TEXT("UNTICKED: NodeShuffle does not step in for that resource, and the other mod's cleanup ")
+            TEXT("runs at that hook. Everything else in the list stays protected.\n\n")
+            TEXT("A ROW IS A RESOURCE, NOT A NODE TYPE. Several different node types — possibly from ")
+            TEXT("several different mods — can yield the same resource, and one row covers all of them. ")
+            TEXT("Untick a row and you hand back every node type that yields that resource, not just the ")
+            TEXT("one you had in mind. A row can also name an ORDINARY game resource, which means some ")
+            TEXT("mod added its own node type that yields it.\n\n")
+            TEXT("WHEN A CHANGE TAKES EFFECT: THE NEXT TIME YOU LOAD THE SAVE. The list is read once ")
+            TEXT("while the world is loading, before the other mod's cleanup runs, and is not re-read ")
+            TEXT("while you play. Unticking in the pause menu changes nothing until you load again. ")
+            TEXT("Unticking does NOT bring back nodes that have already been removed.\n\n")
+            TEXT("THE TEXT BOX IS THE RESOURCE'S IDENTITY, not a label to edit. It is the full asset ")
+            TEXT("path of the resource, which is what tells two mods' similarly-named ores apart. ")
+            TEXT("Change it and the row stops matching anything and does nothing; the real resource ")
+            TEXT("goes back to being protected and gets a fresh row. Delete a row and it comes back the ")
+            TEXT("next time that resource is seen. Adding a row by hand does nothing unless the text ")
+            TEXT("happens to be an exact resource path.\n\n")
+            TEXT("NOTHING HERE APPLIES unless the protection feature is on, and it needs BOTH console ")
+            TEXT("variables: NodeShuffle.DestroyerVeto is OFF by default and must be set to 1, and ")
+            TEXT("NodeShuffle.ProtectForeignNodes is already 1. Both take effect at the next world load. ")
+            TEXT("While NodeShuffle.DestroyerVeto is 0 this list also stays EMPTY — nothing is ever ")
+            TEXT("added to it. ")
+            TEXT("Resource wells that NodeShuffle itself changed to a modded resource are ")
+            TEXT("deliberately NOT listed here, and unticking a row can never affect one — they are ")
+            TEXT("NodeShuffle's own doing, not another mod's."));
+
+        // The element TEMPLATE. AddNewElement() clones this (NewObject with it as archetype), and
+        // SectionProperties is an Instanced UPROPERTY, so each row gets its OWN String and Bool. The
+        // population pass ASSERTS that at runtime rather than trusting it — see the pointer-identity
+        // check in NodeShuffleForeignProtectConfig.cpp, which is the only static-analysis gap here.
+        UConfigPropertySection* RowTemplate = NewObject<UConfigPropertySection>(Rows, SectionClass,
+            TEXT("ForeignResourceRow"));
+        RowTemplate->bRequiresWorldReload = true; // F10
+        // COLD REVIEW F7, both halves.
+        //  (a) THE TEMPLATE NOW CARRIES A FALLBACK LABEL. Every element created by
+        //      UConfigPropertyArray::Deserialize is cloned from this template, so without it every row
+        //      is unlabelled until a sync pass stamps it -- and sync runs only from ApplyLayout, which
+        //      is authority-only and in-world, i.e. NEVER in the main-menu mod panel.
+        //  (b) HasHeader IS NOW TRUE, where the first draft set it false. The two mechanisms
+        //      contradicted each other: the design stamps a per-row DisplayName every sync, and a
+        //      suppressed header is the most plausible place for that label to render. NEITHER HALF CAN
+        //      BE PROVEN DEAD FROM C++ -- Widget_CP_Array and the CP_Section widgets are Blueprint --
+        //      so nothing is deleted here; the two are made CONSISTENT instead, in the direction that
+        //      makes the label reachable. RUNTIME TEST STEP 3 IS THE DECIDER: open the panel from the
+        //      MAIN MENU and record whether a row shows its label.
+        // TODO(2026-08-10, ns-t60 follow-up): once test step 3 has been run, delete whichever of the
+        // two mechanisms it proves inert and record the measurement in docs/TECH-DEBT.md T60.
+        //  (c) RE-REVIEW B: HasHeader=true with HeaderText never set anywhere in Source/ is a THIRD
+        //      plausible behaviour -- a blank header bar per row. There are three label surfaces
+        //      (DisplayName, HeaderText, the child String's own label) and the sync stamped only one,
+        //      so HeaderText is seeded here and stamped alongside DisplayName at both sync sites.
+        //      The fallback reads "(resource)" rather than "Resource": a stamp failure must be
+        //      distinguishable from a successful stamp, and it must not collide with the child field's
+        //      own label.
+        RowTemplate->DisplayName = FText::FromString(TEXT("(resource)"));
+        if (UCP_Section* RowWidget = Cast<UCP_Section>(RowTemplate))
+        {
+            RowWidget->WidgetType = ECP_SectionWidgetType::CPS_Horizontal;
+            RowWidget->HasHeader = true; // F7(b)
+            RowWidget->HeaderText = FText::FromString(TEXT("(resource)")); // re-review B
+        }
+
+        UConfigPropertyString* ResourceProp = NewObject<UConfigPropertyString>(RowTemplate, StringClass,
+            TEXT("Resource"));
+        ResourceProp->Value = TEXT("");
+        ResourceProp->DefaultValue = TEXT("");
+        ResourceProp->DisplayName = FText::FromString(TEXT("Resource"));
+        ResourceProp->Tooltip = FText::FromString(
+            TEXT("The resource's full asset path. This is the row's identity — the tick box beside it ")
+            TEXT("applies to whatever this path names. Editing it makes the row match nothing."));
+        ResourceProp->bRequiresWorldReload = true; // F10
+        RowTemplate->SectionProperties.Add(TEXT("Resource"), ResourceProp);
+
+        UConfigPropertyBool* ProtectedProp = NewObject<UConfigPropertyBool>(RowTemplate, BoolClass,
+            TEXT("Protected"));
+        ProtectedProp->Value = true;
+        ProtectedProp->DefaultValue = true;
+        ProtectedProp->DisplayName = FText::FromString(TEXT("Protected"));
+        ProtectedProp->Tooltip = FText::FromString(
+            TEXT("Ticked: NodeShuffle keeps this resource's nodes alive when another mod's cleanup ")
+            TEXT("tries to remove them. Unticked: that cleanup is allowed to proceed for this one ")
+            TEXT("resource. Takes effect the next time you load the save."));
+        ProtectedProp->bRequiresWorldReload = true; // F10
+        RowTemplate->SectionProperties.Add(TEXT("Protected"), ProtectedProp);
+
+        Rows->DefaultValue = RowTemplate;
+        Root->SectionProperties.Add(TEXT("ProtectedForeignResources"), Rows);
+    }
 
     RootSection = Root;
 }

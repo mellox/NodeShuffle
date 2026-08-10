@@ -291,6 +291,119 @@ player with more than one save — which is the ordinary case, and the author's 
 **Do not "fix" this by persisting the announce set** — see the T55 STATUS block for why that suppresses a
 true notice.
 
+### T60. THE T58 PROTECTION IS ALL-OR-NOTHING, SO A PLAYER WHO WANTS SF+'s RESEARCH GATING BACK FOR **ONE** RESOURCE HAS TO GIVE IT UP FOR ALL OF THEM. **Status: IMPLEMENTED-PENDING-BUILD-REVIEW-AND-INGAME (packet `ns-t60-protect-checkboxes`, 2026-08-10, marker `2026-08-10-t60-1`). NOT BUILT — no build ran in this packet.**
+
+[[T58]] ships one CVar, `NodeShuffle.ProtectForeignNodes`, and it governs every foreign resource at
+once. The author asked (2026-08-10) for a **dynamically-populated checkbox list in the mod-config UI**:
+one row per foreign resource the veto has actually seen, so unticking a row hands **that resource
+only** back to SF+'s cleanup. Built as **lane A** of
+`_team/nodeshuffle-followups/T59-dynamic-config-research.md` (the file is named T59 but is the research
+for THIS entry; T59 below is the unrelated pack-churn item).
+
+**MECHANISM.** A `UConfigPropertyArray` in the C++-built schema
+(`Source/NodeShuffle/Private/NodeShuffleConfig.cpp`) whose element template is a section of
+`{Resource: String, Protected: Bool}`. Rows are added at runtime with SML's `AddNewElement()`. Section
+`Serialize`/`Deserialize` iterate the **schema**, so an ad-hoc key in `NodeShuffle.cfg` would be dropped
+— but array `Deserialize` empties `Values` and re-allocates **one element per JSON entry**
+(`ConfigPropertyArray.cpp:117-137`), so rows added at runtime **do** round-trip. That is why the list
+had to be an array and could not be per-resource top-level keys.
+
+**POPULATION RULE.** A row is offered on the **first sighting of a resource this world session**, from
+inside the veto's own requirement evaluation (`NoteForeignResourceSighting`). Rows are **keyed by the
+resource descriptor class PATH** — not by node actor class, not by any display string — because that is
+the only key that is stable across loads and unique across mods; the UI label is the path leaf and the
+tooltip says so. Rows are **never removed and never reordered** by the mod, so a tick the player set is
+never disturbed. Population runs even while protection is latched OFF, or the player could never untick
+something they had not first been protected from.
+
+**DEFAULT-PROTECTED POLICY (author's both-mods-work ruling).** A resource with no row, an untouched row,
+or a row the latch could not read is **PROTECTED**. Only an explicitly unticked row opts out. The
+empty-set case therefore behaves exactly as T58 shipped.
+
+**WHEN AN EDIT APPLIES: THE NEXT WORLD LOAD.** The opt-out set is latched once in
+`ANodeShuffleSubsystem::BeginPlay`, immediately before the veto arms, for the same reason T58 latches
+its own policy — and because the sweep it governs runs ~0.9 s after world init, so a pause-menu edit
+could not affect the session it was made in even under live re-reads. Consumption is one
+`TSet<FString>` hash lookup per foreign sighting; **no config-tree walk ever happens at sweep time.**
+
+**THE S1 EXCEPTION IS FILTERED OUT OF THE LIST.** A vanilla-class resource well NodeShuffle itself
+retyped to a modded resource grades `Foreign` (see T58's S1 note) and is protected — correctly, because
+that is protecting our own retype. It is **not** another mod's resource and must never be a checkbox
+that switches off protection for our own work. Recognised by the ACTOR CLASS being under `/Game/`
+(`ClassifyResourceNodeOrigin` now publishes that boolean) and **counted, not silently dropped**.
+
+**RELATION TO [[T59]]: ADJACENT, NOT FIXED.** T59 is the SF+ allow-list **pack** being per-install while
+its content is per-save. Nothing in T60 touches the pack, the allow-list writer, or the notice. A player
+who unticks a resource here still gets T59's churn on the next save alternation. Do not close T59
+against this entry.
+
+**KNOWN WARTS, accepted rather than fixed.** (1) The stock array widget exposes Add / Remove / edit-string
+on our list; a hand-added or edited row is inert (it matches no resource path) and a removed row returns
+on the next sighting — the tooltip says both. Suppressing them needs a custom widget (lane B), which the
+research costed at several times lane A for nothing this feature needs. (2) `DefaultValues` is empty, so
+the in-game **Reset** button clears the list and the player's unticks with it; the rows come back, the
+unticks do not.
+
+**UNVERIFIABLE STATICALLY — the one thing a build cannot settle from headers:** whether
+`AddNewElement()`'s `NewObject`-with-archetype instances the template's `Instanced SectionProperties`
+map per element. If it does not, every row shares one tick box. The code **measures** it (pointer
+identity against the live template) and logs `LogNodeShuffle Error` if they compare equal — but the
+in-game check is still owed: untick ONE row of two and confirm the other stays ticked after a reload.
+
+**COLD REVIEW 2026-08-10 — DO NOT SHIP → 11 findings applied, all in-packet.** Two were P1. **F1 was a real
+SYMMETRY bug and the one that would have shipped damage:** the S1 exception was enforced on the population
+side only, so a player unticking AlkaLib's lithium row would also have stripped protection from
+NodeShuffle's own retyped wells yielding that resource — the exact outcome `NodeShuffle.h`'s S1 note says
+must never happen. Consumption now carries the same `bNodeClassIsVanilla` term. **F2** was a false UI claim:
+the tooltip said `NodeShuffle.DestroyerVeto` was on by default; `NodeShuffle.cpp:82` defaults it to **0**, so
+on a default install the list would never fill and the panel said otherwise. Also applied: two ungraded
+tooltip claims removed (mineability is untested — SF+ has a separate extractor allow-list; "as if not
+installed" overclaimed), the n:1 resource↔node-class collapse now stated in the copy, the shared-subobject
+guard widened to `Deserialize`-created rows and made non-writing, a 256-row cap, and
+`bRequiresWorldReload=true` so an in-world Reset cannot wipe the list.
+
+**TWO THINGS DELIBERATELY LEFT OPEN, both needing a runtime measurement before anyone "fixes" them.**
+1. **Row labels (F7).** `HasHeader` was `false` while the design stamps a per-row `DisplayName` every sync —
+   the two contradicted each other and **neither can be proven dead from C++** (`Widget_CP_Array` and the
+   `CP_Section` widgets are Blueprint). They are now consistent (`HasHeader=true`, plus a template fallback
+   label so `Deserialize`-created rows are never blank in the main-menu panel, where the sync never runs).
+   **Runtime test step 3 decides which mechanism is inert; delete the loser then, not before.**
+2. **Pruning (F9).** Nothing prunes, on purpose: a stale row for an uninstalled mod still carries the
+   player's untick, and "the path no longer resolves" is **not** evidence of staleness — an unloaded mod's
+   path does not resolve either. The cap bounds the growth; the pruning policy is unresolved.
+
+**HELD IN RESERVE (reviewer's alternative D):** keying rows by NODE ACTOR CLASS instead of resource removes
+F1 and F6 structurally (our retyped wells are a distinct actor class), at the cost of several rows per mod.
+Not taken this round — rekeying unreviewed to answer a review is how the second bug gets in. Take it if the
+F1 fix proves insufficient in runtime test 8.
+
+**TWO ARTEFACTS ARE LOAD-BEARING *TOGETHER* — DO NOT REMOVE EITHER ALONE.** This is the condition on which
+the scoped re-review accepted keying rows by RESOURCE rather than rekeying to node actor class:
+1. the `bNodeClassIsVanilla ||` conjunct in the veto's consumption predicate
+   (`NodeShuffleDestroyerVetoRequirement.cpp`, the T60 block), and
+2. the array tooltip's sentence *"unticking a row can never affect one"* about NodeShuffle's own retyped
+   wells (`NodeShuffleConfig.cpp`).
+(1) is what makes (2) TRUE; (2) is what corrects the same tooltip's *"you hand back every node type that
+yields that resource"* from an over-claim into an accurate statement. Delete (1) and the panel ships a false
+claim — the F1 bug, back. Delete (2) and (1) becomes an undocumented surprise. Either deletion makes the
+resource key indefensible and the fallback is alternative D above. Both code sites carry this note.
+
+**RE-REVIEW ROUND 2 (FIX-FIRST, one item).** R1: the shared-subobject Error asserted *"any row added this
+pass was withdrawn"* on a condition that includes row-to-row sharing, while only the TEMPLATE branch
+withdraws — two shared DISK rows with a clean template would have made it contradict `addedThisPass` on the
+next census line ([[lessons-log-asserted-a-cause]]). Withdrawal is now a counted field. Also applied:
+`HeaderText` is seeded on the row template and stamped alongside `DisplayName` through one shared helper,
+because `HasHeader=true` with `HeaderText` never set is a blank header bar — a third label surface. The
+fallback text is `(resource)`, not `Resource`, so a stamp failure is distinguishable and does not collide
+with the child field's own label. Runtime test 3 now decides among **three** surfaces, not two.
+
+**DIAGNOSTICS.** `T60CENSUS latch` (once per world init: rows in the file, how many unticked, malformed,
+blank) and `T60CENSUS sync` (rows seen / in config / loaded from disk / added / unticked-in-file /
+opt-outs acting this world / whether the latch ran / S1 sightings suppressed). The veto's own
+`VETOCENSUS` line gains `foreignAllowedPlayerUnticked`, a bucket **disjoint** from
+`foreignAllowedAssetNotInBroadSet` — those two mean opposite things (we could not evaluate the asset
+vs. the player asked us not to) and must never be conflated.
+
 ### T58. ON A NEW GAME, SF+ DESTROYS EVERY THIRD-PARTY RESOURCE NODE ~0.9 s AFTER WORLD INIT — before our roll can enumerate them — so lead, lithium/Alkali and AllMinable's `Res_*2_C` family are EXTINCT on new saves. **NOT a NodeShuffle regression. Status: DECIDED 2026-08-10 (author: protect veto, option 1, DEFAULT ON) → IMPLEMENTED-PENDING-BUILD-REVIEW-AND-INGAME — see the T58 STATUS block at the end of this entry.**
 **AUTHORITATIVE SOURCE for every claim, quote and option below:
 `_team/nodeshuffle-followups/veto-spawnwindow-regression.md` (read-only investigation, 2026-08-10, at
