@@ -66,6 +66,29 @@ struct FNodeShuffleProbeEyeReading
     FString BlockingActors;              // names of the first few blocking overlaps, or an explicit sentinel
 };
 
+// ns-t45-verticaldiag: ONE READING of what the mod's OWN cave store holds at a world point. It is a
+// LOOKUP, not a test: no trace is made and no geometry is inspected. Every field is copied out of the
+// store (ANodeShuffleSubsystem::CaveFloors and its counters) or derived from the point's grid key, so a
+// reader is told what the mod believes about that key and nothing about what is physically there.
+// NOTHING READS IT: it is filled for a log line, and no gate, deal, pick or placement path consults it.
+struct FNodeShuffleCaveCellReading
+{
+    bool bRan = false;                    // false = no key was computed and no lookup was made
+    bool bStoreLoadedBeforeThisCall = false; // was the store already resident when the caller asked
+    int32 StoreCellsTotal = 0;            // DENOMINATOR: cells the store held at reading time
+    int32 StoreSeedCount = 0;             // roof-proven seeds the store held at reading time
+    FVector Point = FVector::ZeroVector;  // the point looked up, exactly as handed in
+    double CellSizeCm = 0.0;              // the store's own cell size, read back from its constant
+    int32 CellX = 0;                      // the point's cave-grid cell, from the store's own key function
+    int32 CellY = 0;
+    FVector CellCentre = FVector::ZeroVector; // that cell's XY centre; Z is the stored floor when present
+    bool bCellPresent = false;            // does the store hold a cell at that key at all
+    uint8 CellState = 0;                  // the RAW stored state value; meaningless when not present
+    double CellFloorZ = 0.0;              // the stored floor Z of that cell
+    double CellCeilingCm = 0.0;           // the stored ceiling clearance; negative = the store's sentinel
+    double PointAboveCellFloorCm = 0.0;   // Point.Z minus CellFloorZ, when a cell is present
+};
+
 // ns-t42-centreshadow: ONE READING of the CANDIDATE containment test -- "is this world point itself
 // inside solid geometry", as opposed to "is the point 200 cm above it walled in horizontally", which is
 // what the shipped enclosure predicate asks. It is a SHADOW METRIC: it is computed and printed and
@@ -1469,10 +1492,21 @@ private:
     // but unplaceable: the spiral/redeal machinery moves the entry. OutRot is the node-actor rotation
     // with tilt CLAMPED to NodeTiltClampDeg toward the SMOOTHED ground normal (4-probe ring average);
     // OutGroundNormal returns that full smoothed normal so the rock visual can take the whole slope.
+    // ns-t45-verticaldiag: OutGroundHit is a WRITE-ONLY DIAGNOSTIC TAP. When non-null it receives the
+    // one blocking hit this function's own primary down-trace returned -- the hit it already had in hand
+    // and already read OutLoc out of -- so a caller can NAME the actor and component that trace ended on
+    // instead of only seeing where it landed. It is defaulted null, no placement caller passes it, and
+    // nothing in this function ever reads it back: adding it cannot change what this function returns or
+    // writes to any other parameter.
     bool RaycastGroundAt(const FVector& ProbeXY, float StartZ, const AActor* IgnoreNode,
                          const AActor* IgnoreMesh, FVector& OutLoc, FRotator& OutRot,
                          bool& bOutWater, bool bShortTrace = false, bool* bOutTooSteep = nullptr,
-                         FVector* OutGroundNormal = nullptr) const;
+                         FVector* OutGroundNormal = nullptr,
+                         struct FHitResult* OutGroundHit = nullptr) const;
+    // ns-t45-verticaldiag: LOOKUP-ONLY reader of the mod's own cave store at one point. It calls the
+    // same EnsureCaveStoreLoaded() that NodeShuffle.Here already calls before reading the store, then
+    // copies out what is held. It traces nothing, decides nothing, and no caller of it gates on it.
+    void ReadCaveStoreAtForDiag(const FVector& At, FNodeShuffleCaveCellReading& Out) const;
     // slopefit-1 RETRO-FIT: nodes settled under the old full-tilt rule get the clamped-actor rotation
     // + full-slope rock alignment re-applied ONCE on adopt (rotation only; never occupied/pinned).
     TSet<FGuid> AdoptRotRefit;

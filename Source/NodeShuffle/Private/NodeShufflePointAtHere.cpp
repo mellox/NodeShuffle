@@ -31,6 +31,7 @@
 
 #include "NodeShuffle.h"
 #include "NodeShuffleCentreShadow.h" // ns-t42-centreshadow: the one shadow-reading emitter
+#include "NodeShuffleGroundIdentity.h" // ns-t45-verticaldiag: hit-identity + cave-store emitters
 
 #include "EngineUtils.h"
 #include "HAL/IConsoleManager.h"
@@ -298,6 +299,17 @@ void ANodeShuffleSubsystem::LogPointAtHereCensus() const
             bEnclosed, Blocked, Total, Threshold);
     }
 
+    // ns-t45-verticaldiag: WHAT THE MOD'S OWN CAVE STORE HOLDS AT THE AIMED POINT. Added to all three
+    // probe commands and not only to WellProbe. NOTHING GATES ON IT.
+    {
+        FNodeShuffleCaveCellReading Cave;
+        ReadCaveStoreAtForDiag(TestAt, Cave);
+        LogCaveStoreReading(TEXT("POINTAT"),
+            FString(TEXT("the aim trace's own impact point, which was not settled and is not a member's ")
+                    TEXT("centre")),
+            Cave);
+    }
+
     // SLOPE + CLIFF VERDICT at the aimed point, mirroring NodeShuffle.Here's line so the two commands'
     // output compares line for line. This runs the ground trace the enclosure call above deliberately
     // did NOT use, and the line says so in full.
@@ -307,9 +319,15 @@ void ANodeShuffleSubsystem::LogPointAtHereCensus() const
         bool bSlopeWater = false;
         bool bSlopeCliff = false;
         FVector SlopeN = FVector::UpVector;
+        // ns-t45-verticaldiag: the same call with the write-only hit tap added. No other argument
+        // changed; the branch below is untouched.
+        FHitResult GroundHit;
         const bool bHaveSettled = RaycastGroundAt(TestAt, static_cast<float>(TestAt.Z), Pawn, nullptr,
                                                   SlopeLoc, SlopeRot, bSlopeWater,
-                                                  /*bShortTrace=*/false, &bSlopeCliff, &SlopeN);
+                                                  /*bShortTrace=*/false, &bSlopeCliff, &SlopeN,
+                                                  &GroundHit);
+        LogGroundTraceHitIdentity(TEXT("POINTAT"),
+            FString(TEXT("the aim trace's own impact point")), TestAt, bHaveSettled, GroundHit);
         if (bHaveSettled)
         {
             const float SlopeDeg = FMath::RadiansToDegrees(

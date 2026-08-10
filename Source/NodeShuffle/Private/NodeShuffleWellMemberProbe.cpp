@@ -40,6 +40,7 @@
 
 #include "NodeShuffle.h"
 #include "NodeShuffleCentreShadow.h" // ns-t42-centreshadow: the one shadow-reading emitter
+#include "NodeShuffleGroundIdentity.h" // ns-t45-verticaldiag: hit-identity + cave-store emitters
 #include "NodeShuffleWellCensus.h"   // AFGResourceNodeFrackingCore / ...Satellite
 #include "NodeShuffleWellRetype.h"   // WellShort
 
@@ -200,6 +201,11 @@ void ANodeShuffleSubsystem::LogWellMemberProbeCensus() const
     // added up is a disagreement nobody can size.
     int32 ShadowInside = 0, ShadowNotMeasured = 0, ShadowControlDidNotDemonstrate = 0;
     int32 AgreeWithGate = 0, CandidateWouldAddRefusal = 0, CandidateWouldDropRefusal = 0;
+    // ns-t45-verticaldiag: the cave-store lookup's own tallies, same `Probed` denominator as the rest.
+    int32 CaveCellPresent = 0, CaveCellAbsent = 0;
+    // The store size AS THE LAST LOOKUP OF THIS RUN READ IT BACK, so the summary's denominator is a
+    // number this run measured rather than one re-read afterwards. -1 means no lookup ran this call.
+    int32 LastCaveStoreTotalSeen = -1;
 
     for (int32 MemberIdx = 0; MemberIdx < MembersInGroup; ++MemberIdx)
     {
@@ -392,6 +398,20 @@ void ANodeShuffleSubsystem::LogWellMemberProbeCensus() const
             }
         }
 
+        // ---- WHAT THE MOD'S OWN CAVE STORE HOLDS AT THIS MEMBER'S LOCATION ----
+        // ns-t45-verticaldiag. The member's OWN point, the same one the enclosure gate above was given.
+        // A lookup, not a test: NOTHING GATES ON IT and no trace is made for it.
+        {
+            FNodeShuffleCaveCellReading Cave;
+            ReadCaveStoreAtForDiag(MemberLoc, Cave);
+            if (Cave.bCellPresent) { CaveCellPresent++; } else { CaveCellAbsent++; }
+            LastCaveStoreTotalSeen = Cave.StoreCellsTotal;
+            LogCaveStoreReading(TEXT("WELLPROBE"),
+                FString::Printf(TEXT("member %d of %d, at its own location"),
+                                MemberIdx + 1, MembersInGroup),
+                Cave);
+        }
+
         // ---- SLOPE + CLIFF VERDICT AT THIS MEMBER ----
         // The same long downward ground trace NodeShuffle.Here and NodeShuffle.PointAtHere run, from this
         // member's own position, so the three commands' slope lines compare. Its landing point is NOT
@@ -402,9 +422,18 @@ void ANodeShuffleSubsystem::LogWellMemberProbeCensus() const
             bool bSlopeWater = false;
             bool bSlopeCliff = false;
             FVector SlopeN = FVector::UpVector;
+            // ns-t45-verticaldiag: the same call with the write-only hit tap added, so the line below
+            // NAMES the actor and component this trace ended on. THIS IS THE PACKET'S CENTRAL QUESTION:
+            // that landing point has been printing metres above the member all evening with no owner.
+            FHitResult GroundHit;
             const bool bHaveSettled = RaycastGroundAt(MemberLoc, static_cast<float>(MemberLoc.Z), Pawn,
                                                       nullptr, SlopeLoc, SlopeRot, bSlopeWater,
-                                                      /*bShortTrace=*/false, &bSlopeCliff, &SlopeN);
+                                                      /*bShortTrace=*/false, &bSlopeCliff, &SlopeN,
+                                                      &GroundHit);
+            LogGroundTraceHitIdentity(TEXT("WELLPROBE"),
+                FString::Printf(TEXT("member %d of %d, traced from its own location"),
+                                MemberIdx + 1, MembersInGroup),
+                MemberLoc, bHaveSettled, GroundHit);
             if (bHaveSettled)
             {
                 const float SlopeDeg = FMath::RadiansToDegrees(
@@ -467,4 +496,8 @@ void ANodeShuffleSubsystem::LogWellMemberProbeCensus() const
         AgreeWithGate, CandidateWouldAddRefusal + CandidateWouldDropRefusal,
         CandidateWouldAddRefusal, CandidateWouldDropRefusal,
         ShadowNotMeasured, ShadowControlDidNotDemonstrate);
+
+    // ns-t45-verticaldiag: THE CAVE-STORE LOOKUP OVER THE WHOLE GROUP, WITH THE SAME DENOMINATOR.
+    LogCaveStoreGroupSummary(TEXT("WELLPROBE"), WellShort(E->CorePath), Probed,
+                             CaveCellPresent, CaveCellAbsent, LastCaveStoreTotalSeen);
 }

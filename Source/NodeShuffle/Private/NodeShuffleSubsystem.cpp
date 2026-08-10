@@ -5,6 +5,7 @@
 #include "NodeShuffleResourceNode.h"
 #include "NodeShuffleNodeComponent.h"
 #include "NodeShuffleCentreShadow.h" // ns-t42-centreshadow: the one shadow-reading emitter
+#include "NodeShuffleGroundIdentity.h" // ns-t45-verticaldiag: hit-identity + cave-store emitters
 
 #include "EngineUtils.h"
 #include "TimerManager.h"
@@ -5885,6 +5886,40 @@ int32 ANodeShuffleSubsystem::CountUndergroundEntries() const
     return N;
 }
 
+// ns-t45-verticaldiag: WHAT DOES THE MOD'S OWN CAVE STORE SAY ABOUT THIS POINT? A lookup, not a test:
+// it computes the point's key with the store's OWN key function and cell size (never a second copy of
+// either) and copies out what is held there. No trace, no geometry, no verdict, and no caller of it
+// gates on anything it returns -- it exists so a probe line can report the store's belief instead of a
+// reader inferring one. It calls EnsureCaveStoreLoaded() exactly as NodeShuffle.Here already does
+// before reading the store, and records whether the store was ALREADY resident, because "the store
+// holds no cell here" and "the store held nothing at all yet" are different statements.
+void ANodeShuffleSubsystem::ReadCaveStoreAtForDiag(const FVector& At,
+                                                   FNodeShuffleCaveCellReading& Out) const
+{
+    Out = FNodeShuffleCaveCellReading();
+    Out.Point = At;
+    Out.CellSizeCm = CaveCellCm;
+    Out.bStoreLoadedBeforeThisCall = bCaveStoreLoaded;
+    EnsureCaveStoreLoaded();
+    Out.StoreCellsTotal = CaveFloors.Num();
+    Out.StoreSeedCount = CaveSeedCount;
+
+    const int64 Key = NodeShuffleGridKey(At, CaveCellCm);
+    Out.CellX = static_cast<int32>(Key >> 32);
+    Out.CellY = static_cast<int32>(Key & 0xffffffffLL);
+    Out.CellCentre = FVector((Out.CellX + 0.5f) * CaveCellCm, (Out.CellY + 0.5f) * CaveCellCm, At.Z);
+    if (const FNodeShuffleCaveCell* Cell = CaveFloors.Find(Key))
+    {
+        Out.bCellPresent = true;
+        Out.CellState = Cell->State;
+        Out.CellFloorZ = Cell->FloorZ;
+        Out.CellCeilingCm = Cell->CeilingCm;
+        Out.PointAboveCellFloorCm = At.Z - Cell->FloorZ;
+        Out.CellCentre.Z = Cell->FloorZ;
+    }
+    Out.bRan = true;
+}
+
 // cave-nodes-2: CaveTopUpPass DELETED (user call — caves are additional random areas, not a quota to
 // actively fill). Cave cells now enter the candidate space of every deal draw instead: see
 // GenerateNewLocations (roll + relocation spots) and TryRedealWaterLockedEntry, each drawing a cave
@@ -5918,11 +5953,14 @@ bool ANodeShuffleSubsystem::IsPointInWater(const FVector& Point) const
 bool ANodeShuffleSubsystem::RaycastGroundAt(const FVector& ProbeXY, float StartZ, const AActor* IgnoreNode,
                                             const AActor* IgnoreMesh, FVector& OutLoc, FRotator& OutRot,
                                             bool& bOutWater, bool bShortTrace, bool* bOutTooSteep,
-                                            FVector* OutGroundNormal) const
+                                            FVector* OutGroundNormal, FHitResult* OutGroundHit) const
 {
     bOutWater = false;
     if (bOutTooSteep) { *bOutTooSteep = false; }
     if (OutGroundNormal) { *OutGroundNormal = FVector::UpVector; }
+    // ns-t45-verticaldiag: cleared here so a caller that ignores the return value still sees an empty
+    // hit rather than whatever it passed in. Written once below, never read by this function.
+    if (OutGroundHit) { *OutGroundHit = FHitResult(); }
     FCollisionQueryParams Params(SCENE_QUERY_STAT(NodeShuffleSettle), true);
     if (IgnoreNode) { Params.AddIgnoredActor(IgnoreNode); }
     if (IgnoreMesh) { Params.AddIgnoredActor(IgnoreMesh); }
@@ -5937,6 +5975,9 @@ bool ANodeShuffleSubsystem::RaycastGroundAt(const FVector& ProbeXY, float StartZ
     {
         return false; // no terrain / out of range (true void)
     }
+    // ns-t45-verticaldiag: the diagnostic tap, taken from the SAME hit OutLoc is read from on the next
+    // line, so a caller naming the actor names the actor that produced the landing point it printed.
+    if (OutGroundHit) { *OutGroundHit = Hit; }
     OutLoc = Hit.ImpactPoint;
     // slopefit-1: SMOOTH the ground normal over a small probe ring — one noisy collision triangle
     // made rocks sit "off the slant of the hillside". Long traces only (cave floors don't tilt).
@@ -6596,6 +6637,52 @@ void ANodeShuffleSubsystem::LogHereCensus() const
         bPlayerRoofed ? *FString::Printf(TEXT(" (%.0fm up)"), (RoofHit.ImpactPoint.Z - P.Z) / 100.0f) : TEXT(""),
         AmbientCount, AmbientCount > 0 ? *AmbientNames : TEXT("<none>"));
 
+    // ns-t45-verticaldiag: HOW TO WALK TO A NODE THE MOD DELIBERATELY PUT IN A CAVE. The counts above
+    // say how many exist; they never said WHERE, and a positive control for the cave classification is
+    // useless if the author cannot reach one. Same predicate as CountUndergroundEntries (bIsNewNode &&
+    // bActive && bUnderground) evaluated in one loop, so the pointer and the count cannot disagree.
+    {
+        const double HereYaw = Pawn->GetActorRotation().Yaw;
+        const FNodeShuffleEntry* NearestUg = nullptr;
+        double NearestUgD2 = 0.0;
+        int32 UgTotal = 0;
+        for (const FNodeShuffleEntry& E : Layout)
+        {
+            if (!(E.bIsNewNode && E.bActive && E.bUnderground)) { continue; }
+            UgTotal++;
+            const double D2 = FVector::DistSquared2D(E.Location, P);
+            if (!NearestUg || D2 < NearestUgD2) { NearestUg = &E; NearestUgD2 = D2; }
+        }
+        if (NearestUg)
+        {
+            const FVector D = NearestUg->Location - P;
+            const double Turn = FRotator::NormalizeAxis(
+                FMath::RadiansToDegrees(FMath::Atan2(D.Y, D.X)) - HereYaw);
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("HERE: nearest cave-flagged node entry -- 1 of %d entry(ies) in this layout that ")
+                TEXT("carry the underground flag, at %s, %.0f m away from you in 2D and %+.0f m in Z; ")
+                TEXT("from where you stand and face, turn %+.0f deg and go. Its ")
+                TEXT("settle state is %s. WHAT THE FLAG IS: the layout's own record that this entry was ")
+                TEXT("DEALT a cave-floor cell, which is why it settles with the short in-cave trace. ")
+                TEXT("Stand at it and run this command again to take the cave-store and hit-identity ")
+                TEXT("readings there. THIS IS A POINTER, NOT A VERDICT: the flag is what the deal wrote, ")
+                TEXT("the apply path can clear it later, and this line does not check where the node ")
+                TEXT("actually ended up. It states no cause."),
+                UgTotal, *NearestUg->Location.ToCompactString(),
+                FMath::Sqrt(NearestUgD2) / 100.0, D.Z / 100.0, Turn,
+                NearestUg->bRayCasted ? TEXT("settled") : TEXT("unsettled"));
+        }
+        else
+        {
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("HERE: nearest cave-flagged node entry -- NONE: 0 of this layout's %d entry(ies) ")
+                TEXT("carry the underground flag, so there is no cave-placed node to walk to in this ")
+                TEXT("save and no distance is printed. That is a different statement from one being far ")
+                TEXT("away. This line counts flags on the layout; it does not say why none are set."),
+                Layout.Num());
+        }
+    }
+
     // slopefit-1 diagnostics: slope at the player's feet + the cliff-gate verdict — answers "would
     // nodes settle on this hillside?" in one line (user hit this exact question on a re-rolled hill).
     {
@@ -6607,8 +6694,14 @@ void ANodeShuffleSubsystem::LogHereCensus() const
         // ns-t35-gatereach: the result is now held in a local so the enclosure block below can say
         // WHICH point it tested without tracing a second time. The call, its arguments and the branch
         // it feeds are unchanged.
+        // ns-t45-verticaldiag: the same call, with the write-only hit tap added so the line below can
+        // NAME what this trace ended on. No other argument changed and the branch it feeds is untouched.
+        FHitResult GroundHit;
         const bool bHaveSettled = RaycastGroundAt(P, P.Z, Pawn, nullptr, SlopeLoc, SlopeRot, bSlopeWater,
-                                                  /*bShortTrace=*/false, &bSlopeCliff, &SlopeN);
+                                                  /*bShortTrace=*/false, &bSlopeCliff, &SlopeN,
+                                                  &GroundHit);
+        LogGroundTraceHitIdentity(TEXT("HERE"),
+            FString(TEXT("your own position")), P, bHaveSettled, GroundHit);
         if (bHaveSettled)
         {
             const float SlopeHereDeg = FMath::RadiansToDegrees(
@@ -6742,6 +6835,19 @@ void ANodeShuffleSubsystem::LogHereCensus() const
                     (Pawn != nullptr) ? Pawn->GetName() : FString(TEXT("<none: no pawn resolved>")),
                     bEnclosed, Blocked, Total, Threshold);
             }
+
+            // ns-t45-verticaldiag: WHAT THE MOD'S OWN CAVE STORE HOLDS AT THE SAME POINT. Added to all
+            // three probe commands and not only to WellProbe: a check present on one probe and absent
+            // on its siblings is this project's most-repeated defect. NOTHING GATES ON IT.
+            {
+                FNodeShuffleCaveCellReading Cave;
+                ReadCaveStoreAtForDiag(TestAt, Cave);
+                LogCaveStoreReading(TEXT("HERE"),
+                    FString(bHaveSettled
+                        ? TEXT("the point a long downward ground trace from your position landed on")
+                        : TEXT("your own position, that ground trace having found nothing to settle on")),
+                    Cave);
+            }
         }
     }
 
@@ -6763,6 +6869,9 @@ void ANodeShuffleSubsystem::LogHereCensus() const
         FString Flags;
         if (!E.bActive) { Flags += TEXT("inactive|"); }
         if (E.bPinned) { Flags += TEXT("pinned|"); }
+        // ns-t45-verticaldiag: the layout's own cave-deal flag, surfaced per entry so a reader standing
+        // in a cavern can see WHICH nearby entry the deal put there. Reports the stored flag only.
+        if (E.bUnderground) { Flags += TEXT("CAVEDEALT|"); }
         Flags += E.bRayCasted ? TEXT("settled|") : TEXT("unsettled|");
         Flags += bLive ? TEXT("LIVE") : TEXT("no-actor");
         if (WaterLockedThisSession.Contains(E.EntryGuid)) { Flags += TEXT("|WATER-LOCKED"); }
