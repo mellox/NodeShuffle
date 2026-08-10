@@ -7,7 +7,7 @@ this list, the entry has failed — fix the entry, not just the bug.**
 Each item records what it is, how we know, and why it is not fixed. Items with a
 **pre-scoped fix** have had the work sized already — start there, don't redesign.
 
-Last updated 2026-08-08 (second revision: the *truth-diagnostics* pass).
+Last updated 2026-08-10 (T54 filed at the top of P1 by author ruling; supersedes D1's coupling).
 
 > **Correction, 2026-08-08 — read before using anything below about node coverage.**
 > An earlier revision of this file was written while the project believed vanilla resource
@@ -74,6 +74,45 @@ original.
 ---
 
 ## P1 — player-visible, fix before more people use the feature
+
+### T54. Vanilla wells are NOT hidden at load — the origin stays live and usable until its replacement places. The author has now ruled that wrong. **TOP OF P1 (author, 2026-08-10).**
+**The ask (author, 2026-08-10, on a fresh multi-mod save):** *"So our on load shuffle still doesn't
+hide vanilla immediately like I asked?"* — said while standing at `BP_FrackingCore12` (water), fully
+live with its six satellites, `hidden=0`, while `WELLH2-STRANDED pass 1` read **2 of 20 well entries
+placed**. By the suppression invariant, every unplaced entry's vanilla group stays visible and usable
+for an unbounded time — until the player happens to stream terrain near that entry's destination.
+
+**This entry supersedes a DECISION, not an oversight — D1 (2026-08-08) chose the current behaviour
+deliberately**: suppression is coupled to placement (`SuppressVanillaWellGroup` has two call sites,
+`NodeShuffleWellRelocateApply.cpp:473`/`:505`, both requiring `bGroupPlaced` — T15's invariant *"a
+suppressed well origin always has a live, maintained relocated group"*), because placement is
+presence-gated (the destination probe needs streamed terrain) and hiding on the roll removes a well
+from the save for an unbounded time, possibly permanently (design §5.4, fail-safe-to-vanilla). The
+author's 2026-08-10 ruling reverses that priority: a player seeing and using a well that is destined
+to move is the worse defect. D1's text must be re-decided as part of this item, not left contradicting it.
+
+**What an immediate-hide fix must re-decide or not break — named up front:**
+1. **The well-less window becomes intended.** Hide-at-load plus presence-gated placement means the
+   resource exists NOWHERE until the destination streams. The author must confirm that window is
+   acceptable as-is, or this item waits on removing the presence gate (T21's baked-surface analysis
+   is exactly that question). **This decision gates the build.**
+2. **`WELLH2-STRANDED` flips polarity.** "Suppressed but not placed = 0" is today's health
+   invariant; after this fix that state is intended-transient. The check must distinguish
+   transient-awaiting-placement from stuck, or it becomes a vacuous pass (the exact defect class in
+   [[lessons-checklist-predates-the-feature]]).
+3. **D1's duplication scenario mostly dissolves** — nobody can build on a hidden well — a point in
+   its favour. But the occupied-member refusal (`NodeShuffleWellRelocateApply.cpp:295`, *never hide
+   a well someone has built on*) must keep protecting saves where extractors already exist at the
+   origin before the first hide runs.
+4. **Restore paths get a bigger population.** Reroll/disable restore has been exercised on placed
+   groups; after this fix it must un-hide entries that never placed. T15's late-streaming-satellite
+   gap (hidden at origin, refused at destination) gains blast radius: with immediate hide there may
+   be NO destination group yet when the satellite streams in.
+
+> **Pre-scoped starting point:** the hide today runs inside `ApplyWellRelocation`'s spawn-then-suppress
+> (`NodeShuffleWellRelocateApply.cpp:467-473`); immediate-hide would run at load/stream-in for every
+> entry the roll marked as moving. **Do not build until the author answers item 1** — that answer
+> decides whether this is a one-gate change now or waits on T21.
 
 ### ~~T1. The Relocate Resource Wells tooltip states the opposite of what the feature does~~ — FIXED 2026-08-08
 The settings UI described a relocated well as *"functional but INVISIBLE"* and labelled the
