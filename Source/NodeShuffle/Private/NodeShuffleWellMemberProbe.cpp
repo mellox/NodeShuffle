@@ -40,6 +40,7 @@
 
 #include "NodeShuffle.h"
 #include "NodeShuffleCentreShadow.h" // ns-t42-centreshadow: the one shadow-reading emitter
+#include "NodeShuffleTotallyInside.h" // ns-t53-totallyinside: the positive-only containment probe
 #include "NodeShuffleGroundIdentity.h" // ns-t45-verticaldiag: hit-identity + cave-store emitters
 #include "NodeShuffleWellCensus.h"   // AFGResourceNodeFrackingCore / ...Satellite
 #include "NodeShuffleWellRetype.h"   // WellShort
@@ -208,6 +209,19 @@ void ANodeShuffleSubsystem::LogWellMemberProbeCensus() const
     // Stays -1 when no member produced a reading at all.
     int32 ShadowDetailCapSeen = -1;
     int32 AgreeWithGate = 0, CandidateWouldAddRefusal = 0, CandidateWouldDropRefusal = 0;
+    // ns-t53-totallyinside: the positive-only instrument's own tallies, all with the same `Probed`
+    // denominator every line above uses. Counted so the group summary can say how many members EACH
+    // instrument would call contained rather than only how many the shipped gate refused.
+    int32 TIPositive = 0, TINotMeasured = 0, TICentreOverlapSolid = 0;
+    int32 TIAgree = 0, TIAdds = 0, TIDrops = 0;
+    int32 TIDirectionsBlocked = 0, TIDirectionsProbed = 0;
+    int32 TICarriedOutward = 0, TICarriedInward = 0, TICarriedSweep = 0, TICarriedSweepStart = 0,
+          TICarriedOuterOverlap = 0;
+    int32 TIIgnoredRehits = 0, TIRetraceCapHits = 0;
+    // The per-point direction count and the probe reach, read back from a reading THIS run rather than
+    // typed into the summary string. They stay at -1 when no member produced a reading at all.
+    int32 TIDirectionCountSeen = -1;
+    double TIProbeReachSeen = -1.0;
     // ns-t45-verticaldiag: the cave-store lookup's own tallies, same `Probed` denominator as the rest.
     int32 CaveCellPresent = 0, CaveCellAbsent = 0;
     // The store size AS THE LAST LOOKUP OF THIS RUN READ IT BACK, so the summary's denominator is a
@@ -416,6 +430,50 @@ void ANodeShuffleSubsystem::LogWellMemberProbeCensus() const
             }
         }
 
+        // ---- THE POSITIVE-ONLY CONTAINMENT INSTRUMENT, AT THIS MEMBER'S OWN LOCATION ----
+        // ns-t53-totallyinside. NOTHING GATES ON THIS EITHER. It is printed AFTER both verdicts above so
+        // the three can be compared member by member. It answers the narrowed question the author asked
+        // for on 2026-08-10 -- is this member's own centre TOTALLY INSIDE solid geometry -- and it makes
+        // no statement at all about a centre sitting on an edge, which the author deferred.
+        {
+            const AActor* Subject = IsValid(LiveActor) ? LiveActor : nullptr;
+            FNodeShuffleTotallyInsideReading Inside;
+            RunTotallyInsideProbe(GetWorld(), MemberLoc, Subject, Inside);
+            if (!Inside.bRan) { TINotMeasured++; }
+            else
+            {
+                if (Inside.bTotallyInside) { TIPositive++; }
+                if (Inside.bCentreOverlapSolid) { TICentreOverlapSolid++; }
+                TIDirectionsBlocked += Inside.BlockedDirections;
+                TIDirectionsProbed += Inside.DirectionCount;
+                TICarriedOutward += Inside.CarriedByOutward;
+                TICarriedInward += Inside.CarriedByInward;
+                TICarriedSweep += Inside.CarriedBySweep;
+                TICarriedSweepStart += Inside.CarriedBySweepStart;
+                TICarriedOuterOverlap += Inside.CarriedByOuterOverlap;
+                TIIgnoredRehits += Inside.IgnoredRehits;
+                TIRetraceCapHits += Inside.RetraceCapHits;
+                TIDirectionCountSeen = Inside.DirectionCount;
+                TIProbeReachSeen = Inside.ProbeReachCm;
+            }
+
+            const ETotallyInsideAgreement TIAgreement = LogTotallyInsideReading(
+                TEXT("WELLPROBE"),
+                FString::Printf(TEXT("member %d of %d"), MemberIdx + 1, MembersInGroup),
+                Inside,
+                Subject ? Subject->GetName()
+                        : FString(TEXT("<none: this member resolved from the saved record>")),
+                bEnclosed, Blocked, Total, Threshold);
+            switch (TIAgreement)
+            {
+                case ETotallyInsideAgreement::AgreeRefuse:
+                case ETotallyInsideAgreement::AgreePass:      TIAgree++; break;
+                case ETotallyInsideAgreement::CandidateAdds:  TIAdds++; break;
+                case ETotallyInsideAgreement::CandidateDrops: TIDrops++; break;
+                case ETotallyInsideAgreement::NotComparable:  break;
+            }
+        }
+
         // ---- WHAT THE MOD'S OWN CAVE STORE HOLDS AT THIS MEMBER'S LOCATION ----
         // ns-t45-verticaldiag. The member's OWN point, the same one the enclosure gate above was given.
         // A lookup, not a test: NOTHING GATES ON IT and no trace is made for it.
@@ -537,6 +595,36 @@ void ANodeShuffleSubsystem::LogWellMemberProbeCensus() const
         Probed, ShadowInside, ShadowControlDidNotDemonstrate, ShadowNotMeasured,
         ShadowDetailCapSeen,
         Probed);
+
+    // ns-t53-totallyinside: THE POSITIVE-ONLY INSTRUMENT OVER THE WHOLE GROUP, SAME DENOMINATOR.
+    UE_LOG(LogNodeShuffle, Display,
+        TEXT("WELLPROBE: group '%s' containment summary -- of the %d member(s) probed, the SHIPPED ")
+        TEXT("enclosure gate would refuse %d and this instrument gave its positive verdict for %d. They ")
+        TEXT("agree on %d member(s) and disagree on %d: on %d this instrument is positive where the ")
+        TEXT("shipped gate accepts, and on %d it is not positive where the shipped gate refuses. For %d ")
+        TEXT("member(s) no query ran at all and those are in neither column. ACROSS THE WHOLE GROUP, %d ")
+        TEXT("of the %d direction(s) probed over every member reported solid; each member is probed in ")
+        TEXT("%d direction(s) out to %.0f cm, both of those read back from a reading this run rather ")
+        TEXT("than typed into this line, and a figure of -1 in either would mean no member produced a ")
+        TEXT("reading at all. WHICH INSTRUMENT CARRIED THOSE DIRECTIONS: the outward line query %d, the ")
+        TEXT("inward line query %d, the inward sweep %d, of which %d were that sweep reporting it was ")
+        TEXT("already overlapping at its own start, and the overlap at the far end %d; one direction can ")
+        TEXT("be carried by more than one instrument, so those need not sum to %d. THE CORROBORATING ")
+        TEXT("OVERLAP at the member's own location found solid for %d of the %d probed, and it neither ")
+        TEXT("grants nor vetoes any verdict above. Over the whole group, %d query result(s) came back ")
+        TEXT("on an actor already on a query's own ignore list and %d query(ies) spent their whole ")
+        TEXT("re-run budget. NO PLACEMENT BEHAVIOUR IN THIS BUILD DEPENDS ON THIS COLUMN: it is ")
+        TEXT("computed and printed and nothing reads it. This line counts verdicts and states no cause ")
+        TEXT("for any of them."),
+        *WellShort(E->CorePath),
+        Probed, RefusedByPredicate, TIPositive,
+        TIAgree, TIAdds + TIDrops, TIAdds, TIDrops, TINotMeasured,
+        TIDirectionsBlocked, TIDirectionsProbed,
+        TIDirectionCountSeen, TIProbeReachSeen,
+        TICarriedOutward, TICarriedInward, TICarriedSweep, TICarriedSweepStart,
+        TICarriedOuterOverlap, TIDirectionsBlocked,
+        TICentreOverlapSolid, Probed,
+        TIIgnoredRehits, TIRetraceCapHits);
 
     // ns-t45-verticaldiag: THE CAVE-STORE LOOKUP OVER THE WHOLE GROUP, WITH THE SAME DENOMINATOR.
     LogCaveStoreGroupSummary(TEXT("WELLPROBE"), WellShort(E->CorePath), Probed,

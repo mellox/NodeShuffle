@@ -31,6 +31,7 @@
 
 #include "NodeShuffle.h"
 #include "NodeShuffleCentreShadow.h" // ns-t42-centreshadow: the one shadow-reading emitter
+#include "NodeShuffleTotallyInside.h" // ns-t53-totallyinside: the positive-only containment probe
 #include "NodeShuffleGroundIdentity.h" // ns-t45-verticaldiag: hit-identity + cave-store emitters
 
 #include "EngineUtils.h"
@@ -299,6 +300,23 @@ void ANodeShuffleSubsystem::LogPointAtHereCensus() const
             FString(TEXT("the aim trace's own impact point, which was not settled and is not a member's ")
                     TEXT("centre")),
             Centre, bCentreInside,
+            (Pawn != nullptr) ? Pawn->GetName() : FString(TEXT("<none: no pawn resolved>")),
+            bEnclosed, Blocked, Total, Threshold);
+    }
+
+    // ns-t53-totallyinside: THE POSITIVE-ONLY CONTAINMENT INSTRUMENT, AT THE SAME AIMED POINT. Added to
+    // all three probe commands and not only to WellProbe: a check present on one probe and absent on its
+    // siblings is this project's most-repeated defect. NOTHING GATES ON IT. On THIS command the point is
+    // an aim trace's impact, which sits ON a surface rather than at any member's centre, so a reading
+    // taken here describes that surface's neighbourhood and not a member's.
+    {
+        FNodeShuffleTotallyInsideReading Inside;
+        RunTotallyInsideProbe(GetWorld(), TestAt, Pawn, Inside);
+        LogTotallyInsideReading(
+            TEXT("POINTAT"),
+            FString(TEXT("the aim trace's own impact point, which was not settled and is not a member's ")
+                    TEXT("centre")),
+            Inside,
             (Pawn != nullptr) ? Pawn->GetName() : FString(TEXT("<none: no pawn resolved>")),
             bEnclosed, Blocked, Total, Threshold);
     }
