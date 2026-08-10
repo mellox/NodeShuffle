@@ -1780,3 +1780,48 @@ cave.**
 readings — the author's rule gets its first real test only after that. **Do not tune the walk against
 satellite 86.** The single best regression test now exists and is free: **a point on open ground under
 an overhang must read NOT INSIDE**, and the author has the coordinates.
+
+### T50. THE CONTAINMENT WALK SPENDS ITS ITERATION BUDGET ON HITS IT THEN DISCARDS — the player's own capsule consumed 28 of 32 inbound and 31 of 32 outbound hits, so the walk never reached the geometry it existed to count. Root cause of [[T48]].
+**MEASURED 2026-08-10 on `2026-08-10-t49-1`, `PointAtHere` at the known-correct test point
+`V(X=81329.41, Y=156623.09, Z=2112.49)` (open ground under an overhang; correct answer NOT INSIDE).
+The per-crossing instrument printed the whole arithmetic:**
+```
+INBOUND : 32 blocking hits, 28 EXCLUDED -> 4 counted, 4 front, 0 back
+OUTBOUND: 32 blocking hits, 31 EXCLUDED -> 1 counted, 1 front, 0 back
+entries = 4 ; exits = max(inbound back 0, outbound front 1) = 1 ; net = 3 >= 1  => CENTRE INSIDE
+"A walk used all of its 32-hit iteration budget."   <- BOTH did
+```
+**Nearly every discarded hit was `Char_Player_C` — the caller's own pawn, passed as the subject actor.**
+
+**DEFECT 1, primary. An EXCLUDED hit still costs a step of the budget.** The walk hits, tests, discards,
+steps 2 cm past, and hits the same actor again. A player capsule is roughly 180 cm tall, so at a 2 cm
+step it can absorb ~90 hits on its own — the 32-hit budget is gone long before the walk reaches any
+terrain. **The exclusions are applied AFTER the trace instead of inside it.** `FCollisionQueryParams`
+already carries `AddIgnoredActor`, which `IsSpotEnclosed` itself uses for the pawn ([[T36]]) — an
+ignored actor is never returned at all and cannot consume a hit. **That is the fix, and it is the same
+mechanism the sibling predicate already uses.**
+
+**DEFECT 2, and it is why nothing caught defect 1.** **Back faces were ZERO on both walks.** The
+`max(inbound back faces, outbound front faces)` was written precisely because nobody could settle from
+the headers whether this engine reports back faces; this is the first evidence, and it says **it does
+not** — so the outbound-front-face term is the ONLY exit mechanism there has ever been. Budget-starved
+to 1 counted crossing, it under-reports exits, and the walk **fails toward INSIDE** whenever an
+excluded actor stands near the tested point. **Note this inverts what the T42 review predicted** (it
+reasoned the `max()` would make the walk fail toward NOT INSIDE, because a spurious exit wins). The
+review's logic was right and its premise — that back faces might be reported — was wrong.
+
+**WHY IT LOOKED LIKE "cliff above ⇒ INSIDE".** [[T48]] found that correlation and it is real, but it is
+a symptom: the reading is taken where the player stands, so the player is always near the tested point,
+and whatever geometry survives the exhausted budget decides the verdict. **The cliff was never the
+cause. Do not fix this by special-casing `FGCliffActor`.**
+
+**WHAT THIS DOES NOT SETTLE.** Whether the same starvation explains the well members' INSIDE readings
+is **UNTESTED** — there the subject is the member's own actor, not the pawn, and nobody has looked at
+its hit count. **Re-run `WellProbe` after the fix and compare, do not assume.** And the author's centre
+rule remains **untested** — [[T44]]'s failure is now attributed to two instrument defects, so the rule
+gets its first honest test only after both are fixed.
+
+**THE FIX, IN ORDER.** (1) Move all three exclusions into `AddIgnoredActor` on the query params so an
+excluded actor never returns a hit. (2) Re-run the free regression test above — it must read NOT
+INSIDE. (3) Only then re-run `WellProbe` and grade the members. **Do not tune anything against
+satellite 86.**
