@@ -1479,3 +1479,44 @@ the first thing the newly-reachable gate does is refuse spots because a creature
 **THE DIAGNOSTIC EARNED ITS KEEP.** This was found only because the ray line prints the HIT ACTOR
 rather than a bare blocked count. A `blocked 8 of 8` line would have read as a correct, damning
 measurement of the terrain. **Print what you hit, not just that you hit.**
+
+### T37. THE ENCLOSURE GATE IS WORKING CORRECTLY AND IS ANSWERING THE WRONG QUESTION. It asks "am I in a pit?" (7 of 8 rays); the player's constraint is "does the extractor footprint fit?". A core in a nook against a cliff blocks 5, PASSES, and is unbuildable.
+**MEASURED in game 2026-08-09 on `2026-08-09-t36-1`, standing on relocated core `BP_FrackingCore13`
+(2 m), with the pawn excluded from the trace. This is the first VALID enclosure reading ever taken.**
+```
+ray 1 (0 deg):   BLOCKED at 499 cm by LandscapeStreamingProxy_...508_3_4_0
+ray 2 (45 deg):  BLOCKED at 278 cm by FGCliffActor_1637
+ray 3 (90 deg):  BLOCKED at 271 cm by FGCliffActor_1637
+ray 4 (135 deg): BLOCKED at 268 cm by FGCliffActor_1637
+ray 5 (180 deg): clear      ray 6 (225 deg): clear      ray 7 (270 deg): clear
+ray 8 (315 deg): BLOCKED at 358 cm by LandscapeStreamingProxy_...508_3_4_0
+verdict: 5 of 8 blocked; refuses at 7 or more; NOT ENCLOSED
+```
+**The reading passes both validity tests** the T36 review demanded: every distance is non-zero
+(268–499 cm) and **two distinct actors** are named, so this is terrain and not a trace originating
+inside a body. Ground slope 26.6 deg, and the cliff gate accepts to 60 deg, so that gate passes too.
+
+**A PREDICTION WAS PUT ON RECORD BEFORE THE MEASUREMENT AND IT RESOLVED AGAINST THE FIRST BRANCH.**
+Stated: *">=7 blocked ⇒ the gate would have refused and the bug is upstream (T35, it never ran);
+3–5 blocked ⇒ the gate deliberately passed and we are testing the wrong property."* **Result: 5.**
+The predicate is **not broken, not blind, and not mis-thresholded by accident** — it saw a cliff on
+five sides and passed by design.
+
+**SO THE DEFECT IS THE QUESTION, NOT THE ANSWER.** 7-of-8 detects near-total surround: a pit, a hole,
+a crevice. The author's actual constraint is whether a **Resource Well Extractor's footprint** fits —
+and a core pressed into a nook blocks five rays, passes, and still cannot be built on without the
+vanilla snap-mode override ([[T34]]). The author reported **3 usable members** in that group.
+
+**DO NOT FIX THIS BY LOWERING THE THRESHOLD.** 5-of-8 would reject any spot with a single wall behind
+it, which is most of the map's interesting terrain, and it would move the ordinary-node path too —
+`IsSpotEnclosed` is shared since T26, so **any threshold change is a SYMMETRY change to both
+populations at once**. The missing test is **terrain clearance at the building's footprint radius**,
+which no current gate performs: `buildableOverlap` tests BUILDINGS, `nodeOverlap` tests NODES, and
+neither tests a cliff or landscape inside the footprint.
+
+**GRADES.** The ray pattern, distances, actors, verdict and slope — **measured**. That the extractor
+footprint is what refuses — **the author's in-game observation** ([[T34]]), not measured by this mod.
+**The footprint radius the game actually requires is UNMEASURED**, and it is the number any fix needs
+first. **Whether the ordinary-node path has the same gap — UNTESTED**, and [[T35]] shows its enclosure
+gate has also never been reached, so nobody has evidence either way. **Ask that question before
+building anything.**
