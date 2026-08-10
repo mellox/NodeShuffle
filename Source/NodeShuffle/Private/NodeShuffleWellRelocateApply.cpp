@@ -755,6 +755,10 @@ void ANodeShuffleSubsystem::SuppressVanillaWellGroup(FNodeShuffleWellEntry& E, E
         // once ever, so a piece that entered the index later -- or was re-created by a streaming round
         // trip at the origin -- was hidden with no record at all and could only be restored to the default.
         MeshesHidden += HideWellMemberMeshes(Node, MeshesAlready);
+        // ns-t36-probefix item 2: LOG ONLY, after the hide so it reports the state a player would see.
+        // It changes no count above and no decision below; it is diagnostics-gated and throttled on its
+        // own counts inside the definition.
+        LogWellMemberComponentCensus(Node);
         if (bChanged) { ++Hidden; }
         // Take the hidden original out of the scanner and the node manager, once, so it cannot ping an
         // empty map spot or accept an extractor snap as an invisible ghost. Same idiom, same reasons,

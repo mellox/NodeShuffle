@@ -1600,9 +1600,19 @@ private:
     // that printed "7 of 8" from a literal would be a measurement baked into a log string, printing the
     // same claim in every world regardless of what the predicate is compiled with. When it is non-null
     // it is written from the constant this call actually tested against.
+    // ns-t36-probefix: IgnoreActor is an OPTIONAL trace exclusion and it defaults to nullptr so both
+    // placement call sites stay textually unchanged and keep passing nothing. It exists for one
+    // measured reason (docs/TECH-DEBT.md T36): a character blocks ECC_WorldStatic, so a probe run at
+    // the point a player is standing on terminates inside that player's own capsule and returns a
+    // reading with no terrain in it -- measured as all 8 rays reporting a blocking hit at 0 cm on the
+    // pawn's own actor name. NodeShuffle.Here passes the pawn it resolved; nothing else passes
+    // anything. The rays, the bearings, the reach, the eye height, the channel, the trace complexity
+    // flag, the blocked threshold and the return value are untouched by this parameter -- it adds one
+    // actor to the query params' ignore list and does nothing else.
     bool IsSpotEnclosed(const FVector& At, int32& OutBlockedRays, int32& OutTotalRays,
                         TArray<FNodeShuffleEnclosureRay>* OutRays = nullptr,
-                        int32* OutBlockedThreshold = nullptr) const;
+                        int32* OutBlockedThreshold = nullptr,
+                        const AActor* IgnoreActor = nullptr) const;
 
     // Group-atomic spawn (design Q1's decision): core deferred-spawned first, then EVERY satellite
     // deferred-spawned with mCore pre-set, then all finished -- so a core can never exist without its
@@ -2140,6 +2150,11 @@ private:
     // and missed pieces that entered the index later or were re-created by a streaming round trip. See
     // the definition for why the record cannot be persisted.
     int32 HideWellMemberMeshes(class AFGResourceNodeBase* Node, int32& OutAlreadyHidden);
+    // ns-t36-probefix item 2: LOG ONLY -- the component inventory of a suppressed member and of the
+    // actors its indexed mesh pieces live on, taken at hide time. It hides nothing and decides nothing.
+    // It exists because the reported still-playing water spout could not be attributed to any component
+    // this mod touches, and this repo's rule is to measure rather than guess at a class name.
+    void LogWellMemberComponentCensus(class AFGResourceNodeBase* Node);
     // The origin-side inverse: restore every indexed piece of this member. Returns pieces restored;
     // OutGuessed accumulates pieces whose prior state was not in the session record and had to use the
     // documented default. bOutIndexHadEntry distinguishes "this member has no pieces" from "the index

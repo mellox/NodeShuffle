@@ -264,3 +264,114 @@ int32 ANodeShuffleSubsystem::HideWellMemberMeshes(AFGResourceNodeBase* Node, int
     if (HiddenNow > 0) { WellMeshHiddenByUs.FindOrAdd(Path) += HiddenNow; }
     return HiddenNow;
 }
+
+// ------------------------------------------------------------------------------------------------
+// ns-t36-probefix ITEM 2 -- MEASUREMENT ONLY. NOTHING HERE HIDES ANYTHING.
+// ------------------------------------------------------------------------------------------------
+// THE REPORT: a relocated well whose rocks vanished on a manual re-roll kept playing its water-spout
+// effect at the origin. THE STATE OF THE SEARCH, stated plainly because the packet that found it was
+// told not to guess: the suppression path hides the member ACTOR (SetActorHiddenInGame), hides the
+// UStaticMeshComponent pieces the index paired to it, deregisters it from the scanner and removes its
+// RADIOACTIVITY emitters -- and the mod's source contains no reference to any particle, Niagara or
+// FX-system component anywhere. The index (NodeShuffleWellMeshIndex.cpp) is typed
+// TWeakObjectPtr<UStaticMeshComponent>, so a non-mesh component sitting on a paired mesh ACTOR is
+// outside every hide this mod performs. That is a POPULATION FACT ABOUT OUR CODE, checkable by
+// reading it. WHICH COMPONENT ACTUALLY DRAWS THE SPOUT IS NOT ESTABLISHED, and a hide aimed at a
+// guessed class or a guessed name would be worse than the spout, so this packet ships the measurement
+// and no behaviour change. This line is what a later packet needs in order to stop guessing: the real
+// component inventory of a member and of every actor its indexed pieces live on, taken at the moment
+// the hide runs. It states no cause and names no culprit; every field is a count or a class name read
+// off the live objects.
+void ANodeShuffleSubsystem::LogWellMemberComponentCensus(AFGResourceNodeBase* Node)
+{
+    if (!IsValid(Node) || !FNodeShuffleModule::AreDiagnosticsEnabled()) { return; }
+    const FString Path = WellPathOf(Node);
+    constexpr int32 WellComponentCensusNameCap = 24;
+
+    // Counts the components of one actor and appends the class names of the SCENE components that are
+    // still visible. Static-mesh components are named too, and deliberately: the reader has to be able
+    // to tell "the mesh hide missed a piece" from "there is a non-mesh component here".
+    int32 TotalComps = 0, SceneComps = 0, VisibleScene = 0, VisibleNonMesh = 0;
+    FString VisibleNames;
+    const auto Tally = [&](const AActor* A) -> void
+    {
+        if (!IsValid(A)) { return; }
+        for (const UActorComponent* C : A->GetComponents())
+        {
+            if (!IsValid(C)) { continue; }
+            ++TotalComps;
+            const USceneComponent* S = Cast<USceneComponent>(C);
+            if (!S) { continue; }
+            ++SceneComps;
+            if (!S->IsVisible()) { continue; }
+            ++VisibleScene;
+            const bool bMesh = (Cast<UStaticMeshComponent>(S) != nullptr);
+            if (!bMesh) { ++VisibleNonMesh; }
+            // Capped so one pathological actor cannot produce an unbounded log line. The cap is printed
+            // on the line FROM THIS CONSTANT, never typed into the prose.
+            if (VisibleScene <= WellComponentCensusNameCap)
+            {
+                VisibleNames += FString::Printf(TEXT("[%s on %s] "), *S->GetClass()->GetName(),
+                                                *A->GetName());
+            }
+        }
+    };
+
+    Tally(Node);
+    const int32 MemberComps = TotalComps;
+
+    // The distinct owner actors of this member's indexed pieces. A vanilla member is paired with a
+    // separate AFGNodeMeshActor, so this is where a non-mesh component would sit unseen by every hide
+    // this mod performs.
+    int32 IndexedPieces = 0, DistinctOwners = 0;
+    if (const TArray<TWeakObjectPtr<UStaticMeshComponent>>* Pieces = WellMeshIndex.Find(Path))
+    {
+        TSet<const AActor*> Owners;
+        for (const TWeakObjectPtr<UStaticMeshComponent>& Weak : *Pieces)
+        {
+            const UStaticMeshComponent* C = Weak.Get();
+            if (!IsValid(C)) { continue; }
+            ++IndexedPieces;
+            // Named PieceOwner, not Owner: AActor has an `Owner` member and this file is compiled with
+            // warnings as errors, so the shadowing name fails the build.
+            const AActor* PieceOwner = C->GetOwner();
+            if (PieceOwner && PieceOwner != Node && !Owners.Contains(PieceOwner))
+            {
+                Owners.Add(PieceOwner);
+                Tally(PieceOwner);
+            }
+        }
+        DistinctOwners = Owners.Num();
+    }
+
+    // Throttled on the counts, not on the path: keyed on the path alone this would print once per
+    // member per session and a piece streaming in later would never be reported. WellSuppressLogged is
+    // the existing session-scoped set for exactly this idiom on this path; the key is prefixed so it
+    // cannot collide with the suppression line's own keys.
+    const FString CensusKey = FString::Printf(TEXT("T36FX|%s|%d|%d|%d|%d|%d|%d"), *Path, MemberComps,
+                                              TotalComps, SceneComps, VisibleScene, VisibleNonMesh,
+                                              IndexedPieces);
+    if (WellSuppressLogged.Contains(CensusKey)) { return; }
+    WellSuppressLogged.Add(CensusKey);
+
+    UE_LOG(LogNodeShuffle, Display,
+        TEXT("WELLH2-COMPONENTCENSUS member='%s': taken just after this member was suppressed, over the ")
+        TEXT("member actor itself plus the %d distinct other actor(s) that own its %d live indexed mesh ")
+        TEXT("piece(s). The member actor carries %d component(s) of its own; across all of those actors ")
+        TEXT("there are %d component(s), of which %d are scene components, of which %d are still ")
+        TEXT("visible right now, of which %d are NOT static-mesh components. The class name and owner ")
+        TEXT("of each still-visible scene component, up to the first %d of the %d: %s. WHY THIS LINE ")
+        TEXT("EXISTS: a relocated well was reported still playing a water-spout effect at its abandoned ")
+        TEXT("origin, and this mod's suppression covers the member actor, the indexed static-mesh ")
+        TEXT("pieces, the scanner registration and the radioactivity emitters -- the index is typed to ")
+        TEXT("static-mesh components, so anything else on any of these actors is outside all of it. ")
+        TEXT("THIS LINE DOES NOT SAY WHICH COMPONENT DRAWS THE SPOUT, and nothing in this build hides ")
+        TEXT("any component named above that the mesh hide did not already cover. A count of zero ")
+        TEXT("still-visible non-mesh scene components means the spout is not on any actor this census ")
+        TEXT("reached, which is a different statement from it not existing."),
+        *WellShort(Path),
+        DistinctOwners, IndexedPieces, MemberComps, TotalComps, SceneComps, VisibleScene, VisibleNonMesh,
+        WellComponentCensusNameCap, VisibleScene,
+        VisibleNames.IsEmpty() ? TEXT("<no still-visible scene component on any of them>")
+                               : *VisibleNames);
+}

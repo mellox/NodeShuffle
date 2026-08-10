@@ -35,6 +35,17 @@
 
 void ANodeShuffleSubsystem::EmitNodeGateCensus()
 {
+    // ns-t36-probefix (T35 cold review F5): GATED THE SAME WAY ITS OPPOSITE NUMBER IS.
+    // This is a ~1.9 KB Display line whose throttle key includes the all-calls counters, and those move
+    // on every spiral-nudge probe -- so the key changed on nearly every pass and the line emitted on
+    // nearly every pass, for every player, with diagnostics off. The well path's equivalent
+    // (LogWellProbeCensus, called from TryPlaceWellGroup behind `bDiag`) has always been behind
+    // FNodeShuffleModule::AreDiagnosticsEnabled(), as is the ENCLOSURE: line in the same spawn
+    // function this census counts. The gate is HERE rather than at the call site so any future caller
+    // inherits it. Consequence, stated rather than left to be discovered: while diagnostics are off the
+    // throttle key is not updated either, so the first line after diagnostics are turned on carries the
+    // full session running totals -- which is what these counters have always been.
+    if (!FNodeShuffleModule::AreDiagnosticsEnabled()) { return; }
     // FIRE CONDITION, and it is restated inside the line: called once per ApplyLayout pass, and emits
     // only when one of the counters below has moved since the last emission. A pass in which no entry
     // reached the spawn path at all therefore emits NOTHING, and that silence is the one thing this
@@ -60,17 +71,24 @@ void ANodeShuffleSubsystem::EmitNodeGateCensus()
         TEXT("without the water-no-land signal set and %d with it. That split is BY THAT SIGNAL and is ")
         TEXT("not a water-versus-cliff split: RaycastSettle tests terrain, water and slope inside ")
         TEXT("itself and returns one boolean plus that one flag, so this census cannot separate a void ")
-        TEXT("probe from a steep one and does not pretend to. DEALT-SPOT GATES, which is the population ")
-        TEXT("comparable to a well CORE because it is the test of the spot the layout dealt: the ")
+        TEXT("probe from a steep one and does not pretend to. PRIMARY-SPOT GATES -- one test per entry ")
+        TEXT("per visit, at the entry's location AS IT STANDS WHEN THE TEST RUNS. ns-t36-probefix ")
+        TEXT("corrects the label these counters used to carry: they were called the DEALT spot, and ")
+        TEXT("that is wrong for any entry the settle step has moved (it writes the impact point, and on ")
+        TEXT("the surface it may spiral to another XY first) or that a previous pass nudged (the nudge ")
+        TEXT("is persisted back onto the entry). The population is still the one comparable to a well ")
+        TEXT("CORE -- one primary test per entry per visit against many nudge probes -- and that is why ")
+        TEXT("it is counted apart: the ")
         TEXT("occupancy gate was reached %d time(s) and rejected %d of them; the enclosure gate was ")
-        TEXT("reached %d time(s) and rejected %d of them. The enclosure gate is reached on the dealt ")
+        TEXT("reached %d time(s) and rejected %d of them. The enclosure gate is reached on the primary ")
         TEXT("spot only when the occupancy gate did not reject it, so its reached count can never be ")
         TEXT("the larger of the two, and the two are equal when the occupancy gate rejected nothing. ")
-        TEXT("ALL CALLS IN THE SPAWN PATH, the dealt spot and ")
+        TEXT("ALL CALLS IN THE SPAWN PATH, the primary spot and ")
         TEXT("every spiral-nudge probe together: occupancy reached %d and rejected %d; enclosure ")
         TEXT("reached %d and rejected %d. Those two populations are NOT interchangeable and must not be ")
         TEXT("pooled -- one nudging entry contributes many probes to the second pair and exactly one to ")
-        TEXT("the first. WHAT THE OCCUPANCY GATE IS HERE: a single predicate that folds the resource-")
+        TEXT("the first, which is the whole reason the second pair moves nearly every pass. WHAT THE ")
+        TEXT("OCCUPANCY GATE IS HERE: a single predicate that folds the resource-")
         TEXT("node radius and the non-foundation buildable radius into one boolean, so a rejection ")
         TEXT("above does not say which of the two fired. The well path's census splits them; that ")
         TEXT("difference is in the code, not in this measurement, and the two must not be read against ")
@@ -79,7 +97,10 @@ void ANodeShuffleSubsystem::EmitNodeGateCensus()
         TEXT("between the two paths' reached counts is a difference in how often the predicate RUNS and ")
         TEXT("cannot be a difference in what it computes. THIS LINE STATES NO CAUSE. Every number on it ")
         TEXT("was counted by this run, and no field asserts why any gate did or did not fire. Fire ")
-        TEXT("condition: once per apply pass, emitted only when one of the counters above changed. ")
+        TEXT("condition: once per apply pass, only while diagnostics are enabled, and only when one of ")
+        TEXT("the counters above changed since the last line. While diagnostics are off the counters ")
+        TEXT("still accumulate but nothing is emitted and the change-detector is not updated, so the ")
+        TEXT("first line after they are turned on carries the totals accrued in the silence too. ")
         TEXT("There is deliberately NO pass ordinal on this line: the only pass counter this subsystem ")
         TEXT("keeps counts WELL apply passes, and putting it on a solid-node line would be a wrong ")
         TEXT("label. Order these lines by their timestamps."),

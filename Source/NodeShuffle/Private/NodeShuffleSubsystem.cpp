@@ -4110,7 +4110,11 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
             return bEnclosed;
         };
 
-        // ns-t35-gatereach: the DEALT-SPOT population, counted separately from the all-calls counters
+        // ns-t35-gatereach: the PRIMARY-SPOT population, counted separately from the all-calls counters
+        // (ns-t36-probefix relabelled it from "dealt spot": T35 cold review F3 -- Entry.Location here is
+        // AFTER the settle step wrote it and after any nudge a previous pass persisted, so "dealt" names
+        // the wrong population. What is counted is one test per entry per visit, wherever the entry
+        // currently sits.)
         // inside the two lambdas because one nudging entry contributes many calls and exactly one dealt
         // spot. The enclosure line below is unchanged -- the short circuit still decides whether
         // IsEnclosed runs -- so the reached counter is incremented on the same condition the short
@@ -6619,7 +6623,21 @@ void ANodeShuffleSubsystem::LogHereCensus() const
             const FVector TestAt = bHaveSettled ? SlopeLoc : P;
             TArray<FNodeShuffleEnclosureRay> Rays;
             int32 Blocked = 0, Total = 0, Threshold = -1;
-            const bool bEnclosed = IsSpotEnclosed(TestAt, Blocked, Total, &Rays, &Threshold);
+            // ns-t36-probefix: the pawn goes on the probe's ignore list. T36: a character blocks
+            // ECC_WorldStatic and this call previously excluded nothing, so every ray died inside the
+            // player's own capsule and the verdict measured the player rather than the world. Only THIS
+            // caller passes it; the placement paths still pass nothing.
+            const bool bEnclosed = IsSpotEnclosed(TestAt, Blocked, Total, &Rays, &Threshold, Pawn);
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("HERE: enclosure probe exclusions -- %d of the 1 actor this command has to offer ")
+                TEXT("(the pawn it resolved for you, named here) was handed to the trace's ignore list ")
+                TEXT("for the rays below: %s. This line reports what was passed IN to the predicate. ")
+                TEXT("Whether any ray still reported a hit on that actor is a separate question and the ")
+                TEXT("ray lines below answer it -- each names the actor its own hit belonged to. The ")
+                TEXT("placement paths pass no exclusion at all, so a spot this command calls clear is ")
+                TEXT("not thereby a spot they would call clear while a pawn stands on it."),
+                (Pawn != nullptr) ? 1 : 0,
+                (Pawn != nullptr) ? *Pawn->GetName() : TEXT("<none: no pawn resolved>"));
             for (int32 i = 0; i < Rays.Num(); ++i)
             {
                 const FNodeShuffleEnclosureRay& R = Rays[i];
@@ -6638,9 +6656,21 @@ void ANodeShuffleSubsystem::LogHereCensus() const
                 TEXT("ray count printed here were read back from the predicate this run, not typed into ")
                 TEXT("this line. WHAT THIS SHAPE OF TEST CANNOT SEE, by construction and not by ")
                 TEXT("observation: anything that blocks beyond one ray's reach, anything above or below ")
-                TEXT("the ray height, and any gap that falls between two bearings. This is the same ")
-                TEXT("function both placement paths call, so wherever one of them runs this gate at ")
-                TEXT("this point in this world it reaches the verdict printed here. WHETHER a path runs ")
+                TEXT("the ray height, and any gap that falls between two bearings. The tested point is ")
+                TEXT("%+.0f m in Z from your own feet; this line reports that difference and does not ")
+                TEXT("explain it. WHICH PLACEMENT POINT THIS DOES AND DOES NOT CORRESPOND TO, since an ")
+                TEXT("earlier build of this line simply called it the point a placement gate tests: the ")
+                TEXT("WELL path settles its probes with the same long downward ground trace this command ")
+                TEXT("just ran, but from the probe's own XY and start Z, not yours; the SOLID-NODE path ")
+                TEXT("settles through RaycastSettle instead, which uses the short trace for an ")
+                TEXT("underground entry and may spiral the entry to a different XY on the surface before ")
+                TEXT("any gate is applied. So this is the point a placement gate would test only when ")
+                TEXT("those inputs coincide with yours, and this command does not check that. This is ")
+                TEXT("the same function both placement paths call, but ")
+                TEXT("ns-t36-probefix means it is NOT called with the same arguments here: this command ")
+                TEXT("hands it the pawn to ignore and the placement paths hand it nothing, so a spot ")
+                TEXT("this line calls clear is a statement about the terrain and not a prediction of ")
+                TEXT("what a placement probe would return while a character stands there. WHETHER a path runs ")
                 TEXT("it at all is a different question and this line does not answer it -- the ")
                 TEXT("gate-reached counters on the census lines are what do. It states no cause: each ")
                 TEXT("ray reports the trace ")
@@ -6648,12 +6678,25 @@ void ANodeShuffleSubsystem::LogHereCensus() const
                 TEXT("above means the predicate cast no rays at all and the verdict is not a ")
                 TEXT("measurement of this spot."),
                 *TestAt.ToCompactString(),
-                bHaveSettled ? TEXT("the settled ground point under you, the point a placement gate tests")
-                             : TEXT("your own position: the ground trace found nothing to settle on, so ")
-                               TEXT("this is NOT the point a placement gate would test"),
+                // ns-t36-probefix (T35 cold review F2): the old text here claimed this WAS "the point a
+                // placement gate tests", and that is not true of the solid-node path. What is true is
+                // stated instead, per path, from the source: the well path settles with the same long
+                // downward RaycastGroundAt this command just ran, but from the probe's own XY and start
+                // Z; the node path settles with RaycastSettle, which uses the SHORT trace for an
+                // underground entry and may spiral the entry to a different XY on the surface before any
+                // gate is applied. So this point is a placement gate's point only when the placement
+                // probe's XY and start Z happen to coincide with yours, which this command cannot check.
+                bHaveSettled ? TEXT("the point a long downward ground trace from your position landed on")
+                             : TEXT("your own position: that ground trace found nothing to settle on"),
                 Blocked, Total, Threshold,
-                bEnclosed ? TEXT("ENCLOSED (a placement here would be refused by this gate)")
-                          : TEXT("not enclosed (this gate would not refuse a placement here)"));
+                bEnclosed ? TEXT("ENCLOSED (this predicate, called with this command's exclusion, ")
+                            TEXT("refuses this point)")
+                          : TEXT("not enclosed (this predicate, called with this command's exclusion, ")
+                            TEXT("does not refuse this point)"),
+                // ns-t36-probefix: measured here from the two positions this call already holds. The
+                // 21 m gap seen on the previous build is UNEXPLAINED and this number does not explain
+                // it; it only stops a reader having to compute it from two other lines.
+                (TestAt.Z - P.Z) / 100.0);
         }
     }
 

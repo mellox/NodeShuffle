@@ -72,10 +72,22 @@ namespace
 // produces the verdict is unchanged: the same 8 bearings, the same 500 cm reach from At.Z+200, the same
 // ECC_WorldStatic trace with the same query params, the same 7-of-8 threshold, the same return. The
 // recorder writes only inside `if (OutRays)`, and every placement caller passes nullptr.
+// ns-t36-probefix AMENDS ONE CLAUSE OF THAT SENTENCE: the query params are the same for every caller
+// that passes no IgnoreActor, which is both placement call sites. A caller that passes one gets that
+// one actor on the ignore list and nothing else changed. See the paragraph on the function itself.
+// ns-t36-probefix: IgnoreActor ADDS ONE ACTOR TO THE TRACE'S IGNORE LIST AND CHANGES NOTHING ELSE.
+// docs/TECH-DEBT.md T36: a character blocks ECC_WorldStatic, and this query previously named no ignored
+// actor at all -- so NodeShuffle.Here, whose whole job is to probe the spot the player is standing on,
+// cast 8 rays that terminated inside the player's own capsule at 0 cm and concluded ENCLOSED. That is a
+// reading with no terrain in it, and it was unobtainable by construction: the command has to stand on
+// the spot to test it. The parameter defaults to nullptr, both placement call sites pass nothing, and
+// the placement behaviour is therefore bit-identical -- ignoring a pawn during PLACEMENT would be a
+// change to a gate the ordinary node path shares and is deliberately not done here.
 bool ANodeShuffleSubsystem::IsSpotEnclosed(const FVector& At, int32& OutBlockedRays,
                                            int32& OutTotalRays,
                                            TArray<FNodeShuffleEnclosureRay>* OutRays,
-                                           int32* OutBlockedThreshold) const
+                                           int32* OutBlockedThreshold,
+                                           const AActor* IgnoreActor) const
 {
     OutBlockedRays = 0;
     OutTotalRays = WellEnclosureRayCount;
@@ -99,6 +111,9 @@ bool ANodeShuffleSubsystem::IsSpotEnclosed(const FVector& At, int32& OutBlockedR
                          Eye.Z);
         FHitResult EncHit;
         FCollisionQueryParams EncParams(FName(TEXT("NodeShuffleEnclosure")), false);
+        // ns-t36-probefix: the ONLY new statement in this function. With IgnoreActor null -- which is
+        // what every placement caller passes -- EncParams is byte-for-byte what it was before.
+        if (IgnoreActor) { EncParams.AddIgnoredActor(IgnoreActor); }
         const bool bHit = World->LineTraceSingleByChannel(EncHit, Eye, To, ECC_WorldStatic, EncParams);
         if (bHit)
         {
@@ -355,9 +370,16 @@ bool ANodeShuffleSubsystem::ValidateWellMemberSpot(const FVector& ProbeXY, float
     if (bApplyEnclosureGate)
     {
         // INSIDE the flag test, so the reached count answers the question T35 asks: how often this gate
-        // actually ran, not how often a probe got as far as the flag that decides whether it runs. A
-        // satellite-side reached count of zero beside a non-zero buildable one therefore says the flag
-        // was false for every probe -- and a zero on both says the probes ended earlier.
+        // actually ran, not how often a probe got as far as the flag that decides whether it runs.
+        // ns-t36-probefix (T35 cold review F1) CORRECTS WHAT THIS COMMENT USED TO CLAIM. It said a zero
+        // here beside a non-zero BUILDABLE reached count showed the flag was false for every probe. It
+        // does not: a probe REJECTED by the buildable gate returns above and never reaches this counter,
+        // so that pair is equally consistent with every such probe having been rejected there. Nothing
+        // stands between the buildable gate and this line but the flag, so the comparison that does
+        // settle it needs BOTH buildable halves -- buildable reached minus buildable rejected is the
+        // number of probes that cleared it, and if that is non-zero while this counter is zero, the flag
+        // was false for all of them. The shipped census legend states the rule correctly; only this
+        // comment was wrong, and it was wrong in the direction that reads as a finding.
         Reach(FNodeShuffleWellProbeCensus::Gate_Enclosed);
         int32 Blocked = 0, Total = 0;
         if (IsSpotEnclosed(OutLoc, Blocked, Total))
