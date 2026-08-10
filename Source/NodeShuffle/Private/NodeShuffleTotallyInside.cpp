@@ -3,8 +3,13 @@
 //
 // WHAT IT DOES NOT INHERIT, DELIBERATELY. The shipped enclosure predicate casts its rays from 200 cm
 // ABOVE the point it is handed (NodeShuffleWellFootprint.cpp), and that offset is a prime suspect for a
-// member in a cliff face reading 0 of 8 blocked (docs/TECH-DEBT.md T41). Every segment here has the
-// TESTED POINT ITSELF as one of its two endpoints. No constant below is read from that predicate, from
+// member in a cliff face reading 0 of 8 blocked (docs/TECH-DEBT.md T41). Every segment here begins a
+// SMALL FIXED DISTANCE from the tested point ALONG ITS OWN RAY'S DIRECTION -- not 200 cm above it, and
+// not at the point itself. The first cut of this file did use the tested point as an endpoint, and the
+// 2026-08-10 run showed why that cannot stand: a probe origin sitting exactly ON a surface reads
+// contact at 0 cm in every direction at once, so plain open ground with sky above read TOTALLY INSIDE
+// (all 14 rays solid, RAY CLEAR zero times in 140 readings). The start offset is TIRayStartEpsilonCm
+// below, with the measured basis for its value. No constant below is read from that predicate, from
 // the centre-shadow walk, or from any placement path, so none of them can drift into this one.
 //
 // THE CENTRE-SHADOW WALK IN NodeShuffleCentreContainment.cpp IS UNTOUCHED BY THIS FILE. It is still the
@@ -29,6 +34,23 @@ namespace
     // furthest distance any blocked direction had to go, so how sensitive a verdict is to this number is
     // visible rather than argued.
     constexpr float TIProbeReachCm = 500.0f;
+
+    // Where each ray STARTS: this far from the tested point, along that ray's own direction. Zero was
+    // measured wrong on 2026-08-10: an origin exactly ON a surface read contact at 0 cm on all 14 rays,
+    // so open ground with sky above read TOTALLY INSIDE. The value is picked from that run's printed
+    // hit distances, not from taste. Of the 282 kept readings across the 10 points, 250 named
+    // LandscapeHeightfieldCollisionComponent on ONE actor (LandscapeStreamingProxy_CI1M39Z1I4): 226 of
+    // those lay under 25 cm and 7 lay between 25 and 73 cm. Every reading naming anything else was an
+    // FGCliffActor StaticMeshComponent at 87 cm or more. NOTHING IN THAT LOG SAYS WHICH LANDSCAPE
+    // READING CAME FROM THE SURFACE THE POINT ITSELF SAT ON -- they all name the same actor -- so 25 cm
+    // is where the bulk of the landscape readings stop, not a proven artefact boundary, and the 7 above
+    // it are not removed by it. It is under every reading that named anything but the landscape by a
+    // factor of three. It is also 5 sweep-radii, so on any ray leaving that surface steeply the inward
+    // sweep's end sphere clears it; on a ray running PARALLEL to it -- the four horizontals on level
+    // ground -- that sphere is still centred on the surface and can still touch it, which this offset
+    // does not fix and does not claim to. Distances in every reading are still measured from the
+    // tested point, so readings before and after this constant existed compare directly.
+    constexpr float TIRayStartEpsilonCm = 25.0f;
 
     // The sweep's radius. Small on purpose: its job is to report solid where a line query starting inside
     // a body reports nothing, not to fatten the probe. A sweep of any radius can report blocked where a
@@ -177,6 +199,7 @@ bool RunTotallyInsideProbe(UWorld* World, const FVector& At, const AActor* Subje
     Out = FNodeShuffleTotallyInsideReading();
     Out.Point = At;
     Out.ProbeReachCm = TIProbeReachCm;
+    Out.RayStartEpsilonCm = TIRayStartEpsilonCm;
     Out.SweepRadiusCm = TISweepRadiusCm;
     Out.OverlapRadiusCm = TIOverlapRadiusCm;
     Out.RetraceCap = TIRetraceCap;
@@ -199,14 +222,19 @@ bool RunTotallyInsideProbe(UWorld* World, const FVector& At, const AActor* Subje
         Ray.Unit = FVector(Def.X, Def.Y, Def.Z).GetSafeNormal();
         Ray.OuterPoint = At + Ray.Unit * TIProbeReachCm;
 
-        // A: from the tested point outward. This is the reading a query that starts inside a body has
+        // Where this ray's segments begin: TIRayStartEpsilonCm along its own direction, so the tested
+        // point itself is an endpoint of no query. See that constant for the measured basis.
+        const FVector RayStart = At + Ray.Unit * TIRayStartEpsilonCm;
+
+        // A: from the ray start outward. This is the reading a query that starts inside a body has
         // been observed not to give in this project; it is run and reported anyway, because which
         // instrument fires is the thing this packet is trying to learn.
         {
             FHitResult Hit;
-            if (TIQuery(World, ETIQueryKind::Line, At, Ray.OuterPoint, SubjectActor, Out, Hit))
+            if (TIQuery(World, ETIQueryKind::Line, RayStart, Ray.OuterPoint, SubjectActor, Out, Hit))
             {
                 Ray.bOutwardBlocked = true;
+                Ray.bOutwardStartPenetrating = Hit.bStartPenetrating;
                 Ray.OutwardSolidAtCm = FVector::Dist(At, Hit.ImpactPoint);
                 Ray.OutwardWhat = TIWhatWasHit(Hit);
             }
@@ -216,13 +244,14 @@ bool RunTotallyInsideProbe(UWorld* World, const FVector& At, const AActor* Subje
             }
         }
 
-        // B: from the outer point back to the tested point, so a surface between the two is met from the
+        // B: from the outer point back to the ray start, so a surface between the two is met from the
         // side this engine has been observed to report.
         {
             FHitResult Hit;
-            if (TIQuery(World, ETIQueryKind::Line, Ray.OuterPoint, At, SubjectActor, Out, Hit))
+            if (TIQuery(World, ETIQueryKind::Line, Ray.OuterPoint, RayStart, SubjectActor, Out, Hit))
             {
                 Ray.bInwardBlocked = true;
+                Ray.bInwardStartPenetrating = Hit.bStartPenetrating;
                 Ray.InwardSolidAtCm = FVector::Dist(At, Hit.ImpactPoint);
                 Ray.InwardWhat = TIWhatWasHit(Hit);
             }
@@ -236,7 +265,7 @@ bool RunTotallyInsideProbe(UWorld* World, const FVector& At, const AActor* Subje
         // the OUTER point being inside something, which is evidence FOR containment, not against it.
         {
             FHitResult Hit;
-            if (TIQuery(World, ETIQueryKind::Sweep, Ray.OuterPoint, At, SubjectActor, Out, Hit))
+            if (TIQuery(World, ETIQueryKind::Sweep, Ray.OuterPoint, RayStart, SubjectActor, Out, Hit))
             {
                 Ray.bSweepBlocked = true;
                 Ray.bSweepStartPenetrating = Hit.bStartPenetrating;

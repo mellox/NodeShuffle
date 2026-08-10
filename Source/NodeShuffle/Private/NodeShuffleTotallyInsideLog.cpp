@@ -84,7 +84,12 @@ ETotallyInsideAgreement LogTotallyInsideReading(const TCHAR* Prefix, const FStri
         TEXT("%s: %s -- TOTALLYINSIDE verdict at %s: %s. Every one of the %d direction(s) probed has to ")
         TEXT("report solid before the positive verdict is given; %d of them did and %d did not, and one ")
         TEXT("direction reporting clear is enough on its own to withhold it. Each direction was probed ")
-        TEXT("%.0f cm from THE TESTED POINT ITSELF and never from an offset above it. Of the directions ")
+        TEXT("out to %.0f cm from the tested point, along a segment that begins %.0f cm from that point ")
+        TEXT("along the SAME direction -- so no line or sweep query on any direction has the tested ")
+        TEXT("point as an endpoint, and none begins from an offset above it either; the one query ")
+        TEXT("still made AT the tested point is the corroborating overlap named below. The line ")
+        TEXT("queries cannot report anything closer to the point than that start figure; the inward ")
+        TEXT("sweep can reach closer than it by at most its own radius. Of the directions ")
         TEXT("that reported solid, the furthest any of them had to go to meet it was %.0f cm, so a ")
         TEXT("reach shorter than that figure would have left at least one direction reading clear; a ")
         TEXT("figure of -1 there means no direction reported solid at all. THE OVERLAP AT THE TESTED ")
@@ -98,7 +103,7 @@ ETotallyInsideAgreement LogTotallyInsideReading(const TCHAR* Prefix, const FStri
         TEXT("returned and states no cause."),
         Prefix, *Tag, *R.Point.ToCompactString(), Verdict,
         R.DirectionCount, R.BlockedDirections, R.ClearDirections,
-        R.ProbeReachCm, R.FurthestNearestSolidCm,
+        R.ProbeReachCm, R.RayStartEpsilonCm, R.FurthestNearestSolidCm,
         CentreOverlapWords);
 
     // ---- WHAT THE PER-DIRECTION LINES BELOW SAY ----
@@ -108,10 +113,12 @@ ETotallyInsideAgreement LogTotallyInsideReading(const TCHAR* Prefix, const FStri
         TEXT("the eight corner diagonals -- fourteen in all, and the vertical pair is what every earlier ")
         TEXT("attempt in this project lacked. FOUR INSTRUMENTS ARE RUN ON EACH RAY and any ONE of them ")
         TEXT("reporting solid is enough for that ray; a ray is called clear only when all four say ")
-        TEXT("nothing. (1) A line query from the tested point outward to the far end of the ray -- the ")
+        TEXT("nothing. Every query on a ray begins or ends at that ray's START -- %.0f cm from the ")
+        TEXT("tested point along its own direction -- never at the tested point itself. (1) A line ")
+        TEXT("query from the ray's start outward to the far end of the ray -- the ")
         TEXT("reading a query beginning inside a body has never once been observed to give in this ")
         TEXT("project, run and reported anyway because which instrument fires is the thing being ")
-        TEXT("learned. (2) A line query from that far end back to the tested point, so a surface ")
+        TEXT("learned. (2) A line query from that far end back to the ray's start, so a surface ")
         TEXT("between the two is met from the side this engine has been observed to report. (3) A ")
         TEXT("sphere sweep of radius %.0f cm along that same inward segment, which also reports whether ")
         TEXT("it was already overlapping at its own start -- that is a statement about the far end of ")
@@ -123,21 +130,29 @@ ETotallyInsideAgreement LogTotallyInsideReading(const TCHAR* Prefix, const FStri
         TEXT("disagreement between the two instruments cannot be an artefact of that setting. Each line ")
         TEXT("names the actor and the component every instrument that reported solid returned. These ")
         TEXT("lines report what the queries returned and state no cause."),
-        Prefix, *Tag, R.SweepRadiusCm, R.OverlapRadiusCm);
+        Prefix, *Tag, R.RayStartEpsilonCm, R.SweepRadiusCm, R.OverlapRadiusCm);
 
     // ---- EVERY RAY ----
     for (const FNodeShuffleTotallyInsideRay& Ray : R.Rays)
     {
         const FString OutPhrase = Ray.bOutwardBlocked
-            ? FString::Printf(TEXT("the outward line query met solid %.0f cm out, at %s."),
-                              Ray.OutwardSolidAtCm, *Ray.OutwardWhat)
+            ? FString::Printf(TEXT("the outward line query met solid %.0f cm out, at %s%s"),
+                              Ray.OutwardSolidAtCm, *Ray.OutwardWhat,
+                              Ray.bOutwardStartPenetrating
+                                  ? TEXT(" -- and it reported it was ALREADY PENETRATING at its own start, ")
+                                    TEXT("so this figure is where that start was put and not a distance this ")
+                                    TEXT("query measured to anything.")
+                                  : TEXT("."))
             : FString::Printf(TEXT("the outward line query kept no blocking result: %s."),
                               *Ray.OutwardWhat);
 
         const FString InPhrase = Ray.bInwardBlocked
-            ? FString::Printf(TEXT("The inward line query met solid %.0f cm from the tested point, at ")
-                              TEXT("%s."),
-                              Ray.InwardSolidAtCm, *Ray.InwardWhat)
+            ? FString::Printf(TEXT("The inward line query met solid %.0f cm from the tested point, at %s%s"),
+                              Ray.InwardSolidAtCm, *Ray.InwardWhat,
+                              Ray.bInwardStartPenetrating
+                                  ? TEXT(" -- and it reported it was ALREADY PENETRATING at its own start, ")
+                                    TEXT("which is a statement about the OUTER point of this ray.")
+                                  : TEXT("."))
             : FString::Printf(TEXT("The inward line query kept no blocking result: %s."),
                               *Ray.InwardWhat);
 

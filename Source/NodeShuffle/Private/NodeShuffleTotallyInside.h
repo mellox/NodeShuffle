@@ -53,13 +53,18 @@ struct FNodeShuffleTotallyInsideRay
     FVector Unit = FVector::ZeroVector;    // the unit vector actually used
     FVector OuterPoint = FVector::ZeroVector;  // the point at the probe reach along it
 
-    // A: a line trace FROM the tested point outward to the outer point.
+    // A: a line trace FROM this ray's start outward to the outer point. Its own start-penetration is
+    // recorded because the ray start can itself lie inside geometry -- the down-family rays from a
+    // point resting on a surface begin below that surface by construction.
     bool bOutwardBlocked = false;
+    bool bOutwardStartPenetrating = false;
     double OutwardSolidAtCm = -1.0;        // distance from the tested point to that impact, -1 when none
     FString OutwardWhat;
 
-    // B: a line trace FROM the outer point back to the tested point.
+    // B: a line trace FROM the outer point back to this ray's start. Its start-penetration is a
+    // statement about the OUTER point, the same way the sweep's is.
     bool bInwardBlocked = false;
+    bool bInwardStartPenetrating = false;
     double InwardSolidAtCm = -1.0;         // distance from the TESTED POINT to that impact, -1 when none
     FString InwardWhat;
 
@@ -87,6 +92,8 @@ struct FNodeShuffleTotallyInsideReading
     bool bRan = false;                     // false = no query was made; no count below is a reading
     FVector Point = FVector::ZeroVector;   // the point tested, exactly as handed in
     double ProbeReachCm = 0.0;             // how far each direction was probed, from its constant
+    double RayStartEpsilonCm = 0.0;        // how far from the tested point, along its own direction,
+                                           // each ray's segments begin, from its constant
     double SweepRadiusCm = 0.0;            // the sweep's radius, from its constant
     double OverlapRadiusCm = 0.0;          // the overlap radius, from its constant
     int32 RetraceCap = 0;                  // most re-runs one query may make to get past excluded actors
