@@ -62,7 +62,21 @@
 
 #include "NodeShuffle.h"
 
+// ns-t49-crossingdetail (2026-08-10): PER-CROSSING OBSERVATION ADDED, NO DECISION CHANGED.
+// The walk above is known to report CENTRE INSIDE for a point measured to be in open air
+// (docs/TECH-DEBT.md T48), and the only lines that produced a conclusion that survived were lines that
+// printed WHAT THEY HIT. This packet therefore adds, per blocking hit: the actor and component and their
+// classes, the distance along the segment and the resulting position, the trace fields the classification
+// consulted and the ones it did not, and the running per-walk totals. NOTHING BELOW WAS ALTERED: the
+// entries term, the exits term, the max(), the 2 cm step, the 100000 cm sky start, the three exclusions
+// and the >= 1 threshold are byte-for-byte the same expressions. The one refactor is that the
+// impact-normal dot product is now computed once above the exclusion chain instead of inside its final
+// branch; `bBack` is still exactly `that dot product > 0.0`, and FVector::DotProduct has no side effect.
+// NO FIX IS ATTEMPTED HERE. The walk is known to fail toward NOT INSIDE, so a change that made this one
+// point read correctly could do it for the wrong reason and break the other direction unobserved.
+
 #include "Buildables/FGBuildable.h"
+#include "Components/PrimitiveComponent.h"
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
 
@@ -87,6 +101,11 @@ namespace
     // How far below the tested point the control's surface-finder walk is allowed to reach.
     constexpr float ShadowControlFinderDropCm = 20000.0f;
 
+    // ns-t49-crossingdetail: most blocking hits reported individually per walk. Below the segment's own
+    // 32-hit iteration budget, so a capped list is possible; how many were not reported is printed rather
+    // than left implied, because a truncated list that does not say it was truncated is a bare count.
+    constexpr int32 ShadowCrossingDetailCap = 24;
+
     // One walked segment's tally. Every field is a count of what a trace returned on THIS walk.
     struct FShadowSegment
     {
@@ -102,12 +121,21 @@ namespace
         bool bHaveFirstCountedImpact = false;
         FVector FirstCountedImpact = FVector::ZeroVector;
         FString Actors;
+
+        // ns-t49-crossingdetail. Written after each hit has already been classified; read by nothing.
+        int32 DetailReported = 0;
+        int32 DetailSuppressed = 0;
     };
 
     // Walks From -> To on ECC_WorldStatic, stepping past every blocking hit, classifying and counting.
     // It never decides anything: it fills the tally and returns.
+    //
+    // ns-t49-crossingdetail: WalkLabel and DetailSink are OBSERVATION ONLY. DetailSink is null on every
+    // call that does not want a per-hit list, and no statement below reads either of them when deciding
+    // anything -- each detail string is built from values the classification has already produced.
     void WalkShadowSegment(UWorld* World, const FVector& From, const FVector& To,
-                           const AActor* SubjectActor, FShadowSegment& Tally)
+                           const AActor* SubjectActor, FShadowSegment& Tally,
+                           const TCHAR* WalkLabel = nullptr, TArray<FString>* DetailSink = nullptr)
     {
         const double Span = FVector::Dist(From, To);
         if (Span <= UE_KINDA_SMALL_NUMBER) { return; }
@@ -132,22 +160,40 @@ namespace
             const bool bPawn = (HitActor != nullptr) && HitActor->IsA<APawn>();
             const bool bBuildable = (HitActor != nullptr) && HitActor->IsA<AFGBuildable>();
 
+            // ns-t49-crossingdetail: computed here rather than inside the final branch below so the
+            // per-hit line can report it for an excluded hit too. The branch below still tests exactly
+            // `this value > 0.0`, which is the expression it tested before, and FVector::DotProduct has
+            // no side effect, so no hit is classified differently for having been measured earlier.
+            const double NormalDotDir = FVector::DotProduct(Hit.ImpactNormal, Dir);
+            const TCHAR* Classification = TEXT("<unset>");
+
             if (bSubject)
             {
                 ++Tally.ExcludedSubject;
+                Classification = TEXT("EXCLUDED, being a hit on the actor this call named as the tested ")
+                                 TEXT("point's own subject, and so not counted as a crossing");
             }
             else if (bPawn)
             {
                 ++Tally.ExcludedPawn;
+                Classification = TEXT("EXCLUDED, being a hit on an APawn, and so not counted as a ")
+                                 TEXT("crossing");
             }
             else if (bBuildable)
             {
                 ++Tally.ExcludedBuildable;
+                Classification = TEXT("EXCLUDED, being a hit on an AFGBuildable, and so not counted as ")
+                                 TEXT("a crossing");
             }
             else
             {
-                const bool bBack = (FVector::DotProduct(Hit.ImpactNormal, Dir) > 0.0);
+                const bool bBack = (NormalDotDir > 0.0);
                 if (bBack) { ++Tally.BackFaces; } else { ++Tally.FrontFaces; }
+                Classification = bBack
+                    ? TEXT("COUNTED as a BACK face, the impact-normal dot product below being greater ")
+                      TEXT("than zero")
+                    : TEXT("COUNTED as a FRONT face, the impact-normal dot product below not being ")
+                      TEXT("greater than zero");
                 if (!Tally.bAnyCounted)
                 {
                     Tally.bAnyCounted = true;
@@ -160,6 +206,51 @@ namespace
                     Tally.Actors += FString::Printf(TEXT("'%s' whose normal %s "),
                         HitActor ? *HitActor->GetName() : TEXT("<crossing with no actor>"),
                         bBack ? TEXT("ran with the walk") : TEXT("opposed the walk"));
+                }
+            }
+
+            // ---- ns-t49-crossingdetail: WHAT THIS HIT WAS. Pure observation, after the fact ----
+            // Everything read here has already been decided above. The cursor advance below is outside
+            // this block and identical whether or not it runs.
+            if (DetailSink != nullptr)
+            {
+                if (Tally.DetailReported >= ShadowCrossingDetailCap)
+                {
+                    ++Tally.DetailSuppressed;
+                }
+                else
+                {
+                    ++Tally.DetailReported;
+                    const UPrimitiveComponent* HitComp = Hit.GetComponent();
+                    const FString ActorName = HitActor ? HitActor->GetName()
+                                                       : FString(TEXT("<this hit named no actor>"));
+                    const FString ActorClass = HitActor ? HitActor->GetClass()->GetName()
+                                                        : FString(TEXT("<none, no actor>"));
+                    const FString CompName = HitComp ? HitComp->GetName()
+                                                     : FString(TEXT("<this hit named no component>"));
+                    const FString CompClass = HitComp ? HitComp->GetClass()->GetName()
+                                                      : FString(TEXT("<none, no component>"));
+                    const double AlongCm = FVector::DotProduct(Hit.ImpactPoint - From, Dir);
+                    DetailSink->Add(FString::Printf(
+                        TEXT("SHADOWCROSS %d of the %s walk: %s. Actor '%s' of class %s, component ")
+                        TEXT("'%s' of class %s. Impact at %s, %.1f cm along this walk's %.1f cm ")
+                        TEXT("segment. The trace reported an impact normal of %s, a normal of %s, a ")
+                        TEXT("dot product of that impact normal with this walk's direction of %+.6f, ")
+                        TEXT("and start-penetrating %s; of those, the classification above read the ")
+                        TEXT("sign of the dot product and nothing else. Running for this walk after ")
+                        TEXT("this hit: %d front face(s), %d back face(s), %d excluded, over %d ")
+                        TEXT("blocking hit(s) seen."),
+                        Tally.HitsSeen,
+                        WalkLabel ? WalkLabel : TEXT("<unlabelled>"),
+                        Classification,
+                        *ActorName, *ActorClass, *CompName, *CompClass,
+                        *Hit.ImpactPoint.ToCompactString(), AlongCm, Span,
+                        *Hit.ImpactNormal.ToCompactString(), *Hit.Normal.ToCompactString(),
+                        NormalDotDir,
+                        Hit.bStartPenetrating ? TEXT("true") : TEXT("false"),
+                        Tally.FrontFaces, Tally.BackFaces,
+                        Tally.ExcludedBuildable + Tally.ExcludedPawn + Tally.ExcludedSubject,
+                        Tally.HitsSeen));
                 }
             }
 
@@ -185,11 +276,17 @@ namespace
         bool bInside = false;
     };
 
+    // ns-t49-crossingdetail: DetailSink is null on the positive control's own parity run and on the
+    // control's surface-finder walk, so the per-hit list describes the two walks of the tested point
+    // only. That is stated in the emitted legend rather than left for a reader to infer from absence.
     void RunShadowParity(UWorld* World, const FVector& Point, const FVector& SkyStart,
-                         const AActor* SubjectActor, FShadowParity& R)
+                         const AActor* SubjectActor, FShadowParity& R,
+                         TArray<FString>* DetailSink = nullptr)
     {
-        WalkShadowSegment(World, SkyStart, Point, SubjectActor, R.Inbound);
-        WalkShadowSegment(World, Point, SkyStart, SubjectActor, R.Outbound);
+        WalkShadowSegment(World, SkyStart, Point, SubjectActor, R.Inbound,
+                          TEXT("inbound (sky start down to the tested point)"), DetailSink);
+        WalkShadowSegment(World, Point, SkyStart, SubjectActor, R.Outbound,
+                          TEXT("outbound (the tested point back up to the sky start)"), DetailSink);
         R.Entries = R.Inbound.FrontFaces;
         // The larger of the two readings of the same quantity: inbound back faces are the exits when this
         // engine reports a surface from behind, and the reverse walk's front faces are the same exits seen
@@ -202,7 +299,8 @@ namespace
 }
 
 bool ANodeShuffleSubsystem::IsPointInsideSolidShadowForDiag(const FVector& At, const AActor* SubjectActor,
-                                                            FNodeShufflePointInsideReading& Out) const
+                                                            FNodeShufflePointInsideReading& Out,
+                                                            bool bWantCrossingDetail) const
 {
     Out = FNodeShufflePointInsideReading();
     Out.Point = At;
@@ -211,6 +309,8 @@ bool ANodeShuffleSubsystem::IsPointInsideSolidShadowForDiag(const FVector& At, c
     Out.MaxHitsPerSegment = ShadowMaxHitsPerSegment;
     Out.ControlDepthCm = ShadowControlDepthCm;
     Out.SkyStart = FVector(At.X, At.Y, At.Z + ShadowSkyOffsetCm);
+    Out.bCrossingDetailRequested = bWantCrossingDetail;
+    Out.CrossingDetailCap = ShadowCrossingDetailCap;
 
     UWorld* World = GetWorld();
     if (!World)
@@ -224,7 +324,8 @@ bool ANodeShuffleSubsystem::IsPointInsideSolidShadowForDiag(const FVector& At, c
     }
 
     FShadowParity Main;
-    RunShadowParity(World, At, Out.SkyStart, SubjectActor, Main);
+    RunShadowParity(World, At, Out.SkyStart, SubjectActor, Main,
+                    bWantCrossingDetail ? &Out.CrossingDetail : nullptr);
 
     Out.bRan = true;
     Out.HitsSeen = Main.Inbound.HitsSeen + Main.Outbound.HitsSeen;
@@ -245,6 +346,17 @@ bool ANodeShuffleSubsystem::IsPointInsideSolidShadowForDiag(const FVector& At, c
     Out.bSegmentCapHit = Main.Inbound.bCapHit || Main.Outbound.bCapHit;
     Out.bFirstInboundCountedWasBackFace = Main.Inbound.bAnyCounted && Main.Inbound.bFirstCountedWasBackFace;
     Out.CrossingActors = Main.Inbound.Actors + Main.Outbound.Actors;
+    // ns-t49-crossingdetail: the per-walk denominators the per-hit list is checked against.
+    Out.InboundHitsSeen = Main.Inbound.HitsSeen;
+    Out.OutboundHitsSeen = Main.Outbound.HitsSeen;
+    Out.InboundExcludedHits = Main.Inbound.ExcludedBuildable + Main.Inbound.ExcludedPawn
+                            + Main.Inbound.ExcludedSubject;
+    Out.OutboundExcludedHits = Main.Outbound.ExcludedBuildable + Main.Outbound.ExcludedPawn
+                             + Main.Outbound.ExcludedSubject;
+    Out.InboundDetailReported = Main.Inbound.DetailReported;
+    Out.OutboundDetailReported = Main.Outbound.DetailReported;
+    Out.InboundDetailSuppressed = Main.Inbound.DetailSuppressed;
+    Out.OutboundDetailSuppressed = Main.Outbound.DetailSuppressed;
     if (Out.CountedCrossings == 0)
     {
         Out.CrossingActors = TEXT("<no counted crossing to name>");

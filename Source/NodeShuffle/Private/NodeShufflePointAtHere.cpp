@@ -289,7 +289,11 @@ void ANodeShuffleSubsystem::LogPointAtHereCensus() const
     // that surface rather than at any member's centre, and a reading taken on it describes that surface.
     {
         FNodeShufflePointInsideReading Centre;
-        const bool bCentreInside = IsPointInsideSolidShadowForDiag(TestAt, Pawn, Centre);
+        // ns-t49-crossingdetail: the per-hit list is requested HERE, on a command a reader points at one
+        // point, and not on the population command. Observation only -- the verdict is the same either
+        // way, and the fourth argument is read by nothing that decides anything.
+        const bool bCentreInside = IsPointInsideSolidShadowForDiag(TestAt, Pawn, Centre,
+                                                                   /*bWantCrossingDetail=*/true);
         LogCentreShadowReading(
             TEXT("POINTAT"),
             FString(TEXT("the aim trace's own impact point, which was not settled and is not a member's ")

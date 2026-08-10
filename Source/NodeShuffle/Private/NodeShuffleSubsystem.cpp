@@ -6803,7 +6803,11 @@ void ANodeShuffleSubsystem::LogHereCensus() const
             // and absent on its siblings is this project's most-repeated defect. NOTHING GATES ON IT.
             {
                 FNodeShufflePointInsideReading Centre;
-                const bool bCentreInside = IsPointInsideSolidShadowForDiag(TestAt, Pawn, Centre);
+                // ns-t49-crossingdetail: the per-hit list is requested HERE, on a command a reader
+                // points at one point, and not on the population command. Observation only -- the
+                // verdict is the same either way.
+                const bool bCentreInside = IsPointInsideSolidShadowForDiag(TestAt, Pawn, Centre,
+                                                                           /*bWantCrossingDetail=*/true);
                 LogCentreShadowReading(
                     TEXT("HERE"),
                     FString(bHaveSettled

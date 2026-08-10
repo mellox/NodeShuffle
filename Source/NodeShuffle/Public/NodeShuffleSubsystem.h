@@ -148,6 +148,27 @@ struct FNodeShufflePointInsideReading
     FString ControlDetail;                // what the control was built from, or why it was not built
 
     FString CrossingActors;               // names of the first few counted crossings, or a sentinel
+
+    // ns-t49-crossingdetail: PER-CROSSING OBSERVATION. Added because every conclusion about this walk
+    // that survived came from a line that printed WHAT IT HIT, and the two lines above print only
+    // totals. Nothing below is read by the walk, by the arithmetic, or by any verdict: these fields are
+    // filled after each decision has already been taken, and the walk runs identically when they are not
+    // requested at all. Requested per call, because a per-hit list is wanted where a reader asked about
+    // ONE point and is noise where a caller runs a population.
+    bool bCrossingDetailRequested = false; // did this call ask for the per-hit list below
+    int32 CrossingDetailCap = 0;           // most hits reported per walk, from its constant
+    TArray<FString> CrossingDetail;        // one entry per REPORTED blocking hit, both walks, in order
+
+    // The per-walk denominators the detail list needs to be checkable. HitsSeen/CountedCrossings above
+    // are the two walks summed, which cannot say which walk a hit belonged to.
+    int32 InboundHitsSeen = 0;             // every blocking hit the inbound walk reported
+    int32 OutboundHitsSeen = 0;            // every blocking hit the outbound walk reported
+    int32 InboundExcludedHits = 0;         // of those, the ones removed by the three exclusions
+    int32 OutboundExcludedHits = 0;
+    int32 InboundDetailReported = 0;       // hits that produced a line in CrossingDetail
+    int32 OutboundDetailReported = 0;
+    int32 InboundDetailSuppressed = 0;     // hits that did NOT, because the cap was already reached
+    int32 OutboundDetailSuppressed = 0;
 };
 
 // One node-pool entry of the per-save layout. The layout is rolled exactly
@@ -1813,8 +1834,14 @@ private:
     //
     // IsSpotEnclosed is NOT touched by this: no parameter, no statement, no constant and no call site of
     // it changes, this function never calls it, and no placement path reads this result.
+    //
+    // ns-t49-crossingdetail: bWantCrossingDetail asks for the per-hit list in Out.CrossingDetail. It is
+    // OBSERVATION ONLY -- it is not read by the walk, by the classification, by the arithmetic or by the
+    // verdict, and the same point returns the same bInside with it true or false. Defaulted false so a
+    // caller running over a population keeps the totals-only output it has today.
     bool IsPointInsideSolidShadowForDiag(const FVector& At, const AActor* SubjectActor,
-                                         FNodeShufflePointInsideReading& Out) const;
+                                         FNodeShufflePointInsideReading& Out,
+                                         bool bWantCrossingDetail = false) const;
 
     // ns-t39-wellprobe: THE ONE nearest-placed-well search, shared by NodeShuffle.Here and
     // NodeShuffle.WellProbe. It was inline in LogHereCensus; a second copy in the new command is the
