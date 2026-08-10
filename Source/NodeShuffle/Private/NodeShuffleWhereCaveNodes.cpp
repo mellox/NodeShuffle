@@ -215,8 +215,15 @@ void ANodeShuffleSubsystem::LogWhereCaveNodesCensus() const
             ? FString::Printf(
                 TEXT("LIVE: an actor for this entry exists right now, at %s, which is %.0f m from the ")
                 TEXT("recorded point above"), *R.ActorLoc.ToCompactString(), R.RecordToActorCm / 100.0)
-            : FString(TEXT("RECORD-ONLY: no actor for this entry exists right now, so the recorded ")
-                      TEXT("point above is where the layout says it should be and not where anything is"));
+            // ns-t47-recordonly (T46 cold review F1): the ONLY thing tested here is the SpawnedNodes
+            // lookup above -- whether the mod currently holds a spawned actor for this entry. It does
+            // NOT test whether anything is standing at the recorded point, and shortly after a load most
+            // distant entries have not spawned. LogHereCensus carries this same caveat (a no-actor row is
+            // indistinguishable from not-yet-streamed); this whole-map path dropped it and must not.
+            : FString(TEXT("RECORD-ONLY: the mod holds no spawned actor for this entry at this moment, ")
+                      TEXT("which is the whole of what was tested -- it does not tell a node never ")
+                      TEXT("placed, or cleared later, apart from one simply not spawned yet because you ")
+                      TEXT("are not near it, so walk to the recorded point before reading it as empty"));
         UE_LOG(LogNodeShuffle, Display,
             TEXT("WHERECAVE: row %d of %d -- entry %s, recorded at %s: %.0f m away from you in 2D, ")
             TEXT("%+.0f m in Z, and from where you stand and face, turn %+.0f deg and go. %s. Settle ")

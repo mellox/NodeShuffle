@@ -1363,7 +1363,16 @@ private:
     struct FNodeShuffleCaveCell
     {
         float FloorZ = 0.0f;
-        uint8 State = 1; // 1=frontier (expandable), 2=expanded, 4=mouth (walkable; no expansion past)
+        // ns-t47-recordonly (T46 cold review F2): this is THE canonical definition, so it must not
+        // gloss the raw value 4 as "mouth" -- that is the conflation ns-t46-cavetruth removed from
+        // both emitters. THREE writers produce a 4 and they mean TWO different things: the flood-fill
+        // expansion pass writes it for a neighbour cell whose upward roof trace found no roof above
+        // that cell's centre, while ClassifyOriginalUnderground and SeedCaveCellAtPlayer each write it
+        // only AFTER their roof trace HIT, when the floor re-sample at the cell centre missed. A 4 may
+        // also arrive from the store's JSON or the baked atlas. The store records NO writer field --
+        // cells round-trip only state, floor and ceiling -- so NO reader, here or in any log line, can
+        // tell which of the three wrote a given cell. Printed wording: NodeShuffleCaveState4Legend().
+        uint8 State = 1; // 1=frontier (expandable), 2=expanded, 4=raw value, see the note above
         // cave-nodes-2: measured ceiling clearance (roof hit - floor). Placement requires enough for
         // a Miner building; low passages stay mapped for connectivity only. -1 = unknown (legacy
         // imports) = treated as tall (the user stood there and chose it).
