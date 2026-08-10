@@ -149,7 +149,19 @@ struct NODESHUFFLE_API FNodeShuffleConfigStruct
     // T23 stage 3 (ns-t23-rollhide): WHEN is the vanilla well removed -- at the ROLL, or once the
     // replacement has actually been built at the destination?
     //
-    // DEFAULT OFF, and the default is the feature's own gate. With it off, suppression happens exactly
+    // ns-t54-immediate-hide (2026-08-10) -- THE PARAGRAPH BELOW THIS ONE IS NOW HISTORY, NOT BEHAVIOUR,
+    // AND IS KEPT BECAUSE IT RECORDS WHAT THE DEFAULT USED TO GUARANTEE. The author ruled that a shuffled
+    // origin must disappear immediately whatever this toggle says, so ApplyWellRelocation now INITIATES
+    // the suppression for every entry marked as moving, on every pass. What survives of this flag: the
+    // roll path additionally attempts the hide at the instant of the roll, for entries whose look is
+    // completely captured then. It is therefore close to a no-op -- it moves the disappearance earlier by
+    // roughly one apply pass and takes on the roll's one-shot-capture fallback to do it.
+    // NOT RETIRED HERE ON PURPOSE: retiring a shipped, save-visible toggle is the author's call, not this
+    // packet's, and its roll-time path is still the only one that can hide before the first apply pass.
+    // Recommendation is filed in docs/TECH-DEBT.md under T54.
+    //
+    // (HISTORY, true until 2026-08-10) DEFAULT OFF, and the default is the feature's own gate. With it
+    // off, suppression happens exactly
     // where it always has (NodeShuffleWellRelocateApply.cpp, after a COMPLETE spawn), so the roll path
     // behaves identically to a build without this packet. With it on, a well whose look can be captured
     // at the roll is hidden at the roll, and the world holds it in NEITHER place until a player reaches

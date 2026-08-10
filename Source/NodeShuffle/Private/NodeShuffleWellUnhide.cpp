@@ -387,6 +387,26 @@ bool ANodeShuffleSubsystem::IsWellGroupCaptureComplete(const FNodeShuffleWellEnt
 // commit message's own recommended grep match every line): the fields below are described in PROSE and
 // are never exemplified in the shape they print. To count occurrences of this census, anchor on the
 // line prefix, which appears exactly once per line.
+//
+// ============================ ns-t54-immediate-hide: THE POLARITY FLIPPED ========================
+// THIS CENSUS'S HEADLINE NUMBER CHANGED MEANING ON 2026-08-10 AND THE CODE IS UNCHANGED, WHICH IS
+// EXACTLY THE FAILURE MODE [[lessons-checklist-predates-the-feature]] DESCRIBES. Before T54,
+// "suppressed but not placed" was a rare, suspicious state: suppression only happened AFTER the
+// replacement existed, so a suppressed-and-unplaced entry meant something had gone wrong. After T54 it
+// is the ORDINARY, INTENDED, TRANSIENT state of every well the roll marked as moving -- the author
+// ruled the origin must disappear at once and accepted the window in which the resource exists nowhere.
+// A reader who carries the old reading forward will see 18 of 20 and conclude the mod is broken.
+//
+// THE SPLIT IS THEREFORE STATED IN THE LINE ITSELF rather than left to a reader:
+//   * TRANSIENT-AWAITING-PLACEMENT = the buckets where a search is running or will run again --
+//     no player near the destination, probing found no terrain, still searching. Expected non-zero.
+//     THIS IS NOT A DEFECT AND THE LINE MUST NOT BE READ AS REPORTING ONE.
+//   * STUCK = the warning bucket below, unchanged in definition: permanently failed, nobody working on
+//     it, keeps failing to assemble. Still must read zero in a healthy save.
+// The buckets and the classification order are NOT changed by T54 -- only the reading of the total is,
+// so nothing here is deleted and no counter is retired. The `NotWorked` bucket additionally now has a
+// REMEDY as well as a warning: ApplyWellRelocation arms a persisted restore on exactly that predicate
+// (ns-t54-immediate-hide), so a non-zero there should now drain over subsequent passes rather than sit.
 void ANodeShuffleSubsystem::EmitWellStrandedCensus()
 {
     int32 TotalEntries = 0, TotalPlaced = 0, TotalSuppressed = 0, SuppressedAndPlaced = 0;
@@ -482,7 +502,15 @@ void ANodeShuffleSubsystem::EmitWellStrandedCensus()
         UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH2-STRANDED pass %d: %d well entr(ies) in the layout, %d of them placed. We hold a ")
             TEXT("suppression record on %d of them; %d of those are placed (correctly suppressed) and %d ")
-            TEXT("are NOT placed -- for those the player has no well at either end right now. Split of ")
+            TEXT("are NOT placed -- for those the player has no well at either end right now. SINCE T54 ")
+            TEXT("THAT LAST NUMBER IS EXPECTED TO BE NON-ZERO AND IS NOT BY ITSELF A DEFECT: the author ")
+            TEXT("ruled on 2026-08-10 that a shuffled origin disappears immediately and accepted the ")
+            TEXT("window in which the resource exists nowhere, so every well waiting for a player to ")
+            TEXT("reach its destination sits here by design. STILL A DEFECT: the FAILED, nobody-working ")
+            TEXT("and keeps-failing-to-assemble buckets, which are the three the WARNING line counts, ")
+            TEXT("plus never-dealt-a-destination, which is an invariant break rather than a wait. ")
+            TEXT("TRANSIENT-AWAITING-PLACEMENT: no-player-near, probing-found-no-terrain and ")
+            TEXT("still-searching. Split of ")
             TEXT("the not-placed ones, in this classification order: relocation permanently FAILED %d, ")
             TEXT("nobody is working on it because relocation is switched off for this pass or for this ")
             TEXT("entry %d, keeps failing to assemble at its destination %d, has never been dealt a ")

@@ -29,28 +29,39 @@ Last updated 2026-08-10 (T54 filed at the top of P1 by author ruling; supersedes
 
 ## Accepted trade-offs — decided, not defects
 
-### D1. Resource wells can duplicate if you build on one mid-move
-**Decided 2026-08-08 by the mod author: accept, document, do not fix.**
-Player-facing explanation is in [README.md](../README.md) under *"Known behaviour"*.
+### ~~D1. Resource wells can duplicate if you build on one mid-move~~ — **SUPERSEDED BY T54, 2026-08-10**
+**The decision below was made 2026-08-08 and REVERSED by the author on 2026-08-10.** The history is
+kept because D1 is the reason the old coupling existed, and a reader who finds only the new behaviour
+will re-derive the old one as an improvement.
 
-Relocation is player-presence-gated: a well cannot move until its destination's terrain
-has streamed, which requires a player to travel there. We therefore hide the original
-only **after** the replacement provably exists — hiding on the roll would remove a well
-from the save for an unbounded time, possibly permanently (design §5.4, *"all-or-nothing;
-fail-safe to the vanilla location"*).
+**WHAT D1 DECIDED (2026-08-08, now history):** accept, document, do not fix. Relocation is
+player-presence-gated — a well cannot move until its destination's terrain has streamed, which requires
+a player to travel there — so we hid the original only **after** the replacement provably existed.
+Hiding on the roll would remove a well from the save for an unbounded time (design §5.4,
+*"all-or-nothing; fail-safe to the vanilla location"*). `bPinned` is computed once at roll time
+(`NodeShuffleWellRoll.cpp:153,188`); `ApplyWellRelocation` was spawn-then-suppress. Building on a well
+after the roll therefore yielded two wells, which **errs in the player's favour**.
 
-`bPinned` is computed once at roll time (`NodeShuffleWellRoll.cpp:153,188`), and
-`ApplyWellRelocation` is spawn-then-suppress (`NodeShuffleWellRelocateApply.cpp:467-473`).
-Suppression correctly refuses to hide an occupied member (`:295`). So building on a well
-after the roll yields two wells.
+**WHAT T54 CHANGED, AND WHY THE DUPLICATION SCENARIO MOSTLY DISSOLVES.** The author ruled the origin
+must be hidden immediately (*"It is a shuffle… that includes ALL things we shuffle"*). A hidden,
+de-collided, de-registered origin cannot take a Pressurizer, so the window in which a player could
+build on a well that is about to move is now roughly one apply pass wide instead of unbounded. It is
+**not zero**: an origin that has not streamed in yet is not hidden yet, and a player standing on it at
+that moment can still build.
 
-**Errs in the player's favour** — we never hide or delete a well someone has built on.
+**THE OCCUPIED GUARD IS UNCHANGED AND STILL LOAD-BEARING — this is the part of D1 that did NOT expire.**
+A save that already holds a Pressurizer or Extractor at a vanilla origin, from before the first hide
+ever ran, must never have it taken away. Two mechanisms enforce it and both survive T54:
+`IsWellMemberInUse` inside `SuppressVanillaWellGroup`'s `HideOne` (per member), and the group-scoped
+occupancy gate, which T54 now asks **before the immediate hide as well as before placement**, through
+one shared lookup (`EvaluateVanillaWellGroupOccupancy`). Hiding the rest of a group around an occupied
+member is the measured T24 field defect and is refused on both paths.
 
-> **Pre-scoped fix if ever revisited:** re-test occupancy immediately before spawning and
-> abandon the relocation, returning the dealt card to the deck so the resource assignment
-> does not drift by one. Machinery exists (`ClearAbandonedWellPlacement`).
-> ⚠ **Verify the absence first.** The "nothing re-checks" claim is five greps and one read,
-> not a cold review. *"I could not find a check"* is weaker evidence than *"there is no check"*.
+> **The pre-scoped fix D1 carried — re-test occupancy immediately before spawning and abandon the
+> relocation — was NOT built and is not needed for the duplication case it was written for.** The
+> residual (a player builds on an origin in the window before it streams in and hides) is refused by the
+> group gate on the next pass, which leaves the whole well vanilla. Keep the hedge that shipped with it:
+> *"I could not find a check"* is weaker evidence than *"there is no check"*.
 
 ### D2. Third-party node-manager mods still list/ping the original node locations
 **Added here 2026-08-08. Previously tracked only in GitHub issue #1, item 4** — which is
@@ -115,6 +126,47 @@ to move is the worse defect. D1's text must be re-decided as part of this item, 
 > (`NodeShuffleWellRelocateApply.cpp:467-473`); immediate-hide would run at load/stream-in for every
 > entry the roll marked as moving. **Do not build until the author answers item 1** — that answer
 > decides whether this is a one-gate change now or waits on T21.
+
+---
+
+#### T54 STATUS: **IMPLEMENTED, PENDING BUILD AND COLD REVIEW** (packet `ns-t54-immediate-hide`, 2026-08-10, boot marker `2026-08-10-t54-1`). **NOT CLOSED — no build has been run and no reviewer has seen it.**
+
+**THE PRE-SCOPED STARTING POINT ABOVE WAS STALE AND IS THE FIRST THING TO CORRECT.** It describes the
+tree as it was before `ns-t23-rollhide` landed. At `7bf99b4` there are **four** `SuppressVanillaWellGroup`
+call sites, not two, and one of them — `NodeShuffleWellRelocateRoll.cpp` phase-3 commit — is **not**
+gated on `bGroupPlaced`. The real coupling was narrower and worse than "two sites behind `bGroupPlaced`":
+
+- the roll-time hide sits behind a **default-OFF** toggle (`CommitWellsAtRoll`), so on the author's save it never ran;
+- a roll happens **once** and can only hide what is resident at that instant, so an origin that streams in later was never revisited;
+- the apply pass's unplaced branch only ever **re-asserted** an existing suppression — it never **initiated** one.
+
+**MEASURED PER POPULATION BEFORE ANY CODE WAS WRITTEN:**
+
+| population | where the origin is hidden | coupled to the replacement? |
+|---|---|---|
+| ordinary/solid nodes | `NodeShuffleSubsystem.cpp:4531` `SuppressOriginalNodes`, over `OriginalNodeRecord` built at roll time at `:1601` | **No — already immediate.** Hides the moment the path resolves; nothing consults the replacement. |
+| oil (liquid) | same record, same loop | **No — already immediate.** A liquid `Layout` entry is an ordinary record. |
+| gas | not shuffled (left vanilla) | n/a |
+| fracking wells | `NodeShuffleWellRelocateApply.cpp` (3 sites) + `NodeShuffleWellRelocateRoll.cpp` (1) | **Yes — the only population that was.** |
+
+**WHAT LANDED.** A third arm in `ApplyWellRelocation`'s `!bGroupPlaced` branch, above every `continue`,
+that **initiates** the suppression for every entry the roll marked as moving
+(`bRelocate && bOffsetsCaptured && bDestDealt && !bRelocationFailed`), behind the group-scoped occupancy
+gate. It runs every pass, so an origin that streams in later is caught — which the roll path structurally
+cannot do. The roll path is **not** disabled. Plus: a disable-restore that arms the persisted un-hide
+intent on the stranded census's own `NotWorked` predicate; the `WELLH2-STRANDED` polarity re-statement;
+a `WELLH2-IMMEDIATE` per-pass census; and a T54-A/T54-B opposite-polarity pair alongside (never
+replacing) T23-A/T23-B.
+
+**OPEN, DELIBERATELY NOT DECIDED HERE — `CommitWellsAtRoll` is now close to a no-op.** It moves the
+disappearance earlier by roughly one apply pass and pays the roll's one-shot-capture fallback to do it.
+Retiring a shipped, save-visible toggle is the author's call, so it was left in place and its tooltip
+and header comment were rewritten to say truthfully what it still does. **Decide it before release.**
+
+**T15 GAINED BLAST RADIUS AND WAS COUNTED, NOT FIXED** (per the packet brief). An uncaptured satellite
+record is hidden with its group and never spawned at the destination; immediate hide widens that
+population because a satellite can now stream in and be hidden while no destination group exists yet.
+The `WELLH2-IMMEDIATE` census reports uncaptured-hidden over total-satellite-records-hidden.
 
 ### ~~T1. The Relocate Resource Wells tooltip states the opposite of what the feature does~~ — FIXED 2026-08-08
 The settings UI described a relocated well as *"functional but INVISIBLE"* and labelled the

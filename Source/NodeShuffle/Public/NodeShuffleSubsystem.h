@@ -827,6 +827,43 @@ public:
     // it spawns nothing, moves nothing and writes no layout field. Both other commands are untouched.
     void LogWellMemberProbeCensus() const;
 
+    // ns-t54 SCOPE ADDITION 1: `NodeShuffle.ProbeNearestNode`, the ORDINARY-NODE sibling of WellProbe.
+    // Defined in NodeShuffleNodeProbe.cpp. Probes the RECORDED CENTRE of the nearest settled/live
+    // shuffled entry -- the point an extractor snaps to, and the only point none of the three existing
+    // probe commands can reach (Here tests where you stand, PointAtHere tests where the aim ray lands).
+    // Log-only: it spawns nothing, moves nothing, writes no layout field, and gates nothing.
+    void LogNearestNodeProbe();
+
+    // ================= ns-t54 SCOPE ADDITION 2: THE CENTRE-TOTALLY-INSIDE SHADOW GATE ================
+    // Defined in NodeShuffleInsideGate.cpp; read that file's header for why this is shadow-first.
+    //
+    // A DEFAULT-OFF CVar IS NOT ISOLATION. The evaluation below runs on EVERY placed entry in both
+    // modes and is live code in the apply path. The CVar gates exactly one thing: whether a positive
+    // verdict is allowed to change a decision.
+    //
+    // Returns "this caller should refuse this spot" -- true only when the verdict is positive AND the
+    // CVar is live AND the spot is neither cave-flagged nor adopted-rather-than-placed. Callers that
+    // ignore the return value still get the measurement and the census.
+    bool EvaluateInsideShadowGate(const FVector& At, const class AActor* Subject, const FString& Who,
+                                  bool bAdoptedNotPlaced, bool bCaveFlagged);
+    bool IsInsideGateRefusalLive() const;
+    void EmitInsideShadowGateCensus();
+
+    // PER-PASS, TRANSIENT, DIAGNOSTICS-ONLY, zeroed by the census that prints them. Nothing behavioural
+    // reads any of them; the gate's own decision is computed and returned per call.
+    int32 InsideGateEvaluatedThisPass = 0;          // DENOMINATOR for every count below
+    int32 InsideGateNotMeasuredThisPass = 0;        // the probe did not run, so there is no reading
+    int32 InsideGateNegativeThisPass = 0;           // ran and read NOT totally inside
+    int32 InsideGateWouldRefuseThisPass = 0;        // ran and read TOTALLY INSIDE
+    int32 InsideGateRefusedThisPass = 0;            // of those, the ones actually refused
+    int32 InsideGatePositiveOnCaveThisPass = 0;     // positives exempt for carrying the cave flag
+    int32 InsideGatePositiveOnAdoptedThisPass = 0;  // positives exempt for being adopted, not placed
+    int32 InsideGateAdoptedThisPass = 0;            // adopted entries evaluated, positive or not
+    int32 InsideGateCaveFlaggedThisPass = 0;        // cave-flagged entries evaluated, positive or not
+    int32 InsideGateQueriesThisPass = 0;            // MEASURED cost: traces and sweeps issued
+    int32 InsideGateOverlapsThisPass = 0;           // MEASURED cost: overlaps issued
+    FString InsideGateCensusLastKey;
+
     // ns-t46-cavetruth: `NodeShuffle.WhereCaveNodes` console command (registered in
     // NodeShuffleWhereCaveNodes.cpp). THE DIRECTORY OF EVERY CAVE-FLAGGED LAYOUT ENTRY -- not the
     // nearest one. It replaces the single nearest-entry pointer line that T45 added to LogHereCensus,
@@ -2280,6 +2317,56 @@ private:
     // of any placement coordinate. See bSuppressedAtRoll's declaration for why no coordinate can answer
     // this. Narrower than WellGroupHasSuppressedMember above, which stays the stranded census's question.
     bool WellGroupHasRollSuppressedMember(const FNodeShuffleWellEntry& E) const;
+
+    // =============== ns-t54-immediate-hide: THE AUTHOR'S RULING (docs/TECH-DEBT.md T54) ==============
+    // Defined in NodeShuffleWellImmediateHide.cpp; read that file's header for what was MEASURED before
+    // any of this was written, including why the ordinary-node and oil populations needed no change.
+    //
+    // THE SHARED OCCUPANCY LOOKUP. The immediate hide and the placement gate ask the same question of
+    // the same actors, and before this packet the actor-gathering half existed once, inline in
+    // ApplyWellRelocation. A second inline copy is exactly how one rule acquires two populations. The
+    // TEST half was already single-sourced (EvaluateWellPin) and is untouched. Non-const because
+    // FindOriginalBaseByPath and the occupancy accessors beneath it are non-const.
+    //
+    // OUT-PARAMETER RATHER THAN A RETURN VALUE, and that is not a style preference: FNodeShuffleWellPinCheck
+    // is defined in the PRIVATE header NodeShuffleWellRetype.h, which this PUBLIC header must not include
+    // (it pulls in FactoryGame fracking types and this header is included by the module's public surface).
+    // A reference to a forward-declared type is unambiguously legal in a declaration; a by-value return of
+    // one is a corner of the language I am not willing to discover through a build I cannot run.
+    void EvaluateVanillaWellGroupOccupancy(const FNodeShuffleWellEntry& E,
+                                           struct FNodeShuffleWellPinCheck& OutCheck);
+
+    // The once-per-pass census of the immediate hide, and the T54 opposite-polarity pair. Both are
+    // LOG ONLY and both are emitted at the very end of ApplyWellRelocation so they describe the state
+    // the pass ended in. The T54 pair is NOT the T23 pair: T23 asks whether a suppression was taken on
+    // the ROLL phase (a question about CommitWellsAtRoll), T54 asks whether an origin marked as moving
+    // is still standing. Both ship; neither replaces the other.
+    void EmitWellImmediateHideCensus();
+    // ns-t54 cold review F1: takes the pass's own `bOn`. The pair's population MUST be the arm's
+    // population, and the arm gates on bOn AND E.bRelocate; a pair that omits bOn counts entries the arm
+    // was never offered and reports them as holes in the arm.
+    void EmitWellImmediateHideTestPair(bool bRelocationOnThisPass);
+
+    // PER-PASS, TRANSIENT, DIAGNOSTICS-ONLY. Reset at the top of every ApplyWellRelocation pass, written
+    // by the immediate-hide arm, read by the two emitters above. NOTHING BEHAVIOURAL READS ANY OF THEM.
+    // They are not SaveGame on purpose: every one of them is a statement about what happened on ONE
+    // pass, and a value that survived a reload would be printed beside this pass's counts as though it
+    // had been measured on it.
+    int32 WellImmediateCandidatesThisPass = 0;              // eligible, unsuppressed, reached the arm
+    int32 WellImmediateHiddenThisPass = 0;                  // of those, suppressed on this pass
+    int32 WellImmediateGateRefusedThisPass = 0;             // occupancy predicate returned true
+    int32 WellImmediateGateUnmeasuredThisPass = 0;          // IsDecisive()==0: no vanilla core resolved
+    int32 WellImmediateTookNothingThisPass = 0;             // suppression ran, took no member
+    int32 WellImmediateCaptureIncompleteThisPass = 0;       // hidden while a piece-holding member had no look
+    int32 WellImmediateUncapturedHiddenThisPass = 0;        // T15 blast radius, numerator
+    int32 WellImmediateSatelliteRecordsHiddenThisPass = 0;  // T15 blast radius, denominator
+    int32 WellImmediateDisableRestoreArmedThisPass = 0;     // restores armed because relocation is off
+    // Core path -> why the arm declined this pass. Codes are defined at the ONE write site in
+    // ApplyWellRelocation. The T54 pair reads it to separate "blocked for a stated cause" from "the arm
+    // never saw this entry", which is the only way its denominator can be honest.
+    TMap<FString, uint8> WellImmediateHideReasonThisPass;
+    FString WellImmediateCensusLastKey;   // picture-changed throttles, session-scoped
+    FString WellImmediateTestLastKey;
 
     // Roll-time capture is ONE SHOT (the apply-time capture retries every pass while the origin
     // streams). So an entry whose look is not COMPLETELY captured at the roll does not get roll-time

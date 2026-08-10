@@ -495,7 +495,69 @@ bool ANodeShuffleSubsystem::TryPlaceWellGroup(FNodeShuffleWellEntry& E, UClass* 
             }
         }
 
+        // ======= ns-t54 SCOPE ADDITION 2: THE SHADOW GATE ON THE WELL PATH, AT THE FINAL SPOT =======
+        // SYMMETRY with the ordinary-node path, which is this workspace's most-repeated defect class: a
+        // containment gate present on one placement path and absent from the other is exactly the shape
+        // T26 records (wells placed with five gates while nodes got six). One rule, both sides.
+        //
+        // WHY IT SITS BETWEEN bAllOk AND THE COMMIT. Everything above has validated this layout and
+        // NOTHING has been written to the world or to the entry's placement fields yet -- the next line
+        // says so. This is therefore the final accepted spot, post-settle and pre-commit, and it is
+        // evaluated ONCE per accepted layout rather than per candidate: the satellite draw loop above
+        // makes many probes per attempt and ~60 queries on each would be ruinous.
+        //
+        // THE REFUSAL USES NO NEW CONTROL FLOW AT ALL. It only withholds bAllOk from the commit below,
+        // so control falls through to the SAME per-attempt rejection path a satellite refusal takes --
+        // the reject log and `++E.YawCursor` at the bottom of this loop, which re-draws the whole layout
+        // next attempt and, when the attempts are exhausted, hands the entry to the shared escalation
+        // ladder (EscalateWellPlacement: nudge, then re-deal, then leave it vanilla). That ladder IS the
+        // existing re-deal machinery for a well and nothing here replaces it.
+        //
+        // SUBJECT IS NULL: nothing is spawned yet at these coordinates, so there is no actor to exclude
+        // and none is claimed. bAdoptedNotPlaced is false -- this is a placement, not an adoption; a
+        // group RESTORED from a save is adopted elsewhere and never reaches this function. CAVE FLAG:
+        // an ordinary node entry carries bUnderground; a WELL ENTRY HAS NO SUCH FIELD, so this path
+        // passes false and therefore CANNOT exempt a cave-floor well. That is stated rather than
+        // guessed, and it is a reason not to turn the refusal CVar on for wells until the census shows
+        // what the positives actually are.
+        bool bInsideRefused = false;
         if (bAllOk)
+        {
+            const FString CoreWho = FString::Printf(TEXT("well core '%s'"), *CoreLabel);
+            if (EvaluateInsideShadowGate(CoreLoc, /*Subject=*/nullptr, CoreWho,
+                                         /*bAdoptedNotPlaced=*/false, /*bCaveFlagged=*/false))
+            {
+                bInsideRefused = true;
+            }
+            for (int32 mi = 0; mi < MemberLocs.Num(); ++mi)
+            {
+                const FString MemberWho = FString::Printf(TEXT("well '%s' member %d of %d"),
+                                                          *CoreLabel, mi + 1, MemberLocs.Num());
+                if (EvaluateInsideShadowGate(MemberLocs[mi], /*Subject=*/nullptr, MemberWho,
+                                             /*bAdoptedNotPlaced=*/false, /*bCaveFlagged=*/false))
+                {
+                    bInsideRefused = true;
+                }
+                // NOT SHORT-CIRCUITED, deliberately: every member is evaluated even once one has
+                // refused, because the census's denominators are the point of the shadow phase and a
+                // break would make "evaluated" mean something different on a refusing layout than on an
+                // accepting one.
+            }
+            if (bInsideRefused)
+            {
+                UE_LOG(LogNodeShuffle, Display,
+                    TEXT("INSIDEGATE core='%s': this validated layout is REFUSED -- at least one of the ")
+                    TEXT("core and %d member spot(s) met solid in every probed direction; the ")
+                    TEXT("INSIDEGATE-WOULDREFUSE line(s) above name which. Nothing was committed and ")
+                    TEXT("nothing was spawned: this attempt falls through to the ordinary per-attempt ")
+                    TEXT("rejection, so the whole layout is re-drawn next attempt and the shared ")
+                    TEXT("escalation ladder takes over when the attempts run out. Reachable only while ")
+                    TEXT("NodeShuffle.InsideGateRefuse is set."),
+                    *CoreLabel, MemberLocs.Num());
+            }
+        }
+
+        if (bAllOk && !bInsideRefused)
         {
             // COMMIT. Nothing before this line wrote to the world or to the entry's placement fields.
             WellVoidDefers.Remove(E.CorePath); // ns-review-h2 F8: a settled group starts fresh
@@ -825,11 +887,20 @@ void ANodeShuffleSubsystem::SuppressVanillaWellGroup(FNodeShuffleWellEntry& E, E
                 IndexedPieces += P->Num();
             }
         }
-        // ns-t23-rollhide -- WHICH COORDINATE THIS LINE MAY NAME DEPENDS ON THE PHASE, and getting it
-        // wrong would make the line assert a world state that is not true. On the APPLY phase the group
-        // has spawned and PlacedCoreLocation is where it stands. At ROLL time PlacedCoreLocation is the
-        // PREVIOUS placement or zero and NOTHING has been built at the destination yet, so the roll
-        // wording names DestCoreLocation and says explicitly that nothing is there.
+        // ns-t23-rollhide -- WHICH COORDINATE THIS LINE MAY NAME, and getting it wrong would make the
+        // line assert a world state that is not true. A placed group HAS spawned and PlacedCoreLocation
+        // is where it stands. An UNPLACED entry's PlacedCoreLocation is the PREVIOUS placement or zero
+        // and NOTHING has been built at the destination, so that wording names DestCoreLocation and says
+        // explicitly that nothing is there.
+        //
+        // ns-t54-immediate-hide -- THE PREDICATE MOVED FROM THE PHASE TO THE MEASURED STATE, and that is
+        // a FIX, not a refactor. It read `bRollPhase`, on the premise that only the roll phase could
+        // arrive here unplaced. T54 falsifies that premise: the immediate-hide arm calls this on the
+        // APPLY phase for an entry that is not placed, and the old ternary would have printed "the
+        // relocated group now lives at" followed by a stale or zero coordinate -- a diagnostic asserting a
+        // world state nothing measured, which is the defect class this repo has shipped repeatedly.
+        // bGroupPlaced is false at every roll-phase call site (the phase-3 commit runs after the
+        // re-enrolment teardown clears it), so the roll path's wording is UNCHANGED by this swap.
         UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH2-SUPPRESS core='%s' phase=%s: hid %d vanilla member(s) + %d mesh piece(s) (%d were ")
             TEXT("already hidden; %d piece(s) indexed for this group across all %d indexed member(s) ")
@@ -839,7 +910,7 @@ void ANodeShuffleSubsystem::SuppressVanillaWellGroup(FNodeShuffleWellEntry& E, E
             Hidden, MeshesHidden, MeshesAlready, IndexedPieces,
             WellMeshIndexMembers, NewlyOwned, Occupied, Unstreamed, E.bCoreVisualsCaptured ? 1 : 0,
             E.bGroupVisualsComplete ? TEXT("COMPLETE") : TEXT("INCOMPLETE"),
-            bRollPhase
+            !E.bGroupPlaced
                 ? *FString::Printf(TEXT("The group is DEALT to %s and NOTHING has been built there yet -- ")
                                    TEXT("it is built when a player reaches it."),
                                    *E.DestCoreLocation.ToCompactString())
@@ -911,6 +982,22 @@ void ANodeShuffleSubsystem::ApplyWellRelocation(bool bWellShuffleEnabled, bool b
     // with nothing to notice.
     int32 ReassertedUnplaced = 0;
 
+    // ns-t54-immediate-hide: THE PER-PASS TALLIES, ZEROED HERE AND NOWHERE ELSE. Every one of them is a
+    // statement about THIS pass, so a value carried in from the last one would be printed beside this
+    // pass's counts as though it had been measured on it. The reason map is cleared for the same reason:
+    // the T54 pair uses "the arm recorded no reason for this entry" as its hole detector, and a stale
+    // entry would silence exactly the case it exists to catch.
+    WellImmediateCandidatesThisPass = 0;
+    WellImmediateHiddenThisPass = 0;
+    WellImmediateGateRefusedThisPass = 0;
+    WellImmediateGateUnmeasuredThisPass = 0;
+    WellImmediateTookNothingThisPass = 0;
+    WellImmediateCaptureIncompleteThisPass = 0;
+    WellImmediateUncapturedHiddenThisPass = 0;
+    WellImmediateSatelliteRecordsHiddenThisPass = 0;
+    WellImmediateDisableRestoreArmedThisPass = 0;
+    WellImmediateHideReasonThisPass.Reset();
+
     for (FNodeShuffleWellEntry& E : WellLayout)
     {
         // ns-t23-stage0 INSTRUMENT 2 (K3) -- THE ONLY INCREMENT SITE, AND IT IS BEFORE EVERY `continue`
@@ -937,6 +1024,48 @@ void ANodeShuffleSubsystem::ApplyWellRelocation(bool bWellShuffleEnabled, bool b
             // MUTUALLY EXCLUSIVE, deliberately. An entry that owes a restore must not be re-suppressed on
             // the same pass -- the two would fight every 5 s and the well would flicker rather than come
             // back.
+            // ns-t54-immediate-hide -- DISABLE-RESTORE, ARMED ABOVE THE CHAIN SO IT DRAINS ON THIS PASS.
+            // T54 makes the suppressed-and-unplaced population the ORDINARY case rather than a rarity, and
+            // that turns an already-known hole into a large one: with relocation switched off, nothing
+            // searched for a destination and nothing put the original back, so the well was absent at both
+            // ends forever. The stranded census already named that bucket (`NotWorked`) and the settings
+            // tooltip already disclosed it; neither is a substitute for a restore. Armed ONLY for UNPLACED
+            // entries -- a PLACED entry's vanilla twin must stay hidden or the player gets two live copies
+            // of the same well, which is D1's duplication with the mod's own hand on it.
+            //
+            // It sets the persisted INTENT rather than calling the restore, reusing the reviewed machinery
+            // exactly as the terminal-failure and deal-failure sites do: the un-hide can only complete
+            // while the ORIGIN actors are resident, and this pass runs wherever the player is.
+            //
+            // THE PREDICATE IS THE STRANDED CENSUS'S OWN `NotWorked` BUCKET, VERBATIM -- relocation is off
+            // for this pass OR for this entry. That is not a coincidence and it is not a widening chosen by
+            // feel: that bucket is defined as "suppressed, unplaced, and nothing is running that could ever
+            // put it back", which is precisely the population that needs arming. Sharing the predicate means
+            // the warning and the remedy cannot drift apart. The census's other two warning buckets are
+            // deliberately NOT armed: bRelocationFailed already arms itself at the terminal-failure site
+            // (NodeShuffleWellEscalate.cpp), and a keeps-failing-to-assemble entry has members STANDING at
+            // the destination, so restoring its origin would put two partial copies in the world.
+            if ((!bOn || !E.bRelocate) && !E.bUnhidePending && WellGroupHasSuppressedMember(E))
+            {
+                E.bUnhidePending = true;
+                ++WellImmediateDisableRestoreArmedThisPass;
+                const FString ArmKey = E.CorePath + TEXT("|t54-disable-restore");
+                if (!WellUnhideLogged.Contains(ArmKey))
+                {
+                    WellUnhideLogged.Add(ArmKey);
+                    UE_LOG(LogNodeShuffle, Display,
+                        TEXT("WELLH2-IMMEDIATE core='%s': RESTORE ARMED -- this entry is not placed and we ")
+                        TEXT("hold a suppression record on at least one of its members, and the predicate ")
+                        TEXT("this branch tested is that nothing is working on it -- relocation switched ")
+                        TEXT("off for this pass (1 = off): %d, or this entry no longer marked as ")
+                        TEXT("relocating (1 = not relocating): %d. Nothing here measured WHY either is so. The persisted ")
+                        TEXT("restore intent is set and drained on every apply pass on which the ORIGINAL ")
+                        TEXT("site resolves; a placed entry is never armed, because its vanilla twin must ")
+                        TEXT("stay hidden while the relocated group stands."),
+                        *WellShort(E.CorePath), bOn ? 0 : 1, E.bRelocate ? 0 : 1);
+                }
+            }
+
             if (E.bUnhidePending)
             {
                 TryUnhideWellGroup(E, TEXT("deferred intent, re-attempted"));
@@ -946,6 +1075,146 @@ void ANodeShuffleSubsystem::ApplyWellRelocation(bool bWellShuffleEnabled, bool b
                 ++E.PassesSinceSuppressed;
                 ++ReassertedUnplaced;
                 SuppressVanillaWellGroup(E, EWellSuppressPhase::Apply);
+            }
+            else if (bOn && E.bRelocate && E.bOffsetsCaptured && E.bDestDealt && !E.bRelocationFailed)
+            {
+                // ============ ns-t54-immediate-hide: THE AUTHOR'S RULING, THIS IS THE ARM ============
+                // "It is a shuffle, I've repeatedly said I want things hidden immediately on a shuffle and
+                // that includes ALL things we shuffle." (author, 2026-08-10)
+                //
+                // WHAT THIS REPLACES. Before T54 the vanilla origin of a well the roll had marked as moving
+                // stayed visible, buildable and scanner-registered until the REPLACEMENT placed -- and
+                // placement is presence-gated on streamed terrain, so on a fresh save that is unbounded.
+                // The author has ruled that the window in which the resource exists NOWHERE is the lesser
+                // defect and is ACCEPTED. This arm makes the hide happen at load/stream-in instead.
+                //
+                // WHY IT IS AN ARM OF THIS CHAIN AND NOT A NEW LOOP. It is mutually exclusive with the two
+                // above by construction: an entry owing a restore must not be re-hidden on the same pass
+                // (the two would fight every ~5 s and the well would flicker), and an entry that already
+                // carries a suppression is RE-asserted by the arm above rather than initiated here.
+                //
+                // WHY IT IS ABOVE EVERY `continue` BELOW. The gates below are about finding a DESTINATION
+                // -- a player near it, a loadable resource class, a footprint that validates. None of them
+                // has anything to do with whether the ORIGIN should still be standing, and putting the hide
+                // beneath them is precisely how it came to be coupled to placement in the first place.
+                //
+                // THE ROLL-TIME PATH IS NOT REPLACED AND NOT DISABLED. CommitWellsAtRoll still hides at the
+                // instant of the roll for entries whose look is completely captured then. This arm covers
+                // what that path structurally cannot: a roll happens once and can only hide what is
+                // RESIDENT AT THAT INSTANT, while this runs every pass.
+                ++WellImmediateCandidatesThisPass;
+
+                // THE GROUP-SCOPED OCCUPANCY GATE (ns-t24-groupgate), asked here through the SAME shared
+                // lookup the placement gate below uses. Hiding the rest of a group around a member a player
+                // has built on leaves a well that cannot produce -- T24's measured field defect -- and that
+                // is exactly as wrong when the hide happens early as when it happens at placement.
+                FNodeShuffleWellPinCheck ImmPin;
+                EvaluateVanillaWellGroupOccupancy(E, ImmPin);
+
+                if (ImmPin.IsPinned())
+                {
+                    ++WellImmediateGateRefusedThisPass;
+                    WellImmediateHideReasonThisPass.Add(E.CorePath, 1);
+                    const FString ImmKey = FString::Printf(TEXT("%s|imm|%s|%d%d"), *E.CorePath,
+                                                           *ImmPin.FiredActorName,
+                                                           ImmPin.bCoreInUse ? 1 : 0,
+                                                           ImmPin.bSatelliteInUse ? 1 : 0);
+                    if (!WellGroupGateLogged.Contains(ImmKey))
+                    {
+                        WellGroupGateLogged.Add(ImmKey);
+                        UE_LOG(LogNodeShuffle, Display,
+                            TEXT("WELLH2-IMMEDIATE core='%s': IMMEDIATE HIDE REFUSED. MEASURED -- the shared ")
+                            TEXT("occupancy predicate returned true for actor '%s' of the VANILLA group ")
+                            TEXT("(core signal '%s', satellite signal '%s'); the actors asked were %s, %d ")
+                            TEXT("core and %d of %d satellite record(s) resolved live. The whole vanilla ")
+                            TEXT("group is left UNTOUCHED. This is the guarantee D1 recorded and T54 keeps: ")
+                            TEXT("a well member a player has built on is never taken away. Re-evaluated ")
+                            TEXT("every pass, so the hide proceeds by itself once the building is gone. ")
+                            TEXT("Said once per group per verdict."),
+                            *WellShort(E.CorePath), *ImmPin.FiredActorName,
+                            ImmPin.CoreWhy, ImmPin.SatelliteWhy, WellPinSourceName(ImmPin.Source),
+                            ImmPin.CoresTested, ImmPin.SatellitesTested, E.Satellites.Num());
+                    }
+                }
+                else if (!ImmPin.IsDecisive())
+                {
+                    // STRICTER THAN THE PLACEMENT GATE BELOW, DELIBERATELY, AND THE ASYMMETRY IS THE POINT.
+                    // The placement gate proceeds on an unmeasured verdict because refusing there would
+                    // refuse every relocation whose ORIGIN is out of streaming range of its DESTINATION,
+                    // which under spawn-on-discovery is the normal case. Here the opposite holds: this arm
+                    // acts ON the origin, so it can only do anything at all when the origin is resident --
+                    // and waiting costs nothing, because the arm re-runs every pass. The predicate that
+                    // produced this branch is IsDecisive()==0, which on this path means no vanilla CORE
+                    // resolved to a live actor. NOTHING HERE TESTED WHY; unstreamed, destroyed and
+                    // stale-path are indistinguishable from here and none of them is claimed.
+                    ++WellImmediateGateUnmeasuredThisPass;
+                    WellImmediateHideReasonThisPass.Add(E.CorePath, 2);
+                }
+                else
+                {
+                    // The capture state is read BEFORE the hide, because the hide's own capture runs inside
+                    // SuppressVanillaWellGroup and would make this read describe the post-hide world. It is
+                    // REPORTED, NOT ENFORCED: the roll-time path needs a completeness gate because its
+                    // capture is one shot, while the apply-phase capture retries every pass -- and gating
+                    // here would reproduce the ns-t24 failure where that gate refused 16 of 17 wells.
+                    int32 CapDressable = 0, CapWithPieces = 0, CapCaptured = 0, CapMissing = 0;
+                    const bool bCaptureComplete =
+                        IsWellGroupCaptureComplete(E, CapDressable, CapWithPieces, CapCaptured, CapMissing);
+
+                    SuppressVanillaWellGroup(E, EWellSuppressPhase::Apply);
+
+                    if (WellGroupHasSuppressedMember(E))
+                    {
+                        ++WellImmediateHiddenThisPass;
+                        WellImmediateHideReasonThisPass.Add(E.CorePath, 0);
+                        if (!bCaptureComplete) { ++WellImmediateCaptureIncompleteThisPass; }
+                        // T15 BLAST RADIUS, COUNTED RATHER THAN FIXED (T54 brief, item 5). An UNCAPTURED
+                        // satellite record is hidden with the group -- HideOne applies no bCaptured filter,
+                        // by design, or it would be stranded visible at an abandoned origin -- and is never
+                        // spawned at the destination (NodeShuffleWellSpawn.cpp refuses it). Immediate hide
+                        // widens that population because a satellite can now stream in and be hidden while
+                        // NO destination group exists yet. Both numerator and denominator are recorded so
+                        // the census cannot print a zero with nothing behind it.
+                        int32 UncapturedHere = 0;
+                        for (const FNodeShuffleWellSatellite& S : E.Satellites)
+                        {
+                            if (!S.bCaptured) { ++UncapturedHere; }
+                        }
+                        WellImmediateUncapturedHiddenThisPass += UncapturedHere;
+                        WellImmediateSatelliteRecordsHiddenThisPass += E.Satellites.Num();
+
+                        const FString HidKey = E.CorePath + TEXT("|t54-hidden");
+                        if (!WellSuppressLogged.Contains(HidKey))
+                        {
+                            WellSuppressLogged.Add(HidKey);
+                            UE_LOG(LogNodeShuffle, Display,
+                                TEXT("WELLH2-IMMEDIATE core='%s': ORIGIN HIDDEN NOW, not at placement. This ")
+                                TEXT("entry is marked as moving and is not placed; the occupancy predicate ")
+                                TEXT("was asked of %d core and %d of %d satellite record(s) that resolved ")
+                                TEXT("live and returned false. Capture state at the instant of the hide: %d ")
+                                TEXT("dressable member(s), %d of them holding at least one indexed mesh ")
+                                TEXT("piece, %d holding a captured look, %d holding pieces but no look -- ")
+                                TEXT("that last number does NOT refuse the hide on this path because the ")
+                                TEXT("apply-phase capture retries every pass. The replacement is still only ")
+                                TEXT("built when a player reaches %s, so this well is absent from the world ")
+                                TEXT("until then: that window is the author's 2026-08-10 ruling, accepted, ")
+                                TEXT("not a defect. Every member hidden carries a persisted restore ")
+                                TEXT("obligation. Said once per group per session."),
+                                *WellShort(E.CorePath), ImmPin.CoresTested, ImmPin.SatellitesTested,
+                                E.Satellites.Num(), CapDressable, CapWithPieces, CapCaptured, CapMissing,
+                                *E.DestCoreLocation.ToCompactString());
+                        }
+                    }
+                    else
+                    {
+                        // The suppression ran and took no member into the ledger. Counted apart from the
+                        // two refusals above because it is neither: it is the absence of an outcome, and
+                        // summing it with a decision is the "zero with no denominator" defect. The
+                        // WELLH2-SUPPRESS line for this group carries its own occupied / not-streamed split.
+                        ++WellImmediateTookNothingThisPass;
+                        WellImmediateHideReasonThisPass.Add(E.CorePath, 3);
+                    }
+                }
             }
 
             if (!bOn || !E.bRelocate || !E.bOffsetsCaptured || !E.bDestDealt || E.bRelocationFailed)
@@ -1000,17 +1269,14 @@ void ANodeShuffleSubsystem::ApplyWellRelocation(bool bWellShuffleEnabled, bool b
             // SYMMETRY: the core AND every satellite record are handed to it -- INCLUDING uncaptured
             // records, which are never spawned but ARE hidden by HideOne, so an Extractor on one of those
             // is the mirrored version of the same defect and must refuse the placement identically.
-            AFGResourceNodeFrackingCore* GateCore =
-                Cast<AFGResourceNodeFrackingCore>(FindOriginalBaseByPath(E.CorePath));
-            TArray<AFGResourceNodeFrackingSatellite*> GateSats;
-            for (const FNodeShuffleWellSatellite& S : E.Satellites)
-            {
-                AFGResourceNodeFrackingSatellite* Sat =
-                    Cast<AFGResourceNodeFrackingSatellite>(FindOriginalBaseByPath(S.SatellitePath));
-                if (IsValid(Sat)) { GateSats.Add(Sat); }
-            }
-            const FNodeShuffleWellPinCheck GatePin =
-                EvaluateWellPin(E, SpawnedWellCores, SpawnedWellSatellites, GateCore, GateSats);
+            // ns-t54-immediate-hide: the actor gathering that used to sit inline HERE now lives in
+            // EvaluateVanillaWellGroupOccupancy (NodeShuffleWellImmediateHide.cpp) and is shared with the
+            // immediate-hide arm above. Not one line of the selection or the test changed -- it is the
+            // same lookups in the same order feeding the same EvaluateWellPin call. It moved because this
+            // packet added a SECOND site asking the same question, and one rule living in two places is
+            // the shape that caused ns-review-h2 F3 and this workspace's most-repeated defect class.
+            FNodeShuffleWellPinCheck GatePin;
+            EvaluateVanillaWellGroupOccupancy(E, GatePin);
             if (GatePin.IsPinned())
             {
                 ++GateRefused;
@@ -1214,4 +1480,11 @@ void ANodeShuffleSubsystem::ApplyWellRelocation(bool bWellShuffleEnabled, bool b
     // already hidden, and gating the restore on the config would strand exactly that population.
     EmitWellStrandedCensus();
     EmitWellRollHideTestPair(FNodeShuffleConfigStruct::GetActiveConfig(this).CommitWellsAtRoll);
+
+    // ns-t54-immediate-hide: the census and the T54 pair, AFTER the stranded census and the T23 pair and
+    // for the same reason -- both describe the state this pass ended in, and the T54 pair's hole detector
+    // reads the reason map this pass's arm wrote. Both are log-only. The T23 pair above is NOT superseded:
+    // it answers a question about the roll-time toggle that this packet does not touch.
+    EmitWellImmediateHideCensus();
+    EmitWellImmediateHideTestPair(bOn);
 }

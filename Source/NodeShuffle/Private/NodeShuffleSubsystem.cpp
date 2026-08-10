@@ -2229,6 +2229,13 @@ void ANodeShuffleSubsystem::ApplyLayout()
     SettleNewNodesNearPlayers();
     ReassociateOrphanedExtractors();
 
+    // ns-t54 SCOPE ADDITION 2: the shadow gate's once-per-pass census, emitted AFTER both placement
+    // paths have run in this pass so it reports the whole pass rather than half of it -- the well path
+    // is called above and the ordinary-node spawns run under SettleNewNodesNearPlayers. It also ZEROES
+    // the per-pass counters, so this must be the only call site; a second one would print a half pass
+    // and then hide the rest of it behind zeroed counters. Log-only.
+    EmitInsideShadowGateCensus();
+
     // cave-nodes-1/2: always-on cavern discovery (budgeted traces near players). Placement happens
     // only where locations are DEALT (roll/redeal draws) — never by actively re-homing entries.
     ExpandCaveFloorsBudgeted();
@@ -4029,9 +4036,14 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
     // spot (like the water relocation) and PERSIST it; after a capped number of
     // failed nudges we RESOLVE the entry (deactivate it) so it stops re-attempting
     // and re-logging. A redundant node on an already-occupied spot is no real loss.
+    // ns-t54 SCOPE ADDITION 2 -- HOISTED ONE SCOPE, VALUE AND MEANING UNCHANGED. It was declared inside
+    // the block below, which closes before the spawn; the shadow gate refuses at the FINAL accepted spot,
+    // past that close, and so could not see it. Hoisted rather than duplicated: this is the SAME bound on
+    // the SAME counter (Entry.OverlapNudges), and a second constant with the same value is exactly the
+    // one-rule-in-two-places shape this file has been bitten by. Nothing else moved.
+    constexpr uint8 MaxOverlapNudges = 8;
     {
         constexpr float OverlapRejectRadius = 800.0f; // 8 m: a node footprint
-        constexpr uint8 MaxOverlapNudges = 8;
         const float RejSq = FMath::Square(OverlapRejectRadius);
 
         auto OverlapsAt = [&](const FVector& At) -> bool
@@ -4204,6 +4216,73 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
     // P3 (deckevict-1): bVanillaOrigin drives the placement-gate re-assert below and the visual branch
     // further down — it must reflect the class we're ACTUALLY spawning (ResolvedNodeClassPath, hoisted
     // above), not the entry's original (possibly refusing) NodeClassPath.
+    // ======= ns-t54 SCOPE ADDITION 2: THE CENTRE-TOTALLY-INSIDE SHADOW GATE, AT THE FINAL SPOT =======
+    // WHY HERE AND NOWHERE ELSE. This is the FINAL ACCEPTED SPOT: the occupancy and enclosure gates
+    // above have passed or the nudge spiral has moved Entry.Location to a spot they pass, and the
+    // SpawnActor below is the commit. Evaluating inside the spiral instead would multiply ~60 queries by
+    // every candidate; evaluating after the spawn would measure a point the node's own body now occupies.
+    //
+    // IT RUNS IN BOTH MODES. A default-OFF CVar is not isolation and this call is not gated on it: the
+    // whole point of shadow-first is a graded log from ordinary play. Only the REFUSAL below is gated.
+    //
+    // THE SUBJECT IS NULL HERE, DELIBERATELY AND WITH A CONSEQUENCE. The node does not exist yet -- that
+    // is what makes this the pre-commit point -- so there is no actor to exclude and none is claimed.
+    // The instrument's subject-exclusion counters will therefore read zero on this path, which is a
+    // statement about what was passed in and not about what the world contains.
+    //
+    // THE CAVE FLAG IS PASSED THROUGH RATHER THAN RE-DERIVED. Entry.bUnderground is the entry's own
+    // persisted record that its destination was dealt as a cave cell. It is NOT a complete identifier of
+    // every placement the author's cave ruling protects -- a spot that ended up under a natural overhang
+    // without going through the cave deal does not carry it -- and the gate's own comment says so rather
+    // than guessing. bAdoptedNotPlaced is false on this path: this branch spawns, it does not adopt.
+    {
+        const FString GateWho = FString::Printf(TEXT("ordinary node entry '%s' (resource '%s')"),
+                                                *Entry.EntryGuid.ToString(),
+                                                *Entry.AssignedResourceClassPath);
+        const bool bGateRefuses = EvaluateInsideShadowGate(Entry.Location, /*Subject=*/nullptr, GateWho,
+                                                           /*bAdoptedNotPlaced=*/false,
+                                                           /*bCaveFlagged=*/Entry.bUnderground);
+        if (bGateRefuses)
+        {
+            // ns-t54 cold review F11 -- ONE EVALUATION, THEN DROP. NO RETRY.
+            // The earlier version spent the shared OverlapNudges cap: it incremented the counter and
+            // returned, so the entry came back next pass and was re-evaluated AT THE SAME LOCATION. That
+            // borrowed the wrong half of the nudge machinery. The spiral's retries are worth having
+            // because the spiral MOVES Entry.Location between them; this refusal moves nothing, so all
+            // eight attempts probe an identical point and the instrument is deterministic at a fixed
+            // point -- ~460 queries to re-derive the first verdict seven more times.
+            //
+            // THE ALTERNATIVE WAS CONSIDERED AND REFUSED, NOT OVERLOOKED: adding the containment
+            // predicate to the spiral's accept test would give a genuine relocate-instead-of-drop, but it
+            // multiplies ~57 queries by every spiral candidate, which is exactly the cost this gate's
+            // placement at the FINAL spot exists to avoid. The reviewer's own recommendation is not now.
+            //
+            // SO THIS IS STILL A DROP, NOT A RE-DEAL, and the handoff says so: whether a true re-deal
+            // path exists for an ordinary node was not verified in this packet, and inventing one behind
+            // a default-OFF switch would be the half-applied-and-green failure. Resolve it before the
+            // CVar is ever turned on. OverlapNudges is deliberately NOT touched here -- it is the
+            // spiral's counter and this is not a spiral attempt.
+            Entry.bActive = false;
+            Entry.bRayCasted = false;
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("INSIDEGATE: resolved %s at %s on the FIRST refusal by the centre-totally-inside ")
+                TEXT("gate -- the entry is dropped immediately rather than retried. MEASURED: the ")
+                TEXT("instrument's verdict on the line above, at this exact location. The reason there is ")
+                TEXT("no retry is that nothing here MOVES the entry, so a second evaluation would probe ")
+                TEXT("the identical point; the overlap spiral retries because it relocates between ")
+                TEXT("attempts, and its nudge counter is left untouched by this branch. This is a DROP, ")
+                TEXT("not a re-deal: the entry does not come back this session, AND NOTHING HERE TOUCHES ")
+                TEXT("THE VANILLA ORIGINAL'S SUPPRESSION -- that node stays hidden, so this resource is ")
+                TEXT("absent at BOTH ends for the session. That is the same outcome as the pre-existing ")
+                TEXT("overlap/enclosure give-up and is not new behaviour, but it is the cost of turning ")
+                TEXT("the switch on. Reachable only while ")
+                TEXT("NodeShuffle.InsideGateRefuse is set; with it at its default the gate logs and ")
+                TEXT("changes nothing."),
+                *ResourceClass->GetName(), *Entry.Location.ToCompactString());
+            return;
+        }
+    }
+
     const bool bVanillaOrigin = ResolvedNodeClassPath.StartsWith(TEXT("/Game/"));
     UClass* SpawnClass = NodeClass ? NodeClass : ANodeShuffleResourceNode::StaticClass();
 
