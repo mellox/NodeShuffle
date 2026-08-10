@@ -1731,3 +1731,52 @@ centre being inside solid; this implementation of it failed. Two candidate expla
    printed beside the first, ~5 lines — turns the one unmeasured judgement call into a measurement.
 3. **Do not tune the candidate to make sat 86 pass.** That is fitting the predicate to the last
    screenshot, which this file already warns against twice.
+
+### T48. THE CENTRE-CONTAINMENT WALK REPORTS "INSIDE" FOR A POINT IN OPEN AIR WHENEVER AN `FGCliffActor` IS ABOVE IT. Proven in game, with a photograph. [[T44]] IS OVERTURNED — the author's rule was never tested.
+**MEASURED 2026-08-10 on `2026-08-09-t47-1`. The author stood on open ground under a rock overhang,
+photographed the overhang above and their own feet below, aimed straight down and ran
+`NodeShuffle.PointAtHere`.**
+```
+aim: pitch -89.9, direction (0,0,-1), hit at 162 cm
+     LandscapeStreamingProxy / LandscapeHeightfieldCollisionComponent   <- the actual ground
+probe eye inside solid geometry: NO                                      <- eye is in open air
+ENCLOSURE GATE: 5 of 8 rays blocked -> not enclosed
+SHADOW centre-containment: CENTRE INSIDE                                 <- FALSE
+ground trace from that point: FGCliffActor_1628 / CliffMesh              <- the overhang above
+```
+**The point is the ground under the author's boots. The eye check says NO. The enclosure rays say 5 of
+8. The photograph shows open air. The walk says INSIDE.**
+
+**THE PATTERN, across every reading taken tonight — it is perfectly mechanical:**
+* trace above the point hits an **`FGCliffActor`** → **CENTRE INSIDE** (well members 1, 2, 4, 7, and
+  this open-air point)
+* trace above hits **`LandscapeStreamingProxy`** → **NOT INSIDE** (member 5, after the author deleted
+  the extractor above it — a clean single-variable control)
+* trace above hits an **excluded buildable** → **NOT INSIDE**, with the positive control unbuilt
+**The walk is not measuring containment. It is measuring "is there an un-excluded `FGCliffActor` above
+me."** It enters the cliff mesh from the sky and never registers the exit from its underside;
+landscape heightfields exit correctly.
+
+**WHAT THIS OVERTURNS.**
+1. **[[T44]] IS WRONG.** It concluded the author's centre rule "does not separate the cases" because
+   the candidate would refuse satellite 86, the partially-embedded member the author wants kept. **86
+   read INSIDE for this reason, not because its centre is buried.** The rule is **UNTESTED, not
+   disproven** — and every conclusion drawn from T44 must be re-derived.
+2. **THE AUTHOR'S CAVE CONCERN WAS EXACTLY RIGHT, AND THIS IS THE MECHANISM.** They asked *"that
+   doesn't mean it's considered a cave right? We don't want to break our putting nodes in caves."* A
+   cave floor has rock above it. **This predicate would have condemned every cave placement in the
+   world**, and it would have looked like a correct measurement while doing it.
+3. **The shadow-metric discipline is what saved it.** The candidate gated nothing, so a predicate that
+   is wrong in the most dangerous possible direction cost two console commands and no regression.
+
+**WHAT IS STILL TRUE AND MUST NOT BE RE-LITIGATED.** [[T41]] stands on its own evidence — the shipped
+enclosure gate has no vertical sampling and reads 0 of 8 for a member inside a cliff face. [[T40]]
+stands. The `RaycastGroundAt` behaviour is now understood: it starts high and stops at the FIRST
+surface, so under an overhang it returns **the top of the overhang** — measured at **+23 m** above the
+author. That is the whole of the unexplained +2 m to +21.5 m gap. **Mystery closed; it was never a
+cave.**
+
+**NEXT.** Fix the walk's exit detection against `FGCliffActor` static meshes, then re-run the SAME
+readings — the author's rule gets its first real test only after that. **Do not tune the walk against
+satellite 86.** The single best regression test now exists and is free: **a point on open ground under
+an overhang must read NOT INSIDE**, and the author has the coordinates.
