@@ -1683,3 +1683,51 @@ MEASURED — do not write it up as the cause until someone tests it.**
 and would move both the well and ordinary-node paths at once. It needs a differential review and a
 before/after count, not a one-line type change. **Measure what the gate currently sees and what it
 would then see, first.**
+
+### T44. THE CENTRE-CONTAINMENT CANDIDATE DOES NOT SEPARATE THE CASES — it would refuse the member the author explicitly wants KEPT, and every one of its NOT-INSIDE readings is UNPROVEN. Prediction falsified; the rule is not retired, the implementation is.
+**MEASURED 2026-08-09/10 on `2026-08-09-t42-1`, `NodeShuffle.WellProbe` over `BP_FrackingCore13`,
+7 of 7 members probed. The shadow metric gated nothing, which is the only reason this cost one run.**
+
+| member | shipped gate | candidate | control built? |
+|---|---|---|---|
+| core (1 of 8) | accept | **CENTRE INSIDE** → refuse | yes |
+| sat 81 — the buried one (0 of 8) | accept | **CENTRE INSIDE** → refuse | yes |
+| sat 82 (8 of 8, extractor on it) | refuse | NOT INSIDE → accept | **NO** |
+| sat 83 (0 of 8) | accept | **CENTRE INSIDE** → refuse | yes |
+| sat 84 (8 of 8, extractor) | refuse | NOT INSIDE → accept | **NO** |
+| sat 85 (8 of 8, extractor) | refuse | NOT INSIDE → accept | **NO** |
+| **sat 86 (3 of 8, partly embedded — AUTHOR WANTS IT KEPT)** | accept | **CENTRE INSIDE** → refuse | yes |
+
+**Shipped gate refuses 3, candidate refuses 4, they agree on 0 of 7 and disagree on all 7.**
+
+**THE PREDICTION, RECORDED BEFORE THE RUN, WAS WRONG ON 3 OF 6 NAMED MEMBERS.** Predicted: sat 81
+INSIDE (**correct**); core and sat 86 NOT INSIDE (**both wrong — both read INSIDE**); 82/84/85 NOT
+INSIDE once buildables excluded (**correct in value, but see below**).
+
+**THE DECISIVE FAILURE: sat 86 reads CENTRE INSIDE.** That is the partially-embedded member the author
+ruled must keep passing ([[T34]]/[[T37]] ruling). **Shipping this as a gate would have deleted exactly
+the terrain the author said adds character** — the outcome the shadow-metric discipline existed to
+prevent, caught for the price of one run and zero placement changes.
+
+**AND ALL THREE "NOT INSIDE" READINGS ARE UNPROVEN.** Each of 82/84/85 reports the positive control as
+**not built** — *"a walk from the sky start down to 20000 cm below the tested point found no counted
+surface at all"*. By the metric's own trust rule a NOT INSIDE without a passing control is **unproven,
+not open air**. So the candidate has **zero trustworthy accepts** in this run. That the 3 unproven ones
+are exactly the 3 with extractors built on them is a **correlation, and its cause is UNTESTED.**
+
+**WHAT IS NOT ESTABLISHED — do not conclude the author's rule is wrong.** The rule is about a node's
+centre being inside solid; this implementation of it failed. Two candidate explanations, neither tested:
+* the walk is wrong (it is known to **fail toward NOT INSIDE**, and the control failed on 3 of 7); or
+* **the members really are below the terrain surface.** The same command's ground line reports a long
+  downward trace landing **+2 m, +13 m, +13 m, +5.7 m, +5.7 m, +21.5 m** above the members. **If a
+  member sits 13 m under the surface, "centre inside solid" is TRUE and correctly reported** — and the
+  real defect is elsewhere entirely. **That Z discrepancy has been printed all evening and has never
+  been explained. Explain it before building another predicate on verticality.**
+
+**NEXT, IN ORDER, AND NOTHING ELSE UNTIL THE FIRST IS DONE.**
+1. **Explain the ground-trace Z gap.** It is unexplained, reproducible, printed per member, and every
+   vertical predicate depends on what it means.
+2. Then re-examine the walk: the F2 fix ([[T42]]) — a second reading with `SubjectActor = nullptr`
+   printed beside the first, ~5 lines — turns the one unmeasured judgement call into a measurement.
+3. **Do not tune the candidate to make sat 86 pass.** That is fitting the predicate to the last
+   screenshot, which this file already warns against twice.
