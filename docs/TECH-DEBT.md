@@ -7,7 +7,9 @@ this list, the entry has failed — fix the entry, not just the bug.**
 Each item records what it is, how we know, and why it is not fixed. Items with a
 **pre-scoped fix** have had the work sized already — start there, don't redesign.
 
-Last updated 2026-08-10 (T55 CLOSED + T59 split out of it; T56 discriminated — packet ns-t55-t56-reload. Earlier: T58 filed in P1 after T55 — SF+ destroys third-party nodes on new games;
+Last updated 2026-08-10 (T59 DECIDED + IMPLEMENTED as a per-SESSION pack namespace, and a pre-scoped
+DESIGN ITEM added to T14 for auto-enrolling newly-surviving foreign resources — packet
+ns-t59-pack-namespace, neither built nor reviewed. Earlier: T55 CLOSED + T59 split out of it; T56 discriminated — packet ns-t55-t56-reload. Earlier: T58 filed in P1 after T55 — SF+ destroys third-party nodes on new games;
 DECIDED the same day by the author and implemented as the default-ON protect veto, pending build,
 review and in-game — see the T58 STATUS block; source
 `_team/nodeshuffle-followups/veto-spawnwindow-regression.md`.
@@ -245,6 +247,9 @@ is `NodeShuffleAutoAllowExtractors.cpp:759` (`if (FM.DirectoryExists(*PackDir) &
 directory itself is per-INSTALL. G loaded a save whose layout has no lithium/alkali group, so AlkaLib
 matched nothing, so its two documents were deleted; the next boot of the other save had to write them
 again. Filed as its own entry, **[[T59]]**, because it is a real defect and this one is not its fix.
+**(T59 was decided and implemented later the same day — the line numbers cited in this paragraph are the
+PRE-FIX ones and are kept because they are what the measurement was taken against; the delete is now
+scoped to the loaded session's own name space. See the T59 STATUS block.)**
 
 **Therefore option 1 is REFUSED ON EVIDENCE, not on deference.** Persisting `AnnouncedPendingKeys` would
 have suppressed the third row above — a notice that was CORRECT, for buildings the player genuinely could
@@ -258,7 +263,7 @@ The header comment at `NodeShuffleSubsystem.h:1147` now records the measurement 
 name. New diagnostic: `AUTOALLOW PACKCHURN:` — docs before/now, unchanged/added/removed, with the removed
 filenames — so a repeat notice is explained by one line instead of a cross-log diff.
 
-### T59. THE GENERATED SF+ ALLOW-LIST PACK IS PER-INSTALL BUT ITS CONTENT IS PER-SAVE, so loading save B deletes the compatibility documents save A needs — and the extractors A had working go back to "Invalid aim location!" for one boot, every time the player alternates saves. **Split out of [[T55]] 2026-08-10 when the measurement showed T55's symptom was this. UNFIXED — AWAITING AUTHOR DECISION — not yet put to the author (T59 created 2026-08-10 by packet `ns-t55-t56-reload`).**
+### T59. THE GENERATED SF+ ALLOW-LIST PACK IS PER-INSTALL BUT ITS CONTENT IS PER-SAVE, so loading save B deletes the compatibility documents save A needs — and the extractors A had working go back to "Invalid aim location!" for one boot, every time the player alternates saves. **Split out of [[T55]] 2026-08-10 when the measurement showed T55's symptom was this. DECIDED BY THE AUTHOR AND IMPLEMENTED THE SAME DAY — option 1 keyed per SESSION; see the T59 STATUS block below for the form, the migration and what it deliberately does not fix. The description below is the DEFECT AS MEASURED, kept in the past tense's place because the status block is what says where it stands.**
 **MEASURED**, three consecutive boots, table in the T55 STATUS block above: written+announced → allowed →
 deleted → not allowed → written+announced again. **THE MECHANISM IS TWO LINES, BOTH DELIBERATE:**
 `NodeShuffleAutoAllowExtractors.cpp:759` deletes the whole pack directory on every completed pass, and
@@ -290,6 +295,87 @@ player with more than one save — which is the ordinary case, and the author's 
 
 **Do not "fix" this by persisting the announce set** — see the T55 STATUS block for why that suppresses a
 true notice.
+
+#### T59 STATUS: **DECIDED AND IMPLEMENTED — OPTION 1, KEYED PER SESSION (PLAYTHROUGH), NOT PER SAVE** (author decision 2026-08-10; packet `ns-t59-pack-namespace`, marker `2026-08-10-t59-1`). **NOT BUILT, NOT COLD-REVIEWED, NOT TESTED IN GAME — no build ran in this packet.**
+
+**FORM: a filename prefix inside the SAME pack directory.** Documents are now
+`s-<sessionSlug>--auto-allow-[<mod>-]<class>.cdo.yml`, alongside one shared `pack.yml`.
+*KDF evidence, strongest first:* (a) **our own measurement** — `pack.yml` lists no documents and this
+generator has always written two different filename shapes flat into this directory
+(`auto-allow-<class>` and `auto-allow-<mod>-<class>`), and a written document read back
+`sfPlusAlreadyAllows=1` on the next boot. **That inference is ASSUMED, NOT MEASURED — capped
+deliberately.** What was MEASURED is narrower than the claim: two stems, BOTH beginning `auto-allow-`,
+both applied. That is consistent with *"KDF enumerates every document file and ignores stems"* AND with
+*"KDF matches a prefix or caches an index"*. Only the first makes this packet work. **The falsifier is
+runtime test R3:** a renamed document must read back `sfPlusAlreadyAllows=1` on the next boot, on an
+install with no legacy document for that class. (b) KPatchwork's `DataForge/README.md` states a pack may sit at `DataForge/**/<pack-name>/pack.yml`
+(*any depth*) and its shipping packs nest documents two levels below their own `pack.yml`
+(`DataForge/SatisfactoryPlus/MkPlusSFPlus/PDA/PDA-allowed-extractors.yml`) — so a per-session
+subdirectory or a per-session sibling pack would very probably also work. They were **not** chosen this
+round: (b) is another repo's layout rather than this generator's measured behaviour, and one shared
+`pack.yml` states the `hasMod` gate exactly once. **THE PER-SESSION SUBDIRECTORY IS THE PRE-AGREED
+RESERVE** (cold review 2026-08-10, alternative 1) — if R3 falsifies stem-agnostic discovery, swap the
+prefix for a subdirectory component (`<PackDir>/s-<slug>/*.cdo.yml`) and the delete becomes a scoped
+`DeleteDirectory` on a directory we own. The sibling-pack form stays rejected: it is the only option that
+adds a directory under the discovered root. **The namespace stays inside the already-discovered pack
+directory, so the set of places KDF reads is unchanged** — the `[[kdf-editor-exports-autoapply]]` hazard
+(documents applying from an unexpected location) is not widened.
+
+**IDENTITY: `AFGGameState::GetSessionName()`**, sanitised to `[A-Za-z0-9_]` (`-` excluded on purpose: the
+prefix separator is `--`, and allowing `-` inside a slug would let one session's delete glob match
+another's files) plus a CRC32 of the **original** name. **Collision, stated honestly:** two *different*
+session names share a namespace only if they fold identically *and* collide on CRC32 — possible, not
+impossible; the consequence is exactly the pre-T59 behaviour **for that one pair**, never a delete
+outside this directory. A session **rename** starts a new namespace and orphans the old one's documents,
+which keep applying and are never deleted.
+
+**ACCEPTED RESIDUAL — A SESSION NAME IS NOT A PLAYTHROUGH ID** (cold review F4, 2026-08-10). The common
+case is not a hash collision at all: **two separate playthroughs the player named identically share one
+namespace by construction** — no fold, no checksum involved — and this entry's churn reproduces in full
+for that pair. The game groups saves by session name too, so they are one session to Satisfactory as
+well. **The author chose per-session deliberately** (per-save was considered and rejected: every autosave
+and branch would become its own namespace, unbounded and un-GC'd, with a much staler union). This is the
+known edge of the KEY, not a defect in the hashing, and the player-facing copy was corrected to say
+"session" rather than "playthrough" so it does not over-claim.
+
+**WHEN THE WRITER RUNS (verified, not assumed):** the only caller is `ANodeShuffleSubsystem::RefreshTick`
+(`NodeShuffleSubsystem.cpp:372`), on an actor in the played world, behind `bLayoutGenerated` + `ApplyLayout()`
+— there is no main-menu path. The identity gate is still mandatory and **retries rather than latching**:
+an empty identity (a client before replication) writes nothing and deletes nothing.
+
+**BOOT SEMANTICS ARE A UNION.** KDF applies everything present at launch, so a player with three
+playthroughs boots with all three namespaces applied. Every document is an *append* to SF+'s
+`mAllowedExtractors`, whose consumer is a `TSet` (measured from KAPI's PDB), so duplicates collapse.
+
+**MIGRATION: LEAVE-AND-UNION — the pre-T59 un-namespaced documents are left in place and NEVER deleted.**
+Chosen on the mechanism, not on caution: *adopting* them into the loaded session's namespace would make
+this session's very next pass delete them, reproducing this entry's churn for whichever save booted
+first. **What the player sees: nothing changes** — the legacy entries are additive, duplicates collapse,
+and a one-line `AUTOALLOW: T59 migration` log says they were found, left alone, and how to remove them
+(the `NodeShuffle.AutoAllowExtractors=0` rollback lever, which clears the whole directory *including every
+session*, or deleting the files without an `s-` prefix by hand).
+**THE MIGRATION BRANCH CANNOT FIRE ON A FRESHLY BUILT INSTALL** (cold review F3): `DataForge/` is in no
+build mirror list, so every build wipes the pack dir and the legacy count is 0 for reasons that have
+nothing to do with the feature. **It therefore ships UNTESTED unless a legacy document is planted** —
+runtime step R5 does exactly that. The pass now logs the empty case explicitly ("*migration check ran and
+found 0*") so "no legacy documents existed" cannot be mistaken for "the check never ran".
+
+**STALENESS — WHAT PER-SESSION BOUNDS AND WHAT IT DELIBERATELY DOES NOT FIX.** Option 3's amendment above
+names the correctness cost of widening SF+'s allow-list beyond what a save actually needs; the union has a
+weaker form of it. A session's documents track **that session's** rolls, so a re-roll or a mod removal
+inside a playthrough still cleans that playthrough's entries on the next pass — the population is bounded
+by rolls the player actually made, not by every extractor×resource pairing the install permits.
+**Not fixed:** documents belonging to *other* playthroughs still apply while you play this one, so an
+extractor may be placeable on a node type your current session's layout never produced. That is a
+strictly smaller widening than option 3 and a strictly larger one than a single-save pack. Deleting
+another session's documents to fix it is the defect this entry exists to end; a garbage collector keyed
+on "sessions that no longer exist on disk" is the shape a future fix would take, and is **not** in scope
+here.
+
+**DIAGNOSTIC:** `AUTOALLOW PACKCHURN:` is split — own-namespace counts (regeneration, *expected*) and
+`crossNamespaceRemoved` **which must read zero**, measured by re-listing the directory after the writes,
+with `otherNamespaceDocsBefore` on the same line as its denominator. A nonzero cross figure is a
+regression to this entry.
 
 ### T60. THE T58 PROTECTION IS ALL-OR-NOTHING, SO A PLAYER WHO WANTS SF+'s RESEARCH GATING BACK FOR **ONE** RESOURCE HAS TO GIVE IT UP FOR ALL OF THEM. **Status: IMPLEMENTED-PENDING-BUILD-REVIEW-AND-INGAME (packet `ns-t60-protect-checkboxes`, 2026-08-10, marker `2026-08-10-t60-1`). NOT BUILT — no build ran in this packet.**
 
@@ -1539,6 +1625,45 @@ the population visible per roll.
 > **Explicitly rejected alternatives:** raising `MinVanillaNodesForRoll` (fixes nothing, and
 > would cement the false streaming model by looking like a fix) and building a node manifest
 > (strictly worse — it *loses* exactly this population).
+
+#### T14 DESIGN ITEM (author: yes, 2026-08-10) — **AUTO-ENROLL NEWLY-SURVIVING FOREIGN RESOURCES WITHOUT A FULL RESHUFFLE. NOT IMPLEMENTED, NOT SCOPED TO A PACKET, NOT DESIGNED — this block is the goal and the open questions, nothing more.** (Recorded by packet `ns-t59-pack-namespace`; that packet implemented **only** T59 and wrote no code for this.)
+
+**GOAL.** When a foreign (other-mod) resource node exists in the world but NodeShuffle is not managing
+it, bring it under management **incrementally** — without the player having to trigger a full re-roll
+that re-deals the whole map.
+
+**WHY NOW, and why this is newer than T14's own pre-scoped fix.** [[T58]]'s protect veto makes
+third-party nodes **survive** SF+'s cleanup on new games — that was the fix, and it worked at the
+survival layer only. A surviving foreign node is not thereby *enrolled*: our layout was dealt without it,
+so it stays outside the shuffle until a **manual** reshuffle re-scans the world and picks it up. So the
+population T14 has always described — nodes present but absent from the layout — now has a second, more
+common source than late `SpawnActor` timing, and the only remedy on offer is the heaviest one the mod
+has. T14's existing pre-scoped fix (re-run the live augment automatically once, N seconds after boot) is
+**adjacent, not the same thing**: it is about *when* the augment runs, this is about *enrolling a node
+the augment has already seen survive*, at any point in a session.
+
+**OPEN QUESTIONS — none of these are decided, and the first two change the shape of the packet.**
+1. **What triggers enrollment?** Candidates, uncosted: the veto's own first-sighting hook
+   (`NoteForeignResourceSighting`, which T60 already runs per foreign resource per session — it is the
+   one place that provably observes exactly this population); a periodic node-count-changed edge (T14's
+   pre-scoped trigger); an explicit player action (console command / config toggle); or on the next load
+   only. A hook that fires **per sighting** and a sweep that fires **per interval** have different
+   failure modes, and the population rule (T60's POPULATION RULE) is the thing to reuse either way.
+2. **Does enrollment MOVE the node, or adopt it in place?** *Adopt in place* = the node joins the managed
+   set at its current location, keeps its own resource, and only becomes eligible for future rolls —
+   cheap, invisible, and arguably not "shuffled" at all. *Move it* = deal it a destination now, which is
+   what a reshuffle would have done, and which changes the world mid-session in front of a player who may
+   already have built on or around it. **These are different features and the answer is not obvious;
+   do not let an implementation pick one by accident.**
+3. **Save impact.** The layout is save-visible state. Enrolling mid-session mutates it outside
+   `RollLayout`, which every existing invariant about "the layout changes only at roll time" is written
+   against — including the auto-allow pass's own latch/re-arm argument
+   (`NodeShuffleAutoAllowExtractors.cpp` header: *"Layout only CHANGES at RollLayout"*), which would
+   become false. **Whoever scopes this must enumerate the consumers of that invariant first**, not
+   discover them afterwards.
+4. Secondary, but real: what happens on the load AFTER enrollment if the foreign mod is removed; and
+   whether an enrolled-in-place node is distinguishable in the layout from one this mod relocated (the
+   S1/`Foreign` classification in [[T58]]/[[T60]] is the existing vocabulary for that question).
 
 ### T3. Snap-box overlap — **PARKED 2026-08-08 by the mod author. Watch-only; do not schedule work.**
 

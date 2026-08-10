@@ -1167,8 +1167,16 @@ private:
     // buildings the player really could not place until a restart -- precisely the failure named above,
     // now observed rather than predicted. T55 is closed as option 2 (state stays transient; the chat copy
     // was rewritten to read as status and to drop two measured-false claims -- see ns-t55-copy in
-    // NodeShufflePendingNotice.cpp). The per-save/per-install pack churn is a SEPARATE, unfixed defect and
-    // is filed as such in docs/TECH-DEBT.md; do not "fix" it by persisting anything in this block.
+    // NodeShufflePendingNotice.cpp). The per-save/per-install pack churn is a SEPARATE defect and is
+    // filed as such in docs/TECH-DEBT.md; do not "fix" it by persisting anything in this block.
+    //
+    // ns-t59-pack-namespace (T59, 2026-08-10): THAT SEPARATE DEFECT IS NOW FIXED AT ITS OWN SITE, and the
+    // sentence above about clearing "the whole directory" is HISTORY, not current behaviour. Generated
+    // documents are namespaced per SESSION (playthrough) and a pass clears only its own name space, so
+    // alternating saves no longer delete each other's documents; KDF's boot state is the union of every
+    // playthrough's. NOTHING IN THIS BLOCK CHANGED and nothing in it should: PENDING is still a state
+    // recomputed every pass, still transient, and the reason persisting it would suppress a true notice
+    // is untouched by T59. What T59 removes is one CAUSE of a repeat notice, not the notice's design.
     TArray<FNodeShufflePendingEntry> PendingNoticeQueue;
     // LOG-ONLY BREADCRUMB -- NOT a decision input. ns-review-notice2 F-C: this used to claim it was what
     // stopped the measured double-pass from double-messaging. It WAS, until F4 moved that job to

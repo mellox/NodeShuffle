@@ -73,6 +73,58 @@
 // function of (available extractors x managed node groups) and restores that claim. The general lesson,
 // worth more than the fix: AN INPUT DERIVED FROM THIS PASS'S OWN PREVIOUS OUTPUT IS A FEEDBACK LOOP, NOT
 // A SHORT-CIRCUIT. Do not add one back.
+//
+// ================= T59 (ns-t59-pack-namespace, 2026-08-10): THE PACK IS PER-SESSION =================
+// THE DEFECT THIS FIXES, MEASURED (docs/TECH-DEBT.md T59, three consecutive boots): this directory is
+// per-INSTALL while ToGenerate is a pure function of the LOADED SAVE's managed node groups, so the
+// clear-and-rebuild below deleted the documents ANOTHER save needed. Loading save B un-allow-listed
+// save A's extractors for a whole boot, every time the player alternated. Both halves were deliberate;
+// neither is a bug alone. The fix is to stop them being the same artifact.
+//
+// AUTHOR DECISION (2026-08-10): option 1, keyed per SESSION (playthrough), NOT per save. Documents are
+// namespaced by a token derived from AFGGameState::GetSessionName() -- the name that groups every save
+// of one playthrough -- so re-loading, autosaving or branching within a playthrough all land in the SAME
+// namespace and regenerate-replace still applies there (that is today's CORRECT behaviour; the measured
+// oscillation was CROSS-save, i.e. cross-session). Each pass owns ONLY its own namespace and MUST NOT
+// delete another session's files; PACKCHURN measures that with a crossNamespaceRemoved counter that must
+// read zero.
+//
+// FORM: A FILENAME PREFIX IN THE SAME PACK DIRECTORY, not a subdirectory and not a second pack.
+// Chosen because it is the discovery mechanism this generator has ALREADY MEASURED working: the pack's
+// pack.yml lists no documents, and this file has always written two DIFFERENT filename shapes flat into
+// this one directory ("auto-allow-<class>.cdo.yml" and "auto-allow-<mod>-<class>.cdo.yml"), both of
+// which took effect (measured: a written document read back sfPlusAlreadyAllows=1 on the next boot).
+// ASSUMED, NOT MEASURED -- capped deliberately. What was MEASURED is narrower than the claim: two
+// stems, BOTH beginning "auto-allow-", both applied. That is consistent with "KDF enumerates every
+// document file and ignores stems" AND with "KDF matches a prefix or caches an index". Only the first
+// makes this packet work. THE FALSIFIER IS RUNTIME TEST R3: a renamed document must read back
+// sfPlusAlreadyAllows=1 on the next boot, on an install with no legacy document for that class.
+// KDF DOES also support deeper structure -- KPatchwork's DataForge/README.md states a pack may live at
+// "DataForge/**/<pack-name>/pack.yml" (any depth), and its shipping packs nest documents two levels
+// below their own pack.yml (DataForge/SatisfactoryPlus/MkPlusSFPlus/PDA/PDA-allowed-extractors.yml) --
+// so a per-session SUBDIRECTORY or a per-session sibling PACK would very probably work too. They are
+// not used THIS ROUND because that evidence is another repo's layout rather than this generator's own measured
+// behaviour, and because one shared pack.yml keeps the hasMod gate stated exactly once.
+// THE PER-SESSION SUBDIRECTORY IS THE PRE-AGREED RESERVE (cold review 2026-08-10, alternative 1): if
+// runtime test R3 falsifies stem-agnostic discovery, swap DocPrefix for a subdirectory component
+// (<PackDir>/s-<slug>/*.cdo.yml) -- the delete then becomes a scoped DeleteDirectory on a directory we
+// own, and no prefix reasoning is needed. Do NOT reach for the sibling-pack form: it is the only option
+// that adds a directory under the discovered root.
+// THE NAMESPACE STAYS INSIDE THE SAME DISCOVERED PACK DIRECTORY -- nothing is written to a new root,
+// so the [[kdf-editor-exports-autoapply]] hazard (documents auto-applying from an unexpected place) is
+// not widened: the set of directories KDF reads is unchanged by this packet.
+//
+// BOOT-TIME SEMANTICS ARE NOW A UNION. KDF applies everything present in this directory at launch, so a
+// player with three playthroughs boots with all three namespaces' documents applied. That is deliberate
+// and harmless in the direction that matters: every document is an APPEND to SF+'s mAllowedExtractors,
+// whose consumer is a TSet (measured from KAPI's PDB, see above), so duplicates collapse. The cost is
+// STALENESS -- a document from session X still applies while you play session Y, allow-listing an
+// extractor for a pairing session Y's layout may not contain. Per-session bounds that cost (a session's
+// entries track that session's rolls) but does not eliminate it; docs/TECH-DEBT.md T59 states what is
+// deliberately not fixed.
+//
+// LEGACY, UN-NAMESPACED DOCUMENTS ARE LEFT ALONE, NEVER DELETED. See the migration block at the
+// clear-and-rebuild site.
 
 #include "NodeShuffle.h"
 #include "NodeShuffleExtractorDiscovery.h"
@@ -88,6 +140,18 @@
 #include "Resources/FGResourceNodeFrackingCore.h"
 #include "Resources/FGResourceNodeFrackingSatellite.h"
 #include "FGRecipeManager.h"
+// T59: the SESSION identity. AFGGameState::GetSessionName() is a FORCEINLINE header accessor over the
+// replicated mReplicatedSessionName (FGGameState.h:348), so it is readable on clients as well as the
+// server. GetGameState<AFGGameState>() is already this mod's in-production idiom for reaching the game
+// state (NodeShuffleSubsystem.cpp:2465, :7344) -- so AFGGameState::StaticClass() is already in this
+// binary's import table and this adds no NEW imported symbol. THAT LAST CLAUSE IS AN IMPORT-TABLE
+// CLAIM AND IS THEREFORE ASSUMED, NOT MEASURED -- on this machine that inference has been falsified
+// twice, including for a function with an inline body in the header. MEASURE IT after the build:
+//   pwsh -File tools\capture-imports-baseline.ps1 -OutFile $env:TEMP\imports-now.txt
+//   git diff --no-index tools\imports-baseline.txt $env:TEMP\imports-now.txt
+// An empty diff is the proof; any new AFGGameState symbol is a finding, not a surprise to wave through.
+#include "FGGameState.h"
+#include "Misc/Crc.h"
 #include "Misc/Paths.h"
 #include "Misc/FileHelper.h"
 #include "HAL/FileManager.h"
@@ -110,6 +174,10 @@ static FAutoConsoleVariableRef CVarNodeShuffleAutoAllowExtractors(
     TEXT("the pass is skipped and any previously-generated pack is deleted. TODO(pre-release): gate ")
     TEXT("behind EnableExperimentalFeatures (default false) before public release."),
     ECVF_Default);
+
+// T59: file-scope so a NEW world load re-arms the loud warnings. A function-local static would spend
+// its 5 loud attempts on world 1 and leave a permanent stall on world 2 visible only at Verbose.
+static int32 GNsAutoAllowNoIdentityLogCount = 0;
 
 namespace
 {
@@ -144,6 +212,65 @@ namespace
         int32 SlashIdx = INDEX_NONE;
         if (Rest.FindChar(TEXT('/'), SlashIdx) && SlashIdx > 0) { return Rest.Left(SlashIdx); }
         return FString();
+    }
+
+    // T59: the per-SESSION namespace token, and the document-name prefix built from it.
+    //
+    // CHARSET IS [A-Za-z0-9_] ONLY, AND EXCLUDING '-' IS LOAD-BEARING, not tidiness. The document prefix
+    // uses "--" as its separator and the delete step globs "s-<slug>--*.cdo.yml". If a slug could contain
+    // '-', a session literally named "A--B" would produce files that the glob for a session named "A"
+    // also matches, and this packet's whole point is that one session never deletes another's files.
+    // With no '-' inside a slug, "s-<slug>--" cannot be a prefix of any other session's "s-<other>--".
+    //
+    // COLLISION BEHAVIOUR, STATED HONESTLY RATHER THAN CLAIMED AWAY. Sanitisation is many-to-one:
+    // "My Save" and "My/Save" both fold to "My_Save", and a name made entirely of characters outside the
+    // charset (an all-CJK session name) folds to underscores alone. So a CRC32 of the ORIGINAL,
+    // unsanitised name is appended -- the fold is not the identity, the fold PLUS the checksum is. Two
+    // DIFFERENT session names therefore share a namespace only if they fold identically AND collide on
+    // CRC32. That is possible, not impossible; when it happens the consequence is exactly the pre-T59
+    // behaviour FOR THAT ONE PAIR (they regenerate over each other's documents), never a wrong pack,
+    // never another mod's file, never a delete outside this directory.
+    //
+    // AND THE CASE THAT IS NOT A COLLISION AT ALL: two SEPARATE playthroughs the player named identically
+    // share this namespace by construction -- no fold, no checksum involved. The game itself groups saves
+    // by session name, so they are one "session" to Satisfactory too, and the pre-T59 churn is the correct
+    // description of what they do to each other. That is a limit of the KEY, not a defect in the hashing.
+    //
+    // THE CHECKSUM IS PERSISTED INTO ON-DISK FILENAMES, so it is a compatibility surface: if an engine
+    // bump ever changes FCrc::StrCrc32's output, every existing namespace is orphaned. The consequence is
+    // already characterised -- it is identical to a session rename: the orphans keep applying (they only
+    // ever ADD entries) and the new namespace regenerates from scratch. No code guards this; it is
+    // recorded so the next reader does not have to re-derive that it is benign.
+    //
+    // RENAMING A SESSION (the game exposes SetSessionName / SaveWithNewSessionName) changes the token, so
+    // the old namespace's documents are orphaned: they are additive appends, so they keep applying and
+    // hurt nothing, and the new namespace regenerates from scratch. Nothing is deleted on a rename.
+    //
+    // Truncation happens BEFORE the checksum is appended, so long names stay distinguished by the CRC of
+    // their full text, not by the first 40 characters.
+    FString MakeSessionSlug(const FString& SessionName)
+    {
+        if (SessionName.IsEmpty()) { return FString(); }
+        FString Slug;
+        Slug.Reserve(SessionName.Len());
+        for (const TCHAR C : SessionName)
+        {
+            const bool bKeep = (C >= TEXT('A') && C <= TEXT('Z'))
+                || (C >= TEXT('a') && C <= TEXT('z'))
+                || (C >= TEXT('0') && C <= TEXT('9'))
+                || C == TEXT('_');
+            Slug.AppendChar(bKeep ? C : TEXT('_'));
+        }
+        const int32 MaxStem = 40; // keeps the whole generated path comfortably short on Windows
+        if (Slug.Len() > MaxStem) { Slug = Slug.Left(MaxStem); }
+        return FString::Printf(TEXT("%s_%08x"), *Slug, FCrc::StrCrc32(*SessionName));
+    }
+
+    // "s-<slug>--". The leading "s-" makes a namespaced document distinguishable from a LEGACY,
+    // pre-T59 un-namespaced one ("auto-allow-...") by inspection and by prefix test alone.
+    FString MakeSessionDocPrefix(const FString& SessionSlug)
+    {
+        return FString::Printf(TEXT("s-%s--"), *SessionSlug);
     }
 
     // Sanitizes a class path into a filesystem-safe stem (the class's own leaf name is already a valid
@@ -208,7 +335,12 @@ bool FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled(UWorld* World,
             if (IFileManager::Get().DeleteDirectory(*PackDir, /*RequireExists=*/false, /*Tree=*/true))
             {
                 UE_LOG(LogNodeShuffle, Display,
-                    TEXT("AUTOALLOW: disabled -- DELETED the previously-generated pack at '%s' (full rollback, verified)"), *PackDir);
+                    TEXT("AUTOALLOW: disabled -- DELETED the previously-generated pack at '%s' (full rollback, ")
+                    TEXT("verified). T59: this is the ONE path that deletes across session name spaces, and ")
+                    TEXT("that is deliberate -- the rollback lever removes EVERY session's generated documents ")
+                    TEXT("plus any legacy un-namespaced ones, because its contract is 'restore pre-mod ")
+                    TEXT("behaviour', not 'tidy this playthrough'. The per-pass regeneration below never does ")
+                    TEXT("this."), *PackDir);
             }
             else
             {
@@ -230,6 +362,76 @@ bool FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled(UWorld* World,
     {
         UE_LOG(LogNodeShuffle, Warning, TEXT("AUTOALLOW: no world -- skipped this pass (will retry)"));
         return false;
+    }
+
+    // ================= T59: RESOLVE THE SESSION IDENTITY BEFORE ANYTHING IS WRITTEN =================
+    // WHEN THIS PASS ACTUALLY RUNS (verified, not assumed): the only caller is
+    // ANodeShuffleSubsystem::RefreshTick (NodeShuffleSubsystem.cpp:372), on an ACTOR that exists in the
+    // played world, gated behind bLayoutGenerated && ApplyLayout() -- i.e. a save is loaded and its layout
+    // has been rolled/applied. There is no main-menu path into here; the "no world" guard above and this
+    // one are belt-and-braces for a future caller, not the expected case. The gate is still mandatory,
+    // because writing with an EMPTY identity would put this session's documents in the un-namespaced
+    // legacy name space, where no session owns them and none may delete them.
+    // RETRY, DO NOT LATCH: on a client mReplicatedSessionName arrives by replication and can legitimately
+    // be empty for a few ticks. This is the same "world still settling" class as the recipe-manager guard
+    // below, and it self-heals; a permanent absence keeps saying so in the log every tick.
+    const AFGGameState* NsGameState = World->GetGameState<AFGGameState>();
+    const FString SessionName = NsGameState ? NsGameState->GetSessionName() : FString();
+    const FString SessionSlug = MakeSessionSlug(SessionName);
+    const FString DocPrefix = MakeSessionDocPrefix(SessionSlug);
+    if (SessionSlug.IsEmpty())
+    {
+        // Same log-volume idiom as the recipe-manager guard below (ns-review-g G10), for the same reason:
+        // this path retries every tick, so a PERMANENT absence of a session name must be visible in a
+        // shipping log without writing a line per tick forever. First few loud, then Verbose. If you see
+        // this and never see an "AUTOALLOW: pass complete" line, this is where the pass stalled -- and the
+        // consequence is that NO document is written at all, i.e. the pre-mod allow-list state.
+        if (GNsAutoAllowNoIdentityLogCount < 5)
+        {
+            ++GNsAutoAllowNoIdentityLogCount;
+            UE_LOG(LogNodeShuffle, Warning,
+                TEXT("AUTOALLOW: no session identity yet -- gameStateFound %d, sessionNameLen %d (attempt %d). ")
+                TEXT("NOTHING was written and NOTHING was deleted this pass; retrying next tick. (T59: every ")
+                TEXT("generated document is named for the session that owns it, so a pass without an identity ")
+                TEXT("cannot own -- or clean up -- anything.)"),
+                NsGameState ? 1 : 0, SessionName.Len(), GNsAutoAllowNoIdentityLogCount);
+        }
+        else
+        {
+            UE_LOG(LogNodeShuffle, Verbose,
+                TEXT("AUTOALLOW: no session identity yet -- gameStateFound %d, sessionNameLen %d -- retry next tick"),
+                NsGameState ? 1 : 0, SessionName.Len());
+        }
+        return false;
+    }
+    // LOG VOLUME, deliberately: this function RETRIES every tick until it completes (a slow recipe
+    // manager can stall it for many ticks), so an unconditional Display here would repeat the same line
+    // dozens of times. It is printed at Display the first time a given slug is seen and on any change,
+    // Verbose thereafter -- and the authoritative per-pass record is PACKCHURN, which carries the slug on
+    // every completed pass regardless. A static is safe for this: the worst case of it holding a value
+    // across a world change is one line demoted to Verbose, never a wrong slug used for a file.
+    // NOTE the SLUG is printed, never the raw session name: the slug's charset is [A-Za-z0-9_] by
+    // construction, so nothing a player types into a session name can inject a delimiter into this log.
+    {
+        static FString LastLoggedSlug;
+        const bool bNewSlug = (LastLoggedSlug != SessionSlug);
+        LastLoggedSlug = SessionSlug;
+        if (bNewSlug)
+        {
+            GNsAutoAllowNoIdentityLogCount = 0; // identity resolved -- re-arm the loud warnings for the next world
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("AUTOALLOW: T59 session name space resolved -- slug '%s', document prefix '%s', from a ")
+                TEXT("session name of %d character(s). Documents this pass are written under that prefix and ")
+                TEXT("ONLY that prefix is cleared; other playthroughs' documents in the same pack stay and ")
+                TEXT("keep applying."),
+                *SessionSlug, *DocPrefix, SessionName.Len());
+        }
+        else
+        {
+            UE_LOG(LogNodeShuffle, Verbose,
+                TEXT("AUTOALLOW: T59 session name space unchanged -- slug '%s' (already reported this run)."),
+                *SessionSlug);
+        }
     }
 
     // AFGRecipeManager::Get() -- the reviewer's recommended, registry-free discovery mechanism (public
@@ -679,9 +881,18 @@ bool FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled(UWorld* World,
         ToGenerate.Add(Doc);
     }
 
-    // Regenerate the pack directory fresh every completed pass -- fully idempotent. Clearing first means
-    // an extractor that no longer qualifies (mod removed, or the layout re-rolled away from its resource)
-    // never leaves a stale entry behind.
+    // Regenerate THIS SESSION'S DOCUMENTS fresh every completed pass -- fully idempotent WITHIN the
+    // session. Clearing first means an extractor that no longer qualifies (mod removed, or the layout
+    // re-rolled away from its resource) never leaves a stale entry behind FOR THIS PLAYTHROUGH.
+    //
+    // T59 (2026-08-10): THE SCOPE OF THAT CLEAR IS THE ONLY THING THAT CHANGED, AND IT IS THE FIX.
+    // What used to happen here was DeleteDirectory(PackDir, Tree=true) -- a per-INSTALL delete driven by a
+    // per-SAVE input, which is the measured defect (docs/TECH-DEBT.md T59). Now the pass deletes exactly
+    // the documents whose filename carries THIS session's prefix, and nothing else. Every argument below
+    // about why clearing is safe is UNCHANGED and still applies -- it was always an argument about this
+    // session's own ToGenerate being the authoritative answer for this session's layout; it was never an
+    // argument that this pass knew anything about another playthrough's layout, which is precisely why
+    // deleting another playthrough's documents was wrong.
     //
     // "AN EMPTY PACK IS A HARMLESS STATE" WAS MEASURED FALSE (2026-07-30) AND IS ONLY TRUE AGAIN BECAUSE
     // OF THE OSCILLATION FIX ABOVE -- do NOT restore the old unconditional wording. An empty pack
@@ -738,7 +949,7 @@ bool FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled(UWorld* World,
     }
     IFileManager& FM = IFileManager::Get();
     // ns-t55-churn (T55, 2026-08-10): READ THE PACK BEFORE WE DESTROY IT, so the log can say what this
-    // pass CHANGED rather than only what it wrote. MEASUREMENT ONLY -- nothing below reads PriorDocNames
+    // pass CHANGED rather than only what it wrote. MEASUREMENT ONLY -- nothing below reads PriorOwnDocNames
     // for a decision, and ToGenerate is computed above without ever consulting the pack (the oscillation
     // fix depends on that and is not being touched here).
     //
@@ -748,22 +959,79 @@ bool FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled(UWorld* World,
     // sfPlusAlreadyAllows=1 on the 17.15.16 boot (so the document DID take effect), and were pending
     // again -- sfPlusAlreadyAllows=0 -- on the next boot. The pending state is genuinely re-created, not
     // merely re-announced. This directory is per-INSTALL while ToGenerate is a function of the layout of
-    // whichever SAVE is loaded, so loading save X after save Y deletes every document Y needed and X
-    // does not. These counts are what makes that visible in one line instead of a cross-log diff.
-    TArray<FString> PriorDocFiles;
+    // whichever SAVE is loaded, so loading save X after save Y DELETED every document Y needed and X does
+    // not. These counts are what makes that visible in one line instead of a cross-log diff.
+    // PAST TENSE AS OF T59 (2026-08-10): that delete is now scoped to the loaded session's own name space,
+    // so the cross-save case cannot occur through this path. The counts stay, and gained a
+    // cross-name-space half, precisely so a regression back to it is one grep away.
+    //
+    // T59: the listing is now SPLIT BY NAME SPACE at the point it is read, because the two halves have
+    // opposite meanings. Documents carrying THIS session's prefix are ours to replace; everything else --
+    // other playthroughs' documents, and legacy un-namespaced ones from before this packet -- is read
+    // ONLY so the census can prove we did not touch it.
+    TArray<FString> AllDocFilesBefore;
     if (FM.DirectoryExists(*PackDir))
     {
-        FM.FindFiles(PriorDocFiles, *FPaths::Combine(PackDir, TEXT("*.cdo.yml")), /*Files=*/true, /*Directories=*/false);
+        FM.FindFiles(AllDocFilesBefore, *FPaths::Combine(PackDir, TEXT("*.cdo.yml")), /*Files=*/true, /*Directories=*/false);
     }
-    const TSet<FString> PriorDocNames(PriorDocFiles);
-    if (FM.DirectoryExists(*PackDir) && !FM.DeleteDirectory(*PackDir, /*RequireExists=*/false, /*Tree=*/true))
+    TSet<FString> PriorOwnDocNames;
+    TSet<FString> ForeignDocNamesBefore;
+    int32 PriorLegacyDocs = 0;
+    for (const FString& N : AllDocFilesBefore)
     {
-        UE_LOG(LogNodeShuffle, Error,
-            TEXT("AUTOALLOW: FAILED to clear '%s' (permissions / read-only install / file lock / AV?). ")
-            TEXT("NOTHING was generated this pass and any PREVIOUS generated pack is still on disk and ")
-            TEXT("will still apply next boot. Will retry next tick."), *PackDir);
-        return false;
+        if (N.StartsWith(DocPrefix, ESearchCase::CaseSensitive))
+        {
+            PriorOwnDocNames.Add(N);
+        }
+        else
+        {
+            ForeignDocNamesBefore.Add(N);
+            // A legacy document is one written before T59: it carries no session prefix at all.
+            if (!N.StartsWith(TEXT("s-"), ESearchCase::CaseSensitive)) { ++PriorLegacyDocs; }
+        }
     }
+
+    // ================= T59 MIGRATION: LEAVE-AND-UNION. NOTHING IS ADOPTED, NOTHING IS DELETED. =========
+    // An install that ran an earlier build has un-namespaced documents here. The two candidates were
+    // ADOPT (rename them into this session's name space on first write) and LEAVE (let them stay and be
+    // part of the boot union until a human removes them). LEAVE is chosen ON THE MECHANISM, not on
+    // caution: adopting would make them THIS session's documents, and this session regenerates its own
+    // name space on the very next pass -- so adoption would DELETE them one boot later, reproducing the
+    // exact churn this packet exists to end, for whichever save happened to boot first. Adoption is the
+    // bug wearing a migration's clothes.
+    // WHAT THE PLAYER SEES: nothing changes for them. Each legacy document is an APPEND to SF+'s
+    // mAllowedExtractors, whose consumer is a TSet, so a duplicate of something a namespaced document
+    // also appends collapses; anything it adds that no current session needs is a stale-but-additive
+    // permission, the same staleness the union already carries (see the file header, and T59's staleness
+    // note in docs/TECH-DEBT.md). They are never deleted silently -- the only delete is the explicit
+    // NodeShuffle.AutoAllowExtractors=0 rollback lever, which says so in its own log line.
+    if (PriorLegacyDocs > 0)
+    {
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("AUTOALLOW: T59 migration -- found %d legacy document(s) with no session prefix in '%s'. ")
+            TEXT("They are LEFT IN PLACE and keep applying at boot (they only ever ADD entries to SF+'s ")
+            TEXT("allow-list, and its consumer is a set, so duplicates collapse). This pass neither adopts ")
+            TEXT("nor deletes them. To remove them, set NodeShuffle.AutoAllowExtractors=0 and reload once ")
+            TEXT("(that clears the whole directory), or delete the files named without an 's-' prefix by ")
+            TEXT("hand."),
+            PriorLegacyDocs, *PackDir);
+    }
+    else
+    {
+        // Cold review F3: WITHOUT THIS BRANCH, SILENCE HAS TWO MEANINGS -- "no legacy document existed"
+        // and "the migration check never ran" (or ran against the wrong directory) read identically in
+        // the log, and the second is the likely one on this machine: every build wipes DataForge/, so a
+        // freshly deployed install starts with an EMPTY pack dir and the branch above cannot fire.
+        // Runtime test R5 plants a legacy document precisely so the branch above is exercised; this line
+        // is what tells you which of the two states you are looking at while it is not planted.
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("AUTOALLOW: T59 migration check ran and found 0 legacy document(s) with no session prefix ")
+            TEXT("in '%s' (of %d document file(s) present in total). This is the check REPORTING an empty ")
+            TEXT("set, not the check being skipped. A freshly built+deployed install is expected to read 0 ")
+            TEXT("here because the build wipes DataForge/."),
+            *PackDir, AllDocFilesBefore.Num());
+    }
+
     if (!FM.MakeDirectory(*PackDir, /*Tree=*/true))
     {
         UE_LOG(LogNodeShuffle, Error,
@@ -772,13 +1040,53 @@ bool FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled(UWorld* World,
         return false;
     }
 
+    // T59: CLEAR THIS SESSION'S NAME SPACE ONLY -- one delete per file we ourselves named, never a
+    // directory tree. Every result is checked, for the same reason the old whole-directory delete was:
+    // a stale document that survives keeps applying next boot, so an unreported failure would be a silent
+    // wrong answer. A failure returns false (retry next tick) rather than writing over a half-cleared set.
+    int32 OwnDocsDeleted = 0;
+    int32 OwnDocsDeleteFailed = 0;
+    FString FirstUndeletedName;
+    for (const FString& N : PriorOwnDocNames)
+    {
+        const FString DeletePath = FPaths::Combine(PackDir, N);
+        if (FM.Delete(*DeletePath, /*RequireExists=*/false, /*EvenReadOnly=*/false, /*Quiet=*/true))
+        {
+            ++OwnDocsDeleted;
+        }
+        else
+        {
+            ++OwnDocsDeleteFailed;
+            if (FirstUndeletedName.IsEmpty()) { FirstUndeletedName = N; }
+        }
+    }
+    if (OwnDocsDeleteFailed > 0)
+    {
+        UE_LOG(LogNodeShuffle, Error,
+            TEXT("AUTOALLOW: FAILED to clear %d of this session's %d previously-generated document(s) in ")
+            TEXT("'%s' (permissions / read-only install / file lock / AV?) -- first one that would not ")
+            TEXT("delete was '%s'; %d WERE deleted before the failure, so this session's name space is now ")
+            TEXT("PARTIALLY cleared and NOTHING was generated to replace it -- a boot from this state would ")
+            TEXT("apply only the surviving documents. No other playthrough's documents were touched (this ")
+            TEXT("pass only ever deletes files carrying its own session prefix). Will retry next tick, and ")
+            TEXT("a successful pass rewrites the whole set."),
+            OwnDocsDeleteFailed, PriorOwnDocNames.Num(), *PackDir, *FirstUndeletedName, OwnDocsDeleted);
+        return false;
+    }
+
     const FString Timestamp = FDateTime::Now().ToString();
     const FString PackYaml = FString::Printf(
         TEXT("# MACHINE-GENERATED by NodeShuffle Packet G (NodeShuffle.AutoAllowExtractors, default ON in\n")
-        TEXT("# this dev build). DO NOT HAND-EDIT -- fully overwritten every world load while the CVar is 1.\n")
+        TEXT("# this dev build). DO NOT HAND-EDIT -- rewritten every world load while the CVar is 1.\n")
+        TEXT("# T59: this pack.yml is SHARED by every playthrough. The documents beside it are namespaced\n")
+        TEXT("# per session -- 's-<session>--*.cdo.yml' -- and each world load rewrites ONLY the documents\n")
+        TEXT("# of the session it loaded. KDataForge applies everything present here at launch, so the\n")
+        TEXT("# boot state is the UNION of every playthrough's documents (all of them are appends to one\n")
+        TEXT("# set, so duplicates collapse). Documents named without the 's-' prefix predate T59 and are\n")
+        TEXT("# left alone by every pass.\n")
         TEXT("# To regenerate now: reload a save. To roll back completely: set NodeShuffle.AutoAllowExtractors=0\n")
-        TEXT("# and reload once -- the pass deletes this whole directory.\n")
-        TEXT("# Generated: %s | %d document(s) this run.\n")
+        TEXT("# and reload once -- that deletes this whole directory, every session included.\n")
+        TEXT("# Generated: %s | %d document(s) for the session loaded on that run (not the directory total).\n")
         TEXT("ref: NodeShuffleAutoAllow\n")
         TEXT("name: Node Shuffle Auto-Allow Extractors (generated)\n")
         TEXT("version: 1.0.0\n")
@@ -807,7 +1115,7 @@ bool FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled(UWorld* World,
     // builder sees them in one pass and cannot accidentally report a failure as a restart.
     TArray<FNodeShufflePendingRaw> NoticeRaw;
     int32 AlreadyAllowedCount = 0;
-    TSet<FString> WrittenDocNames; // ns-t55-churn: measurement only -- compared against PriorDocNames below
+    TSet<FString> WrittenDocNames; // ns-t55-churn: measurement only -- compared against PriorOwnDocNames below
     for (const FGeneratedDoc& Doc : ToGenerate)
     {
         FString HasModLines = TEXT("    - SatisfactoryPlus\n    - NodeShuffle\n");
@@ -840,9 +1148,18 @@ bool FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled(UWorld* World,
         // ns-review-g G9: the class LEAF alone is not unique across mounts -- two mods can ship the same
         // leaf name and silently overwrite each other's document. Prefix with the owning mod reference
         // (empty for vanilla) so the filename is unique per (mod, class).
+        // T59: and prefix THAT with the session name space, so the name is unique per (session, mod,
+        // class) and the delete step can select exactly this session's files by prefix. The uniqueness
+        // argument above is untouched -- the session token is prepended, never substituted for the mod
+        // reference.
+        // ASSUMED, NOT MEASURED -- capped deliberately. What was MEASURED is narrower than the claim: two
+        // stems, BOTH beginning "auto-allow-", both applied. That is consistent with "KDF enumerates every
+        // document file and ignores stems" AND with "KDF matches a prefix or caches an index". Only the first
+        // makes this packet work. THE FALSIFIER IS RUNTIME TEST R3: a renamed document must read back
+        // sfPlusAlreadyAllows=1 on the next boot, on an install with no legacy document for that class.
         const FString FileName = Doc.OwningMod.IsEmpty()
-            ? FString::Printf(TEXT("auto-allow-%s.cdo.yml"), *ExtractorClassStem(Doc.ExtractorPath))
-            : FString::Printf(TEXT("auto-allow-%s-%s.cdo.yml"), *Doc.OwningMod, *ExtractorClassStem(Doc.ExtractorPath));
+            ? FString::Printf(TEXT("%sauto-allow-%s.cdo.yml"), *DocPrefix, *ExtractorClassStem(Doc.ExtractorPath))
+            : FString::Printf(TEXT("%sauto-allow-%s-%s.cdo.yml"), *DocPrefix, *Doc.OwningMod, *ExtractorClassStem(Doc.ExtractorPath));
         const FString DocPath = FPaths::Combine(PackDir, FileName);
         if (FFileHelper::SaveStringToFile(DocYaml, *DocPath))
         {
@@ -889,14 +1206,25 @@ bool FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled(UWorld* World,
         TEXT("(0 matched is a valid, harmless state, not an error; a nonzero FAILED count is an error)"),
         ToGenerate.Num(), WrittenCount, FailedCount, *PackDir);
 
-    // ns-t55-churn (T55): the one line that explains a repeat "restart required" notice without a
-    // cross-log diff. Counts only -- it reports what the two directory listings were, never why the
-    // sets differ; the per-extractor SKIP lines above carry each reason in their own words.
+    // ns-t55-churn (T55) / T59: the one line that explains a repeat "restart required" notice without a
+    // cross-log diff. Counts only -- it reports what the directory listings were, never why the sets
+    // differ; the per-extractor SKIP lines above carry each reason in their own words.
+    //
+    // T59 SPLIT THIS CENSUS IN TWO, because the two kinds of removal now mean opposite things:
+    //   * own-name-space removal is EXPECTED -- it is this session regenerating its own documents, the
+    //     behaviour that was always correct and is deliberately kept;
+    //   * CROSS-name-space removal is THE DEFECT T59 fixed and MUST read zero. The counter stays
+    //     precisely so a regression is visible in one line instead of needing another three-boot study.
+    // The cross-name-space figure is MEASURED, not derived: the directory is re-listed after the writes
+    // and the two foreign sets are compared, so it counts what is actually on disk rather than what this
+    // code believes it did. It reports the count and the names; it asserts no cause for either.
+    // A ZERO HERE HAS A DENOMINATOR ON THE SAME LINE (otherNamespaceDocsBefore) -- "0 removed" out of 0
+    // present is evidence of nothing, and the pair says which case you are looking at.
     {
         int32 Unchanged = 0;
-        for (const FString& N : WrittenDocNames) { if (PriorDocNames.Contains(N)) { ++Unchanged; } }
+        for (const FString& N : WrittenDocNames) { if (PriorOwnDocNames.Contains(N)) { ++Unchanged; } }
         TArray<FString> RemovedNames;
-        for (const FString& N : PriorDocNames) { if (!WrittenDocNames.Contains(N)) { RemovedNames.Add(N); } }
+        for (const FString& N : PriorOwnDocNames) { if (!WrittenDocNames.Contains(N)) { RemovedNames.Add(N); } }
         RemovedNames.Sort();
         const int32 MaxNamed = 6;
         FString RemovedCsv = FString::Join(
@@ -905,13 +1233,50 @@ bool FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled(UWorld* World,
         {
             RemovedCsv += FString::Printf(TEXT(", +%d more"), RemovedNames.Num() - MaxNamed);
         }
+
+        // Re-list and re-split: what is on disk NOW, outside this session's name space.
+        TArray<FString> AllDocFilesAfter;
+        FM.FindFiles(AllDocFilesAfter, *FPaths::Combine(PackDir, TEXT("*.cdo.yml")), /*Files=*/true, /*Directories=*/false);
+        TSet<FString> ForeignDocNamesAfter;
+        int32 LegacyDocsNow = 0;
+        for (const FString& N : AllDocFilesAfter)
+        {
+            if (N.StartsWith(DocPrefix, ESearchCase::CaseSensitive)) { continue; }
+            ForeignDocNamesAfter.Add(N);
+            if (!N.StartsWith(TEXT("s-"), ESearchCase::CaseSensitive)) { ++LegacyDocsNow; }
+        }
+        TArray<FString> CrossRemovedNames;
+        for (const FString& N : ForeignDocNamesBefore)
+        {
+            if (!ForeignDocNamesAfter.Contains(N)) { CrossRemovedNames.Add(N); }
+        }
+        CrossRemovedNames.Sort();
+        FString CrossRemovedCsv = FString::Join(
+            TArray<FString>(CrossRemovedNames.GetData(), FMath::Min(CrossRemovedNames.Num(), MaxNamed)), TEXT(", "));
+        if (CrossRemovedNames.Num() > MaxNamed)
+        {
+            CrossRemovedCsv += FString::Printf(TEXT(", +%d more"), CrossRemovedNames.Num() - MaxNamed);
+        }
+
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("AUTOALLOW PACKCHURN: docsBefore %d, docsNow %d -- unchanged %d, added %d, removed %d. ")
-            TEXT("Removed: [%s]. This directory is cleared and rebuilt every completed pass from THIS ")
-            TEXT("world's managed node groups, so a removed document stops applying at the next boot and ")
-            TEXT("its extractor can become pending again. Counts, not a diagnosis."),
-            PriorDocNames.Num(), WrittenDocNames.Num(), Unchanged,
-            WrittenDocNames.Num() - Unchanged, RemovedNames.Num(), *RemovedCsv);
+            TEXT("AUTOALLOW PACKCHURN: sessionSlug '%s' | ownDocsBefore %d, ownDocsNow %d -- unchanged %d, ")
+            TEXT("added %d, removed %d, deletedFromDisk %d. Removed: [%s]. ")
+            TEXT("otherNamespaceDocsBefore %d, otherNamespaceDocsNow %d, crossNamespaceRemoved %d, ")
+            TEXT("legacyUnNamespacedNow %d. CrossRemoved: [%s]. ")
+            TEXT("Own-name-space removal is this session regenerating its own documents and is ")
+            TEXT("expected; a removed own document stops applying at the next boot and its extractor can ")
+            TEXT("become pending again. Cross-name-space removal is the T59 defect and any nonzero value ")
+            TEXT("is a REGRESSION -- this pass may only delete files carrying its own session prefix. ")
+            TEXT("TWO FIELDS ARE EASY TO OVER-READ, so both are stated: the deleted-from-disk figure is an ")
+            TEXT("INVARIANT, not independent evidence -- it always equals the own-docs-before figure at ")
+            TEXT("this point, because any delete failure returns before this line is reached; and the ")
+            TEXT("other-name-space figures INCLUDE the legacy un-namespaced documents, so the true count ")
+            TEXT("of OTHER SESSIONS' documents is the other-name-space-now figure MINUS the legacy one. ")
+            TEXT("Counts, not a diagnosis."),
+            *SessionSlug, PriorOwnDocNames.Num(), WrittenDocNames.Num(), Unchanged,
+            WrittenDocNames.Num() - Unchanged, RemovedNames.Num(), OwnDocsDeleted, *RemovedCsv,
+            ForeignDocNamesBefore.Num(), ForeignDocNamesAfter.Num(), CrossRemovedNames.Num(),
+            LegacyDocsNow, *CrossRemovedCsv);
     }
 
     // ns-h1b-notice: the pass's own one-line answer to "what was the player told, and why".

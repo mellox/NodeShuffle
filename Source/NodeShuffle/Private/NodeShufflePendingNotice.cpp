@@ -411,6 +411,10 @@ bool FNodeShuffleModule::EmitPendingNotice(UWorld* World, const TArray<FNodeShuf
         //     NodeShuffleAutoAllowExtractors.cpp's clear-and-rebuild and its PACKCHURN line), so loading
         //     a different save deletes documents that save does not need. The replacement sentence states
         //     THAT, and only for the net mode where the player can act on it.
+        //     ns-t59-pack-namespace (2026-08-10): that replacement sentence has ITSELF been replaced --
+        //     T59 fixed the mechanism it described (documents are per-playthrough now, so a different
+        //     save no longer deletes them). See the graded block at the single-player branch below. The
+        //     T55 reasoning above is unchanged and still stands; only the cause it cited is gone.
         FString Body = FString::Printf(
             TEXT("NODE SHUFFLE - %d building(s) still need a restart\n\n")
             TEXT("Compatibility patches are written for extractors that Satisfactory Plus does not yet\n")
@@ -443,9 +447,35 @@ bool FNodeShuffleModule::EmitPendingNotice(UWorld* World, const TArray<FNodeShuf
         }
         else
         {
+            // ns-t59-pack-namespace (T59, 2026-08-10): THE LAST SENTENCE WAS RE-GRADED AND REPLACED
+            // BECAUSE THE CHANGE UNDER IT MADE IT FALSE, not because it read badly. It said "the patch
+            // set is rebuilt for whichever save you open, so loading a different save can re-create it" --
+            // true when one per-install directory was cleared and rebuilt from the loaded save's layout,
+            // and FALSE now that each playthrough owns its own documents and a pass deletes only its own.
+            // A copy line that survives the mechanism it describes is exactly the class of false claim
+            // the T55 rewrite existed to remove; leaving it would have re-created that defect in the
+            // packet that fixed its cause.
+            // EVERY ASSERTION IN THE REPLACEMENT, GRADED:
+            //  * "restart the game once and they work" -- ASSUMED, unchanged from before this packet:
+            //    it depends on KDataForge applying the pack at launch, which is third-party and stays a
+            //    runtime test step. Not newly claimed here.
+            //  * "kept separately for each session, so opening a save from a different session does not
+            //    remove this one's" -- PROVABLE from our own code (documents are named for the session
+            //    and the delete step selects by that prefix) for the part we control; that they keep
+            //    APPLYING is the same KDF assumption as the line above.
+            //    ns-t59 cold review F4: this sentence said "playthrough" in both places and that was an
+            //    OVER-CLAIM. The key is the SESSION NAME, and two separate playthroughs the player named
+            //    identically are one session to the game and to us -- they share a namespace and still
+            //    churn. One word, and it is now true of exactly what the code keys on.
+            //  * "you can see this again after a re-roll, or when a building you have just unlocked
+            //    qualifies" -- PROVABLE: a re-roll re-arms bAutoAllowExtractorsDone and recomputes the
+            //    census, and the candidate list is unlock-scoped (both documented in
+            //    NodeShuffleAutoAllowExtractors.cpp's header). No cause is asserted for any PARTICULAR
+            //    repeat -- the sentence lists the two mechanisms that exist, it does not diagnose.
             Body += TEXT("on those nodes. Nothing is broken and nothing needs fixing - restart the game once\n")
-                    TEXT("and they work. You can see this again on a later load: the patch set is rebuilt for\n")
-                    TEXT("whichever save you open, so loading a different save can re-create it.");
+                    TEXT("and they work. These patches are kept separately for each session, so opening a\n")
+                    TEXT("save from a different session does not remove this one's. You can see this\n")
+                    TEXT("message again after a re-roll, or when a building you have just unlocked qualifies.");
         }
         PostMessage(Body);
     }
