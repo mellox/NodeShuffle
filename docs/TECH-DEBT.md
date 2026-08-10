@@ -93,9 +93,11 @@ to move is the worse defect. D1's text must be re-decided as part of this item, 
 
 **What an immediate-hide fix must re-decide or not break — named up front:**
 1. **The well-less window becomes intended.** Hide-at-load plus presence-gated placement means the
-   resource exists NOWHERE until the destination streams. The author must confirm that window is
-   acceptable as-is, or this item waits on removing the presence gate (T21's baked-surface analysis
-   is exactly that question). **This decision gates the build.**
+   resource exists NOWHERE until the destination streams. **DECIDED (author, 2026-08-10): accept the
+   window.** Verbatim: *"It is a shuffle, I've repeatedly said I want things hidden immediately on a
+   shuffle and that includes ALL things we shuffle."* Scope is therefore every shuffled population,
+   not only wells — any origin that currently stays visible pending its replacement is in scope.
+   T21's bake remains worth having (it shrinks the window) but no longer gates this item.
 2. **`WELLH2-STRANDED` flips polarity.** "Suppressed but not placed = 0" is today's health
    invariant; after this fix that state is intended-transient. The check must distinguish
    transient-awaiting-placement from stuck, or it becomes a vacuous pass (the exact defect class in
