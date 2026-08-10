@@ -136,6 +136,16 @@ bool ANodeShuffleSubsystem::IsSpotEnclosed(const FVector& At, int32& OutBlockedR
     return OutBlockedRays >= WellEnclosureBlockedThreshold;
 }
 
+// ns-t38-pointathere: read-back of the two probe-geometry constants defined at the top of THIS file,
+// for diagnostics that must print how the predicate derives its eye from the point it is handed. It
+// reads the same two constants the loop above uses, in the same translation unit, so it cannot drift
+// from them. It runs no trace, touches no member, and IsSpotEnclosed is unchanged by its existence.
+void ANodeShuffleSubsystem::GetEnclosureProbeGeometryForDiag(float& OutEyeHeightCm, float& OutReachCm) const
+{
+    OutEyeHeightCm = WellEnclosureEyeHeightCm;
+    OutReachCm = WellEnclosureReachCm;
+}
+
 // ------------------------------------------------------------------------------------------------
 // ns-t27-perf: THE ONE WORLD SCAN PER GROUP PER PASS
 // ------------------------------------------------------------------------------------------------

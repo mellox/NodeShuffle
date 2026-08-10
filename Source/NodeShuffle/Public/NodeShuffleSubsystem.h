@@ -672,6 +672,14 @@ public:
     // and the water/depth test at the player's feet. Log-only; safe anywhere.
     void LogHereCensus() const;
 
+    // ns-t38-pointathere: `NodeShuffle.PointAtHere` console command (registered in
+    // NodeShufflePointAtHere.cpp). The AIMED sibling of LogHereCensus: it traces from the player's view
+    // point along the aim direction and runs the SAME ANodeShuffleSubsystem::IsSpotEnclosed at the
+    // point that trace hit, instead of at the player's feet. It exists because a spot INSIDE a rock
+    // cannot be stood on, so LogHereCensus structurally cannot probe one. NodeShuffle.Here is untouched
+    // and both commands remain available. Log-only; safe anywhere.
+    void LogPointAtHereCensus() const;
+
     // cave-nodes-1: `NodeShuffle.SeedHere` console command. Plants a manual cave seed at the player's
     // feet — for roofed spots vanilla never put a node under (rock bridges, shelves, side tunnels).
     // Same guarantees as automatic seeds: the player standing there proves reachability, the roof
@@ -1613,6 +1621,19 @@ private:
                         TArray<FNodeShuffleEnclosureRay>* OutRays = nullptr,
                         int32* OutBlockedThreshold = nullptr,
                         const AActor* IgnoreActor = nullptr) const;
+
+    // ns-t38-pointathere: READ-ONLY accessors for the two enclosure-probe geometry constants, so a
+    // diagnostic can print how the predicate derives its probe eye from the point it is handed WITHOUT
+    // a number being typed into a log string (the ns-t35 rule that already governs OutBlockedThreshold).
+    // They are defined in NodeShuffleWellFootprint.cpp beside the constants themselves -- that file's
+    // anonymous namespace is not reachable from another translation unit, and copying the values into
+    // one would be exactly the baked-in measurement the rule forbids. IsSpotEnclosed is NOT touched by
+    // this: no parameter, no statement and no constant of it changes, and every existing caller of it
+    // stays textually identical.
+    void GetEnclosureProbeGeometryForDiag(float& OutEyeHeightCm, float& OutReachCm) const;
+    // Same idea for the cliff gate's slope threshold, whose constant lives in NodeShuffleSubsystem.cpp's
+    // anonymous namespace. Read-only; the cliff gate itself is unchanged.
+    float GetCliffSlopeDegForDiag() const;
 
     // Group-atomic spawn (design Q1's decision): core deferred-spawned first, then EVERY satellite
     // deferred-spawned with mCore pre-set, then all finished -- so a core can never exist without its

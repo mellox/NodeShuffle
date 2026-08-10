@@ -6528,6 +6528,15 @@ void ANodeShuffleSubsystem::EvictSpawnRefusingClass(const FString& RefusedPath, 
     }
 }
 
+// ns-t38-pointathere: read-back of the cliff gate's slope threshold, which is a file-local constant in
+// this translation unit and therefore unreachable from NodeShufflePointAtHere.cpp. Read-only: it runs
+// nothing and changes nothing, and exists so a diagnostic prints this build's constant rather than a
+// number typed into a log string.
+float ANodeShuffleSubsystem::GetCliffSlopeDegForDiag() const
+{
+    return CliffSlopeDeg;
+}
+
 void ANodeShuffleSubsystem::LogHereCensus() const
 {
     // playtest-fixes-1: `NodeShuffle.Here` — one command turns "something is odd at this spot" into a
