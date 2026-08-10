@@ -7,7 +7,9 @@ this list, the entry has failed — fix the entry, not just the bug.**
 Each item records what it is, how we know, and why it is not fixed. Items with a
 **pre-scoped fix** have had the work sized already — start there, don't redesign.
 
-Last updated 2026-08-10 (T54 filed at the top of P1 by author ruling; supersedes D1's coupling).
+Last updated 2026-08-10 (T54 filed at the top of P1 by author ruling; supersedes D1's coupling.
+T51/T52/T53 filed at the end of P3 — they were cited across the code and the state file and had
+never been defined here, which is exactly the failure the paragraph above describes).
 
 > **Correction, 2026-08-08 — read before using anything below about node coverage.**
 > An earlier revision of this file was written while the project believed vanilla resource
@@ -1212,6 +1214,169 @@ has exercised it.
 
 > **Pre-scoped fix:** a `NodeShuffle.DumpWellBackstop` console command so the backstop can be
 > run on demand instead of waiting for its one scheduled pass.
+
+### T51. ~~The containment walk filtered its exclusions AFTER the trace, so an ignored actor ate the iteration budget~~ — **FIXED 2026-08-10, `6cf1c24`, marker `2026-08-10-t51-1`. This is the fix for [[T50]]; it did NOT fix the member readings — see [[T52]].**
+**WHAT IT WAS.** [[T50]] measured the mechanism: the walk hit an excluded actor, discarded it, stepped
+2 cm past, and hit the same actor again — 28 of 32 inbound and 31 of 32 outbound hits were the caller's
+own `Char_Player_C`, both walks exhausted the 32-hit budget, and the verdict came out `CENTRE INSIDE`
+for a point in open air.
+
+**WHAT LANDED (`6cf1c24`).** The first hit on an excluded actor is handed to
+`Params.AddIgnoredActor` — **one `FCollisionQueryParams` for the whole walk**
+(`NodeShuffleCentreContainment.cpp:190`) — and the walk **re-traces from the SAME cursor without
+stepping** (`:221`, `:341`). Cost is one budget iteration per **distinct** excluded actor per walk; the
+commit message states a capsule drops from ~90 iterations to 1. The 32 budget now bounds *counted
+crossings plus distinct excluded actors* rather than raw hits (`:500`). This is the mechanism
+`IsSpotEnclosed` already used for the pawn ([[T36]]), not a new one.
+
+**WHAT THE PACKET DELIBERATELY DID NOT DO, and it is the reason the next reading was interpretable**
+(all from `6cf1c24`): the subject actor is **not** pre-ignored before the first trace, because that
+would make `ExcludedSubject` structurally zero — and the exclusion counts *with their denominators* are
+the instrument that found T50 ([[lessons-zero-needs-a-denominator]]); no `FGCliffActor` special case
+(T50 established that correlation as a **symptom**); no change to the back-face rule; nothing tuned
+against satellite 86. An anomaly guard was added — a hit on an already-ignored actor increments
+`InboundIgnoredRehits`/`OutboundIgnoredRehits` (`NodeShuffleSubsystem.h:173`,
+`NodeShuffleCentreContainment.cpp:152-158`), steps past as before, and is **printed with an expected
+value of 0**, so the walk cannot stand still.
+
+**THE VERDICT RULE IS UNCHANGED** — `6cf1c24` records a filtered diff over the containment file
+returning nothing that touches entries, exits, the `FMath::Max`, the `>= 1` threshold, the
+front/back classification, the counted-crossing step, the sky start, the cap, the channel, or the
+exclusion predicates and their order; `IsSpotEnclosed`'s file is not in the modified set.
+
+**A SECOND BEHAVIOUR CHANGE, disclosed by the packet rather than found later** (`6cf1c24`): the old
+walk stepped 2 cm past every excluded hit and could therefore skip a surface lying within those 2 cm;
+the new one cannot. **Counts may differ for that reason too, not only because of the budget** — do not
+attribute a moved number to the budget alone.
+
+**HOW WE KNOW IT WORKED, AND HOW FAR.** Measured on `2026-08-10-t51-1` over `BP_FrackingCore13`
+(reported in `96a4cf3`): the [[T48]] overhang regression point reads **4 crossings in / 4 out, net 0,
+NOT INSIDE, with a healthy budget**. **The member verdicts did not move** — which is [[T52]], and it
+retires T50's "root cause of T48" claim.
+
+### T52. The per-crossing detail was printed everywhere EXCEPT where the mechanism lives — and once it was moved there, budget starvation was ruled OUT as the members' cause. [[T50]]'s "root cause of [[T48]]" is TOO STRONG. **A second mechanism is live and UNMEASURED.**
+**WHAT IT WAS (`96a4cf3`, marker `2026-08-10-t52-1`, diagnostics only).** T49 added the per-crossing
+`SHADOWCROSS` detail and gated it to `Here` and `PointAtHere` to stop 7 members × 2 walks flooding the
+screen. That was right for the question then and **became exactly backwards once [[T51]] landed**:
+after the ignore-list fix, **the only points still reading `CENTRE INSIDE` are well-member locations**
+(`NodeShuffleCentreShadow.h:31-40`, `NodeShuffleCentreShadowLog.cpp:113`) — the one command where the
+detail was switched off. The instrument that would explain the remaining mechanism was disabled
+precisely where the mechanism lives.
+
+**WHAT LANDED.** The two meanings of one switch are now separate: the reading's own
+`bCrossingDetailRequested` decides whether the walks **build** the list (`WellProbe` now asks for it on
+every member) and a policy decides which built lists are **printed**
+(`ECentreShadowDetailPolicy`, `NodeShuffleCentreShadow.h:39`, applied at
+`NodeShuffleCentreShadowLog.cpp:120-123`). Shipped rule: a member prints its crossing list when the
+candidate **would refuse it** OR **its positive control did not read inside** — through **one
+predicate, `CentreShadowDetailSelected` (`NodeShuffleCentreShadow.h:54`,
+`NodeShuffleCentreShadowLog.cpp:13`), read by both the emitter and `WellProbe`'s tally, so the group
+count cannot disagree with the number of lists printed** (`96a4cf3`). The walk
+itself is provably untouched: `96a4cf3` records `NodeShuffleCentreContainment.cpp` as **not appearing
+in `git status` at all**.
+
+**THE PACKET CONTRADICTED ITS OWN BRIEF AND WAS RIGHT TO** (`96a4cf3`): the brief predicted the rule
+would select 4 members; **both limbs select all 7** — 1/2/4/7 read INSIDE and 3/5/6 have unproven
+controls. Neither limb was narrowed; the group line prints the run's actual split.
+
+**WHAT IT MEASURED — the finding.** On `2026-08-10-t51-1` over `BP_FrackingCore13`: the overhang
+regression point is fixed (see [[T51]]), **but the member verdicts are unchanged — cliff above still
+gives INSIDE for members 1, 2, 4 and 7.** Therefore **budget starvation was NOT the members' cause**,
+and `96a4cf3` states T50's filing as "root cause of T48" is too strong: **it was the cause at the
+player-standing point, where the pawn was in the trace path**, and nowhere else that has been measured.
+
+**WHY IT IS NOT FIXED.** The state file's 2026-08-10 ~00:0x block, item 7, rules the whole approach
+out rather than the instrument: *"T48/T50/T52 — the crossing-parity walk cannot work here: **zero back
+faces have ever been reported**"*, so a node under one slab enters and exits through the **same**
+surface and the exit is invisible (`a92c61b` states the same reason as the design premise for
+[[T53]]). The project's answer was therefore to build a different instrument ([[T53]]), not to repair
+this one. **The back-face question is filed as its own packet and is still open** (state file
+2026-08-10 ~00:0x STILL OPEN, carried forward by the ~00:5x block). `96a4cf3` also declares what it
+deliberately did **not** do: no fix to the second mechanism, no `FGCliffActor` special case, no change
+to the back-face question, nothing tuned to satellite 86.
+
+> **The second mechanism remains the open item here.** The crossing-parity walk is superseded in
+> practice, not diagnosed. Anyone reopening it inherits an unmeasured cause for four INSIDE readings —
+> **do not restate T50's root-cause line, and do not assume starvation.**
+
+### T53. The `TOTALLY-INSIDE` detector — built as a trustworthy POSITIVE after three attempts at proving a negative failed. It over-fired on open ground, the 25 cm epsilon fixed that in game, and it still has **ZERO graded TRUE POSITIVES**. The first `ProbeNearestNode` at the lead node decides.
+**WHY THIS SHAPE** (`a92c61b`, marker `2026-08-10-t53-1`; design rationale in
+`NodeShuffleTotallyInside.h:1-41`). Three methods failed the same night and all three tried to prove a
+**negative** — that a centre is *not* inside anything: crossing parity needs back faces and zero have
+ever been reported here ([[T50]]/[[T52]]); a 1 cm sphere overlap cannot report containment in a
+landscape heightfield; the shipped 8-ray gate has no vertical sampling ([[T41]]). The author's ruling
+makes the asymmetry the right one — *"I'm ok with working on the center being on the edge later if we
+can stop them being totally inside for now"* — so a **false accept is cheap and a false reject would
+condemn terrain and cave placements the author asked to keep**. 14 directions from the point's own
+location, each probed 500 cm by **four** instruments (outward line, inward line, inward sphere sweep
+with its start-penetration flag, outer-point overlap); **all 14 must report solid** or the verdict is
+withheld; which instrument carried each ray is printed. **It gates nothing** — `a92c61b` verifies
+`NodeShuffleWellFootprint.cpp` and `NodeShuffleCentreContainment.cpp` are absent from its diff.
+
+**THE OVER-FIRE DEFECT, MEASURED NOT INFERRED** (state file 2026-08-10 ~00:0x, §START HERE): the probe
+origin **sits exactly ON a surface**, so all 14 rays — including straight up — registered a hit at
+**0 cm**, naming `LandscapeHeightfieldCollisionComponent`. `RAY SOLID` **140 times**, `RAY CLEAR`
+**zero**; plain open ground with sky above read `TOTALLY INSIDE`, and all 10 probed points came back
+positive. *(The inverse of the `+200` eye-offset error, which was too large and lifted the probe out of
+the rock; this one was zero and never left the ground.)*
+
+**THE FIX AND ITS CORRECTED BASIS** (`a6c339b`, marker `2026-08-10-t53-2`). Every ray's line/sweep
+segments now begin **`TIRayStartEpsilonCm` = 25 cm** from the tested point **along that ray's own
+direction**; outer point (500 cm), outer overlap, centre overlap, the all-14 rule, the exclusions and
+the retrace budget are unchanged, and every distance is still measured from the tested point. **The
+constant is taken from the run's printed distances, as corrected by the cold review — use these
+figures, not the earlier 74 cm one:** 226 of 250 landscape readings in the `t53-1` log lay **under
+25 cm**; **7 lie at 28–73 cm and are NOT removed**; every non-landscape reading was `CliffMesh` at
+**87 cm or more**. **The 74 cm figure in the pre-review draft was itself a landscape reading — the
+reviewer falsified it.** `a6c339b` is explicit that 25 cm is **not a proven artefact boundary** — the
+log cannot say which landscape reading came from the surface the point sat on — **it is where the bulk
+of them stop.** The review also made line queries record their own start-penetration and print
+`ALREADY PENETRATING`, because the down-family rays from a surface point start below it *by
+construction* and such a hit would otherwise print as cover at exactly 25 cm.
+
+**IN-GAME VERIFICATION** (state file 2026-08-10 ~00:5x, 17 verdicts read from the live log on marker
+`t53-2`, predictions recorded before the run):
+* **Open ground (`Here`): an escape was found, straight-up ray CLEAR, 10 of 14 clear.** The over-fire
+  is gone.
+* **Overhang `PointAtHere`: negative and NOT vacuously** — 12 of 14 solid through all four instrument
+  classes; two clear diagonals withheld the verdict. The instrument is demonstrably alive.
+* **All 10 of the previous night's positive points flipped negative, sat 81 included** — sat 81
+  (member 2) now reads 10 of 14 CLEAR, so **its `TOTALLY INSIDE` was entirely the origin-on-surface
+  artifact**. The state file records the author-facing reframing: **sat 81 is the DEFERRED
+  centre-on-edge case, not the totally-inside case** — which is ruling 2 of the 2026-08-10 settled
+  rulings, not a failed fix.
+* Epsilon printed `begins 25 cm` on all 17 readings; zero unflagged `met solid 25 cm out` lines; no
+  distance under 20 cm anywhere.
+* **UNMET — the positive control never fired.** `TOTALLY INSIDE` printed nowhere. The author aimed at a
+  thick cliff, but `PointAtHere` probes the aim trace's **impact** point, which is by construction the
+  cliff **surface**, so the command **structurally cannot probe inside solid**. "It can still say
+  TOTALLY INSIDE" is therefore **evidenced but not proven**.
+
+**THE TWO FIELD FINDS THAT MOTIVATED THE NEXT COMMAND** (`NodeShuffleNodeProbe.cpp:4-10`, stated there
+as what was measured rather than as theory): **two of our placed nodes — lithium (`Desc_OreLithium_C`)
+and lead (`oreleaddesc_C`, actor `BP_ResourceNode_C_2147425393`) — sit almost entirely inside rock**;
+and **no command could probe a solid node's CENTRE** — `NodeShuffle.Here` probes where the player
+stands, `NodeShuffle.PointAtHere` probes wherever the aim trace lands, which on the author's own
+attempt was a cliff 5.4 m away and then a rock mesh. **The centre is the point that decides the defect
+— it is where an extractor snaps — and it had never been probed on this population.**
+
+**CURRENT STATUS — CONSUMED, NOT GRADED.** `ee01d38` wires the instrument into two callers:
+`NodeShuffle.ProbeNearestNode` (`NodeShuffleNodeProbe.cpp`, the solid-node sibling of `WellProbe`, no
+resource-form filter so lithium stays in population) and the **shadow centre gate** at both final
+accepted placement spots (`NodeShuffleInsideGate.cpp`) — `WOULD-REFUSE` logging always, refusal behind
+`NodeShuffle.InsideGateRefuse`, **default 0**. `NodeShuffleInsideGate.cpp:9-15` states the grading
+plainly: **one-sided — NEGATIVE on everything the author wants kept (caves, satellite 81, open ground)
+and with ZERO graded TRUE POSITIVES** — and that an instrument with no graded positive cannot be
+allowed to refuse a placement, because the first thing it refused would be unfalsifiable.
+
+> **THE NEXT READING IS THE ONE THAT DECIDES IT** (`_team/nodeshuffle-followups/T54-implementation-handoff.md:59`,
+> restated as step 6 of the cold review's checklist, `t54-coldreview.md:11`): stand near the lead node
+> (`oreleaddesc_C` / `BP_ResourceNode_C_2147425393`) and run `NodeShuffle.ProbeNearestNode`, then
+> repeat at the lithium node. **That reading is either this instrument's first genuine true positive or
+> evidence against the 25 cm epsilon.** Held fallbacks, from the ~00:5x block: a per-instrument epsilon
+> (outward line back to the point) if one instrument class goes silent everywhere; 40–60 cm if the 7
+> landscape readings at 28–73 cm keep carrying rays. **Do not flip `InsideGateRefuse` before that
+> positive exists.**
 
 ---
 
