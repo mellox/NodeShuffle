@@ -1520,3 +1520,41 @@ footprint is what refuses — **the author's in-game observation** ([[T34]]), no
 first. **Whether the ordinary-node path has the same gap — UNTESTED**, and [[T35]] shows its enclosure
 gate has also never been reached, so nobody has evidence either way. **Ask that question before
 building anything.**
+
+### ★ AUTHOR RULING 2026-08-09 on T34 / T37 — PARTIAL EMBEDDING IS WANTED. The footprint-fit gate is REJECTED. The target is a member FULLY INSIDE a rock.
+**The author, verbatim:** *"I like that nodes are partially in something, thinks it adds character. A
+smart person uses H to place on it. However, it's the well inside that rock outcrop that we need to
+figure out."*
+
+**WHAT THIS SETTLES — do not re-propose any of it.**
+1. **A member partly embedded in terrain is CORRECT BEHAVIOUR, not a defect.** The measured core
+   `BP_FrackingCore13` at **5 of 8 rays blocked** ([[T37]]) is a spot the author WANTS. The gate passing
+   it was right.
+2. **T37's proposed footprint-fit gate is REJECTED.** Do not build it. Do not lower the 7-of-8
+   threshold — [[T37]] already showed 5-of-8 would reject most interesting terrain, and the author has
+   now confirmed those spots are desirable.
+3. **The extractor's required footprint radius NO LONGER NEEDS MEASURING.** It was only needed to size
+   the rejected gate. Question withdrawn — the author identified this themselves.
+4. **T34 is downgraded, not closed.** Using vanilla snap-mode (H) to place on a partly-embedded member
+   is the intended player experience, not a workaround. What remains open in T34 is only the count of
+   members a player could not use at all.
+
+**WHAT IS ACTUALLY OPEN, AND IT IS NARROWER AND CHEAPER.** A member **fully inside** a rock outcrop —
+not touching it, not partly in it — is unusable by any means, including H. **That is the only case to
+detect.** And it may need no new predicate at all: `IsSpotEnclosed`'s 7-of-8 threshold is a reasonable
+test for *fully inside*, and [[T35]] shows the gate **has never once been reached** on either path. So
+the plausible outcome is that **the existing gate is correct for the case the author cares about and
+the entire fix is making it RUN** — which is [[T35]], already open, rather than new machinery.
+
+**THE MEASUREMENT THAT DECIDES IT IS NOT YET POSSIBLE.** `NodeShuffle.Here` probes where the player
+STANDS, and nobody can stand inside a rock. The buried member in the author's screenshots has never
+been measured. **This is what `NodeShuffle.PointAtHere` is for** (author-requested, alongside `Here`,
+not replacing it): aim at the spot, trace from the camera, run the same predicate at the hit point.
+**If the buried member reads 7–8 of 8 by terrain actors, the predicate is already right and T35 is the
+whole job. If it reads 5 or fewer, the predicate cannot see the case the author cares about and a new
+one is justified.** Do not build any fix before that reading.
+
+**A NOTE ON HOW THIS RULING AROSE, because it saved a packet.** The prior entry proposed a footprint
+gate off a correct measurement and a correct inference. It was the AUTHOR's taste — *partial embedding
+is character* — that made it wrong. **A measurement can establish what IS and never what is WANTED;
+this workspace has now had the author overturn a well-evidenced direction twice in one session.**
