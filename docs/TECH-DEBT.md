@@ -1558,3 +1558,52 @@ one is justified.** Do not build any fix before that reading.
 gate off a correct measurement and a correct inference. It was the AUTHOR's taste — *partial embedding
 is character* — that made it wrong. **A measurement can establish what IS and never what is WANTED;
 this workspace has now had the author overturn a well-evidenced direction twice in one session.**
+
+### T40. `IsSpotEnclosed` COUNTS THE PLAYER'S OWN BUILDINGS AS ENCLOSURE. 24 of the 28 blocked rays in the first full group probe were `Build_FrackingExtractor_C` — 3 of 7 members read REFUSED purely because the author had built extractors on them.
+**MEASURED in game 2026-08-09 on `2026-08-09-t39-1`, `NodeShuffle.WellProbe` over group
+`BP_FrackingCore13`. 7 of 7 members probed, 7 resolved from live spawned actor transforms, 0
+unresolved, 0 with zero rays cast. The saved record agreed with the live actor to 0–1 cm on every
+member, so the probed points are not stale.**
+
+| member | blocked | eye inside solid | blocked by |
+|---|---|---|---|
+| core `BP_FrackingCore13` | 1 of 8 | NO | landscape at 399 cm |
+| sat 81 | 0 of 8 | NO | — |
+| **sat 82** | **8 of 8** | **YES** | **`Build_FrackingExtractor_C`, all 8 at 0 cm** |
+| sat 83 | 0 of 8 | NO | — |
+| **sat 84** | **8 of 8** | **YES** | **`Build_FrackingExtractor_C`, all 8 at 0 cm** |
+| **sat 85** | **8 of 8** | **YES** | **`Build_FrackingExtractor_C`, all 8 at 0 cm** |
+| sat 86 | 3 of 8 | NO | landscape at 102 / 135 / 180 cm |
+
+**Across the whole probe: 24 blocked rays were the author's own extractors and 4 were terrain.**
+
+**WHY IT MATTERS.** `FCollisionQueryParams` in `IsSpotEnclosed` ignores nothing ([[T36]]), so a
+**buildable** is enclosure to this predicate. A player who builds on their wells manufactures permanent
+"enclosed" spots. **The mod already has a `buildableOverlap` gate — the correct mechanism, with the
+correct label.** Enclosure double-counts buildings under a wrong name, and the census would attribute
+the refusal to the wrong gate. **Latent only because [[T35]] shows the gate has never been reached.**
+
+**WHAT IT SETTLES ABOUT THE PREDICATE — and this is the useful half.** The predicate **does** detect
+"fully inside a solid": three members inside an extractor's collision produced eye-inside-solid YES and
+8 of 8 at 0 cm. It correctly returned **3 of 8** for a partially-embedded member and **1 of 8** for a
+core beside landscape — exactly the "adds character" case the author wants kept. **The predicate is
+working. On this evidence the fix for a buried member is [[T35]] — make the gate RUN — not new
+machinery.**
+
+**GRADES.**
+* Every figure above — **measured**, with the hit actor named on each ray.
+* "The predicate detects fully-inside-a-solid" — **measured for BUILDINGS (primitive collision).**
+* **"Therefore it would detect a member inside ROCK" — INFERRED, NOT MEASURED.** Landscape heightfields
+  and complex-as-simple triangle meshes do not necessarily report containment the way a primitive does,
+  and the eye boolean's NO is unproven over exactly those two types ([[T39]] review). **No member of
+  this group was inside rock, so the case the author cares about STILL HAS NO DIRECT MEASUREMENT.**
+* Whether these three members are the ones the author found unplaceable — **untested**; they are
+  occupied by working extractors, which is the opposite of unplaceable.
+
+**THE ORCHESTRATOR'S ERROR THIS CORRECTS, RECORDED BECAUSE IT IS THE THIRD OF ITS KIND TODAY.** Before
+this run I told the author that eye-inside-solid YES at a member's own location "**is** the defect —
+it literally means the member is inside a rock." **That was an assertion about what a measurement
+MEANS, made without testing what the solid was.** It was a building. **The only reason this was caught
+is that the ray line prints the HIT ACTOR** — a bare "8 of 8 blocked" would have been read as proof of
+a buried member and sent the next packet at the wrong target. Same lesson as [[T36]]: **print what you
+hit, not just that you hit.**
