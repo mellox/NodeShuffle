@@ -5917,7 +5917,9 @@ void ANodeShuffleSubsystem::ReadCaveStoreAtForDiag(const FVector& At,
         Out.PointAboveCellFloorCm = At.Z - Cell->FloorZ;
         Out.CellCentre.Z = Cell->FloorZ;
     }
-    Out.bRan = true;
+    // ns-t46-cavetruth: the `Out.bRan = true;` that used to close this function is GONE with the field.
+    // It was set on every path of every caller, so the "the lookup was not made" state its emitter's
+    // legend advertised could never print. See FNodeShuffleCaveCellReading in NodeShuffleSubsystem.h.
 }
 
 // cave-nodes-2: CaveTopUpPass DELETED (user call — caves are additional random areas, not a quota to
@@ -6610,11 +6612,15 @@ void ANodeShuffleSubsystem::LogHereCensus() const
     // cave-nodes-1: cavern knowledge + is-the-player-under-a-roof + ambient volumes here (the ambient
     // list evaluates whether the game's audio volumes could ever serve as an authored cave dataset).
     EnsureCaveStoreLoaded();
-    int32 CaveFrontier = 0, CaveMouth = 0;
+    // ns-t46-cavetruth (T45 cold review F1, applied at BOTH sites): this counter was named CaveMouth and
+    // printed as "mouth". Raw state 4 has three writers and two meanings and the store records neither
+    // (see NodeShuffleGroundIdentity.h), so the counter is named for the VALUE it counts. A rule applied
+    // at one site and not its sibling is this project's most-repeated defect, and this was the sibling.
+    int32 CaveState1 = 0, CaveState4 = 0;
     for (const auto& Cell : CaveFloors)
     {
-        if (Cell.Value.State == 1) { CaveFrontier++; }
-        else if (Cell.Value.State == 4) { CaveMouth++; }
+        if (Cell.Value.State == 1) { CaveState1++; }
+        else if (Cell.Value.State == 4) { CaveState4++; }
     }
     FHitResult RoofHit;
     FCollisionQueryParams RoofParams(FName(TEXT("NodeShuffleHereRoof")), true);
@@ -6631,57 +6637,29 @@ void ANodeShuffleSubsystem::LogHereCensus() const
         }
     }
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("HERE: cave-store %d cells (%d frontier, %d mouth), %d underground seeds, %d underground entries | roofAbovePlayer=%d%s | ambientVolumes(%d): %s"),
-        CaveFloors.Num(), CaveFrontier, CaveMouth, CaveSeedCount, CountUndergroundEntries(),
+        TEXT("HERE: cave-store %d cells, of which %d are held at raw state 1 and %d at raw state 4, ")
+        TEXT("%d underground seeds, %d underground entries | roofAbovePlayer=%d%s | ambientVolumes(%d): ")
+        TEXT("%s. HOW TO READ THE TWO CELL COLUMNS: they count STORED VALUES, not places. Cells at raw ")
+        TEXT("state 2 are in the total and in neither column, so the two columns are not required to sum ")
+        TEXT("to it. The underground-entry count is CountUndergroundEntries(), whose predicate is ")
+        TEXT("bIsNewNode AND bActive AND bUnderground -- run NodeShuffle.WhereCaveNodes for the entries ")
+        TEXT("themselves and for a count that includes the inactive ones this one drops. %s This line ")
+        TEXT("counts stored values and layout flags; it states no cause."),
+        CaveFloors.Num(), CaveState1, CaveState4, CaveSeedCount, CountUndergroundEntries(),
         bPlayerRoofed ? 1 : 0,
         bPlayerRoofed ? *FString::Printf(TEXT(" (%.0fm up)"), (RoofHit.ImpactPoint.Z - P.Z) / 100.0f) : TEXT(""),
-        AmbientCount, AmbientCount > 0 ? *AmbientNames : TEXT("<none>"));
+        AmbientCount, AmbientCount > 0 ? *AmbientNames : TEXT("<none>"),
+        NodeShuffleCaveState4Legend());
 
-    // ns-t45-verticaldiag: HOW TO WALK TO A NODE THE MOD DELIBERATELY PUT IN A CAVE. The counts above
-    // say how many exist; they never said WHERE, and a positive control for the cave classification is
-    // useless if the author cannot reach one. Same predicate as CountUndergroundEntries (bIsNewNode &&
-    // bActive && bUnderground) evaluated in one loop, so the pointer and the count cannot disagree.
-    {
-        const double HereYaw = Pawn->GetActorRotation().Yaw;
-        const FNodeShuffleEntry* NearestUg = nullptr;
-        double NearestUgD2 = 0.0;
-        int32 UgTotal = 0;
-        for (const FNodeShuffleEntry& E : Layout)
-        {
-            if (!(E.bIsNewNode && E.bActive && E.bUnderground)) { continue; }
-            UgTotal++;
-            const double D2 = FVector::DistSquared2D(E.Location, P);
-            if (!NearestUg || D2 < NearestUgD2) { NearestUg = &E; NearestUgD2 = D2; }
-        }
-        if (NearestUg)
-        {
-            const FVector D = NearestUg->Location - P;
-            const double Turn = FRotator::NormalizeAxis(
-                FMath::RadiansToDegrees(FMath::Atan2(D.Y, D.X)) - HereYaw);
-            UE_LOG(LogNodeShuffle, Display,
-                TEXT("HERE: nearest cave-flagged node entry -- 1 of %d entry(ies) in this layout that ")
-                TEXT("carry the underground flag, at %s, %.0f m away from you in 2D and %+.0f m in Z; ")
-                TEXT("from where you stand and face, turn %+.0f deg and go. Its ")
-                TEXT("settle state is %s. WHAT THE FLAG IS: the layout's own record that this entry was ")
-                TEXT("DEALT a cave-floor cell, which is why it settles with the short in-cave trace. ")
-                TEXT("Stand at it and run this command again to take the cave-store and hit-identity ")
-                TEXT("readings there. THIS IS A POINTER, NOT A VERDICT: the flag is what the deal wrote, ")
-                TEXT("the apply path can clear it later, and this line does not check where the node ")
-                TEXT("actually ended up. It states no cause."),
-                UgTotal, *NearestUg->Location.ToCompactString(),
-                FMath::Sqrt(NearestUgD2) / 100.0, D.Z / 100.0, Turn,
-                NearestUg->bRayCasted ? TEXT("settled") : TEXT("unsettled"));
-        }
-        else
-        {
-            UE_LOG(LogNodeShuffle, Display,
-                TEXT("HERE: nearest cave-flagged node entry -- NONE: 0 of this layout's %d entry(ies) ")
-                TEXT("carry the underground flag, so there is no cave-placed node to walk to in this ")
-                TEXT("save and no distance is printed. That is a different statement from one being far ")
-                TEXT("away. This line counts flags on the layout; it does not say why none are set."),
-                Layout.Num());
-        }
-    }
+    // ns-t46-cavetruth: THE `nearest cave-flagged node entry` LINE T45 ADDED HERE IS GONE, on the
+    // author's call, and it is not coming back to this command. `NodeShuffle.Here` answers "what is true
+    // at the point I am standing at"; "where are the cave nodes" is a DIRECTORY question about the whole
+    // layout, and answering it here made this command's remit drift across three consecutive packets.
+    // Its replacement is `NodeShuffle.WhereCaveNodes` (NodeShuffleWhereCaveNodes.cpp), which lists EVERY
+    // cave-flagged entry rather than the nearest one -- a nearest-only lookup hides the population, and
+    // the row it picked could be a record with no actor behind it. T45's two POINT-LOCAL additions stay
+    // exactly where they are: the ground-trace hit identity and the cave-store reading below are both
+    // statements about the point under your feet, which is this command's job.
 
     // slopefit-1 diagnostics: slope at the player's feet + the cliff-gate verdict — answers "would
     // nodes settle on this hillside?" in one line (user hit this exact question on a re-rolled hill).

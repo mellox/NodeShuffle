@@ -33,6 +33,29 @@ struct FNodeShuffleCaveCellReading;
 void LogGroundTraceHitIdentity(const TCHAR* Prefix, const FString& Tag, const FVector& ProbedFrom,
                                bool bTraceHit, const FHitResult& Hit);
 
+// ns-t46-cavetruth: THE ONE DEFINITION OF THE STATE WORD, and the ONE definition of what it means.
+// Two emitters now print it (the per-point CAVE-STORE READING and the WhereCaveNodes rows), and two
+// copies of one instrument's vocabulary drift -- T26's defect. Every token this returns appears in
+// exactly one place in the source, and the legend deliberately spells none of them.
+//
+// WHY THE STATE-4 WORD REFUSES TO GLOSS (T45 cold review F1). The raw value 4 is written at three
+// places with two different meanings: the expansion pass writes it when its upward roof trace found
+// NOTHING above a neighbour cell's centre (open sky -- a cavern mouth), while ClassifyOriginalUnderground
+// and SeedCaveCellAtPlayer both write it only AFTER a roof trace HIT, when the re-sample of the floor at
+// the cell's centre missed (proven roof -- definitively inside). The stored cell carries State, FloorZ
+// and CeilingCm and NO field naming its writer, and the JSON/baked-atlas load round-trips exactly those
+// three fields -- so the writer is NOT recoverable from the store and this vocabulary does not guess it.
+const TCHAR* NodeShuffleCaveCellStateWord(const FNodeShuffleCaveCellReading& Cave);
+
+// The ONE definition of what raw state 4 does and does not license a reader to conclude. It is its own
+// function because THREE lines now carry that claim -- the per-point reading, the WhereCaveNodes rows,
+// and NodeShuffle.Here's cave-store counter line, whose state-4 counter made the very same conflation
+// this packet is fixing. A claim stated in three places in three wordings is how one of them goes stale.
+const TCHAR* NodeShuffleCaveState4Legend();
+
+// The full state-word legend: what the five words are, followed by the shared state-4 paragraph above.
+FString NodeShuffleCaveCellStateWordLegend();
+
 // Reports what the mod's own cave store holds at a point. The reading is taken by the subsystem
 // (ANodeShuffleSubsystem::ReadCaveStoreAtForDiag) and handed in; this only puts it into words.
 void LogCaveStoreReading(const TCHAR* Prefix, const FString& Tag,

@@ -71,9 +71,15 @@ struct FNodeShuffleProbeEyeReading
 // store (ANodeShuffleSubsystem::CaveFloors and its counters) or derived from the point's grid key, so a
 // reader is told what the mod believes about that key and nothing about what is physically there.
 // NOTHING READS IT: it is filled for a log line, and no gate, deal, pick or placement path consults it.
+//
+// ns-t46-cavetruth: THERE IS NO bRan FIELD, deliberately. It existed, every caller went through
+// ReadCaveStoreAtForDiag, and that function set it true unconditionally -- so the "the lookup was not
+// made" state named in the emitter's legend could not occur in any build. A legend that names a state
+// nothing can produce is a lie in a line whose whole value is honesty, so the field and its word were
+// removed rather than kept as a defensive default nobody can reach. Every field below is written on
+// every call.
 struct FNodeShuffleCaveCellReading
 {
-    bool bRan = false;                    // false = no key was computed and no lookup was made
     bool bStoreLoadedBeforeThisCall = false; // was the store already resident when the caller asked
     int32 StoreCellsTotal = 0;            // DENOMINATOR: cells the store held at reading time
     int32 StoreSeedCount = 0;             // roof-proven seeds the store held at reading time
@@ -792,6 +798,18 @@ public:
     // LogPointAtHereCensus tests where an aim ray terminates, which is the rock's near face. Log-only:
     // it spawns nothing, moves nothing and writes no layout field. Both other commands are untouched.
     void LogWellMemberProbeCensus() const;
+
+    // ns-t46-cavetruth: `NodeShuffle.WhereCaveNodes` console command (registered in
+    // NodeShuffleWhereCaveNodes.cpp). THE DIRECTORY OF EVERY CAVE-FLAGGED LAYOUT ENTRY -- not the
+    // nearest one. It replaces the single nearest-entry pointer line that T45 added to LogHereCensus,
+    // which is removed: `NodeShuffle.Here` reports on the point you are standing at, and a directory
+    // lookup is not that question. THE REASON IT LISTS ALL OF THEM: a nearest-only lookup hides the
+    // population, and a wrong population is this project's most expensive defect class -- one row per
+    // entry lets a reader see how many there are, how they are spread, and how many of them are records
+    // with no actor behind them. Every row states LIVE or record-only (T45 cold review F3: a stale
+    // record otherwise sends the reader walking hundreds of metres to nothing), and the summary counts
+    // those two separately. Log-only: it traces nothing, spawns nothing and writes no layout field.
+    void LogWhereCaveNodesCensus() const;
 
     // cave-nodes-1: `NodeShuffle.SeedHere` console command. Plants a manual cave seed at the player's
     // feet — for roofed spots vanilla never put a node under (rock bridges, shelves, side tunnels).

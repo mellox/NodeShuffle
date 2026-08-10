@@ -51,28 +51,62 @@ void LogGroundTraceHitIdentity(const TCHAR* Prefix, const FString& Tag, const FV
         (Hit.ImpactPoint.Z - ProbedFrom.Z) / 100.0);
 }
 
+// ns-t46-cavetruth: ONE state word per reading, and each token appears in this file exactly once -- as
+// its own value, never inside the legend prose. docs/TECH-DEBT.md: a legend that spells its own field's
+// value made a bare grep match every line regardless of value, three times in this project already.
+//
+// The state-4 token names the RAW VALUE and stops there. T45 cold review F1: the word it used to carry
+// asserted "a cavern's walkable edge", which is true for one of that value's three writers and FALSE for
+// the other two -- and the two it is false for are the ones that seed a vanilla cave node, i.e. exactly
+// the cell the author walks to. See NodeShuffleGroundIdentity.h for the three writers.
+//
+// ns-t46-cavetruth: the LOOKUP-NOT-RUN word is GONE, with FNodeShuffleCaveCellReading::bRan. It named a
+// sixth state that no caller could produce (ReadCaveStoreAtForDiag set bRan unconditionally), and a
+// legend that names a state which cannot occur is a small lie in a line whose whole value is honesty.
+const TCHAR* NodeShuffleCaveCellStateWord(const FNodeShuffleCaveCellReading& Cave)
+{
+    if (!Cave.bCellPresent) { return TEXT("CELL-ABSENT"); }
+    if (Cave.CellState == 1) { return TEXT("CELL-PRESENT-FRONTIER"); }
+    if (Cave.CellState == 2) { return TEXT("CELL-PRESENT-EXPANDED"); }
+    if (Cave.CellState == 4) { return TEXT("CELL-PRESENT-STATE4"); }
+    return TEXT("CELL-PRESENT-OTHERSTATE");
+}
+
+const TCHAR* NodeShuffleCaveState4Legend()
+{
+    return TEXT("THE RAW VALUE 4 HAS THREE WRITERS IN THIS MOD AND TWO DIFFERENT ")
+           TEXT("MEANINGS: the flood-fill expansion pass (ExpandCaveFloorsBudgeted) writes it for a ")
+           TEXT("neighbour cell whose upward roof trace found NOTHING above that cell's centre, which ")
+           TEXT("is open sky; ClassifyOriginalUnderground and SeedCaveCellAtPlayer each write it only ")
+           TEXT("AFTER their upward roof trace HIT, when the re-sample of the floor at that cell's ")
+           TEXT("centre missed -- a proven roof overhead. A cell may also have been loaded from the ")
+           TEXT("store's JSON file or from the embedded baked atlas carrying a 4 one of those three ")
+           TEXT("wrote in an earlier session. THE STORE RECORDS NO FIELD NAMING THE WRITER, and its ")
+           TEXT("cells round-trip only state, floor and ceiling, so NOTHING READING THE STORE -- ")
+           TEXT("INCLUDING THIS LINE -- CAN TELL WHICH OF THOSE WROTE A GIVEN CELL. A 4 is reported as ")
+           TEXT("the value it is and is not glossed: read it neither as a statement that a cavern's ")
+           TEXT("open edge is here nor as a statement that it is not.");
+}
+
+FString NodeShuffleCaveCellStateWordLegend()
+{
+    return FString(
+        TEXT("WHAT THE STATE WORD IS: one of five, and this legend deliberately spells none of them. ")
+        TEXT("Two name the stored state of a cell the store's own expansion pass treats as expandable ")
+        TEXT("or as fully expanded, one names a cell held at the raw state value 4, one covers a cell ")
+        TEXT("held at any other raw value, and one says the store holds no cell at that key at all. ")
+        TEXT("The two expansion words carry no split -- every writer of those two values means what ")
+        TEXT("the word says. "))
+        + NodeShuffleCaveState4Legend();
+}
+
 void LogCaveStoreReading(const TCHAR* Prefix, const FString& Tag,
                          const FNodeShuffleCaveCellReading& Cave)
 {
-    // ONE state word per reading, and it appears in this file exactly once each -- as its own value,
-    // never inside the legend prose. docs/TECH-DEBT.md: a legend that spells its own field's value made
-    // a bare grep match every line regardless of value, three times in this project already.
-    const TCHAR* StateWord = TEXT("LOOKUP-NOT-RUN");
-    if (Cave.bRan)
-    {
-        if (!Cave.bCellPresent) { StateWord = TEXT("CELL-ABSENT"); }
-        else if (Cave.CellState == 1) { StateWord = TEXT("CELL-PRESENT-FRONTIER"); }
-        else if (Cave.CellState == 2) { StateWord = TEXT("CELL-PRESENT-EXPANDED"); }
-        else if (Cave.CellState == 4) { StateWord = TEXT("CELL-PRESENT-MOUTH"); }
-        else { StateWord = TEXT("CELL-PRESENT-OTHERSTATE"); }
-    }
+    const TCHAR* StateWord = NodeShuffleCaveCellStateWord(Cave);
 
     FString CellDetail;
-    if (!Cave.bRan)
-    {
-        CellDetail = TEXT("No key was computed and no lookup was made, so nothing below describes a cell.");
-    }
-    else if (Cave.bCellPresent)
+    if (Cave.bCellPresent)
     {
         const FString Ceiling = (Cave.CellCeilingCm < 0.0)
             ? FString::Printf(TEXT("a stored ceiling clearance of %.0f cm, which is the store's own ")
@@ -100,17 +134,15 @@ void LogCaveStoreReading(const TCHAR* Prefix, const FString& Tag,
         TEXT("OWN store HOLDS at this key and nothing more. That store is grown by the mod's own ")
         TEXT("flood-fill outward from proven seeds, so a key it does not hold is a key the fill has not ")
         TEXT("reached -- which this reading cannot tell apart from a point that is in no cavern at all, ")
-        TEXT("and a zero total above means it holds nothing anywhere yet. The state word after the tag ")
-        TEXT("is one of six: three name the stored state of a cell that IS held at this key (an ")
-        TEXT("expandable one, a fully expanded one, or one at a cavern's walkable edge), one covers a ")
-        TEXT("cell held at some other raw state value, one says the store holds no cell at this key, ")
-        TEXT("and one says the lookup was not made. NOTHING PLACES OR REFUSES ANYTHING ON THIS READING: ")
-        TEXT("it is computed for this log line and no code reads it. It states no cause."),
+        TEXT("and a zero total above means it holds nothing anywhere yet. %s NOTHING PLACES OR REFUSES ")
+        TEXT("ANYTHING ON THIS READING: it is computed for this log line and no code reads it. It ")
+        TEXT("states no cause."),
         Prefix, *Tag, StateWord,
         *Cave.Point.ToCompactString(), Cave.CellX, Cave.CellY,
         Cave.CellSizeCm, *Cave.CellCentre.ToCompactString(),
         *CellDetail, Cave.StoreCellsTotal, Cave.StoreSeedCount,
-        Cave.bStoreLoadedBeforeThisCall ? TEXT("WAS") : TEXT("was NOT"));
+        Cave.bStoreLoadedBeforeThisCall ? TEXT("WAS") : TEXT("was NOT"),
+        *NodeShuffleCaveCellStateWordLegend());
 }
 
 void LogCaveStoreGroupSummary(const TCHAR* Prefix, const FString& GroupTag, int32 Probed,
