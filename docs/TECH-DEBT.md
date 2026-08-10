@@ -7,7 +7,9 @@ this list, the entry has failed — fix the entry, not just the bug.**
 Each item records what it is, how we know, and why it is not fixed. Items with a
 **pre-scoped fix** have had the work sized already — start there, don't redesign.
 
-Last updated 2026-08-10 (T54 filed at the top of P1 by author ruling; supersedes D1's coupling.
+Last updated 2026-08-10 (T58 filed in P1 after T55 — SF+ destroys third-party nodes on new games,
+DECISION PENDING; source `_team/nodeshuffle-followups/veto-spawnwindow-regression.md`.
+T54 filed at the top of P1 by author ruling; supersedes D1's coupling.
 T51/T52/T53 filed at the end of P3 — they were cited across the code and the state file and had
 never been defined here, which is exactly the failure the paragraph above describes).
 
@@ -222,6 +224,124 @@ own. The design says PENDING *"empties itself one boot after the documents land"
 were pending on F **and** on H (two loads apart), which is the first datum against that claim and the
 cheapest next measurement. Do that before choosing an option: if PENDING never empties, this is not a
 dedup defect at all but a stuck allow-list write, and every option above is the wrong fix.
+
+### T58. ON A NEW GAME, SF+ DESTROYS EVERY THIRD-PARTY RESOURCE NODE ~0.9 s AFTER WORLD INIT — before our roll can enumerate them — so lead, lithium/Alkali and AllMinable's `Res_*2_C` family are EXTINCT on new saves. **NOT a NodeShuffle regression. Status: DECISION PENDING — the author picks the route.**
+**AUTHORITATIVE SOURCE for every claim, quote and option below:
+`_team/nodeshuffle-followups/veto-spawnwindow-regression.md` (read-only investigation, 2026-08-10, at
+`f84930d`). Read it before acting on this entry; nothing here is re-derived.** The investigation was
+opened as *"the veto flipped `lead_C` from spawn-window to not-ours"* — that framing is **wrong**, and
+the entry is filed under what was actually measured.
+
+**THE MECHANISM — our veto's predicate cannot see a level-placed foreign node, by construction.**
+`Source/NodeShuffleVetoKBFL/Private/NodeShuffleDestroyerVetoRequirement.cpp:26-33`, verbatim:
+
+```cpp
+const bool bRegistered  = TargetActor && FNodeShuffleModule::IsManagedSpawnedNode(TargetActor);
+const bool bSpawnWindow = !bRegistered && TargetActor && FNodeShuffleModule::IsSpawningManagedNode();
+const bool bManaged     = bRegistered || bSpawnWindow;   // !bManaged -> return true (allow)
+```
+
+* `IsManagedSpawnedNode` = membership in `GNodeShuffleManagedNodes` (`NodeShuffle.cpp:114-117`).
+* `IsSpawningManagedNode` = **a global game-thread depth counter**, `GNodeShuffleSpawningDepth > 0`
+  (`NodeShuffle.cpp:119-130`), incremented by `FNodeShuffleSpawningScope` placed tightly around **our
+  own** `SpawnActor` calls (`NodeShuffleSubsystem.cpp:4299`, `NodeShuffleWellSpawn.cpp:153,268`). It is
+  **not a time window, not a class list, not per-actor** — do not read `VETO (spawn-window)` as "a
+  window of leniency"; it means *we were inside our own SpawnActor for that actor.*
+
+Both inputs are therefore **"did NodeShuffle create or adopt this actor"**. SF+'s
+`WorldRequirement_ResearchNodeRemover` fires while the registry is empty and no spawn scope is open, so
+the predicate returns `allow` — and is *correct* to.
+
+**THE TWO-SAVE DISCRIMINATION (measured; `Destroy:` counts per log, all logs build `t54-1`, so build is
+excluded — the flip has `t54-1` logs on BOTH sides):**
+
+| save | logs | pre-registered at arm | lead destroyed | alkali destroyed |
+|---|---|---|---|---|
+| **TestWithMods** (established) | 6 (`07.37.43`, `07.45.49`, `17.08–17.15`) | 139 / >0 | **0** | **0** |
+| **TestAllMinables** (new game) | `18.10.09` | **0** | **6** | **23** |
+| TestAllMinables (reload) | `18.39.39`, `FactoryGame.log` | 70 / 54 | 6 | 23 |
+
+The first flipped session, in one timeline:
+
+```
+18.07.31:549  veto: pre-registered 0 restored nodes before arm (new game)
+18.07.31:549  veto: NodeShuffle.DestroyerVeto=1 at world init — arming    (armed on 2 assets)
+18.07.32:461  [WorldRequirement_ResearchNodeRemover]: Destroy: lead_C_2147471175 | Resource: oreleaddesc_C
+18.07.38:346  veto: IsRequirementMet ... class='BP_ResourceNode_C' -> VETO (spawn-window)   <- our FIRST spawn
+```
+
+**SF+ kills the foreign nodes 0.9 s after world init and ~5.9 s before NodeShuffle spawns anything.**
+Arming is excluded as a candidate (it *precedes* the destroys and the requirement was in the chain);
+config is excluded (`DestroyerVeto=1` and identical arm output in both eras); `VETO (managed node)`
+fires **0 times in every log**. On the established save the same classes appear only as
+`VETO (spawn-window)` at `07.34:01`/`17.30:29` — **minutes** after load, during our own spawn passes:
+they were our re-spawns, protected because they were already ours.
+
+**SOURCING CAVEAT, stated because the shape of the claim invites over-reading:** *no log contains*
+`class='lead_C' -> allow (not ours)`. The trace is Verbose+diag-gated and starts ~5 s after load, i.e.
+**after** the destroys. "Today they get allow (not ours)" is an *inference* — correct in substance
+(the predicate has no other branch available) but **not a quoted log line**.
+
+**WHY THIS IS NOT A REGRESSION, AND WHY THAT MATTERS FOR THE FIX.** `Source/NodeShuffleVetoKBFL/` has
+**no commit since 2026-07-25** (entire history: `c0c53da`, `0dd69b2`, `288d416`); diffing
+`a6c339b^..ee01d38` over the veto and both its inputs is **1 file, +1/-1 — the build-marker string
+only** (`NodeShuffle.cpp:407`), and widening to `--since=2026-08-03` (48 commits) changes nothing. The
+founding contract (`288d416`) never claimed this ground: it *"skips their destroy chain for nodes we
+spawned/adopted (hidden originals never vetoed)"*, and the header states *"for every other actor this
+returns true and the asset behaves exactly as if NodeShuffle were absent."* **Protecting third-party
+nodes was a side effect of adoption, never an advertised capability** — so there is nothing to
+"restore", and any fix is NEW capability that must be designed, not a repair.
+
+**THE ESTABLISHED SAVE IS NOT SAFE BY DESIGN EITHER — it survives only because those actors were
+already in the managed registry** (our own registered respawns are veto-protected). That is
+save-contents luck, not a guarantee.
+
+**RESHUFFLE DOES NOT RECOVER THEM (author-measured, 2026-08-10):** a manual reshuffle + save + reload
+brings nothing back. The level **re-instantiates** the foreign nodes every load and SF+ **re-destroys**
+them every load, still before we look — 6 lead + 23 alkali destroyed again in both later loads. There
+is no in-game workaround from our side.
+
+**OPEN — THE DISCRIMINATING MEASUREMENT, AND IT DECIDES WHETHER ANYTHING CHANGED AT ALL.** The author
+had lead/lithium on low-tech **new** games about a week ago; the logs that would settle it have rotated
+out (unprovable from evidence on disk, and nothing in NodeShuffle *can* protect a first-load new game —
+the registry is 0 by construction). **Run: a new game with NodeShuffle DISABLED, SF+ on; grep
+`ResearchNodeRemover]: Destroy:.*oreleaddesc`.** If they still die, NodeShuffle never protected new
+games, SF+'s research gating of these resources changed in the last week, and there is no regression to
+chase. **Do not choose a fix option before this runs.**
+
+**THE STANDING AUTHOR RULING IS BROKEN ON NEW GAMES.** *"We've already worked on them [lithium, lead,
+chlorine] and have them going, I just don't want them excluded in new things we do"*
+([[nodeshuffle-modded-nodes-in-scope]], quoted in full at [[T43]]). With SF+ loaded, a new game loses
+that whole population before the roll sees it, so the resources are not merely *excluded from a new
+feature* — they are absent from the world.
+
+**Options (from the source doc §5), with the trade-off each buys:**
+1. **Non-vanilla protect veto — opt-in CVar, default OFF (INVESTIGATOR'S RECOMMENDATION).** Veto
+   destroys of any `FGResourceNodeBase` whose resource/class is not `/Game/`. Fixes AllMinable **and
+   every future resource mod at once** — the only option that satisfies "modded nodes permanently in
+   scope" for *arbitrary* mods. Cost: it silently overrides SF+'s deliberate research gating — a
+   balance change to another author's mod — so **opt-in only, and the settings copy must say so**
+   (player-facing copy is a graded claim; see the T1 block below).
+2. **KDF research-requirement patch (recommended alongside, for the specific SF+ pairing).** Patch the
+   requirement for `oreleaddesc_C`/alkali so SF+ never gates them. No C++ risk, SF+-native, and honest
+   — it changes SF+'s balance **in SF+'s own data** rather than vetoing its code. But it is
+   per-resource, per-mod, and does **not** generalise to unseen mods.
+3. **Adopt-early.** Claim the foreign population where we already `pre-register` restored nodes, before
+   the arm. Smallest change, reuses the registry path, and the roll wants that population anyway. Same
+   balance consequence as (1); and **a node we adopt and never deal is a new state to reason about.**
+4. **Widen the spawn window — REJECTED OUTRIGHT.** It is a race-closer for our own `SpawnActor`.
+   Widening it protects *whatever happens to be judged during our spawn bursts*: **non-deterministic
+   and untestable.** Do not touch it. ("Restore the old classification" is likewise a non-option —
+   nothing changed, so there is nothing to restore.)
+
+**Cross-links.** [[T43]] is the same class-hierarchy seam seen from the other side: our
+`TActorIterator<AFGResourceNode>` *under*-matches and cannot see `AFGResourceNodeBase` subclasses,
+while SF+'s remover filter *over*-matches down that same base and sweeps up third-party nodes we never
+intended it to reach — and option 1 would have us predicate on `FGResourceNodeBase` deliberately, so
+T43's warning applies verbatim: **that changes a POPULATION, and needs a before/after count and a
+differential review, not a one-line type change.** [[T54]]/[[T55]]/[[T56]]/[[T57]] are the same
+2026-08-10 multi-mod-save investigation block; T55 shares this entry's shape — a documented design
+decision, not a bug, that must be **re-decided** rather than patched.
 
 ### ~~T1. The Relocate Resource Wells tooltip states the opposite of what the feature does~~ — FIXED 2026-08-08
 The settings UI described a relocated well as *"functional but INVISIBLE"* and labelled the
