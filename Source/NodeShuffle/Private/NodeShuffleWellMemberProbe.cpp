@@ -200,6 +200,13 @@ void ANodeShuffleSubsystem::LogWellMemberProbeCensus() const
     // refuse rather than only how many the shipped one did -- a per-member disagreement that never gets
     // added up is a disagreement nobody can size.
     int32 ShadowInside = 0, ShadowNotMeasured = 0, ShadowControlDidNotDemonstrate = 0;
+    // ns-t52-memberdetail: how many probed members had their per-hit SHADOWCROSS list PRINTED. Counted
+    // through the same predicate the emitter selects with, so this number cannot disagree with the
+    // number of lists in the log.
+    int32 ShadowDetailEmitted = 0;
+    // The per-walk report cap, read back from a reading this run rather than typed into a log string.
+    // Stays -1 when no member produced a reading at all.
+    int32 ShadowDetailCapSeen = -1;
     int32 AgreeWithGate = 0, CandidateWouldAddRefusal = 0, CandidateWouldDropRefusal = 0;
     // ns-t45-verticaldiag: the cave-store lookup's own tallies, same `Probed` denominator as the rest.
     int32 CaveCellPresent = 0, CaveCellAbsent = 0;
@@ -373,13 +380,23 @@ void ANodeShuffleSubsystem::LogWellMemberProbeCensus() const
         {
             const AActor* Subject = IsValid(LiveActor) ? LiveActor : nullptr;
             FNodeShufflePointInsideReading Centre;
-            const bool bCentreInside = IsPointInsideSolidShadowForDiag(MemberLoc, Subject, Centre);
+            // ns-t52-memberdetail: the per-hit list is now BUILT for every probed member. ns-t49
+            // switched it off here to keep the volume down and ns-t51 then left the members as the only
+            // points still reading inside, so the instrument was off where the reading is. Building it
+            // is pure observation -- each detail string is composed from values the classification has
+            // already produced, the cursor advance sits outside that block, and no trace, count or
+            // verdict reads it. WHICH of these lists gets PRINTED is the policy on the emitter call
+            // below, applied after the walks have run.
+            const bool bCentreInside = IsPointInsideSolidShadowForDiag(MemberLoc, Subject, Centre,
+                                                                      /*bWantCrossingDetail=*/true);
             if (!Centre.bRan) { ShadowNotMeasured++; }
             else
             {
                 if (bCentreInside) { ShadowInside++; }
                 if (!Centre.bControlInside) { ShadowControlDidNotDemonstrate++; }
             }
+            if (CentreShadowDetailSelected(Centre, bCentreInside)) { ShadowDetailEmitted++; }
+            ShadowDetailCapSeen = Centre.CrossingDetailCap;
 
             const ECentreShadowAgreement Agreement = LogCentreShadowReading(
                 TEXT("WELLPROBE"),
@@ -387,7 +404,8 @@ void ANodeShuffleSubsystem::LogWellMemberProbeCensus() const
                 Centre, bCentreInside,
                 Subject ? Subject->GetName()
                         : FString(TEXT("<none: this member resolved from the saved record>")),
-                bEnclosed, Blocked, Total, Threshold);
+                bEnclosed, Blocked, Total, Threshold,
+                ECentreShadowDetailPolicy::RefusedOrControlDidNotDemonstrate);
             switch (Agreement)
             {
                 case ECentreShadowAgreement::AgreeRefuse:
@@ -496,6 +514,29 @@ void ANodeShuffleSubsystem::LogWellMemberProbeCensus() const
         AgreeWithGate, CandidateWouldAddRefusal + CandidateWouldDropRefusal,
         CandidateWouldAddRefusal, CandidateWouldDropRefusal,
         ShadowNotMeasured, ShadowControlDidNotDemonstrate);
+
+    // ns-t52-memberdetail: WHICH MEMBERS GOT A PER-HIT LIST, WITH THE SAME DENOMINATOR AS EVERY LINE
+    // ABOVE. A selective instrument that never says how selective it was is one nobody can size.
+    UE_LOG(LogNodeShuffle, Display,
+        TEXT("WELLPROBE: group '%s' shadow per-hit detail -- a SHADOWCROSS list was printed for %d of ")
+        TEXT("the %d member(s) probed. THE RULE THIS COMMAND PASSED, and the only rule it passed: print ")
+        TEXT("for a member the candidate would refuse, or for one whose positive control did not read ")
+        TEXT("inside; a member the candidate accepts whose control read inside keeps its two summary ")
+        TEXT("lines and gets no list. Of the %d probed, %d had a candidate that would refuse, %d had a ")
+        TEXT("positive control that did not read inside, and for %d the walks did not run at all -- a ")
+        TEXT("member can fall in more than one of those, so they need not sum to the printed figure. ")
+        TEXT("Each printed list reports at most %d hit(s) per walk, that figure read back from a ")
+        TEXT("reading this run rather than typed here, and each list's own closing line states how many ")
+        TEXT("hits it did not report; a figure of -1 would mean no member produced a reading at all. ")
+        TEXT("The list was BUILT for every one of the %d probed member(s): this is a choice about what ")
+        TEXT("was printed, it was made after each member's walks had already run, and it moved no ")
+        TEXT("trace, no count and no verdict. This line counts printed lists and states no cause for ")
+        TEXT("any verdict."),
+        *WellShort(E->CorePath),
+        ShadowDetailEmitted, Probed,
+        Probed, ShadowInside, ShadowControlDidNotDemonstrate, ShadowNotMeasured,
+        ShadowDetailCapSeen,
+        Probed);
 
     // ns-t45-verticaldiag: THE CAVE-STORE LOOKUP OVER THE WHOLE GROUP, WITH THE SAME DENOMINATOR.
     LogCaveStoreGroupSummary(TEXT("WELLPROBE"), WellShort(E->CorePath), Probed,

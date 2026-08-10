@@ -6,11 +6,21 @@
 #include "NodeShuffle.h"
 #include "NodeShuffleSubsystem.h"   // FNodeShufflePointInsideReading
 
+// ns-t52-memberdetail: the ONE expression behind "does this reading print its per-hit list under the
+// selective policy". Declared in the header so a caller tallying how many lists a run produced uses this
+// and not a second copy of the same two terms. A reading whose walks did not run has no control verdict
+// either, so it selects here and prints the one line saying there is no list.
+bool CentreShadowDetailSelected(const FNodeShufflePointInsideReading& Centre, bool bCentreInside)
+{
+    return bCentreInside || !Centre.bControlInside;
+}
+
 ECentreShadowAgreement LogCentreShadowReading(const TCHAR* Prefix, const FString& Tag,
                                               const FNodeShufflePointInsideReading& Centre,
                                               bool bCentreInside, const FString& SubjectName,
                                               bool bGateRefuses, int32 Blocked, int32 Total,
-                                              int32 Threshold)
+                                              int32 Threshold,
+                                              ECentreShadowDetailPolicy DetailPolicy)
 {
     UE_LOG(LogNodeShuffle, Display,
         TEXT("%s: %s -- SHADOW centre-containment candidate at %s: %s. Two walks were made along the ")
@@ -96,19 +106,38 @@ ECentreShadowAgreement LogCentreShadowReading(const TCHAR* Prefix, const FString
     // ---- ns-t49-crossingdetail (2026-08-10): PER-HIT DETAIL, ONLY WHERE IT WAS ASKED FOR ----
     // The two lines above are totals. docs/TECH-DEBT.md T48 was established, and every conclusion about
     // this walk that survived was established, by lines that printed WHAT THEY HIT -- so this block
-    // prints the hits. It runs only when the caller requested the detail, which is the two commands a
-    // reader points at a SINGLE point (NodeShuffle.Here and NodeShuffle.PointAtHere). NodeShuffle.
-    // WellProbe does not request it and its output above is unchanged, because 8 members times 2 walks
-    // times N hits is not a reading anyone can hold. Nothing here decides, traces or gates.
-    if (Centre.bCrossingDetailRequested)
+    // prints the hits. It runs only when the caller's walks BUILT the list.
+    //
+    // ns-t52-memberdetail (2026-08-10): AND ONLY WHERE THIS CALLER WANTS IT PRINTED. T49 switched the
+    // list off wholesale for NodeShuffle.WellProbe to keep 7 members x 2 walks x N hits off the screen;
+    // after ns-t51-ignorelist the well-member locations are the ONLY points still reading CENTRE INSIDE,
+    // so that is where the list is needed. The population command now builds the list for every member
+    // and passes the selective policy, which prints it for a member the candidate would refuse or one
+    // whose positive control did not read inside. Nothing here decides, traces or gates: this chooses
+    // which already-built lines are emitted.
+    const bool bEmitDetail =
+        Centre.bCrossingDetailRequested
+        && ((DetailPolicy == ECentreShadowDetailPolicy::EveryPoint)
+            || CentreShadowDetailSelected(Centre, bCentreInside));
+    const TCHAR* PolicyWords =
+        (DetailPolicy == ECentreShadowDetailPolicy::EveryPoint)
+            ? TEXT("a list for every point it probes")
+            // The verdict token this reading prints on its own lines is deliberately NOT repeated here.
+            // A legend that spells a field's own printed value makes a grep for that value match the
+            // legend too -- four prior sightings in this project's logs.
+            : TEXT("a list only for a point the candidate would refuse, or one whose positive control ")
+              TEXT("did not read inside");
+    if (bEmitDetail)
     {
         if (!Centre.bRan)
         {
             UE_LOG(LogNodeShuffle, Display,
                 TEXT("%s: %s -- SHADOWCROSS: a per-hit list was requested for this point and there is ")
                 TEXT("none, because the walks did not run at all. No count on the lines above is a ")
-                TEXT("reading of this point."),
-                Prefix, *Tag);
+                TEXT("reading of this point. This caller asked for %s, and a point whose walks did not ")
+                TEXT("run reports no candidate verdict and no control verdict, so it is selected by ")
+                TEXT("either of those two."),
+                Prefix, *Tag, PolicyWords);
         }
         else
         {
@@ -135,8 +164,18 @@ ECentreShadowAgreement LogCentreShadowReading(const TCHAR* Prefix, const FString
                 TEXT("that list. The positive control's own two walks ")
                 TEXT("and the downward surface-finder walk that placed it are NOT reported here. These ")
                 TEXT("lines report what the traces returned and how this code labelled it, and state ")
-                TEXT("no cause."),
-                Prefix, *Tag, Centre.CrossingDetailCap);
+                TEXT("no cause. WHY THIS POINT HAS A LIST WHEN ANOTHER POINT IN THE SAME RUN MAY NOT: ")
+                TEXT("this caller asked for %s. On this reading the candidate %s this point and the ")
+                TEXT("positive control %s. This point's list was BUILT by the walks above and the ")
+                TEXT("choice reported here was made after they had already run, so it moved no trace, ")
+                TEXT("no count and no verdict. The verdict itself is on the two lines above this one, ")
+                TEXT("spelled there and not here."),
+                Prefix, *Tag, Centre.CrossingDetailCap,
+                PolicyWords,
+                bCentreInside ? TEXT("would refuse") : TEXT("would not refuse"),
+                !Centre.bControlRan ? TEXT("was not built")
+                                    : (Centre.bControlInside ? TEXT("read inside")
+                                                             : TEXT("did not read inside")));
 
             for (const FString& Line : Centre.CrossingDetail)
             {
