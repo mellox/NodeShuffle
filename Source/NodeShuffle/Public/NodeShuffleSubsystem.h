@@ -125,7 +125,12 @@ struct FNodeShufflePointInsideReading
     int32 ExcludedBuildableHits = 0;      // of those, hits on an AFGBuildable (docs/TECH-DEBT.md T40)
     int32 ExcludedPawnHits = 0;           // of those, hits on an APawn (docs/TECH-DEBT.md T36)
     int32 ExcludedSubjectHits = 0;        // of those, hits on the actor the caller named as the subject
-    int32 CountedCrossings = 0;           // HitsSeen minus the three exclusions above
+    // ns-t51-ignorelist: since the fix for docs/TECH-DEBT.md T50, an excluded actor is handed to the
+    // trace's own ignore list the first time a walk sees it, so each of the three counts above is also
+    // the number of DISTINCT actors that walk excluded for that reason. IgnoredRehits is the count of
+    // hits returned on an actor already on that ignore list -- not expected, and 0 on a healthy reading.
+    int32 IgnoredRehits = 0;
+    int32 CountedCrossings = 0;           // HitsSeen minus the three exclusions above and IgnoredRehits
 
     int32 InboundFrontFaces = 0;          // counted crossings whose normal opposed the inbound travel
     int32 InboundBackFaces = 0;           // counted crossings whose normal ran with the inbound travel
@@ -165,6 +170,8 @@ struct FNodeShufflePointInsideReading
     int32 OutboundHitsSeen = 0;            // every blocking hit the outbound walk reported
     int32 InboundExcludedHits = 0;         // of those, the ones removed by the three exclusions
     int32 OutboundExcludedHits = 0;
+    int32 InboundIgnoredRehits = 0;        // ns-t51-ignorelist: of those, hits already on the ignore list
+    int32 OutboundIgnoredRehits = 0;
     int32 InboundDetailReported = 0;       // hits that produced a line in CrossingDetail
     int32 OutboundDetailReported = 0;
     int32 InboundDetailSuppressed = 0;     // hits that did NOT, because the cap was already reached

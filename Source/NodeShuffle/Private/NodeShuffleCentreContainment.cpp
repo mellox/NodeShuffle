@@ -75,6 +75,45 @@
 // NO FIX IS ATTEMPTED HERE. The walk is known to fail toward NOT INSIDE, so a change that made this one
 // point read correctly could do it for the wrong reason and break the other direction unobserved.
 
+// ns-t51-ignorelist (2026-08-10): THE FIX FOR docs/TECH-DEBT.md T50. THE VERDICT RULE IS UNCHANGED.
+// T50 measured, at a point in open air, 28 of 32 inbound and 31 of 32 outbound blocking hits discarded --
+// nearly all of them the caller's own pawn, hit again and again because the walk stepped only 2 cm past
+// each discard. The exclusions were applied AFTER the trace, so a discarded hit still cost a step of the
+// 32-hit budget and a ~180 cm capsule could absorb ~90 of them alone.
+//
+// WHAT CHANGED, AND ONLY THIS. The FCollisionQueryParams object is now built ONCE per walk instead of
+// once per iteration, and the FIRST time a walk excludes an actor it hands that actor to
+// Params.AddIgnoredActor and RE-TRACES FROM THE SAME CURSOR instead of stepping past it. An excluded
+// actor is therefore never returned again by that walk and costs exactly ONE iteration in total,
+// however tall it is. This is the same mechanism ANodeShuffleSubsystem::IsSpotEnclosed already uses for
+// its pawn exclusion (T36); it is not a new one.
+//
+// WHY ALL THREE GO THROUGH THE SAME PATH RATHER THAN PRE-IGNORING THE SUBJECT ACTOR. Pre-ignoring the
+// subject before the first trace would cost zero iterations instead of one, but it would also make
+// ExcludedSubject structurally zero on every reading -- and the exclusion counts with their denominator
+// are the instrument that found T50 at all. One path for all three also means the subject, the pawn and
+// the buildable cannot drift apart. The price is one iteration per DISTINCT excluded actor per walk.
+//
+// WHAT THE BUDGET NOW BOUNDS. ShadowMaxHitsPerSegment is unchanged at 32 and still counts loop
+// iterations, but an iteration is now spent on a COUNTED CROSSING or on the FIRST sight of one excluded
+// actor -- no longer on the same actor over and over. A walk that still exhausts it is still recorded in
+// bCapHit and still printed on every reading; this fix does not hide its own failure mode.
+//
+// ONE SIDE EFFECT, STATED BECAUSE IT CAN MOVE A COUNT. The old walk stepped 2 cm past every excluded hit
+// and so could step over a real surface lying within those 2 cm; the new walk does not move the cursor
+// on an excluded hit and cannot skip such a surface. Counts may therefore differ from a pre-fix reading
+// for that reason as well as for the budget.
+//
+// THE ANOMALY GUARD. If a trace returns an actor this walk has ALREADY handed to the ignore list, the
+// walk counts that in IgnoredRehits, steps past it as the old code did, and carries on -- so it can
+// never stand still, and the condition is visible in the log rather than silent. Zero is the expected
+// reading.
+//
+// UNTOUCHED, BYTE FOR BYTE: the entries term, the exits term, the max(), the >= 1 threshold, the
+// classification (`bBack` is still exactly `NormalDotDir > 0.0`), the 2 cm step applied to counted hits,
+// the 100000 cm sky start, ECC_WorldStatic, the trace-complexity flag, the trace tag, the exclusion SET
+// (the same three predicates in the same order), the positive control, and the SHADOWCROSS detail block.
+
 #include "Buildables/FGBuildable.h"
 #include "Components/PrimitiveComponent.h"
 #include "Engine/World.h"
@@ -110,9 +149,15 @@ namespace
     struct FShadowSegment
     {
         int32 HitsSeen = 0;
+        // ns-t51-ignorelist: each of the three below is still literally "blocking hits this walk removed
+        // for that reason". Because an excluded actor is handed to the trace's own ignore list the first
+        // time it is seen, that is now also the number of DISTINCT actors excluded for that reason.
         int32 ExcludedBuildable = 0;
         int32 ExcludedPawn = 0;
         int32 ExcludedSubject = 0;
+        // ns-t51-ignorelist: hits returned on an actor this walk had ALREADY put on the trace's ignore
+        // list. Not expected; counted rather than assumed away. Reported on every reading.
+        int32 IgnoredRehits = 0;
         int32 FrontFaces = 0;          // counted crossings whose impact normal OPPOSED the travel
         int32 BackFaces = 0;           // counted crossings whose impact normal RAN WITH the travel
         bool bCapHit = false;
@@ -142,6 +187,16 @@ namespace
         const FVector Dir = (To - From) / Span;
         FVector Cursor = From;
 
+        // ns-t51-ignorelist: ONE params object for the whole walk, so an actor added to its ignore list
+        // stays ignored for every remaining trace of this walk. Constructed with exactly the trace tag
+        // and the trace-complexity flag (false) the per-iteration object was constructed with before --
+        // the same complexity flag the enclosure predicate uses, so both instruments resolve the same
+        // geometry and a disagreement between them cannot be an artefact of that setting.
+        FCollisionQueryParams Params(FName(TEXT("NodeShuffleCentreShadow")), false);
+        // Which actors this walk has already excluded and handed to Params. Read only by the anomaly
+        // guard below; it classifies nothing and enters no term of the verdict.
+        TSet<const AActor*> AlreadyIgnored;
+
         for (int32 Step = 0; Step < ShadowMaxHitsPerSegment; ++Step)
         {
             // Stop once the cursor has been advanced past the far end; a trace with a reversed segment
@@ -149,9 +204,6 @@ namespace
             if (FVector::DotProduct(To - Cursor, Dir) <= 0.0) { return; }
 
             FHitResult Hit;
-            // The same complexity flag the enclosure predicate uses (false), so both instruments resolve
-            // the same geometry and a disagreement between them cannot be an artefact of that setting.
-            FCollisionQueryParams Params(FName(TEXT("NodeShuffleCentreShadow")), false);
             if (!World->LineTraceSingleByChannel(Hit, Cursor, To, ECC_WorldStatic, Params)) { return; }
 
             ++Tally.HitsSeen;
@@ -166,24 +218,53 @@ namespace
             // no side effect, so no hit is classified differently for having been measured earlier.
             const double NormalDotDir = FVector::DotProduct(Hit.ImpactNormal, Dir);
             const TCHAR* Classification = TEXT("<unset>");
+            // ns-t51-ignorelist: an excluded actor is added to the trace's ignore list and the walk
+            // re-traces from the SAME cursor, so it costs one iteration in total instead of one per
+            // step of its own height. Counted hits still advance the cursor exactly as they did.
+            bool bAdvanceCursor = true;
 
-            if (bSubject)
+            if (bSubject || bPawn || bBuildable)
             {
-                ++Tally.ExcludedSubject;
-                Classification = TEXT("EXCLUDED, being a hit on the actor this call named as the tested ")
-                                 TEXT("point's own subject, and so not counted as a crossing");
-            }
-            else if (bPawn)
-            {
-                ++Tally.ExcludedPawn;
-                Classification = TEXT("EXCLUDED, being a hit on an APawn, and so not counted as a ")
-                                 TEXT("crossing");
-            }
-            else if (bBuildable)
-            {
-                ++Tally.ExcludedBuildable;
-                Classification = TEXT("EXCLUDED, being a hit on an AFGBuildable, and so not counted as ")
-                                 TEXT("a crossing");
+                if (AlreadyIgnored.Contains(HitActor))
+                {
+                    // The trace returned an actor this walk had already given it to ignore. Not
+                    // expected. Counted on its own, and the cursor IS advanced so the walk cannot
+                    // stand still on it.
+                    ++Tally.IgnoredRehits;
+                    Classification = TEXT("EXCLUDED AGAIN on an actor this walk had already added to ")
+                                     TEXT("the trace's own ignore list, which is not expected; this ")
+                                     TEXT("hit is not counted as a crossing and the walk stepped past ")
+                                     TEXT("it rather than re-tracing from the same position");
+                }
+                else
+                {
+                    AlreadyIgnored.Add(HitActor);
+                    Params.AddIgnoredActor(HitActor);
+                    bAdvanceCursor = false;
+                    if (bSubject)
+                    {
+                        ++Tally.ExcludedSubject;
+                        Classification = TEXT("EXCLUDED, being a hit on the actor this call named as ")
+                                         TEXT("the tested point's own subject, and so not counted as ")
+                                         TEXT("a crossing; it was added to the trace's ignore list and ")
+                                         TEXT("this walk re-traced from the same position");
+                    }
+                    else if (bPawn)
+                    {
+                        ++Tally.ExcludedPawn;
+                        Classification = TEXT("EXCLUDED, being a hit on an APawn, and so not counted ")
+                                         TEXT("as a crossing; it was added to the trace's ignore list ")
+                                         TEXT("and this walk re-traced from the same position");
+                    }
+                    else
+                    {
+                        ++Tally.ExcludedBuildable;
+                        Classification = TEXT("EXCLUDED, being a hit on an AFGBuildable, and so not ")
+                                         TEXT("counted as a crossing; it was added to the trace's ")
+                                         TEXT("ignore list and this walk re-traced from the same ")
+                                         TEXT("position");
+                    }
+                }
             }
             else
             {
@@ -238,8 +319,8 @@ namespace
                         TEXT("dot product of that impact normal with this walk's direction of %+.6f, ")
                         TEXT("and start-penetrating %s; of those, the classification above read the ")
                         TEXT("sign of the dot product and nothing else. Running for this walk after ")
-                        TEXT("this hit: %d front face(s), %d back face(s), %d excluded, over %d ")
-                        TEXT("blocking hit(s) seen."),
+                        TEXT("this hit: %d front face(s), %d back face(s), and %d hit(s) not counted ")
+                        TEXT("as a crossing at all, over %d blocking hit(s) seen."),
                         Tally.HitsSeen,
                         WalkLabel ? WalkLabel : TEXT("<unlabelled>"),
                         Classification,
@@ -249,17 +330,26 @@ namespace
                         NormalDotDir,
                         Hit.bStartPenetrating ? TEXT("true") : TEXT("false"),
                         Tally.FrontFaces, Tally.BackFaces,
-                        Tally.ExcludedBuildable + Tally.ExcludedPawn + Tally.ExcludedSubject,
+                        Tally.ExcludedBuildable + Tally.ExcludedPawn + Tally.ExcludedSubject
+                            + Tally.IgnoredRehits,
                         Tally.HitsSeen));
                 }
             }
 
             // Resume just beyond the hit. Forced forward by at least the epsilon so a hit reported at the
             // cursor itself cannot stall the walk on one surface forever.
-            const FVector Next = Hit.ImpactPoint + Dir * ShadowStepEpsilonCm;
-            Cursor = (FVector::DotProduct(Next - Cursor, Dir) > 0.0)
-                       ? Next
-                       : (Cursor + Dir * ShadowStepEpsilonCm);
+            // ns-t51-ignorelist: skipped for a newly-excluded actor only. That actor is now on the
+            // trace's ignore list, so the next trace runs from THIS SAME cursor and returns the next
+            // blocking hit past it -- which also means the walk can no longer step over a surface that
+            // lies within the epsilon beyond an excluded hit. Every other path through this loop, and
+            // every counted crossing, advances exactly as it did before.
+            if (bAdvanceCursor)
+            {
+                const FVector Next = Hit.ImpactPoint + Dir * ShadowStepEpsilonCm;
+                Cursor = (FVector::DotProduct(Next - Cursor, Dir) > 0.0)
+                           ? Next
+                           : (Cursor + Dir * ShadowStepEpsilonCm);
+            }
         }
         // Reached only by exhausting the loop; every other way out of it is an early return above.
         Tally.bCapHit = true;
@@ -332,6 +422,7 @@ bool ANodeShuffleSubsystem::IsPointInsideSolidShadowForDiag(const FVector& At, c
     Out.ExcludedBuildableHits = Main.Inbound.ExcludedBuildable + Main.Outbound.ExcludedBuildable;
     Out.ExcludedPawnHits = Main.Inbound.ExcludedPawn + Main.Outbound.ExcludedPawn;
     Out.ExcludedSubjectHits = Main.Inbound.ExcludedSubject + Main.Outbound.ExcludedSubject;
+    Out.IgnoredRehits = Main.Inbound.IgnoredRehits + Main.Outbound.IgnoredRehits;
     Out.InboundFrontFaces = Main.Inbound.FrontFaces;
     Out.InboundBackFaces = Main.Inbound.BackFaces;
     Out.OutboundFrontFaces = Main.Outbound.FrontFaces;
@@ -353,6 +444,8 @@ bool ANodeShuffleSubsystem::IsPointInsideSolidShadowForDiag(const FVector& At, c
                             + Main.Inbound.ExcludedSubject;
     Out.OutboundExcludedHits = Main.Outbound.ExcludedBuildable + Main.Outbound.ExcludedPawn
                              + Main.Outbound.ExcludedSubject;
+    Out.InboundIgnoredRehits = Main.Inbound.IgnoredRehits;
+    Out.OutboundIgnoredRehits = Main.Outbound.IgnoredRehits;
     Out.InboundDetailReported = Main.Inbound.DetailReported;
     Out.OutboundDetailReported = Main.Outbound.DetailReported;
     Out.InboundDetailSuppressed = Main.Inbound.DetailSuppressed;
@@ -400,14 +493,20 @@ bool ANodeShuffleSubsystem::IsPointInsideSolidShadowForDiag(const FVector& At, c
 
     UE_LOG(LogNodeShuffle, Verbose,
         TEXT("CENTRESHADOW at %s: entries %d, exits %d, net %d of the %d counted crossing(s) on both ")
-        TEXT("walks; %d hit(s) were seen in total and %d of those were excluded -- %d on a buildable, ")
-        TEXT("%d on a pawn, %d on the named subject. The positive control %s. This is a shadow reading: ")
-        TEXT("no gate, no placement path and no refusal reads it. It reports what these walks returned ")
-        TEXT("and states no cause."),
+        TEXT("walks; %d hit(s) were seen in total and %d of those were not counted as a crossing -- ")
+        TEXT("%d on a buildable, %d on a pawn, %d on the named subject, each of those being the first ")
+        TEXT("sight of a distinct actor which was then added to that walk's trace ignore list, and %d ")
+        TEXT("returned again after having been added. A walk %s its %d-iteration budget, which since ")
+        TEXT("ns-t51-ignorelist bounds counted crossings plus distinct excluded actors rather than raw ")
+        TEXT("hits. The positive control %s. This is a shadow reading: no gate, no placement path and ")
+        TEXT("no refusal reads it. It reports what these walks returned and states no cause."),
         *At.ToCompactString(), Out.Entries, Out.Exits, Out.Net, Out.CountedCrossings,
         Out.HitsSeen,
-        Out.ExcludedBuildableHits + Out.ExcludedPawnHits + Out.ExcludedSubjectHits,
+        Out.ExcludedBuildableHits + Out.ExcludedPawnHits + Out.ExcludedSubjectHits + Out.IgnoredRehits,
         Out.ExcludedBuildableHits, Out.ExcludedPawnHits, Out.ExcludedSubjectHits,
+        Out.IgnoredRehits,
+        Out.bSegmentCapHit ? TEXT("used all of") : TEXT("stayed inside"),
+        Out.MaxHitsPerSegment,
         !Out.bControlRan
             ? TEXT("was not built")
             : (Out.bControlInside

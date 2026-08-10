@@ -58,14 +58,19 @@ ECentreShadowAgreement LogCentreShadowReading(const TCHAR* Prefix, const FString
         TEXT("CONTROL was %s, and it read %s. A control that does not read inside means this method did ")
         TEXT("not demonstrate, on this run and in this geometry, that it can detect containment at all -- ")
         TEXT("so a CENTRE NOT INSIDE beside a failed control is not evidence of open air and must not be ")
-        TEXT("read as one. EXCLUSIONS: of %d blocking hit(s) the two walks reported, %d were removed -- ")
-        TEXT("%d on an AFGBuildable (excluded for the reason recorded in docs/TECH-DEBT.md T40: a point ")
-        TEXT("carrying the player's own working machine is the opposite of the case being looked for), ")
-        TEXT("%d on an APawn (excluded for the reason recorded in T36), and %d on the actor named as ")
-        TEXT("this point's own subject, which ")
-        TEXT("was %s -- leaving %d counted crossing(s). ALSO MEASURED ON THIS RUN: a hit reported from a ")
-        TEXT("surface's far side was %s, the first counted inbound crossing led %s, and a walk %s its ")
-        TEXT("%d-hit budget. THE TWO VERDICTS: the shipped gate blocked %d of %d rays against a threshold ")
+        TEXT("read as one. EXCLUSIONS: of %d blocking hit(s) the two walks reported, %d were not counted ")
+        TEXT("as a crossing -- %d on an AFGBuildable (excluded for the reason recorded in ")
+        TEXT("docs/TECH-DEBT.md T40: a point carrying the player's own working machine is the opposite ")
+        TEXT("of the case being looked for), %d on an APawn (excluded for the reason recorded in T36), ")
+        TEXT("and %d on the actor named as this point's own subject, which ")
+        TEXT("was %s -- leaving %d counted crossing(s). SINCE ns-t51-ignorelist, the fix for T50, an ")
+        TEXT("excluded actor is handed to the trace's own ignore list the first time a walk sees it and ")
+        TEXT("that walk re-traces from the same position, so each of those three counts one hit per ")
+        TEXT("DISTINCT actor rather than one per step of that actor's height; %d hit(s) came back on an ")
+        TEXT("actor already on that list, which is not expected. ALSO MEASURED ON THIS RUN: a hit ")
+        TEXT("reported from a surface's far side was %s, the first counted inbound crossing led %s, and ")
+        TEXT("a walk %s its %d-iteration budget, which bounds counted crossings plus distinct excluded ")
+        TEXT("actors. THE TWO VERDICTS: the shipped gate blocked %d of %d rays against a threshold ")
         TEXT("of %d and so %s this point; the candidate %s it. NOTHING IN THIS BUILD ACTS ON THE ")
         TEXT("CANDIDATE -- no placement path, no gate and no refusal reads it. This line reports two ")
         TEXT("verdicts and the counts behind them; it does not say why they differ."),
@@ -74,9 +79,11 @@ ECentreShadowAgreement LogCentreShadowReading(const TCHAR* Prefix, const FString
         !Centre.bControlRan ? TEXT("nothing, because it was not built")
                             : (Centre.bControlInside ? TEXT("INSIDE") : TEXT("NOT INSIDE")),
         Centre.HitsSeen,
-        Centre.ExcludedBuildableHits + Centre.ExcludedPawnHits + Centre.ExcludedSubjectHits,
+        Centre.ExcludedBuildableHits + Centre.ExcludedPawnHits + Centre.ExcludedSubjectHits
+            + Centre.IgnoredRehits,
         Centre.ExcludedBuildableHits, Centre.ExcludedPawnHits, Centre.ExcludedSubjectHits,
         *SubjectName, Centre.CountedCrossings,
+        Centre.IgnoredRehits,
         Centre.bBackFacesObserved ? TEXT("seen") : TEXT("not seen"),
         Centre.bFirstInboundCountedWasBackFace ? TEXT("OUT of solid") : TEXT("into solid"),
         Centre.bSegmentCapHit ? TEXT("used all of") : TEXT("stayed inside"),
@@ -119,7 +126,13 @@ ECentreShadowAgreement LogCentreShadowReading(const TCHAR* Prefix, const FString
                 TEXT("consulted. HOW THE RUNNING TOTALS REACH THE VERDICT: the inbound walk's front ")
                 TEXT("faces are the entries; the inbound walk's back faces and the outbound walk's ")
                 TEXT("front faces are two readings of the exits, of which the larger is taken; the ")
-                TEXT("outbound walk's back faces enter no term. The positive control's own two walks ")
+                TEXT("outbound walk's back faces enter no term. HOW AN EXCLUDED ACTOR IS HANDLED SINCE ")
+                TEXT("ns-t51-ignorelist, the fix for docs/TECH-DEBT.md T50: the first hit on it is ")
+                TEXT("reported below, that actor is then added to the trace's own ignore list, and the ")
+                TEXT("walk re-traces from the same position without stepping, so one excluded actor ")
+                TEXT("produces one line and costs one iteration however tall it is. A line saying an ")
+                TEXT("actor was EXCLUDED AGAIN is that guard reporting a hit on an actor already on ")
+                TEXT("that list. The positive control's own two walks ")
                 TEXT("and the downward surface-finder walk that placed it are NOT reported here. These ")
                 TEXT("lines report what the traces returned and how this code labelled it, and state ")
                 TEXT("no cause."),
@@ -139,23 +152,32 @@ ECentreShadowAgreement LogCentreShadowReading(const TCHAR* Prefix, const FString
 
             UE_LOG(LogNodeShuffle, Display,
                 TEXT("%s: %s -- SHADOWCROSS summary, and the arithmetic that produced the verdict. ")
-                TEXT("INBOUND walk: %d blocking hit(s), of which %d were excluded, leaving %d counted ")
+                TEXT("INBOUND walk: %d blocking hit(s), of which %d were not counted as a crossing ")
+                TEXT("(%d of those being a hit on an actor already on the trace's ignore list), ")
+                TEXT("leaving %d counted ")
                 TEXT("crossing(s) -- %d front face(s) and %d back face(s); %d hit(s) were reported ")
                 TEXT("above and %d were not. OUTBOUND walk: %d blocking hit(s), of which %d were ")
-                TEXT("excluded, leaving %d counted crossing(s) -- %d front face(s) and %d back ")
+                TEXT("not counted as a crossing (%d of those being a hit on an actor already on the ")
+                TEXT("trace's ignore list), ")
+                TEXT("leaving %d counted crossing(s) -- %d front face(s) and %d back ")
                 TEXT("face(s); %d hit(s) were reported above and %d were not. THE ARITHMETIC: entries ")
                 TEXT("is the inbound front-face count, %d. Exits is the larger of the inbound ")
                 TEXT("back-face count %d and the outbound front-face count %d, and the term taken was ")
                 TEXT("%s, giving %d. Net is entries minus exits, %d. This build reports the point as ")
-                TEXT("inside when net is at least 1, so the verdict is %s. A walk %s its %d-hit ")
-                TEXT("iteration budget. This line reports counts and the arithmetic applied to them, ")
-                TEXT("and states no cause."),
+                TEXT("inside when net is at least 1, so the verdict is %s. A walk %s its %d-iteration ")
+                TEXT("budget, which since ns-t51-ignorelist bounds counted crossings plus distinct ")
+                TEXT("excluded actors rather than raw blocking hits. This line reports counts and the ")
+                TEXT("arithmetic applied to them, and states no cause."),
                 Prefix, *Tag,
-                Centre.InboundHitsSeen, Centre.InboundExcludedHits,
+                Centre.InboundHitsSeen,
+                Centre.InboundExcludedHits + Centre.InboundIgnoredRehits,
+                Centre.InboundIgnoredRehits,
                 Centre.InboundFrontFaces + Centre.InboundBackFaces,
                 Centre.InboundFrontFaces, Centre.InboundBackFaces,
                 Centre.InboundDetailReported, Centre.InboundDetailSuppressed,
-                Centre.OutboundHitsSeen, Centre.OutboundExcludedHits,
+                Centre.OutboundHitsSeen,
+                Centre.OutboundExcludedHits + Centre.OutboundIgnoredRehits,
+                Centre.OutboundIgnoredRehits,
                 Centre.OutboundFrontFaces + Centre.OutboundBackFaces,
                 Centre.OutboundFrontFaces, Centre.OutboundBackFaces,
                 Centre.OutboundDetailReported, Centre.OutboundDetailSuppressed,
