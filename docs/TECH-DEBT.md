@@ -496,8 +496,9 @@ had to be an array and could not be per-resource top-level keys.
 **POPULATION RULE.** A row is offered on the **first sighting of a resource this world session**, from
 inside the veto's own requirement evaluation (`NoteForeignResourceSighting`). Rows are **keyed by the
 resource descriptor class PATH** — not by node actor class, not by any display string — because that is
-the only key that is stable across loads and unique across mods; the UI label is the path leaf and the
-tooltip says so. Rows are **never removed and never reordered** by the mod, so a tick the player set is
+the only key that is stable across loads and unique across mods; the UI label is
+"<MountRoot>: <DescriptorName>" derived from that path (T65), the row's text box holds the path
+verbatim, and the row tooltip repeats it in full. Rows are **never removed and never reordered** by the mod, so a tick the player set is
 never disturbed. Population runs even while protection is latched OFF, or the player could never untick
 something they had not first been protected from.
 
@@ -588,6 +589,22 @@ opt-outs acting this world / whether the latch ran / S1 sightings suppressed). T
 `VETOCENSUS` line gains `foreignAllowedPlayerUnticked`, a bucket **disjoint** from
 `foreignAllowedAssetNotInBroadSet` — those two mean opposite things (we could not evaluate the asset
 vs. the player asked us not to) and must never be conflated.
+**`s1RetypedWellSightingsSuppressed` COUNTS REPEAT SIGHTINGS, NOT DISTINCT WELLS (measured 2026-08-11,
+`_team/nodeshuffle-followups/s1-variance-2026-08-11.md`):** across three t64-2 sessions it read 4→45→44
+while the whole dealt-well population was 23 — the value exceeds the population, so it is evaluation
+traffic, not a well count; the 4→45 jump lands at the reroll→reload boundary. Benign accounting; do not
+read it as "N wells were filtered", and slice it by session before quoting it anywhere.
+
+### T67. FOUR PLAYER-FACING SURFACES ASSERT A REMOVAL THE HOOK NEVER OBSERVES — "tries to remove" / "steps in to stop that removal" — where what is measured is a KBFL REQUIREMENT EVALUATION. Copy-only; filed from T65's park + cold-review L5 (2026-08-11).
+The four: `NodeShuffleConfig.cpp:346`, `:349`, `:449` (tooltips) and `NodeShuffleObserveNotice.cpp:205`
+(the notice's enforcing branch). T58's RefinedPower case measured that an asset can evaluate the
+requirement on nodes it never destroys, so "tries to remove" asserts intent the hook cannot see —
+the same claim-vs-measurement family the T61 notice fix closed. **Fix all four together in one pass**
+(the T65 review's L5 failure scenario is a partial fix reproducing the defect); wording should say what
+is measured: the other mod's handler *checked* the node / *its requirement was evaluated*. One packet,
+copy + regrade of each sentence, no behavior change. Cold review L4's legend rewrite is the tone model.
+Also queued for the same packet: `diskRowsUnticked %d` on `T65ROUNDTRIP` (review M2 fix b) and the E
+alternative (carry the measured parse flag per notice item instead of re-deriving via `Contains(": ")`).
 
 ### T58. ON A NEW GAME, SF+ DESTROYS EVERY THIRD-PARTY RESOURCE NODE ~0.9 s AFTER WORLD INIT — before our roll can enumerate them — so lead, lithium/Alkali and AllMinable's `Res_*2_C` family are EXTINCT on new saves. **NOT a NodeShuffle regression. Status: DECIDED 2026-08-10 (author: protect veto, option 1, DEFAULT ON) → IMPLEMENTED-PENDING-BUILD-REVIEW-AND-INGAME — see the T58 STATUS block at the end of this entry.**
 **AUTHORITATIVE SOURCE for every claim, quote and option below:

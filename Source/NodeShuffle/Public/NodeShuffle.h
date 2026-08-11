@@ -129,8 +129,13 @@ enum class ENodeShuffleNodeOrigin : uint8
 struct NODESHUFFLE_API FNodeShuffleSeenForeignResource
 {
     FString ResourceClassPath;      // the identity. Written to the config row's 'Resource' string.
-    FString DisplayName;            // the resource DESCRIPTOR CLASS name (path leaf, trailing "_C"
-                                    // removed). NOT the in-game item name — nothing here reads one.
+    FString DisplayName;            // T65: "<MountRoot>: <DescriptorName>", e.g. "KLib: LiquidBioWater",
+                                    // derived from ResourceClassPath and falling back to the whole path
+                                    // when that parse fails. The mount segment is NOT optional — it is
+                                    // what tells two mods' similarly-named resources apart, and for a
+                                    // base-game asset it reads "Game". Still NOT the in-game item name;
+                                    // nothing here reads one. TWO CONSUMERS: the config row's label
+                                    // surfaces, and the T61 chat notice's bullet list.
     FString FirstNodeClassName;     // diagnostics only: the node actor class of the first sighting.
     int32   Sightings = 0;          // how many foreign evaluations named this resource this session.
 };

@@ -64,20 +64,95 @@ static bool GNodeShuffleForeignOptOutsLatched = false;
 // Cumulative, this world session, for the census.
 static int32 GNodeShuffleRowsAddedThisLoad = 0;
 static int32 GNodeShuffleRowsLoadedFromDisk = -1; // -1 until the first sync measures it
+// T65: label derivations for NEWLY SEEN resources this session, and how many of those could not be
+// parsed into "<mount>: <name>" and fell back to the full path. Counted as a PAIR so the fallback count
+// always prints with its denominator -- a bare "0 fallbacks" cannot tell a clean session from a session
+// in which nothing was ever derived. Disk rows are counted separately, per pass, on the T65ROUNDTRIP
+// line: those are a different population and merging them would hide which one had the failures.
+static int32 GNodeShuffleLabelsDerivedThisSession = 0;
+static int32 GNodeShuffleLabelFallbacksThisSession = 0;
 // One-shot gate for the "list not reachable" warning. A file static reset per world session, NOT a
 // function-local static: the population pass runs on the ApplyLayout cadence, so a per-pass warning is
 // a firehose, while a process-lifetime one-shot would go silent for every world after the first.
 static bool GNodeShuffleWarnedListUnreachable = false;
 
-// The path leaf, with a trailing "_C" removed. This is the resource DESCRIPTOR CLASS name and the UI
-// says so; it is NOT looked up as an in-game item name and must never be described as one.
-static FString NodeShuffleMakeForeignResourceLabel(const FString& ResourceClassPath)
+// ---- T65 LABEL DERIVATION: "<MountRoot>: <DescriptorName>" ---------------------------------------
+// e.g. /KLib/Assets/.../Res_LiquidBioWater.Res_LiquidBioWater_C  ->  "KLib: LiquidBioWater"
+//
+// THE MOUNT SEGMENT IS LOAD-BEARING AND IS NEVER DROPPED. It is the FIRST path segment, which is
+// exactly the string the Foreign classification itself is decided on (NodeShuffle.cpp:171-172 compares
+// the same prefix against /Game/), so it is a measurement this list already rests on rather than a new
+// claim. Without it two mods' similarly-named ores -- and a vanilla resource carried by a mod's node
+// versus the same-named asset from a content pack -- render identically, which is the ambiguity T62/T63
+// hit when a notice trimmed it away. For a base-game asset the segment reads "Game", which is the
+// literal mount root and not an interpretation of it.
+//
+// THE TRIM IS DELIBERATELY TIMID. "_C" comes off (it is the Blueprint-generated-class suffix, always
+// present on these paths); a leading "Desc_"/"Res_" comes off ONLY when the remainder is non-empty and
+// starts with a letter, so nothing can trim a name down to "" or to a bare number. Anything else is
+// left alone. RESIDUAL, NOT FIXED: two assets under one mount whose leaves differ only by which of the
+// two prefixes they use would render the same label. Both surfaces that carry the identity -- the row's
+// text box and its tooltip -- still show the full path, so the ambiguity is cosmetic; recorded here so
+// nobody has to rediscover it.
+//
+// PARSE FAILURE FALLS BACK TO THE FULL PATH, never to a leaf: a label that cannot name its mount must
+// not silently look like one that can. bOutParsed reports which happened; it is counted, with a
+// denominator, on the T65LABEL and T65ROUNDTRIP lines.
+static FString NodeShuffleMakeForeignResourceLabel(const FString& ResourceClassPath, bool* bOutParsed)
 {
+    if (bOutParsed) { *bOutParsed = false; }
+    if (!ResourceClassPath.StartsWith(TEXT("/"), ESearchCase::CaseSensitive))
+    {
+        return ResourceClassPath;
+    }
+    // Mount root = text between the leading slash and the next one.
+    const FString AfterLeadingSlash = ResourceClassPath.Mid(1);
+    int32 SlashIndex = INDEX_NONE;
+    if (!AfterLeadingSlash.FindChar(TEXT('/'), SlashIndex) || SlashIndex <= 0)
+    {
+        return ResourceClassPath;
+    }
+    const FString MountRoot = AfterLeadingSlash.Left(SlashIndex);
+
+    // Descriptor name = text after the last '.', or after the last '/' when the path carries no object
+    // suffix at all (a package-only path).
     FString Leaf = ResourceClassPath;
     int32 DotIndex = INDEX_NONE;
-    if (Leaf.FindLastChar(TEXT('.'), DotIndex)) { Leaf = Leaf.Mid(DotIndex + 1); }
+    if (Leaf.FindLastChar(TEXT('.'), DotIndex))
+    {
+        Leaf = Leaf.Mid(DotIndex + 1);
+    }
+    else
+    {
+        int32 LastSlash = INDEX_NONE;
+        if (Leaf.FindLastChar(TEXT('/'), LastSlash)) { Leaf = Leaf.Mid(LastSlash + 1); }
+    }
     if (Leaf.EndsWith(TEXT("_C"), ESearchCase::CaseSensitive)) { Leaf = Leaf.LeftChop(2); }
-    return Leaf.IsEmpty() ? ResourceClassPath : Leaf;
+    static const TCHAR* const TrimmablePrefixes[] = { TEXT("Desc_"), TEXT("Res_") };
+    for (const TCHAR* Prefix : TrimmablePrefixes)
+    {
+        if (Leaf.StartsWith(Prefix, ESearchCase::CaseSensitive))
+        {
+            const FString Rest = Leaf.RightChop(FCString::Strlen(Prefix));
+            // AN EXPLICIT A-Z/a-z TEST, NOT FChar::IsAlpha. MEASURED, not stylistic: IsAlpha on a wide
+            // char compiles down to the UCRT's iswalpha, and the imports diff for this packet showed it
+            // as a NEW entry in the DLL's import table (api-ms-win-crt-string-l1-1-0.dll) where the
+            // whole packet is otherwise import-neutral. It is also the wrong predicate -- iswalpha is
+            // locale-dependent, and what this test wants is "the remainder still starts like an asset
+            // identifier". Asset path leaves are ASCII identifiers, so the range test IS the intent.
+            const TCHAR First = (Rest.Len() > 0) ? Rest[0] : TEXT('\0');
+            const bool bRestStartsWithLetter =
+                (First >= TEXT('A') && First <= TEXT('Z')) || (First >= TEXT('a') && First <= TEXT('z'));
+            if (bRestStartsWithLetter) { Leaf = Rest; }
+            break;
+        }
+    }
+    if (MountRoot.IsEmpty() || Leaf.IsEmpty())
+    {
+        return ResourceClassPath;
+    }
+    if (bOutParsed) { *bOutParsed = true; }
+    return MountRoot + TEXT(": ") + Leaf;
 }
 
 void FNodeShuffleModule::ResetSeenForeignResources()
@@ -93,6 +168,8 @@ void FNodeShuffleModule::ResetSeenForeignResources()
     GNodeShuffleRowsAddedThisLoad = 0;
     GNodeShuffleRowsLoadedFromDisk = -1;
     GNodeShuffleWarnedListUnreachable = false;
+    GNodeShuffleLabelsDerivedThisSession = 0;   // T65
+    GNodeShuffleLabelFallbacksThisSession = 0;  // T65
 }
 
 void FNodeShuffleModule::NoteForeignResourceSighting(const FString& ResourceClassPath,
@@ -119,10 +196,23 @@ void FNodeShuffleModule::NoteForeignResourceSighting(const FString& ResourceClas
     }
     FNodeShuffleSeenForeignResource& Row = GNodeShuffleSeenForeignResources.Add(ResourceClassPath);
     Row.ResourceClassPath = ResourceClassPath;
-    Row.DisplayName = NodeShuffleMakeForeignResourceLabel(ResourceClassPath);
+    bool bLabelParsed = false;
+    Row.DisplayName = NodeShuffleMakeForeignResourceLabel(ResourceClassPath, &bLabelParsed);
+    ++GNodeShuffleLabelsDerivedThisSession;
+    if (!bLabelParsed) { ++GNodeShuffleLabelFallbacksThisSession; }
     Row.FirstNodeClassName = NodeClassName;
     Row.Sightings = 1;
     GNodeShuffleSeenForeignRevision++;
+    // T65: one line per NEWLY SEEN resource -- the same bound as the "added a protection row" line
+    // below, i.e. once per distinct resource per session, not per evaluation. It reports the two
+    // strings and the branch taken; it does not say why a parse failed, only that it did.
+    // Arity hand-counted: 5 format specifiers, 5 arguments.
+    UE_LOG(LogNodeShuffle, Verbose,
+        TEXT("T65LABEL new-resource: path '%s' rendered as label '%s' (mount-and-name parse succeeded ")
+        TEXT("%d). Derivations for newly seen resources this session %d, of which fell back to the ")
+        TEXT("full path %d."),
+        *ResourceClassPath, *Row.DisplayName, bLabelParsed ? 1 : 0,
+        GNodeShuffleLabelsDerivedThisSession, GNodeShuffleLabelFallbacksThisSession);
 }
 
 bool FNodeShuffleModule::IsForeignResourceProtectedByConfig(const FString& ResourceClassPath)
@@ -173,11 +263,36 @@ namespace
     // which is fixed schema text and deliberately not touched here. WHICH ONE THE WIDGET RENDERS IS A
     // BLUEPRINT QUESTION THIS FILE CANNOT ANSWER; runtime test 3 settles it, and the dated TODO in
     // NodeShuffleConfig.cpp says to delete the inert surfaces once it has.
-    void NodeShuffleStampRowLabel(UConfigPropertySection* Section, const FString& Label)
+    // T65 adds a FOURTH surface: the row section's own Tooltip, carrying the FULL PATH. The visible
+    // label is now trimmed, so the identity has to remain readable somewhere -- and NOTHING IS DELETED
+    // TO MAKE ROOM: the row's Resource text box still shows the path verbatim, which is the surface that
+    // is certain to render, and this tooltip is the one the design asks for. Whether a SECTION tooltip
+    // renders at all is a Blueprint question this file cannot answer (the same class of unknown as
+    // DisplayName vs HeaderText); runtime test step 2 decides it, and until it has, the text box is the
+    // guarantee. THIS FUNCTION IS STILL THE ONLY PLACE ANY ROW LABEL SURFACE IS WRITTEN, so the two
+    // sync sites cannot drift -- that was re-review B's whole point and T65 keeps it.
+    //
+    // FullPath may be empty at the template-fallback call sites; an empty one leaves the tooltip alone
+    // rather than stamping a blank over the template's fallback text.
+    void NodeShuffleStampRowLabel(UConfigPropertySection* Section, const FString& Label,
+        const FString& FullPath)
     {
         if (!Section) { return; }
         const FText LabelText = FText::FromString(Label);
         Section->DisplayName = LabelText;
+        if (!FullPath.IsEmpty())
+        {
+            // EVERY ASSERTION GRADED. "full asset path" and "the row's identity" -- MEASURED: this is
+            // the exact string the row's Resource property holds and the exact string the consumption
+            // predicate compares (IsForeignResourceProtectedByConfig does a set lookup on it). "the name
+            // before the colon is the content folder it comes from" -- MEASURED: the label is built from
+            // the first path segment. NOT CLAIMED: anything about who authored the resource, whether it
+            // is a base-game asset, or what the other mod would have done to it.
+            Section->Tooltip = FText::FromString(FString::Printf(
+                TEXT("%s\n\nThat is the resource's full asset path and this row's identity. In the row ")
+                TEXT("label, the name before the colon is the content folder the asset comes from."),
+                *FullPath));
+        }
         if (UCP_Section* RowWidget = Cast<UCP_Section>(Section))
         {
             RowWidget->HeaderText = LabelText;
@@ -311,6 +426,14 @@ void FNodeShuffleModule::SyncForeignResourceRowsToConfig(UObject* WorldContext)
 
     TMap<FString, UConfigPropertySection*> ExistingByPath;
     int32 Malformed = 0;
+    // T65, all four local to THIS pass. They describe the rows that were already in the array when this
+    // pass started -- on the first pass of a world that is exactly the set read back from
+    // NodeShuffle.cfg, which is what makes the T65ROUNDTRIP line below a reload measurement.
+    int32 BlankPaths = 0;
+    int32 RowsWithPathKey = 0;
+    int32 LabelsDerivedThisPass = 0;
+    int32 LabelFallbacksThisPass = 0;
+    TArray<FString> FirstSyncLabels; // filled only on the first pass; the T65LABEL listing
     for (UConfigProperty* Element : Rows->Values)
     {
         UConfigPropertyString* ResourceProp = nullptr;
@@ -328,7 +451,8 @@ void FNodeShuffleModule::SyncForeignResourceRowsToConfig(UObject* WorldContext)
         if (bAlreadySeen) { ++SharedBetweenRows; }
 
         const FString Path = ResourceProp->Value.TrimStartAndEnd();
-        if (Path.IsEmpty()) { continue; }
+        if (Path.IsEmpty()) { ++BlankPaths; continue; }
+        ++RowsWithPathKey;
         UConfigPropertySection* Section = Cast<UConfigPropertySection>(Element);
         ExistingByPath.Add(Path, Section);
         // Stamp the UI label every pass we run. DisplayName is not serialized, so a row read back from
@@ -336,11 +460,53 @@ void FNodeShuffleModule::SyncForeignResourceRowsToConfig(UObject* WorldContext)
         // that do not run at all. RE-REVIEW B: HeaderText is stamped too -- the row template sets
         // HasHeader, and a header whose text nobody writes is a blank bar. Which of the two surfaces
         // the widget actually renders is a Blueprint question that runtime test 3 settles.
-        NodeShuffleStampRowLabel(Section, NodeShuffleMakeForeignResourceLabel(Path));
+        // T65: derive once, use for the label AND count it. The FULL PATH goes to the tooltip; it is
+        // still the row's stored key and this pass does not write it.
+        bool bRowLabelParsed = false;
+        const FString RowLabel = NodeShuffleMakeForeignResourceLabel(Path, &bRowLabelParsed);
+        ++LabelsDerivedThisPass;
+        if (!bRowLabelParsed) { ++LabelFallbacksThisPass; }
+        if (bFirstSyncThisLoad) { FirstSyncLabels.Add(RowLabel); }
+        NodeShuffleStampRowLabel(Section, RowLabel, Path);
     }
     if (bFirstSyncThisLoad)
     {
         GNodeShuffleRowsLoadedFromDisk = Rows->Values.Num();
+
+        // ---- T65 ROUND-TRIP CENSUS: the proof that an existing NodeShuffle.cfg survived the rework ---
+        // FIELD NAMES ARE DELIBERATELY DISTINCT FROM T60CENSUS's. T60CENSUS sync carries
+        // rowsLoadedFromDisk and T60CENSUS latch carries rowsInFileAtLatch, both unchanged in name and
+        // meaning by this packet; a shared field name across two lines cannot be counted separately by a
+        // grep (cold review F11), so every field below is T65's own. What each one measures, in prose so
+        // that no legend text can collide with the printed form: how many array elements existed when
+        // this first pass started; how many of those carried a non-empty resource path (the key that
+        // must survive a reload); how many were not the declared row shape; how many were the right
+        // shape with an empty path; how many labels this pass derived from those rows; and how many of
+        // those derivations could not be parsed and fell back to printing the full path.
+        // A NON-ZERO diskRowsRead WITH AN EQUAL diskRowsWithPathKey IS THE ROUND-TRIP EVIDENCE.
+        // Arity hand-counted: 6 format specifiers, 6 arguments.
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("T65ROUNDTRIP first-sync: diskRowsRead %d diskRowsWithPathKey %d diskRowsMalformedShape ")
+            TEXT("%d diskRowsBlankPath %d labelsDerivedFromDiskRows %d labelFallbacksToFullPath %d"),
+            Rows->Values.Num(), RowsWithPathKey, Malformed, BlankPaths,
+            LabelsDerivedThisPass, LabelFallbacksThisPass);
+
+        // The listing. VERBOSE and once per world session: it is the only place the derived text itself
+        // is visible, which is what makes a wrong trim readable in a log instead of only on screen. It
+        // is CAPPED WITH ITS OWN DENOMINATOR -- a truncated list that did not say what it truncated
+        // would be the same defect as a count without one.
+        constexpr int32 MaxListedLabels = 60;
+        FString Listing;
+        for (int32 i = 0; i < FirstSyncLabels.Num() && i < MaxListedLabels; ++i)
+        {
+            Listing += FString::Printf(TEXT("\n    [%d] %s"), i, *FirstSyncLabels[i]);
+        }
+        // Arity hand-counted: 4 format specifiers, 4 arguments.
+        UE_LOG(LogNodeShuffle, Verbose,
+            TEXT("T65LABEL first-sync listing: showing %d of %d derived row label(s); %d of them fell ")
+            TEXT("back to the full path because the mount-and-name parse failed.%s"),
+            FMath::Min(FirstSyncLabels.Num(), MaxListedLabels), FirstSyncLabels.Num(),
+            LabelFallbacksThisPass, *Listing);
     }
 
     // COLD REVIEW F9: A HARD CAP, because nothing prunes. A row whose mod is later uninstalled is KEPT
@@ -389,7 +555,9 @@ void FNodeShuffleModule::SyncForeignResourceRowsToConfig(UObject* WorldContext)
         ProtectedProp->Value = true; // default PROTECTED -- the author's both-mods-work ruling
         if (UConfigPropertySection* Section = Cast<UConfigPropertySection>(NewElement))
         {
-            NodeShuffleStampRowLabel(Section, Pair.Value.DisplayName); // re-review B: both surfaces
+            // T65: the stored key (Pair.Key, the full path) is what the tooltip carries; the trimmed
+            // DisplayName is what the row shows. Both come from the same string.
+            NodeShuffleStampRowLabel(Section, Pair.Value.DisplayName, Pair.Key); // re-review B: both surfaces
         }
         ++AddedThisPass;
 

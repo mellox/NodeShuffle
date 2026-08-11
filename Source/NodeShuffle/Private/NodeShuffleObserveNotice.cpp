@@ -130,25 +130,61 @@ namespace
     // Composes the body. THREE branches, because the three states genuinely differ in what is true of
     // the player's world, and one message covering all of them could only do it by saying less than it
     // knows or more than it measured. EVERY FACTUAL ASSERTION IS GRADED:
-    //   * "not part of the base game's content" -- MEASURED: the classifier grades a node Foreign only
-    //     when its actor class path or its resource class path is outside /Game/ (the same two-sided
-    //     test the roll uses).
-    //   * "another mod's node handler checked nodes of it this session" -- MEASURED: the sighting came
-    //     through a KBFL actor listener/destroyer asset our arm pass prepended into. It deliberately
+    //   * "%d resource(s) on other mods' nodes" / "those nodes' own classes are not the base game's" --
+    //     MEASURED, and this is the T65 CORRECTION. The predicate that produced every item in this list
+    //     is the NODE ACTOR CLASS, not the resource: NoteForeignResourceSighting returns early when
+    //     bNodeClassIsVanilla is true, and that flag is set from
+    //     Actor->GetClass()->GetPathName().StartsWith("/Game/") (NodeShuffle.cpp:172). So "the node
+    //     classes are not base-game classes" is a measurement of the exact test these items passed.
+    //   * WHAT THIS COPY NO LONGER SAYS, and why. It used to open with "These are not part of the base
+    //     game's content", asserting the RESOURCES were modded. That is false for a population this
+    //     hook demonstrably produces and produced on 2026-08-11: vanilla NitrogenGas and LiquidOil
+    //     carried by RefinedPower's Deanium well actors. The class was foreign; the resources were the
+    //     base game's. The Foreign grade is an OR over two sides (NodeShuffle.cpp:176) -- so passing it
+    //     never licensed a claim about the resource side alone.
+    //   * the colon legend -- MEASURED: it describes the label derivation in
+    //     NodeShuffleForeignProtectConfig.cpp, which is the first path segment verbatim. It is printed
+    //     ONLY when at least one listed label actually carries a mount prefix, so a session whose labels
+    //     all fell back to full paths does not get a sentence about a colon that is not there.
+    //     THE ONE ASSUMED TERM: that "/Game/" is the base game's own content root. It is the engine
+    //     mount-root convention, and it is the SAME assumption the Foreign classification itself rests
+    //     on -- if it is wrong, this notice is the smaller of the two problems.
+    //   * "another mod's node handler checked nodes carrying these resources" -- MEASURED: the sighting
+    //     came through a KBFL actor listener/destroyer asset our arm pass prepended into. It deliberately
     //     does NOT say the other mod tried to REMOVE anything: this hook sees a requirement evaluation,
     //     not a destroy (the same distinction T58's log copy is held to).
-    //   * "added to <list>, ticked" -- MEASURED: this notice is queued from the successful row add.
+    //   * "added to <list>, ticked" -- MEASURED: this notice is queued from the successful row add. THE
+    //     QUOTED LIST TITLE MUST MATCH NodeShuffleConfig.cpp's DisplayName EXACTLY; both were retitled
+    //     by T65 and tools/check_t65_lint.ps1 pins them together.
     //   * the protection sentences -- each branch states only the latch its own world is running under,
     //     and the enforcing branch's wording is the settings list's own graded wording, not a new claim.
-    //   * NOT CLAIMED anywhere: that anything was saved, removed or restored; that unticking brings back
-    //     nodes already gone; any timing.
+    //   * NOT CLAIMED anywhere: who authored any listed resource; that anything was saved, removed or
+    //     restored; that unticking brings back nodes already gone; any timing.
     FString BuildForeignNoticeBody(const TArray<FNodeShuffleForeignNoticeItem*>& Items)
     {
+        // MEASURED BRANCH, not a guess about the labels: only print the colon legend if a listed label
+        // has one. The label falls back to a bare path when its mount cannot be parsed.
+        bool bAnyLabelCarriesMount = false;
+        for (int32 i = 0; i < Items.Num() && i < MaxNamedResources; ++i)
+        {
+            if (Items[i]->DisplayName.Contains(TEXT(": "))) { bAnyLabelCarriesMount = true; break; }
+        }
+
         FString Body = FString::Printf(
-            TEXT("NODE SHUFFLE - %d resource(s) from other mods detected\n\n")
-            TEXT("These are not part of the base game's content, and another mod's node handler\n")
-            TEXT("checked nodes of them this session:\n"),
+            TEXT("NODE SHUFFLE - %d resource(s) on other mods' nodes\n\n")
+            TEXT("Another mod's node handler checked nodes carrying these resources this session.\n")
+            TEXT("Those nodes' own classes are not the base game's; the resources they carry can be\n")
+            TEXT("ordinary game resources or ones a mod added.\n"),
             Items.Num());
+        if (bAnyLabelCarriesMount)
+        {
+            // T65 cold review L4: the gate above is existential (ANY label has a colon), so the legend
+            // must not make a universal claim ("each resource"), and "anything else is a mod's" was an
+            // ungraded assumption (mount roots also include /Engine/, /Script/, /SML/).
+            Body += TEXT("Where a name has a colon in it, the part before the colon is the content folder\n")
+                    TEXT("that resource's asset lives in - \"Game\" is the base game's own content folder.\n");
+        }
+        Body += TEXT("\n");
         for (int32 i = 0; i < Items.Num() && i < MaxNamedResources; ++i)
         {
             Body += FString::Printf(TEXT("  * %s\n"), *Items[i]->DisplayName);
@@ -157,7 +193,7 @@ namespace
         {
             Body += FString::Printf(TEXT("  ...and %d more.\n"), Items.Num() - MaxNamedResources);
         }
-        Body += TEXT("\nEach one has been added, TICKED, to \"Protect Other Mods' Resources (Per\n")
+        Body += TEXT("\nEach one has been added, TICKED, to \"Protect Other Mods' Nodes (Per\n")
                 TEXT("Resource)\" in NodeShuffle's mod settings.\n");
 
         if (FNodeShuffleModule::IsVetoObservingOnlyThisWorld())

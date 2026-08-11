@@ -321,7 +321,15 @@ void UNodeShuffleConfig::PostInitProperties()
         UConfigPropertyArray* Rows = NewObject<UConfigPropertyArray>(Root, ArrayClass,
             TEXT("ProtectedForeignResources"));
         Rows->bRequiresWorldReload = true; // F10
-        Rows->DisplayName = FText::FromString(TEXT("Protect Other Mods' Resources (Per Resource)"));
+        // T65 RETITLED. The old title was "Protect Other Mods' RESOURCES", which asserts the resource
+        // itself belongs to another mod -- FALSE for the population that motivated T61's copy fix:
+        // vanilla NitrogenGas / LiquidOil carried by another mod's well actors. What every row in this
+        // list has in common is MEASURED and is the NODE side: the sighting only reaches the population
+        // pass when the node's ACTOR CLASS path is outside /Game/ (NodeShuffle.cpp:172, and
+        // NoteForeignResourceSighting returns early otherwise). "(Per Resource)" still says what a ROW
+        // is. THE T61 CHAT NOTICE QUOTES THIS TITLE VERBATIM -- the two are pinned together by
+        // tools/check_t65_lint.ps1 so they cannot drift.
+        Rows->DisplayName = FText::FromString(TEXT("Protect Other Mods' Nodes (Per Resource)"));
 
         // EVERY FACTUAL ASSERTION BELOW IS GRADED, per the workspace rule that UI copy is a claim.
         // MEASURED-IN-CODE: rows are added only from foreign sightings inside the KBFL requirement
@@ -402,6 +410,13 @@ void UNodeShuffleConfig::PostInitProperties()
         //      distinguishable from a successful stamp, and it must not collide with the child field's
         //      own label.
         RowTemplate->DisplayName = FText::FromString(TEXT("(resource)"));
+        // T65: the TEMPLATE's tooltip is the fallback for a row no sync pass has stamped yet (the same
+        // hole F7(a) fixed for the label -- sync runs only from ApplyLayout, which never runs in the
+        // main-menu panel). It says where the identity is, and claims nothing about the resource.
+        RowTemplate->Tooltip = FText::FromString(
+            TEXT("The full asset path in this row's text box is the resource's identity. The row label ")
+            TEXT("is a trimmed form of it: the name before the colon is the content folder the asset ")
+            TEXT("comes from."));
         if (UCP_Section* RowWidget = Cast<UCP_Section>(RowTemplate))
         {
             RowWidget->WidgetType = ECP_SectionWidgetType::CPS_Horizontal;
@@ -409,17 +424,21 @@ void UNodeShuffleConfig::PostInitProperties()
             RowWidget->HeaderText = FText::FromString(TEXT("(resource)")); // re-review B
         }
 
-        UConfigPropertyString* ResourceProp = NewObject<UConfigPropertyString>(RowTemplate, StringClass,
-            TEXT("Resource"));
-        ResourceProp->Value = TEXT("");
-        ResourceProp->DefaultValue = TEXT("");
-        ResourceProp->DisplayName = FText::FromString(TEXT("Resource"));
-        ResourceProp->Tooltip = FText::FromString(
-            TEXT("The resource's full asset path. This is the row's identity — the tick box beside it ")
-            TEXT("applies to whatever this path names. Editing it makes the row match nothing."));
-        ResourceProp->bRequiresWorldReload = true; // F10
-        RowTemplate->SectionProperties.Add(TEXT("Resource"), ResourceProp);
-
+        // ---- T65 ROW FIELD ORDER: THE TICK BOX IS DECLARED FIRST, ON PURPOSE. ----------------------
+        // The author's design: the checkbox and its "Protected" label render at the LEFT of the row and
+        // the resource label after them, so a short name and a long name line up identically instead of
+        // the tick box drifting right with the text width. SectionProperties is a TMap and the row
+        // widget is CPS_Horizontal, so the ONLY lever C++ has over field order is the order of these
+        // two Add calls (TMap iteration is insertion order while nothing is removed, and nothing here
+        // ever removes). WHETHER THE BLUEPRINT ROW WIDGET RENDERS IN SectionProperties ORDER IS NOT
+        // PROVABLE FROM C++ -- Widget_CP_Section is Blueprint. Runtime test step 1 is the decider.
+        //
+        // SERIALIZATION IS UNAFFECTED AND THIS IS PROVABLE: UConfigPropertySection::Serialize writes a
+        // KEYED object and Deserialize reads it back with ObjectValue->GetValue(Property.Key)
+        // (SML ConfigPropertySection.cpp), so nothing about either is positional; the struct mirror
+        // FillConfigStruct is keyed by name too. An existing NodeShuffle.cfg therefore round-trips
+        // unchanged -- only the key ORDER inside each row's JSON object flips on the next save.
+        // tools/check_t65_lint.ps1 pins this order; the T65ROUNDTRIP census line measures the reload.
         UConfigPropertyBool* ProtectedProp = NewObject<UConfigPropertyBool>(RowTemplate, BoolClass,
             TEXT("Protected"));
         ProtectedProp->Value = true;
@@ -431,6 +450,17 @@ void UNodeShuffleConfig::PostInitProperties()
             TEXT("resource. Takes effect the next time you load the save."));
         ProtectedProp->bRequiresWorldReload = true; // F10
         RowTemplate->SectionProperties.Add(TEXT("Protected"), ProtectedProp);
+
+        UConfigPropertyString* ResourceProp = NewObject<UConfigPropertyString>(RowTemplate, StringClass,
+            TEXT("Resource"));
+        ResourceProp->Value = TEXT("");
+        ResourceProp->DefaultValue = TEXT("");
+        ResourceProp->DisplayName = FText::FromString(TEXT("Resource"));
+        ResourceProp->Tooltip = FText::FromString(
+            TEXT("The resource's full asset path. This is the row's identity — the tick box beside it ")
+            TEXT("applies to whatever this path names. Editing it makes the row match nothing."));
+        ResourceProp->bRequiresWorldReload = true; // F10
+        RowTemplate->SectionProperties.Add(TEXT("Resource"), ResourceProp);
 
         Rows->DefaultValue = RowTemplate;
         Root->SectionProperties.Add(TEXT("ProtectedForeignResources"), Rows);
