@@ -512,7 +512,16 @@ void ANodeShuffleSubsystem::RestoreOriginalsForReroll()
                 AsNode->InitRadioactivity();
                 AsNode->UpdateRadioactivity(); // cold-review parity: always paired at the other two call sites
             }
-            if (AFGNodeMeshActor* MeshActor = FindMeshActorForNode(Node))
+            AFGNodeMeshActor* MeshActor = FindMeshActorForNode(Node);
+            if (!MeshActor)
+            {
+                // T64 cold review F1: the cache is one pass's snapshot, but the T64 stream-in route hides
+                // any pairing it ever saw. Fall back to the node's own soft link so a LOADED mesh actor is
+                // un-hidden even when this pass's rebuild did not pair it. .Get() is null when the actor is
+                // unloaded, which is the case we cannot reach and do not claim to.
+                MeshActor = Cast<AFGNodeMeshActor>(Node->mMeshActor.Get());
+            }
+            if (MeshActor)
             {
                 MeshActor->SetActorHiddenInGame(false);
                 MeshActor->SetActorEnableCollision(true);
@@ -4709,16 +4718,26 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
             FMath::Max(MeshHideLatencyMaxDelaySeconds, Delay);
         if (bDiagHide)
         {
+            // T64: the stream-in route can have hidden this record's rock EARLIER IN THIS SAME PASS
+            // (RebuildMeshActorCache runs before this function). Without this field a
+            // meshVisibleAtThisMoment of 0 reads as "the rock arrived hidden", which nothing measured.
+            // The value is a set-membership test on paths this pass's cache rebuild actually hid.
+            const int32 ByStreamIn = RockHiddenAtCacheAddPathsThisPass.Contains(Path) ? 1 : 0;
             UE_LOG(LogNodeShuffle, Verbose,
                 TEXT("[route=%s] ")
                 TEXT("MESHHIDE-LATENCY record='%s': its AFGNodeMeshActor was NOT resolvable when the node ")
                 TEXT("was hidden on hide-pass %d, and IS resolvable now on hide-pass %d -- %.1f s and %d ")
                 TEXT("pass(es) later. meshVisibleAtThisMoment=%d (1 = the rock was still drawn this long ")
                 TEXT("after the node stopped accepting a miner; 0 = something had already hidden it). ")
-                TEXT("MEASURED: pairing resolvability, the mesh actor's hidden flag, and world time ")
-                TEXT("between the two events. NOT MEASURED: why the pairing was missing, and what hid ")
-                TEXT("the rock. Said once per record."),
-                Route, *Path, W.HidePass, MeshHidePass, Delay, PassDelay, bMeshVisibleNow ? 1 : 0);
+                TEXT("hiddenByStreamInRouteThisPass=%d (1 = this mod's T64 stream-in rock-hide darkened ")
+                TEXT("this record's rock earlier in THIS SAME pass, so the zero to its left is this mod's ")
+                TEXT("own work and not an observation about how the rock arrived; 0 = it did not). ")
+                TEXT("MEASURED: pairing resolvability, the mesh actor's hidden flag, world time between ")
+                TEXT("the two events, and membership of this pass's stream-in hide set. NOT MEASURED: why ")
+                TEXT("the pairing was missing, and -- when the field to the left is 0 -- what hid the ")
+                TEXT("rock. Said once per record."),
+                Route, *Path, W.HidePass, MeshHidePass, Delay, PassDelay, bMeshVisibleNow ? 1 : 0,
+                ByStreamIn);
         }
     };
 
@@ -4935,6 +4954,15 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
     // map, so this is O(watched) two-cache-lookup work, not O(all records) -- and a record leaves the map
     // the first time it is reported. A record that already went steady never re-enters the loop above, so
     // this is the ONLY route by which its rock can be measured at all. IT HIDES NOTHING: measurement only.
+    // T64, THE ROUTE-ATTRIBUTION ORDERING FIX. Before this packet a record was REMOVED from the watch
+    // map here, and the backstop's attribution loop further down scans that same map -- so a record
+    // whose mesh actor became resolvable on the pass its rock also became findable was always already
+    // gone by the time the backstop looked, and `route=backstop` could never fire. That produced 0
+    // backstop attributions across 220 reports in the 2026-08-11 trace, which is an artifact of
+    // ordering, NOT evidence about which route hides these rocks. The record is still removed here (so
+    // no record can be reported twice and the delay totals stay one-per-record), but its watch data is
+    // carried in this per-pass map so the backstop below can still recognise it and say so.
+    TMap<FString, FNodeShuffleMeshHideWatch> WatchReportedThisPass;
     if (MeshHideLatencyWatch.Num() > 0)
     {
         TArray<FString> ReportedNow;
@@ -4946,6 +4974,7 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
             if (!WatchedMesh) { continue; }
             ReportMeshResolvedLater(Pair.Key, Pair.Value, !WatchedMesh->IsHidden(), TEXT("cache"));
             ReportedNow.Add(Pair.Key);
+            WatchReportedThisPass.Add(Pair.Key, Pair.Value);
         }
         for (const FString& K : ReportedNow) { MeshHideLatencyWatch.Remove(K); }
     }
@@ -4982,15 +5011,49 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
     const bool bRunBackstop = NodesHidden > 0
         || (NowSeconds - LastRockBackstopSeconds >= RockBackstopCooldownSeconds);
     int32 RocksHidden = 0;
+    // T64: THE INSTANCED RESIDUAL, MEASURED RATHER THAN CLAIMED AWAY. The backstop has always skipped
+    // UInstancedStaticMeshComponent (they are world-shared, so hiding one hides every instance it
+    // draws), and the T64 stream-in route hides a MESH ACTOR, which covers an instanced component only
+    // when that component belongs to the actor being hidden. A node-rock drawn by an ISM/HISM owned by
+    // anything else is outside BOTH routes. This packet does not start hiding them -- it counts them, so
+    // the residual has a number instead of a silence. SCOPE, STATED WITH THE COUNT: an ISM's
+    // GetComponentLocation() is the COMPONENT's transform, not any instance's, so the proximity figure
+    // below is about component origins and per-instance geometry is NOT measured here. These are counted
+    // only on passes the backstop actually runs (its 30 s cooldown), which is why the census names that.
+    int32 InstancedRockNamedNearPlayer = 0;   // DENOMINATOR: visible ISM rock-named components near a player
+    int32 InstancedResidualAtOriginals = 0;   // of those, with an origin within RockOwnRange of an original
+    int32 RocksHiddenNearAlreadyReported = 0; // backstop hits on a record the cache route reported THIS pass
     if (bRunBackstop)
     {
     LastRockBackstopSeconds = NowSeconds;
     for (TObjectIterator<UStaticMeshComponent> It; It; ++It)
     {
         UStaticMeshComponent* Smc = *It;
-        if (!IsValid(Smc) || Smc->GetWorld() != GetWorld() || !Smc->GetStaticMesh()
-            || Cast<UInstancedStaticMeshComponent>(Smc) || !Smc->IsVisible())
+        if (!IsValid(Smc) || Smc->GetWorld() != GetWorld() || !Smc->GetStaticMesh() || !Smc->IsVisible())
         {
+            continue;
+        }
+        if (Cast<UInstancedStaticMeshComponent>(Smc))
+        {
+            // COUNT ONLY -- never hidden here, exactly as before this packet. Ordered cheapest-first:
+            // the distance test before the mesh-name string compare.
+            const FVector IsmLoc = Smc->GetComponentLocation();
+            bool bIsmNearPlayer = false;
+            for (const FVector& P : Players)
+            {
+                if (FVector::DistSquared2D(P, IsmLoc) < FMath::Square(SuppressPlayerRange)) { bIsmNearPlayer = true; break; }
+            }
+            if (!bIsmNearPlayer) { continue; }
+            if (!IsNodeRockMeshName(Smc->GetStaticMesh()->GetName(), TArray<FString>())) { continue; }
+            ++InstancedRockNamedNearPlayer;
+            for (const FVector& OrigLoc : NearOriginalLocs)
+            {
+                if (FVector::DistSquared2D(OrigLoc, IsmLoc) < FMath::Square(RockOwnRange))
+                {
+                    ++InstancedResidualAtOriginals;
+                    break;
+                }
+            }
             continue;
         }
         AActor* RockOwner = Smc->GetOwner();
@@ -5038,6 +5101,19 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
             }
             // Removed AFTER the range-for, never during it.
             if (!BackstopHitKey.IsEmpty()) { MeshHideLatencyWatch.Remove(BackstopHitKey); }
+            else
+            {
+                // T64: the record may have been reported by the watch sweep EARLIER IN THIS PASS and
+                // removed from the map above. It is NOT reported again -- one record, one delay -- but
+                // it is counted, because before this packet that case was indistinguishable from "no
+                // watched record was near this rock" and made backstop attribution unmeasurable.
+                for (const TPair<FString, FNodeShuffleMeshHideWatch>& WPair : WatchReportedThisPass)
+                {
+                    if (FVector::DistSquared2D(WPair.Value.NodeLoc, Loc) >= FMath::Square(RockOwnRange)) { continue; }
+                    ++RocksHiddenNearAlreadyReported;
+                    break;
+                }
+            }
         }
     }
     } // if (bRunBackstop)
@@ -5128,6 +5204,64 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
                 MeshHideLatencyMaxDelaySeconds,
                 RocksHiddenNearWatched, RockOwnRange,
                 RockBackstopCooldownSeconds, NowSeconds - LastRockBackstopSeconds);
+        }
+    }
+
+    // T64 (docs/TECH-DEBT.md T64): ROCK-HIDE ROUTE CENSUS. One line carrying the counts of all three
+    // routes that can darken an original's rock, each with the denominator it belongs to, so "route X
+    // hid 0" can never be read without knowing how many chances route X had. Always-on Display and
+    // delta-gated on its own fields, the same idiom as the MESHHIDE-LATENCY summary above: a settled
+    // world stops printing it. It reports what was counted and names no cause.
+    {
+        // T64 cold review F2: key on what a reader ACTS on, not on the streaming population. pairs-seen /
+        // no-steady / base-only-paired / ISM-near-player all track how many mesh actors happen to be
+        // streamed in this instant (measured 31..98 in one session, solid-hide-latency.md §2.3), so keying
+        // on them re-prints this whole line every pass.
+        const int32 Census[9] = {
+            RocksHiddenAtCacheAddThisPass, RocksHiddenAtCacheAddTotal, MeshResolvedAtHide,
+            RocksHidden, RocksHiddenNearWatched, RocksHiddenNearAlreadyReported,
+            InstancedResidualAtOriginals, RockCacheAddAlreadyDarkThisPass > 0 ? 1 : 0,
+            MeshCacheBaseOnlyPairedThisPass > 0 ? 1 : 0 };
+        bool bCensusChanged = false;
+        for (int32 i = 0; i < 9; i++)
+        {
+            if (Census[i] != LastRockHideCensus[i]) { bCensusChanged = true; LastRockHideCensus[i] = Census[i]; }
+        }
+        if (bCensusChanged)
+        {
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("ROCKHIDE-CENSUS hide-pass %d. STREAM-IN ROUTE (T64, runs in this pass's mesh-actor ")
+                TEXT("cache rebuild, before this hide loop): it examined %d paired node/mesh-actor add(s) ")
+                TEXT("and hid %d rock(s) this pass, %d this session. Of the adds it examined, %d were ")
+                TEXT("skipped because the node actor was not hidden, %d because no steady-hidden record ")
+                TEXT("resolved to that same node instance, and %d because the rock was already hidden AND ")
+                TEXT("collisionless. Capture was invoked before the hide on %d of the rocks it hid, and ")
+                TEXT("reported still-pending on %d of those. PAIRING REACH: %d of %d original(s) ")
+                TEXT("deriving directly from AFGResourceNodeBase were forward-paired this pass -- a ")
+                TEXT("population the pre-T64 iterator's type could not reach. NODE-HIDE-LOOP ROUTE: %d ")
+                TEXT("rock(s) hid in the same statement as their node this pass. STRAY-ROCK BACKSTOP: it ")
+                TEXT("%s this pass and hid %d rock(s); %d of those matched a record still on the watch ")
+                TEXT("list, and %d matched a record the cache route had already reported earlier in this ")
+                TEXT("same pass -- that second number was previously unmeasurable and is why a zero on ")
+                TEXT("the first one was never evidence about the backstop. INSTANCED RESIDUAL, only ")
+                TEXT("counted on passes the backstop runs: %d of %d visible instanced component(s) with ")
+                TEXT("a node-rock mesh name near a player had a component origin within %.0f cm of a ")
+                TEXT("processed original. NEITHER ROUTE HIDES THOSE. SCOPE OF THAT LAST PAIR: an ")
+                TEXT("instanced component's origin is the component's own transform, not any instance's, ")
+                TEXT("so per-instance geometry is NOT measured and this is a component count. MEASURED ")
+                TEXT("throughout: hidden flags, collision flags, set membership, 2-D distances and ")
+                TEXT("iteration counts, all taken this pass. NOT MEASURED: what streamed any actor in, ")
+                TEXT("and why any pairing was absent."),
+                MeshHidePass,
+                RockCacheAddPairsSeenThisPass, RocksHiddenAtCacheAddThisPass, RocksHiddenAtCacheAddTotal,
+                RockCacheAddNodeNotHiddenThisPass, RockCacheAddNoSteadyRecordThisPass,
+                RockCacheAddAlreadyDarkThisPass,
+                RocksCaptureFirstThisPass, RocksCapturePendingAtHideThisPass,
+                MeshCacheBaseOnlyPairedThisPass, MeshCacheBaseOnlySeenThisPass,
+                MeshResolvedAtHide,
+                bRunBackstop ? TEXT("RAN") : TEXT("did not run"), RocksHidden,
+                RocksHiddenNearWatched, RocksHiddenNearAlreadyReported,
+                InstancedResidualAtOriginals, InstancedRockNamedNearPlayer, RockOwnRange);
         }
     }
 
@@ -5464,6 +5598,12 @@ void ANodeShuffleSubsystem::FlushWaterGridIfDirty() const
 
 void ANodeShuffleSubsystem::RecordWaterGridSample(const FVector& Loc, bool bWater) const
 {
+    // T64 WORK ITEM B. `NodeShuffle.AuditPlacements` runs the settle probe at points the roll may never
+    // have sampled, and this function is a WRITE to a persistent cross-save store. The latch is set only
+    // for the duration of a PlacementAuditTick, so an audit cannot change what a later roll believes
+    // about water. It is false everywhere else, including every placement path, which therefore keeps
+    // teaching the grid exactly as before.
+    if (bWaterGridLearningSuppressed) { return; }
     EnsureWaterGridLoaded();
     const int64 Key = NodeShuffleWaterCellKey(Loc);
     uint8& State = WaterGrid.FindOrAdd(Key, 0);
@@ -7956,7 +8096,20 @@ void ANodeShuffleSubsystem::RebuildMeshActorCache()
     // Rebuilt fresh each ApplyLayout pass (mirrors VanillaNodeCache): mesh actors stream
     // in/out, and a re-sweep drops stale/null weak keys for free.
     MeshActorCache.Reset();
-    int32 FromBackLink = 0, FromForwardLink = 0;
+    int32 FromBackLink = 0, FromForwardLink = 0, FromForwardLinkBaseOnly = 0;
+    // T64 (docs/TECH-DEBT.md T64): the per-pass census counters describe THIS rebuild. This function's
+    // only caller is ApplyLayout (once per pass) and SuppressOriginalNodes reads them later in the same
+    // pass, so resetting at the top is what keeps them a per-pass reading rather than a running sum.
+    RockCacheAddPairsSeenThisPass = 0;
+    RockCacheAddNodeNotHiddenThisPass = 0;
+    RockCacheAddNoSteadyRecordThisPass = 0;
+    RockCacheAddAlreadyDarkThisPass = 0;
+    RocksHiddenAtCacheAddThisPass = 0;
+    RocksCaptureFirstThisPass = 0;
+    RocksCapturePendingAtHideThisPass = 0;
+    MeshCacheBaseOnlySeenThisPass = 0;
+    MeshCacheBaseOnlyPairedThisPass = 0;
+    RockHiddenAtCacheAddPathsThisPass.Reset();
 
     // 1. Back-link sweep (kept): mesh actors that DID get their mNodeActor set.
     for (TActorIterator<AFGNodeMeshActor> It(GetWorld()); It; ++It)
@@ -7965,6 +8118,9 @@ void ANodeShuffleSubsystem::RebuildMeshActorCache()
         {
             MeshActorCache.Add(Paired, *It);
             FromBackLink++;
+            // T64 CACHE-ADD HIDE SITE 1 of 2. Called AFTER the Add on purpose: the capture step inside
+            // reads the pairing back out of this cache, so the pairing must be in it first.
+            TryHideStreamedRockForSteadyOriginal(Paired, *It);
         }
     }
 
@@ -7975,38 +8131,64 @@ void ANodeShuffleSubsystem::RebuildMeshActorCache()
     // MESHTYPE-CENSUS coverage denominator: how many ordinary nodes were streamed in at all, so the
     // census below can print "N of M paired" rather than a bare N whose population is unknown.
     int32 OrdinaryNodesSeen = 0;
-    for (TActorIterator<AFGResourceNode> It(GetWorld()); It; ++It)
+    // T64 / docs/TECH-DEBT.md T43. THIS ITERATOR WAS `TActorIterator<AFGResourceNode>`, which cannot see
+    // a class deriving DIRECTLY from AFGResourceNodeBase -- the esc_/Base-only originals this mod
+    // already resolves and hides through FindOriginalBaseByPath (redesign-6 FIX 2 widened
+    // VanillaNodeCache for exactly this population). Their rocks were therefore reachable only through
+    // the back-link sweep above, which is unset for the large majority of level nodes in a modded world.
+    // WHAT THE WIDENING DOES AND DOES NOT ADMIT, so no exclusion is lost:
+    //   * AFGResourceDeposit derives from AFGResourceNode (FGResourceDeposit.h:15), so it was ALREADY in
+    //     the old iterator's population -- it is not newly admitted here.
+    //   * Fracking cores and satellites ARE newly reachable by the iterator's type, and are still
+    //     excluded by the same IsFrackingActor test on the line below, unchanged. Well members remain
+    //     NodeShuffleWellMeshIndex's business exactly as before.
+    // The ordinary/base-only split is counted separately so the MESHTYPE-CENSUS coverage numbers keep
+    // the exact meaning they carry in logs from earlier builds.
+    // The iterator variable is named NodeIt, not It: NodeShuffleSubsystem.cpp holds several
+    // `TActorIterator<AFGResourceNodeBase> It(GetWorld())` sweeps with byte-identical text, and
+    // tools/check_t64_lint.ps1's mutation test could not target THIS one while it shared their spelling
+    // (its M3 mutant silently edited the VanillaNodeCache refresh instead and reported MISSED).
+    for (TActorIterator<AFGResourceNodeBase> NodeIt(GetWorld()); NodeIt; ++NodeIt)
     {
-        AFGResourceNode* Node = *It;
+        AFGResourceNodeBase* Node = *NodeIt;
         if (!IsValid(Node) || Node->HasAnyFlags(RF_Transient) || IsFrackingActor(Node))
         {
             continue;
         }
-        ++OrdinaryNodesSeen;
+        const bool bIsOrdinaryNode = (Cast<AFGResourceNode>(Node) != nullptr);
+        if (bIsOrdinaryNode) { ++OrdinaryNodesSeen; } else { ++MeshCacheBaseOnlySeenThisPass; }
         if (MeshActorCache.Contains(Node))
         {
-            continue; // already paired via the back-link
+            continue; // already paired via the back-link (which already ran the T64 hide for it)
         }
         // mMeshActor is private on AFGResourceNodeBase; friend access (AccessTransformers)
         // makes the soft pointer readable. .Get() resolves it if the actor is loaded.
         AActor* RockActor = Node->mMeshActor.Get();
         if (AFGNodeMeshActor* MA = Cast<AFGNodeMeshActor>(RockActor))
         {
-            // Repair the engine's own back-link so the game (and our cache) agree.
+            // Repair the engine's own back-link so the game (and our cache) agree. SetNodeActor takes
+            // an AFGResourceNodeBase* (FGResourceNodeBase.h:73), so the widened iterator's base-only
+            // nodes are passed to it without a cast.
             if (!MA->mNodeActor.Get())
             {
                 MA->SetNodeActor(Node);
             }
             MeshActorCache.Add(Node, MA);
-            FromForwardLink++;
+            if (bIsOrdinaryNode) { FromForwardLink++; } else { MeshCacheBaseOnlyPairedThisPass++; }
+            // T64 CACHE-ADD HIDE SITE 2 of 2. After the Add, for the same reason as site 1.
+            TryHideStreamedRockForSteadyOriginal(Node, MA);
         }
     }
+    FromForwardLinkBaseOnly = MeshCacheBaseOnlyPairedThisPass;
 
     if (FNodeShuffleModule::AreDiagnosticsEnabled())
     {
         UE_LOG(LogNodeShuffle, Verbose,
-            TEXT("Mesh-actor cache: %d paired (%d via mesh-actor back-link, %d via node->mMeshActor forward link)"),
-            MeshActorCache.Num(), FromBackLink, FromForwardLink);
+            TEXT("Mesh-actor cache: %d paired (%d via mesh-actor back-link, %d via node->mMeshActor forward link, ")
+            TEXT("of which %d were on originals deriving directly from AFGResourceNodeBase -- a population the ")
+            TEXT("pre-T64 iterator's type could not reach at all, out of %d such originals iterated this pass)"),
+            MeshActorCache.Num(), FromBackLink, FromForwardLink + FromForwardLinkBaseOnly,
+            FromForwardLinkBaseOnly, MeshCacheBaseOnlySeenThisPass);
     }
 
     // MESHTYPE-CENSUS (cold review 2026-08-08, Alternative F). THE BOOT-TIME MEASUREMENT OF THE ONE
@@ -8057,10 +8239,18 @@ void ANodeShuffleSubsystem::RebuildMeshActorCache()
             TEXT("meshActors=%d STREAMED-IN (not world) | pairedToOrdinaryNode: %d MT_Node + %d ")
             TEXT("non-MT_Node | pairedToFracking: %d MT_Node + %d non-MT_Node | unpaired(mNodeActor ")
             TEXT("unset): %d, of which %d non-MT_Node | coverage: %d of %d streamed ordinary node(s) ")
-            TEXT("paired (%d engine back-link, %d back-links repaired by THIS pass) | mNodeMeshType ")
+            TEXT("paired (%d engine back-link, %d back-links repaired by THIS pass) | baseOnlyOriginals ")
+            TEXT("(deriving directly from AFGResourceNodeBase, unreachable by the pre-T64 iterator): %d ")
+            TEXT("of %d iterated were forward-paired this pass | mNodeMeshType ")
             TEXT("histogram 0..6 = %d/%d/%d/%d/%d/%d/%d"),
             Total, OrdinaryMTNode, OrdinaryNonNode, FrackMTNode, FrackNonNode, Unpaired, UnpairedNonNode,
-            OrdinaryMTNode + OrdinaryNonNode, OrdinaryNodesSeen, FromBackLink, FromForwardLink,
+            OrdinaryMTNode + OrdinaryNonNode, OrdinaryNodesSeen, FromBackLink,
+            // T64 cold review F3: this parenthetical's legend scopes it to ORDINARY nodes ("N of M streamed
+            // ordinary node(s) paired"); base-only pairings have their own clause immediately after, so
+            // summing them here made the decomposition exceed its own numerator and silently changed the
+            // field's population vs pre-T64 logs.
+            FromForwardLink,
+            MeshCacheBaseOnlyPairedThisPass, MeshCacheBaseOnlySeenThisPass,
             ByType[0], ByType[1], ByType[2], ByType[3], ByType[4], ByType[5], ByType[6]);
         // Key on the DECISION-RELEVANT subset, not the whole payload. Total, unpaired and all seven
         // histogram bins move whenever any node mesh actor streams in or out, so keying on the full

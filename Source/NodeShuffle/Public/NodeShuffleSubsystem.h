@@ -834,6 +834,20 @@ public:
     // Log-only: it spawns nothing, moves nothing, writes no layout field, and gates nothing.
     void LogNearestNodeProbe();
 
+    // ============ T64 WORK ITEM B: `NodeShuffle.AuditPlacements` ============
+    // Defined in NodeShuffleAuditPlacements.cpp, registered there. THE POPULATION SIBLING of the four
+    // nearest-one probe commands: it walks EVERY layout entry -- including the ones it cannot judge,
+    // which get their own bucket rather than being dropped -- and at each recorded centre takes four
+    // readings reported as SEPARATE fields because they are known to disagree (docs/TECH-DEBT.md T41):
+    // the settle gate's own water signal, a below-terrain comparison against that same probe's ground
+    // hit, the SHIPPED 8-ray enclosure gate's verdict, and the deep TOTALLYINSIDE instrument's verdict.
+    // Log-only: it spawns nothing, moves nothing, writes no layout field, refuses nothing, and its water
+    // probes are prevented from teaching the persistent water grid while it runs. Time-sliced across
+    // ticks so the walk cannot hitch a frame. NOT diagnostics-gated, matching NodeShuffle.Here /
+    // PointAtHere / WellProbe / ProbeNearestNode -- a command a human types IS its own gate.
+    void StartPlacementAudit();
+    void PlacementAuditTick();
+
     // ================= ns-t54 SCOPE ADDITION 2: THE CENTRE-TOTALLY-INSIDE SHADOW GATE ================
     // Defined in NodeShuffleInsideGate.cpp; read that file's header for why this is shadow-first.
     //
@@ -1697,6 +1711,83 @@ private:
     // Used by SuppressOriginalNodes to hide an original node's paired mesh actor on stream-in.
     TMap<TWeakObjectPtr<AFGResourceNodeBase>, TWeakObjectPtr<AFGNodeMeshActor>> MeshActorCache;
     void RebuildMeshActorCache();
+
+    // ============ T64 (docs/TECH-DEBT.md T64): IMMEDIATE ROCK-HIDE AT STREAM-IN ============
+    // Defined in NodeShuffleRockStreamInHide.cpp. THE MECHANISM IS MEASURED, NOT ASSUMED -- the trace is
+    // scratchpad/solid-hide-latency.md (2026-08-11, taken on build 2026-08-10-t61-1): all 874 original
+    // NODE actors resolved and hid on pass 1, but 837 of them had no resolvable AFGNodeMeshActor at that
+    // instant; the record went STEADY on the node result alone (SuppressOriginalNodes) and the main loop
+    // skipped it for the rest of the instance's life, so nothing ever retried the pairing. When the
+    // rock's own actor later streamed in it arrived VISIBLE -- 212 of the 220 that became pairable were
+    // still drawn at that moment, worst delay 1535 s -- and the only route left that could darken it was
+    // the stray-rock backstop, gated on a 300 m player range and a 30 s cooldown.
+    //
+    // WHERE THIS HOOKS AND WHY THERE. RebuildMeshActorCache is the function that FIRST observes a
+    // newly-streamed AFGNodeMeshActor, and it already runs every ApplyLayout pass BEFORE
+    // SuppressOriginalNodes. At each MeshActorCache.Add site, a paired node that is already hidden AND
+    // holds a SteadyHiddenOriginals record resolving to that same instance has its rock hidden there and
+    // then. No engine surface is added and the steady-set semantics are untouched.
+    //
+    // CAPTURE-IN-FLOW ORDER (the author's ruling, verbatim: "check if captured, capture if needed, then
+    // hide"). CaptureOriginalVisualIfNeeded's first source reads the PAIRED mesh actor's static mesh
+    // component, so it is called AFTER the pairing is in the cache and BEFORE the hide. This packet does
+    // NOT rest on the older in-file claim that hiding leaves the mesh data readable -- that claim is a
+    // comment, never measured -- so the order is arranged so it never has to be true.
+    //
+    // Returns true only when this call actually hid a rock. Every early return is counted below.
+    bool TryHideStreamedRockForSteadyOriginal(AFGResourceNodeBase* Node, AFGNodeMeshActor* MeshActor);
+
+    // T64 CENSUS COUNTERS. The *ThisPass fields are reset at the TOP of RebuildMeshActorCache -- whose
+    // only caller is ApplyLayout, once per pass -- and read by SuppressOriginalNodes' ROCKHIDE-CENSUS
+    // later in the SAME pass. They report what was counted and name no cause; every one of them is
+    // printed with the denominator it belongs to.
+    int32 RockCacheAddPairsSeenThisPass = 0;      // DENOMINATOR: paired adds this route examined
+    int32 RockCacheAddNodeNotHiddenThisPass = 0;  // of those, the node actor was not hidden
+    int32 RockCacheAddNoSteadyRecordThisPass = 0; // node hidden, but no steady record resolved to it
+    int32 RockCacheAddAlreadyDarkThisPass = 0;    // steady, and the rock was already hidden AND collisionless
+    int32 RocksHiddenAtCacheAddThisPass = 0;      // rocks this route hid THIS pass
+    int32 RocksCaptureFirstThisPass = 0;          // of those, capture was invoked before the hide
+    int32 RocksCapturePendingAtHideThisPass = 0;  // of those, capture reported still-PENDING
+    int32 RocksHiddenAtCacheAddTotal = 0;         // session total, same predicate
+    // T43 family: the forward-link sweep's iterator was widened from AFGResourceNode to
+    // AFGResourceNodeBase, so classes deriving DIRECTLY from the base (the esc_/Base-only originals this
+    // mod already hides through FindOriginalBaseByPath) are reachable for pairing. Counted separately so
+    // the MESHTYPE-CENSUS coverage numbers keep the exact meaning they had in earlier logs.
+    int32 MeshCacheBaseOnlySeenThisPass = 0;      // DENOMINATOR: base-only originals the sweep iterated
+    int32 MeshCacheBaseOnlyPairedThisPass = 0;    // of those, forward-link paired this pass
+    // The record paths this route hid a rock for THIS pass. Without it, a watch entry that observes its
+    // rock already dark reads as "the rock arrived hidden", which is an inference nothing measured --
+    // exactly the defect class docs/TECH-DEBT.md T4's heading is about.
+    TSet<FString> RockHiddenAtCacheAddPathsThisPass;
+    int32 LastRockHideCensus[9] = { -1, -1, -1, -1, -1, -1, -1, -1, -1 }; // delta gate for ROCKHIDE-CENSUS
+
+    // T64 WORK ITEM B state. The two entry points are PUBLIC (the console command's lambda calls
+    // StartPlacementAudit through a TActorIterator, exactly as NodeShuffle.ProbeNearestNode calls
+    // LogNearestNodeProbe); everything below is this class's own bookkeeping.
+    FTimerHandle PlacementAuditTimer;
+    int32 PlacementAuditCursor = 0;         // next Layout index to examine; INDEX_NONE = not running
+    bool bPlacementAuditRunning = false;
+    double PlacementAuditStartSeconds = 0.0;
+    struct FNodeShuffleAuditOffender
+    {
+        int32 Severity = 0;                 // rank; higher is printed first. Ranking is stated in the log
+        int32 LayoutIndex = 0;
+        FString Guid;
+        FString Resource;
+        FVector At = FVector::ZeroVector;
+        FString What;                       // the predicates that fired, as measured fields
+    };
+    TArray<FNodeShuffleAuditOffender> PlacementAuditOffenders;
+    int32 PlacementAuditCounts[16] = { 0 };  // bucket slots; the index legend lives in the .cpp
+    int32 PlacementAuditLayoutNumAtStart = 0; // so the completion line can say if Layout moved mid-walk
+    int32 PlacementAuditQueries = 0;        // MEASURED cost: traces/sweeps the deep instrument issued
+    int32 PlacementAuditOverlaps = 0;       // MEASURED cost: overlaps it issued
+    // T64 WORK ITEM B, THE ONE THING THAT MAKES "REPORTS MEASUREMENTS ONLY" LITERALLY TRUE. The settle
+    // probe (RaycastGroundAt) teaches the persistent cross-save water grid one cell per call, which is a
+    // WRITE, and the audit probes points the roll may never have sampled. This latch is checked by
+    // RecordWaterGridSample and is set ONLY for the duration of a PlacementAuditTick, so the audit
+    // cannot alter what a later roll believes about water. Nothing else reads or writes it.
+    mutable bool bWaterGridLearningSuppressed = false;
 
     // ---- Packet H1 (ns-wells-h1): IN-PLACE RESOURCE-WELL RETYPE ----
     // Everything below is DEFINED IN NodeShuffleWellRoll.cpp (the deal) and NodeShuffleWellRetype.cpp

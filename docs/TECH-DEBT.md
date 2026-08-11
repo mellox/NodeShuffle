@@ -7,7 +7,13 @@ this list, the entry has failed — fix the entry, not just the bug.**
 Each item records what it is, how we know, and why it is not fixed. Items with a
 **pre-scoped fix** have had the work sized already — start there, don't redesign.
 
-Last updated 2026-08-11 (**T63 filed in P2, author LOW/possibly-never — nodes can be dealt into
+Last updated 2026-08-11 (**T64 filed in P3 and IMPLEMENTED — the ordinary-node rock-hide was one-shot, so
+a rock whose `AFGNodeMeshActor` streamed in after its node was hidden arrived VISIBLE and nothing ever
+retried; measured in `scratchpad/solid-hide-latency.md` at 212 of 220 rocks still drawn when their pairing
+resolved, worst delay 1535 s. Fixed at the mesh-actor cache's two add sites, capture-before-hide, with the
+forward-link iterator widened to `AFGResourceNodeBase` (T43 family). `NodeShuffle.AuditPlacements` added.
+Packet ns-t64-rock-hide-and-audit, build `2026-08-11-t64-1` — built, NOT yet reviewed and NOT yet
+in-game.**) Earlier: **T63 filed in P2, author LOW/possibly-never — nodes can be dealt into
 dense foliage; trees don't block the gates' trace channel, second measured sighting of the
 foliage-blindness family. T62 filed in P2, author-priority LOW — a third-party pointer mod (RNM)
 beams at hidden dirty originals and misses late replacements; window hypothesis + discriminating
@@ -2007,6 +2013,70 @@ path first; wells have their own probe stack.
 
 *This project's recurring failure class. Eight sightings during the H2 arc. A gate that
 cannot fail is worse than no gate, because it is read as evidence.*
+
+### T64. The ordinary-node rock-hide was ONE-SHOT: a rock whose mesh actor streamed in AFTER its node was hidden arrived VISIBLE and nothing retried. **A = FIXED-this-packet · B = TOOL-ADDED (packet ns-t64-rock-hide-and-audit, build `2026-08-11-t64-1`).**
+
+**THE MECHANISM IS MEASURED, AND THE TRACE IS THE AUTHORITY** —
+`scratchpad/solid-hide-latency.md` (2026-08-11, taken on build `2026-08-10-t61-1`, log session
+`NodeShuffle 1.3.0 LOADED (2026-08-10-t61-1)`). Do not re-derive it; read it.
+
+* All **874** original NODE actors resolved and were hidden on hide-pass 1, ~25 s after mod load
+  (`records=874 loaded=874 newlyHidden=874 pathUnresolved=0`). Nothing was ever re-hidden: every one of
+  the 20 `Hide originals:` lines after pass 1 reads `hid 0 original nodes`.
+* Of those 874, only **37** had a resolvable `AFGNodeMeshActor` at that instant. **837 did not** — 271
+  because no separate mesh actor is authored at all, **566** because the assigned one had not streamed in.
+* The record was then marked `SteadyHiddenOriginals` on the **node** result alone (the steady mark's only
+  other condition is the capture flag, never the mesh result), and the main hide loop `continue`s past a
+  steady record for the rest of that instance's life. **So nothing ever retried the pairing.**
+* When world partition finally loaded the rock, it loaded **visible**: of the 220 rocks that became
+  pairable that session, **212 were still drawn at that moment** (`stillVisibleWhenResolved=212`), worst
+  delay **1535 s**. The T4 watch sweep observes exactly this and, by design, only prints it.
+* The one route left that could darken such a rock was the **stray-rock backstop** — the only
+  player-distance gate in the whole hide path (300 m) on a 30 s cooldown. That bounds the visible window
+  at 0–30 s after stream-in, which is where the ~10 s the author counted sits. **That last attribution
+  step was HYPOTHESIS, not measurement**, because `route=backstop` was structurally unable to fire: the
+  watch sweep removed a record in the same pass its rock became findable, before the backstop's
+  attribution loop ran.
+
+**A — WHAT THIS PACKET CHANGED (`NodeShuffleRockStreamInHide.cpp`, `NodeShuffleSubsystem.cpp`).**
+`RebuildMeshActorCache` is the function that FIRST observes a newly-streamed mesh actor, and ApplyLayout
+already calls it every pass **before** `SuppressOriginalNodes`. Both of its `MeshActorCache.Add` sites now
+call `TryHideStreamedRockForSteadyOriginal`, which hides the rock when — and only when — the node is
+hidden **and** a `SteadyHiddenOriginals` record resolves to that same instance. Order is
+**capture → hide**, the author's ruling verbatim ("check if captured, capture if needed, then hide"); the
+older in-file claim that hiding leaves the mesh data readable is an unmeasured comment and this packet
+deliberately does not rest on it. *(Cold review F7 scoped the capture benefit: a late-streaming-donor
+resource "can now capture at all" ONLY when it is non-solid or placeholder-only-terminal — an ordinary
+solid with no donor never goes steady, so it was already re-funnelled every pass and still is.)* The forward-link sweep's iterator was widened from
+`TActorIterator<AFGResourceNode>` to `AFGResourceNodeBase` (**the T43 family**) so originals deriving
+directly from the base are pairable at all; fracking is still excluded by the same `IsFrackingActor` test,
+and `AFGResourceDeposit` derives from `AFGResourceNode` so it was already in the old population.
+This closes the window from 0–30 s to **≤1 pass tick**, adds no engine surface, and does not touch the
+steady-set semantics. Pinned by `tools/check_t64_lint.ps1` (10 mutants, all caught).
+
+**WHAT IT DOES NOT COVER, WITH ITS DENOMINATOR RATHER THAN A SILENCE.** A node-rock drawn by an
+`UInstancedStaticMeshComponent` owned by something other than the hidden actor is outside **both** routes
+— the backstop has always skipped instanced components (they are world-shared) and this route hides an
+actor. They are now **counted**, not hidden: `ROCKHIDE-CENSUS` reports how many visible instanced
+rock-named components near a player have an origin within 8 m of a processed original, and states that an
+instanced component's origin is the component's transform, so **per-instance geometry is not measured**.
+
+**B — `NodeShuffle.AuditPlacements` (`NodeShuffleAuditPlacements.cpp`), the population sibling of the
+four nearest-one probe commands.** Walks every layout entry, including the ones it cannot judge (own
+buckets, never dropped), and reports four readings per recorded centre as **separate** fields because
+they are known to disagree (T41): the settle gate's own water signal, a below-terrain comparison against
+that same probe's ground hit, the shipped 8-ray enclosure gate, and the deep TOTALLYINSIDE instrument.
+Log-only and time-sliced. Its water probes are prevented from teaching the persistent water grid while it
+runs (`bWaterGridLearningSuppressed`), so an audit cannot change what a later roll believes.
+
+**STILL OPEN AFTER THIS PACKET:** the instanced residual above; whether the ≤1-pass-tick window is
+short enough in play — the ROCKHIDE-CENSUS and `hiddenByStreamInRouteThisPass` fields exist to answer
+that from a log rather than a stopwatch; and (cold review F6) the iterator widening also lets
+`ClassifyOriginalUnderground` resolve a base-only original's own rock into its cave-roof ignore list,
+where pre-T64 it was null — a **fix in direction**, but `CaveSeedsDone` is persisted and one-shot per
+original, so an existing save now holds cave seeds derived under two different rules. If the author
+wants that population re-derived under the new rule, bump the `CaveSeedsDone` version; left as-is, the
+mixed population is accepted and this line is its record.
 
 ### T4. Ordinary-node mesh-hide latency is unmeasured
 A hidden ordinary node's **rock stays visible for a while** after the node itself is hidden
