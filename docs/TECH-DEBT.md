@@ -7,7 +7,9 @@ this list, the entry has failed — fix the entry, not just the bug.**
 Each item records what it is, how we know, and why it is not fixed. Items with a
 **pre-scoped fix** have had the work sized already — start there, don't redesign.
 
-Last updated 2026-08-11 (**T62 filed in P2, author-priority LOW — a third-party pointer mod (RNM)
+Last updated 2026-08-11 (**T63 filed in P2, author LOW/possibly-never — nodes can be dealt into
+dense foliage; trees don't block the gates' trace channel, second measured sighting of the
+foliage-blindness family. T62 filed in P2, author-priority LOW — a third-party pointer mod (RNM)
 beams at hidden dirty originals and misses late replacements; window hypothesis + discriminating
 test recorded, do not build until it runs.** Earlier: **T61 filed and IMPLEMENTED — the KBFL hook now arms whether or not
 `NodeShuffle.DestroyerVeto` is on, in OBSERVE-ONLY mode when it is off: it measures, fills the T60
@@ -1974,6 +1976,30 @@ of node registration nobody enumerated.
 dirty/AllMinable classes across both sessions (13 + 38 lines, all fracking chatter) — the
 diagnostic that would have named the stale actor cannot see this population. If branch (2) wins,
 extend ORPHANDIAG's population first.
+
+### T63. Nodes can be dealt INTO DENSE FOLIAGE — a tree cluster is invisible to every placement gate. **Author priority: LOW, possibly never (2026-08-11: "I think it's hilarious").**
+
+**What it is.** On the new-game test save, a Dirty Rubber (Pure) replacement landed inside a
+dense tree cluster (author's screenshot, 2026-08-11). **Fully functional** — hand-mine prompt
+appears, mod miner places. The defect, to the extent it is one, is aesthetic: a node can sit
+where trees visually swallow it.
+
+**Mechanism — measured, two sightings.** Foliage is `InstancedFoliageActor` instanced meshes,
+which do not block the trace channel the placement/containment stack queries — and the
+`TOTALLYINSIDE` legend's own caveat applies: *"geometry that does not block this channel is
+invisible to all four of its instruments."* Prior sighting, same family: the 2026-08-10 WellProbe
+at Core7 measured rays STARTING inside foliage firing already-penetrating without flipping any
+verdict (state-file note at the time: "candidate future exclusion, not filed as debt" — this entry
+is that filing). No gate in the stack has ever considered trees; nothing regressed.
+
+**Why LOW/never.** Harmless to play, arguably thematic (author: "rubber does come from trees!").
+File exists so the next person who sees a node in a bush knows it is KNOWN and understood, not a
+mystery — the header rule of this file.
+
+**Pre-scoped direction IF ever wanted.** A foliage-density check at the SETTLE/deal stage (query
+`InstancedFoliageActor` instances in a small radius; prefer sparser candidates rather than veto) —
+NOT in the enclosure predicate, which answers a different question (T37). Prototype in the solid
+path first; wells have their own probe stack.
 
 ---
 
