@@ -7,7 +7,9 @@ this list, the entry has failed — fix the entry, not just the bug.**
 Each item records what it is, how we know, and why it is not fixed. Items with a
 **pre-scoped fix** have had the work sized already — start there, don't redesign.
 
-Last updated 2026-08-10 (**T61 filed and IMPLEMENTED — the KBFL hook now arms whether or not
+Last updated 2026-08-11 (**T62 filed in P2, author-priority LOW — a third-party pointer mod (RNM)
+beams at hidden dirty originals and misses late replacements; window hypothesis + discriminating
+test recorded, do not build until it runs.** Earlier: **T61 filed and IMPLEMENTED — the KBFL hook now arms whether or not
 `NodeShuffle.DestroyerVeto` is on, in OBSERVE-ONLY mode when it is off: it measures, fills the T60
 opt-in list and posts one chat notice, and vetoes nothing at all. Author's ruling; it deliberately
 REVERSES T58's R1 "off means blind" paragraph and closes the ship-default decision. Packet
@@ -1924,6 +1926,54 @@ well member must still snap.
 > | Water | `BaseNode_FrackingCore1_0` | `X=77127.81, Y=46452.60, Z=11494.30` |
 >
 > ⚠ These are **destinations dealt in that save's roll**, read from one log. A re-roll re-deals them.
+
+### T62. A third-party node-pointer mod (RNM) beams at our HIDDEN ORIGINALS and never finds late-materializing replacements — dirty classes only. **Author priority: LOW (2026-08-11) — do not schedule ahead of P1 work.**
+
+**What it is.** Resource Nodes Manager (RNM, third-party) draws pointer lines to node centres from
+its own list. After a manual reshuffle on the new-game test save (build `t61-1`), RNM tracked the
+relocations of vanilla, `lead_C` and Alkali/lithium nodes correctly, but its entry for AllMinable's
+Dirty Black Powder kept the ORIGINAL location — listed at 4 m, beam standing on empty ground
+(author's screenshots, 2026-08-11 ~evening) — while the replacement **exists and is minable**
+(a mod miner snapped to it; `materialized esc_BlackPowder_C node` in the roll session's log).
+Known for weeks per the author ("we had this issue with rm then too") — **NOT a regression of the
+2026-08-10 builds.** RNM also shows no pointers at all for water/nitrogen wells; presumed RNM's own
+scope (fracking cores/satellites are not solid-node actors) and not chased.
+
+**What is measured healthy on OUR side, same resource, same sessions** (evidence:
+`nodeshuffle-t61-log-extract.md` §POST-REROLL, scratchpad copy of 2026-08-11): enrollment
+(`ROLLCENSUS` `esc_BlackPowder_C=7/4`, AUTOALLOW groups 73→286), spawn success (zero dirty-class
+spawn failures), originals capture-terminal **by design** then **DEREGISTERED**, cluster regen runs
+in both sessions with dirty classes inside its population, scanner-knowledge 8→35→42 persisted
+across the reload. The vanilla scanner — the one consumer we patched at the
+`GenerateNodeClusters` source — is correct.
+
+**Mechanism — HYPOTHESIS, not measured (RNM internals unread: actor iteration vs registry vs
+persistent cache, unknown).** The per-session transition window. Dirty originals are the chronic
+capture-terminal class (instanced-mesh visuals; `CaptureGiveUpPasses = 36` ≈ 3 min at the 5 s
+tick), so each session they sit hidden-but-REGISTERED for up to ~3 minutes before deregistration,
+while dirty replacements materialize through the same deferred passes. A consumer that snapshots
+early each load captures exactly the wrong set — originals in, replacements out. Vanilla and
+lead/lithium originals capture and deregister fast, so an early snapshot is already correct for
+them. One window explains the per-class asymmetry, the reload persistence, and the weeks-old
+history. It is still a hypothesis until the test below runs.
+
+**Discriminating test (first step for whoever picks this up; ~5 min in game).** More than ~4 min
+into a session, force an RNM rescan (reopen/reconfigure the terminal near the live replacement).
+(1) Ghost drops and the live node appears → window hypothesis stands; fix is a window-shrink
+and/or a compat note. (2) Rescan still shows the ghost or still misses a node the player can
+mine → RNM enumerates something we do not clean; measure WHAT before designing anything.
+
+**Pre-scoped fix directions — do not build until the test discriminates.** (a) Deregister
+originals AT suppression time instead of after capture-terminal — touches the restore-on-disable
+contract; restore is believed to read our own records rather than the registry, but that is an
+ASSUMPTION to verify, not a given. (b) Compat note only ("rescan RNM after a reshuffle").
+Cross-ref: this is the blast-radius lens's first recorded third-party sighting — RNM is a consumer
+of node registration nobody enumerated.
+
+**Diagnostics sub-note (P3-flavored, kept here to keep one entry):** ORPHANDIAG covered ZERO
+dirty/AllMinable classes across both sessions (13 + 38 lines, all fracking chatter) — the
+diagnostic that would have named the stale actor cannot see this population. If branch (2) wins,
+extend ORPHANDIAG's population first.
 
 ---
 
