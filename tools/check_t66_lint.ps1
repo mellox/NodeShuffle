@@ -61,12 +61,14 @@ $footprintFile  = 'NodeShuffleWellFootprint.cpp'
 $nodeProbeFile  = 'NodeShuffleNodeProbe.cpp'
 $wellProbeFile  = 'NodeShuffleWellMemberProbe.cpp'
 $subsystemFile  = 'NodeShuffleSubsystem.cpp'
+$auditFile      = 'NodeShuffleAuditPlacements.cpp'
 
 $hPath          = Join-Path $root ('Source\NodeShuffle\Public\' + $hFile)
 $footprintPath  = Join-Path $root ('Source\NodeShuffle\Private\' + $footprintFile)
 $nodeProbePath  = Join-Path $root ('Source\NodeShuffle\Private\' + $nodeProbeFile)
 $wellProbePath  = Join-Path $root ('Source\NodeShuffle\Private\' + $wellProbeFile)
 $subsystemPath  = Join-Path $root ('Source\NodeShuffle\Private\' + $subsystemFile)
+$auditPath      = Join-Path $root ('Source\NodeShuffle\Private\' + $auditFile)
 
 function Remove-LineComments([string]$text) {
     ($text -split "`n" | ForEach-Object { $_ -replace '//.*$', '' }) -join "`n"
@@ -74,13 +76,14 @@ function Remove-LineComments([string]$text) {
 
 # Returns an array of failure strings. Empty array = every pin holds.
 function Get-T66Failures([string]$hText, [string]$footprintText, [string]$nodeProbeText,
-                         [string]$wellProbeText, [string]$subsystemText) {
+                         [string]$wellProbeText, [string]$subsystemText, [string]$auditText) {
     $fails = @()
     $h          = Remove-LineComments $hText
     $footprint  = Remove-LineComments $footprintText
     $nodeProbe  = Remove-LineComments $nodeProbeText
     $wellProbe  = Remove-LineComments $wellProbeText
     $subsystem  = Remove-LineComments $subsystemText
+    $audit      = Remove-LineComments $auditText
 
     # ---- HALF 1: the shared predicate's declaration and body actually gained IgnoreActor2 -----------
     # T66 cold review F2 aftermath: the header now declares IgnoreActor2 on TWO functions (IsSpotEnclosed
@@ -153,6 +156,13 @@ function Get-T66Failures([string]$hText, [string]$footprintText, [string]$nodePr
         $fails += "FAIL: $footprintFile's well-placement gate six call site no longer reads as the exact 3-arg 'IsSpotEnclosed(OutLoc, Blocked, Total)'. Same boundary as the solid-node site above: this call must stay bit-identical to before T66."
     }
 
+    # ---- HALF 5: the AUDIT call site keeps the self-ignore (cold review F1 + supersession addendum) --
+    # Added 2026-08-11 ~02:0x after the chip session's addendum measured that a one-line revert of the
+    # audit fix passed the then-15/15 suite -- this file was never loaded, so the fix was unpinned.
+    if ($audit -notmatch 'IsSpotEnclosed\(E\.Location, Blocked, Total, nullptr, &Threshold, Pawn, LiveActor\);') {
+        $fails += "FAIL: $auditFile's reading-3 gate call no longer passes LiveActor as the 7th argument -- every audited entry with a live node at its centre self-hits 8-of-8 again and the offender ranking is poisoned by the exact wrong-population signal this command exists to prevent (T66 cold review F1)."
+    }
+
     return ,$fails
 }
 
@@ -169,15 +179,16 @@ $footprintRaw  = Get-Content -Raw $footprintPath
 $nodeProbeRaw  = Get-Content -Raw $nodeProbePath
 $wellProbeRaw  = Get-Content -Raw $wellProbePath
 $subsystemRaw  = Get-Content -Raw $subsystemPath
+$auditRaw      = Get-Content -Raw $auditPath
 
 if (-not $MutationTest) {
-    $f = Get-T66Failures $hRaw $footprintRaw $nodeProbeRaw $wellProbeRaw $subsystemRaw
+    $f = Get-T66Failures $hRaw $footprintRaw $nodeProbeRaw $wellProbeRaw $subsystemRaw $auditRaw
     if ($f.Count -gt 0) { $f | ForEach-Object { Write-Host $_ }; exit 1 }
     exit 0
 }
 
 # ---- mutation mode: prove each pin actually catches its edit ----
-$control = Get-T66Failures $hRaw $footprintRaw $nodeProbeRaw $wellProbeRaw $subsystemRaw
+$control = Get-T66Failures $hRaw $footprintRaw $nodeProbeRaw $wellProbeRaw $subsystemRaw $auditRaw
 Write-Host ("CONTROL (unmutated tree): {0}" -f $(if ($control.Count -eq 0) { 'PASS (0 failures) -- as required' } else { "UNEXPECTEDLY FAILING with $($control.Count):`n  " + ($control -join "`n  ") }))
 
 function Replace-First([string]$text, [string]$find, [string]$repl) {
@@ -233,12 +244,15 @@ $mutants = @(
        Find = 'FNodeShuffleProbeEyeReading& Out,';
        Repl = 'FNodeShuffleProbeEyeReading& Out) const;' },
     @{ Name = 'M15 delete the EyeParams.AddIgnoredActor(IgnoreActor2) statement (cold review F2)'; File = 'footprint';
-       Find = 'if (IgnoreActor2) { EyeParams.AddIgnoredActor(IgnoreActor2); }'; Repl = '' }
+       Find = 'if (IgnoreActor2) { EyeParams.AddIgnoredActor(IgnoreActor2); }'; Repl = '' },
+    @{ Name = 'M16 revert the audit-site 7th arg (supersession addendum: the fix was unpinned)'; File = 'audit';
+       Find = 'IsSpotEnclosed(E.Location, Blocked, Total, nullptr, &Threshold, Pawn, LiveActor);';
+       Repl = 'IsSpotEnclosed(E.Location, Blocked, Total, nullptr, &Threshold, Pawn);' }
 )
 
 $missed = 0
 foreach ($m in $mutants) {
-    $hh = $hRaw; $ff = $footprintRaw; $np = $nodeProbeRaw; $wp = $wellProbeRaw; $ss = $subsystemRaw
+    $hh = $hRaw; $ff = $footprintRaw; $np = $nodeProbeRaw; $wp = $wellProbeRaw; $ss = $subsystemRaw; $aa = $auditRaw
     $applied = $null
     switch ($m.File) {
         'h'          { $hh = Replace-First $hRaw         $m.Find $m.Repl; $applied = $hh }
@@ -246,13 +260,14 @@ foreach ($m in $mutants) {
         'nodeProbe'  { $np = Replace-First $nodeProbeRaw $m.Find $m.Repl; $applied = $np }
         'wellProbe'  { $wp = Replace-First $wellProbeRaw $m.Find $m.Repl; $applied = $wp }
         'subsystem'  { $ss = Replace-First $subsystemRaw $m.Find $m.Repl; $applied = $ss }
+        'audit'      { $aa = Replace-First $auditRaw     $m.Find $m.Repl; $applied = $aa }
     }
     if ($null -eq $applied) {
         Write-Host ("{0}: NOT APPLIED -- the text it edits was not found. The mutation test is stale, which means it is proving nothing." -f $m.Name)
         $missed++
         continue
     }
-    $f = Get-T66Failures $hh $ff $np $wp $ss
+    $f = Get-T66Failures $hh $ff $np $wp $ss $aa
     $new = @($f | Where-Object { $control -notcontains $_ })
     if ($new.Count -gt 0) {
         Write-Host ("{0}: CAUGHT ({1} new failure(s)) -- first: {2}" -f $m.Name, $new.Count, $new[0])
