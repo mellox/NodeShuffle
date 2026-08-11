@@ -1952,10 +1952,18 @@ private:
     // anything. The rays, the bearings, the reach, the eye height, the channel, the trace complexity
     // flag, the blocked threshold and the return value are untouched by this parameter -- it adds one
     // actor to the query params' ignore list and does nothing else.
+    // ns-t66-probe-self-ignore: IgnoreActor2 is a SECOND optional trace exclusion, same defaulting
+    // rule and same reason for existing (measured, docs/TECH-DEBT.md T66): NodeShuffle.ProbeNearestNode
+    // replays this predicate at a layout entry's own recorded centre, and when that entry has a live
+    // spawned actor standing there, every ray died at 0 cm on that actor's own name -- a self-hit, not
+    // a reading of the terrain around it. Both placement call sites keep passing nothing for this
+    // parameter too, so they stay 3-arg and bit-identical. It adds one MORE actor to the same ignore
+    // list IgnoreActor already adds to, and does nothing else.
     bool IsSpotEnclosed(const FVector& At, int32& OutBlockedRays, int32& OutTotalRays,
                         TArray<FNodeShuffleEnclosureRay>* OutRays = nullptr,
                         int32* OutBlockedThreshold = nullptr,
-                        const AActor* IgnoreActor = nullptr) const;
+                        const AActor* IgnoreActor = nullptr,
+                        const AActor* IgnoreActor2 = nullptr) const;
 
     // ns-t38-pointathere: READ-ONLY accessors for the two enclosure-probe geometry constants, so a
     // diagnostic can print how the predicate derives its probe eye from the point it is handed WITHOUT
@@ -1974,7 +1982,8 @@ private:
     // hands the predicate. IsSpotEnclosed is NOT touched by this: no parameter, no statement, no constant
     // and no call site of it changes, and nothing any gate reads consults this result.
     bool IsProbeEyeInsideSolidForDiag(const FVector& At, const AActor* IgnoreActor,
-                                      FNodeShuffleProbeEyeReading& Out) const;
+                                      FNodeShuffleProbeEyeReading& Out,
+                                      const AActor* IgnoreActor2 = nullptr) const;
 
     // ns-t42-centreshadow: THE CANDIDATE CONTAINMENT TEST, AS A SHADOW METRIC. NOTHING GATES ON IT.
     //

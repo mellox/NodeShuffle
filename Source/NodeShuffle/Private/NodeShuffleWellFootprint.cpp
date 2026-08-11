@@ -88,11 +88,19 @@ namespace
 // the spot to test it. The parameter defaults to nullptr, both placement call sites pass nothing, and
 // the placement behaviour is therefore bit-identical -- ignoring a pawn during PLACEMENT would be a
 // change to a gate the ordinary node path shares and is deliberately not done here.
+// ns-t66-probe-self-ignore: IgnoreActor2 ADDS ONE MORE ACTOR TO THE SAME IGNORE LIST AND CHANGES
+// NOTHING ELSE. docs/TECH-DEBT.md T66: NodeShuffle.ProbeNearestNode replays this predicate at a layout
+// entry's own recorded centre; when that entry already has a live spawned actor standing there, the 8
+// rays terminated inside THAT ACTOR at 0 cm instead -- a self-hit, measured 2026-08-10/11 as 8/8 blocked
+// on the probed entry's own actor name. Same shape of defect as T36, one indirection later. The
+// parameter defaults to nullptr, both placement call sites pass nothing for it, and the placement
+// behaviour is therefore bit-identical to before this change.
 bool ANodeShuffleSubsystem::IsSpotEnclosed(const FVector& At, int32& OutBlockedRays,
                                            int32& OutTotalRays,
                                            TArray<FNodeShuffleEnclosureRay>* OutRays,
                                            int32* OutBlockedThreshold,
-                                           const AActor* IgnoreActor) const
+                                           const AActor* IgnoreActor,
+                                           const AActor* IgnoreActor2) const
 {
     OutBlockedRays = 0;
     OutTotalRays = WellEnclosureRayCount;
@@ -119,6 +127,9 @@ bool ANodeShuffleSubsystem::IsSpotEnclosed(const FVector& At, int32& OutBlockedR
         // ns-t36-probefix: the ONLY new statement in this function. With IgnoreActor null -- which is
         // what every placement caller passes -- EncParams is byte-for-byte what it was before.
         if (IgnoreActor) { EncParams.AddIgnoredActor(IgnoreActor); }
+        // ns-t66-probe-self-ignore: same rule, second actor. With IgnoreActor2 null -- which is what
+        // every placement caller and both older probe call sites still pass -- this adds nothing.
+        if (IgnoreActor2) { EncParams.AddIgnoredActor(IgnoreActor2); }
         const bool bHit = World->LineTraceSingleByChannel(EncHit, Eye, To, ECC_WorldStatic, EncParams);
         if (bHit)
         {
@@ -171,7 +182,8 @@ void ANodeShuffleSubsystem::GetEnclosureProbeGeometryForDiag(float& OutEyeHeight
 // IsSpotEnclosed IS UNCHANGED BY ITS EXISTENCE: no parameter, statement, constant, ray, threshold or
 // call site of it is touched, and no gate reads this result.
 bool ANodeShuffleSubsystem::IsProbeEyeInsideSolidForDiag(const FVector& At, const AActor* IgnoreActor,
-                                                         FNodeShuffleProbeEyeReading& Out) const
+                                                         FNodeShuffleProbeEyeReading& Out,
+                                                         const AActor* IgnoreActor2) const
 {
     Out = FNodeShuffleProbeEyeReading();
     Out.Eye = FVector(At.X, At.Y, At.Z + WellEnclosureEyeHeightCm);
@@ -190,6 +202,10 @@ bool ANodeShuffleSubsystem::IsProbeEyeInsideSolidForDiag(const FVector& At, cons
     TArray<FOverlapResult> EyeHits;
     FCollisionQueryParams EyeParams(FName(TEXT("NodeShuffleProbeEyeInside")), false);
     if (IgnoreActor) { EyeParams.AddIgnoredActor(IgnoreActor); }
+    // T66 cold review F2: the eye reading prints immediately above the gate verdict; without the same
+    // self-ignore, a member probed at its own live actor's transform reads "eye inside solid" from its
+    // own collision and misleads the reader the same way the 8/8 gate self-hit did.
+    if (IgnoreActor2) { EyeParams.AddIgnoredActor(IgnoreActor2); }
     World->OverlapMultiByChannel(EyeHits, Out.Eye, FQuat::Identity, ECC_WorldStatic,
                                  FCollisionShape::MakeSphere(DiagEyeOverlapRadiusCm), EyeParams);
     Out.bRan = true;

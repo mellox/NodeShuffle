@@ -251,8 +251,11 @@ void ANodeShuffleSubsystem::PlacementAuditTick()
         }
 
         // ---- READING 3: the SHIPPED enclosure gate, unmodified, at the same point ----
+        // T66 cold review F1: pass the entry's own live actor as the second ignore, or every audited
+        // entry with a live node standing at its centre reads a self-hit 8-of-8 refusal -- the exact
+        // wrong-population signal this command exists to prevent (measured on entry 526, 2026-08-11).
         int32 Blocked = 0, Total = 0, Threshold = -1;
-        const bool bEnclosed = IsSpotEnclosed(E.Location, Blocked, Total, nullptr, &Threshold, Pawn);
+        const bool bEnclosed = IsSpotEnclosed(E.Location, Blocked, Total, nullptr, &Threshold, Pawn, LiveActor);
         if (bEnclosed)
         {
             ++PlacementAuditCounts[AB_EnclosureRefuse];

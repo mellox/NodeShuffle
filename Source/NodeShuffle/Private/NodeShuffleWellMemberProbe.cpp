@@ -322,15 +322,26 @@ void ANodeShuffleSubsystem::LogWellMemberProbeCensus() const
             FVector::Dist2D(MemberLoc, P) / 100.0, ToMember.Z / 100.0, MemberTurn);
 
         // ---- THE PROBE EYE READING, BEFORE ANY VERDICT (T38 cold review F1) ----
+        // T66 cold review F2: the self-ignore locals are hoisted above this reading so the eye overlap
+        // ignores the member's own live actor exactly as the gate leg below does — without it, a member
+        // probed at its own live actor's transform reads "eye inside solid" from its own collision,
+        // printed directly above a now-clean gate verdict. GateSelfIgnoreName is a NAMED local, not a
+        // temporary dereferenced inline, so the %s in the verdict line below stays valid past this
+        // statement.
+        const AActor* GateSelfIgnore = IsValid(LiveActor) ? LiveActor : nullptr;
+        const FString GateSelfIgnoreName = GateSelfIgnore
+            ? GateSelfIgnore->GetName()
+            : FString(TEXT("none"));
         FNodeShuffleProbeEyeReading Eye;
-        const bool bEyeInside = IsProbeEyeInsideSolidForDiag(MemberLoc, Pawn, Eye);
+        const bool bEyeInside = IsProbeEyeInsideSolidForDiag(MemberLoc, Pawn, Eye, GateSelfIgnore);
         if (!Eye.bRan) { EyeNotMeasured++; } else if (bEyeInside) { EyeInsideSolid++; }
         UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLPROBE: member %d of %d -- probe eye inside solid geometry: %s. The eye sits at %s, ")
             TEXT("which is where the enclosure predicate starts its rays for this member. One sphere of ")
             TEXT("radius %.0f cm was overlapped there on the same channel those rays are cast on, with ")
-            TEXT("the same one actor on the ignore list; it returned %d result(s), %d of which report ")
-            TEXT("blocking on that channel: %s. WHY THIS LINE COMES FIRST: when that eye starts inside a ")
+            TEXT("the same ignore list as those rays (pawn, ignoredOwnActor=%s); it returned %d ")
+            TEXT("result(s), %d of which report blocking on that channel: %s. WHY THIS LINE COMES FIRST: ")
+            TEXT("when that eye starts inside a ")
             TEXT("blocking body, every ray below terminates at once and the verdict reads as a confident ")
             TEXT("full refusal that contains no terrain. A negative reading is a statement about this ")
             TEXT("channel at this radius and is not a claim that the eye stands in open air. This line ")
@@ -338,16 +349,25 @@ void ANodeShuffleSubsystem::LogWellMemberProbeCensus() const
             MemberIdx + 1, MembersInGroup,
             !Eye.bRan ? TEXT("UNMEASURED -- the overlap did not run, so neither answer is reported")
                       : (bEyeInside ? TEXT("YES") : TEXT("NO")),
-            *Eye.Eye.ToCompactString(), Eye.ProbeRadiusCm,
+            *Eye.Eye.ToCompactString(), Eye.ProbeRadiusCm, *GateSelfIgnoreName,
             Eye.OverlapResults, Eye.BlockingOverlaps, *Eye.BlockingActors);
 
         // ---- THE ENCLOSURE GATE, AT THIS MEMBER'S OWN LOCATION ----
         // The SAME member function both placement paths call, with the same recorder and threshold
         // out-params NodeShuffle.Here uses and the pawn on the ignore list exactly as it passes it.
         // Nothing here reimplements the predicate.
+        // ns-t66-probe-self-ignore (P2 check on the T66 packet: this leg IS exposed, because MemberLoc
+        // is this member's own live actor's transform whenever Source == LiveActor): this member's own
+        // live actor rides along as the gate's SECOND ignore actor, mirroring what the shadow and
+        // containment instruments below already do with their own per-block Subject locals. Null when
+        // there is no live actor for this member (IsValid-checked; LiveActor above is null or stale
+        // when this member resolved from the saved record instead), which makes this call
+        // byte-identical to the pre-T66 one. GateSelfIgnore/GateSelfIgnoreName are declared above the
+        // eye reading (T66 cold review F2) and shared by both legs.
         TArray<FNodeShuffleEnclosureRay> Rays;
         int32 Blocked = 0, Total = 0, Threshold = -1;
-        const bool bEnclosed = IsSpotEnclosed(MemberLoc, Blocked, Total, &Rays, &Threshold, Pawn);
+        const bool bEnclosed =
+            IsSpotEnclosed(MemberLoc, Blocked, Total, &Rays, &Threshold, Pawn, GateSelfIgnore);
         ThresholdSeen = Threshold;
         if (Rays.Num() == 0) { PredicateCastNoRays++; }
         if (bEnclosed) { RefusedByPredicate++; }
@@ -365,25 +385,27 @@ void ANodeShuffleSubsystem::LogWellMemberProbeCensus() const
 
         UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLPROBE: member %d of %d -- ENCLOSURE GATE at %s: %d of %d rays blocked, and this ")
-            TEXT("build refuses a spot at %d or more blocked, so the verdict for this member is %s. The ")
-            TEXT("threshold and the ray count here were read back from the predicate this run. This is ")
-            TEXT("the same function both placement paths call, but it is NOT called with the same ")
-            TEXT("arguments: this command hands it the pawn to ignore and the placement paths hand it ")
-            TEXT("nothing, and a placement probe tests a location it settles for itself rather than the ")
-            TEXT("one this member ended up at. So this is a statement about the terrain around this ")
-            TEXT("member now, not a prediction of what a placement probe would return. WHAT THIS SHAPE ")
-            TEXT("OF TEST CANNOT SEE, by construction and not by observation: anything blocking beyond ")
-            TEXT("one ray's reach, anything above or below the ray height, and any gap between two ")
-            TEXT("bearings. Read it together with this member's eye line above. A ray count of zero ")
-            TEXT("means the predicate cast no rays at all and the verdict is not a measurement of this ")
-            TEXT("spot. Each ray reports the trace it made and nothing about why the world is shaped ")
-            TEXT("that way."),
+            TEXT("build refuses a spot at %d or more blocked, so the verdict for this member is %s. ")
+            TEXT("ignoredOwnActor=%s. The threshold and the ray count here were read back from the ")
+            TEXT("predicate this run. This is the same function both placement paths call, but it is ")
+            TEXT("NOT called with the same arguments: this command hands it the pawn to ignore, and now ")
+            TEXT("(ns-t66) this member's own live actor too when one resolved this run, while the ")
+            TEXT("placement paths hand it nothing at all, and a placement probe tests a location it ")
+            TEXT("settles for itself rather than the one this member ended up at. So this is a statement ")
+            TEXT("about the terrain around this member now, not a prediction of what a placement probe ")
+            TEXT("would return. WHAT THIS SHAPE OF TEST CANNOT SEE, by construction and not by ")
+            TEXT("observation: anything blocking beyond one ray's reach, anything above or below the ray ")
+            TEXT("height, and any gap between two bearings. Read it together with this member's eye line ")
+            TEXT("above. A ray count of zero means the predicate cast no rays at all and the verdict is ")
+            TEXT("not a measurement of this spot. Each ray reports the trace it made and nothing about ")
+            TEXT("why the world is shaped that way."),
             MemberIdx + 1, MembersInGroup, *MemberLoc.ToCompactString(),
             Blocked, Total, Threshold,
             bEnclosed
                 ? TEXT("REFUSED (this predicate, called with this command's exclusion, refuses this point)")
                 : TEXT("not refused (this predicate, called with this command's exclusion, does not ")
-                  TEXT("refuse this point)"));
+                  TEXT("refuse this point)"),
+            *GateSelfIgnoreName);
 
         // ---- THE SHADOW CENTRE-CONTAINMENT READING, AND AN EXPLICIT AGREE/DISAGREE ----
         // ns-t42-centreshadow. NOTHING GATES ON THIS. It is printed AFTER the shipped verdict above, on

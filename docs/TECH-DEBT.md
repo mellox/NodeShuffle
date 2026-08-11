@@ -595,6 +595,21 @@ while the whole dealt-well population was 23 — the value exceeds the populatio
 traffic, not a well count; the 4→45 jump lands at the reroll→reload boundary. Benign accounting; do not
 read it as "N wells were filtered", and slice it by session before quoting it anywhere.
 
+### T66. THE PROBE COMMANDS' ENCLOSURE-GATE LEG SELF-HIT THE PROBED ENTRY'S OWN LIVE ACTOR — 8/8 rays blocked at 0 cm by the node itself — a false REFUSE the real placement path can never produce. **FIXED same day (packet ns-t66, marker t66-2); the suppression MECHANISM is ASSUMED until the in-game re-probe.**
+**Measured 2026-08-11 (entry 526, `BP_ResourdeNode_Alkali_C_2147344490`, lithium):** every gate ray hit
+the probed entry's own live actor at 0 cm because the probe replays the gate at a spot where the node
+NOW stands, while real placement evaluates spots before any node exists — the containment instrument
+already excluded its subject; the gate leg did not. **Fix:** `IsSpotEnclosed` gained an additive
+optional `IgnoreActor2` (default null — all 5 non-probe callers byte-identical, lint-pinned); NODEPROBE,
+WELLPROBE (gate leg + eye reading, review F2) and `AuditPlacements` reading 3 (review F1 — its
+severity ranking was poisoned by the same self-hit) now pass the probed entry's IsValid-checked live
+actor, and every verdict line prints `ignoredOwnActor=` read back from the pointer the call used.
+**Graded ASSUMED, not proved:** that `AddIgnoredActor` suppresses the self-hit at runtime is Unreal's
+closed-source collision layer — same class T36 needed an in-game log excerpt for. The re-probe at
+entry 526 (`ignoredOwnActor=` names the actor, per-ray lines show terrain, DISAGREE resolves or
+becomes genuine) is the gate for trusting the new readings; group tallies must move one-directionally
+(ignoring more can only reduce blocked counts). Review: `t66-coldreview.md` SHIP WITH TESTS.
+
 ### T67. FOUR PLAYER-FACING SURFACES ASSERT A REMOVAL THE HOOK NEVER OBSERVES — "tries to remove" / "steps in to stop that removal" — where what is measured is a KBFL REQUIREMENT EVALUATION. Copy-only; filed from T65's park + cold-review L5 (2026-08-11).
 The four: `NodeShuffleConfig.cpp:346`, `:349`, `:449` (tooltips) and `NodeShuffleObserveNotice.cpp:205`
 (the notice's enforcing branch). T58's RefinedPower case measured that an asset can evaluate the

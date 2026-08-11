@@ -139,11 +139,14 @@ void ANodeShuffleSubsystem::LogNearestNodeProbe()
         TEXT("(originally '%s'), recorded at %s, %.0f cm from you, settled by a ground trace: %d, cave ")
         TEXT("cell: %d, resource form byte %d. Live spawned actor: %s. It was the nearest of %d eligible ")
         TEXT("entr(ies). THE CENTRE IS THE POINT PROBED -- not an aim impact and not the ground under ")
-        TEXT("you -- because that is where an extractor snaps. Two different exclusions follow and they ")
-        TEXT("are not interchangeable: the shipped enclosure gate is handed YOUR PAWN as its ignore ")
-        TEXT("actor, exactly as NodeShuffle.Here and NodeShuffle.WellProbe hand it, while the ")
-        TEXT("containment instrument is handed THIS NODE'S OWN actor as its subject so the node cannot ")
-        TEXT("report itself as the rock it is inside."),
+        TEXT("you -- because that is where an extractor snaps. Two exclusions follow and they are still ")
+        TEXT("not interchangeable, though ns-t66 narrowed the gap between them: the shipped enclosure ")
+        TEXT("gate is handed YOUR PAWN, and now this entry's own live actor too when one resolved this ")
+        TEXT("run, both on its ignore list -- the pawn exactly as NodeShuffle.Here and NodeShuffle.WellProbe ")
+        TEXT("hand it, the entry's own actor added by ns-t66 so a probe at this entry's own centre does ")
+        TEXT("not self-hit the entry it is measuring -- while the containment instrument is handed THIS ")
+        TEXT("NODE'S OWN actor as its SUBJECT, a different mechanism (hits on it are classified after the ")
+        TEXT("query runs, not withheld from the trace) answering a different question."),
         BestIdx + 1, Layout.Num(), *E.AssignedResourceClassPath, *E.OriginalResourceClassPath,
         *E.Location.ToCompactString(), BestDistCm, E.bRayCasted ? 1 : 0, E.bUnderground ? 1 : 0,
         static_cast<int32>(E.ResourceForm), *SubjectName, Eligible);
@@ -151,9 +154,13 @@ void ANodeShuffleSubsystem::LogNearestNodeProbe()
     // ---- THE SHIPPED ENCLOSURE GATE, AT THE SAME POINT ----
     // The SAME member function both placement paths call, with the same recorder and threshold
     // out-params and the same pawn on the ignore list. Nothing here reimplements the predicate.
+    // ns-t66-probe-self-ignore: Subject (this entry's own live actor, IsValid-checked, computed above)
+    // now rides along as the gate's SECOND ignore actor. Null when this entry has no live actor, which
+    // makes this call byte-identical to the pre-T66 one -- there was nothing to self-hit in that case
+    // and there is still nothing added to the ignore list for it.
     TArray<FNodeShuffleEnclosureRay> Rays;
     int32 Blocked = 0, Total = 0, Threshold = -1;
-    const bool bEnclosed = IsSpotEnclosed(E.Location, Blocked, Total, &Rays, &Threshold, Pawn);
+    const bool bEnclosed = IsSpotEnclosed(E.Location, Blocked, Total, &Rays, &Threshold, Pawn, Subject);
 
     for (int32 i = 0; i < Rays.Num(); ++i)
     {
@@ -166,14 +173,18 @@ void ANodeShuffleSubsystem::LogNearestNodeProbe()
             R.bBlocked ? *R.HitActor : TEXT(""));
     }
 
+    // ns-t66-probe-self-ignore: read back from the SAME Subject pointer the call above was actually
+    // given, never a separate claim -- "none" when this entry had no live actor this run, which is the
+    // only case where this field's value differs from what the pre-T66 build would have produced.
+    const TCHAR* IgnoredOwnActorTok = Subject ? *SubjectName : TEXT("none");
     UE_LOG(LogNodeShuffle, Display,
         TEXT("NODEPROBE: ENCLOSURE GATE at %s: %d of %d rays blocked, and this build refuses a spot at %d ")
-        TEXT("or more blocked, so the verdict for this entry is %s. The threshold and the ray count were ")
-        TEXT("read back from the predicate on this run. This gate is horizontal-only at one height ")
-        TEXT("(docs/TECH-DEBT.md T37, T41) -- it is not a containment test and a pass from it is not ")
-        TEXT("evidence that the centre is in open air."),
+        TEXT("or more blocked, so the verdict for this entry is %s. ignoredOwnActor=%s. The threshold and ")
+        TEXT("the ray count were read back from the predicate on this run. This gate is horizontal-only ")
+        TEXT("at one height (docs/TECH-DEBT.md T37, T41) -- it is not a containment test and a pass from ")
+        TEXT("it is not evidence that the centre is in open air."),
         *E.Location.ToCompactString(), Blocked, Total, Threshold,
-        bEnclosed ? TEXT("REFUSE") : TEXT("accept"));
+        bEnclosed ? TEXT("REFUSE") : TEXT("accept"), IgnoredOwnActorTok);
 
     // ---- THE POSITIVE-ONLY CONTAINMENT INSTRUMENT, AT THE SAME POINT ----
     // ONE EMITTER, T26. The wording is LogTotallyInsideReading's, not this file's: three copies of one
