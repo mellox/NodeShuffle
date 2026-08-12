@@ -1,4 +1,4 @@
-# ns-t66-probe-self-ignore -- THE LINT FOR THE PROBE-COMMAND GATE-LEG SELF-IGNORE.
+﻿# ns-t66-probe-self-ignore -- THE LINT FOR THE PROBE-COMMAND GATE-LEG SELF-IGNORE.
 #
 # THE DEFECT THIS PINS AGAINST. NodeShuffle.ProbeNearestNode (NODEPROBE) replays the shipped 8-ray
 # enclosure gate at a layout entry's own RECORDED CENTRE. When that entry already has a live spawned
@@ -122,6 +122,19 @@ function Get-T66Failures([string]$hText, [string]$footprintText, [string]$nodePr
     if ($nodeProbe -notmatch 'ignoredOwnActor=%s') {
         $fails += "FAIL: $nodeProbeFile's ENCLOSURE GATE verdict line no longer carries an ignoredOwnActor=%s field -- the probe output no longer says what this run excluded."
     }
+    # T66 cold review F5 (lint gap) + F2. The legend pin above proves the FIELD is in the format string;
+    # this proves the verdict UE_LOG actually PASSES both readback arguments. Anchored on the verdict
+    # ternary that immediately precedes them, so it can only be satisfied by that call's argument list
+    # and not by any other occurrence of either name. WELLPROBE has had this half since T66 (its
+    # *GateSelfIgnoreName pin); NODEPROBE did not.
+    if ($nodeProbe -notmatch 'bEnclosed \? TEXT\("REFUSE"\) : TEXT\("accept"\), IgnoredOwnActorTok, \*IgnoredOwnActorWhere\)') {
+        $fails += "FAIL: $nodeProbeFile's ENCLOSURE GATE verdict UE_LOG no longer passes BOTH readbacks (IgnoredOwnActorTok and *IgnoredOwnActorWhere) after its verdict argument. Dropping the second one silently removes the measured separation between the excluded actor and the point actually probed -- the F2 divergence a redealt entry produces -- while the line still names an actor as if it stood there."
+    }
+    # F2's measurement itself: the separation must be MEASURED on this run from the same Subject pointer
+    # the gate call used, never assumed to be zero and never hardcoded.
+    if ($nodeProbe -notmatch 'FVector::Dist\(Subject->GetActorLocation\(\), E\.Location\)') {
+        $fails += "FAIL: $nodeProbeFile no longer measures the distance between the excluded actor's transform and E.Location. NODEPROBE probes the RECORDED centre while excluding whatever the guid resolved to; a water/cliff redeal moves the record and leaves the actor, so without this measurement a cleared ray can be attributed to terrain that was never measured."
+    }
 
     # ---- HALF 3: WELLPROBE's per-member gate leg passes its own live actor as the second ignore actor -
     if ($wellProbe -notmatch 'GateSelfIgnore\s*=\s*IsValid\(LiveActor\)\s*\?\s*LiveActor\s*:\s*nullptr') {
@@ -228,7 +241,7 @@ $mutants = @(
     @{ Name = 'M10 change the no-live-actor fallback token away from "none" (WELLPROBE)'; File = 'wellProbe';
        Find = ': FString(TEXT("none"));'; Repl = ': FString(TEXT("n/a"));' },
     @{ Name = 'M11 delete the ignoredOwnActor field from the NODEPROBE verdict legend'; File = 'nodeProbe';
-       Find = 'TEXT("or more blocked, so the verdict for this entry is %s. ignoredOwnActor=%s. The threshold and ")';
+       Find = 'TEXT("or more blocked, so the verdict for this entry is %s. ignoredOwnActor=%s%s. The threshold and ")';
        Repl = 'TEXT("or more blocked, so the verdict for this entry is %s. The threshold and ")' },
     @{ Name = 'M12 delete the ignoredOwnActor field from the WELLPROBE verdict legend'; File = 'wellProbe';
        Find = 'TEXT("ignoredOwnActor=%s. The threshold and the ray count here were read back from the ")';
@@ -247,7 +260,13 @@ $mutants = @(
        Find = 'if (IgnoreActor2) { EyeParams.AddIgnoredActor(IgnoreActor2); }'; Repl = '' },
     @{ Name = 'M16 revert the audit-site 7th arg (supersession addendum: the fix was unpinned)'; File = 'audit';
        Find = 'IsSpotEnclosed(E.Location, Blocked, Total, nullptr, &Threshold, Pawn, LiveActor);';
-       Repl = 'IsSpotEnclosed(E.Location, Blocked, Total, nullptr, &Threshold, Pawn);' }
+       Repl = 'IsSpotEnclosed(E.Location, Blocked, Total, nullptr, &Threshold, Pawn);' },
+    # M17 is the addendum's spec'd "M16" RENUMBERED: M16 was already taken by the audit-site pin that
+    # landed with the T66 lint commit. It drops the second readback argument from the NODEPROBE verdict
+    # call -- the one-line edit that turns F2's measured separation back into an assumption.
+    @{ Name = 'M17 drop the measured-offset argument from the NODEPROBE verdict line (cold review F2/F5)'; File = 'nodeProbe';
+       Find = 'bEnclosed ? TEXT("REFUSE") : TEXT("accept"), IgnoredOwnActorTok, *IgnoredOwnActorWhere);';
+       Repl = 'bEnclosed ? TEXT("REFUSE") : TEXT("accept"), IgnoredOwnActorTok);' }
 )
 
 $missed = 0

@@ -84,8 +84,10 @@ static bool GNodeShuffleWarnedListUnreachable = false;
 // the same prefix against /Game/), so it is a measurement this list already rests on rather than a new
 // claim. Without it two mods' similarly-named ores -- and a vanilla resource carried by a mod's node
 // versus the same-named asset from a content pack -- render identically, which is the ambiguity T62/T63
-// hit when a notice trimmed it away. For a base-game asset the segment reads "Game", which is the
-// literal mount root and not an interpretation of it.
+// hit when a notice trimmed it away. For a base-game asset the segment reads "Game" and T67 RENDERS
+// THAT ONE SEGMENT as "Satisfactory" (user-approved 2026-08-11); every other mount root is printed
+// verbatim. The mapping is a single equality test in the parts function below -- the string that is
+// TESTED anywhere in this mod is still the literal path.
 //
 // THE TRIM IS DELIBERATELY TIMID. "_C" comes off (it is the Blueprint-generated-class suffix, always
 // present on these paths); a leading "Desc_"/"Res_" comes off ONLY when the remainder is non-empty and
@@ -98,21 +100,58 @@ static bool GNodeShuffleWarnedListUnreachable = false;
 // PARSE FAILURE FALLS BACK TO THE FULL PATH, never to a leaf: a label that cannot name its mount must
 // not silently look like one that can. bOutParsed reports which happened; it is counted, with a
 // denominator, on the T65LABEL and T65ROUNDTRIP lines.
+// ---- T67 (2026-08-11): THE DERIVATION IS SPLIT INTO ITS TWO PARTS, and the parts are what the panel
+// row now carries. The composed "<Mount>: <Name>" string is UNCHANGED and is still what the chat notice
+// and the logs print -- only the PANEL consumes the parts, because SML's section widget renders
+// `{HeaderText} ({DisplayName})` (measured in Widget_CP_Section_Base.uasset; see NodeShuffleConfig.cpp)
+// and stamping one string into both slots is what printed every row twice.
+//
+// T67 ITEM D (user-approved 2026-08-11): the mount root "Game" is RENDERED as "Satisfactory". The
+// mapping is one equality test on the first path segment and it is applied HERE, once, so the panel,
+// the notice and the logs cannot disagree about it. GRADED: that /Game/ is the base game's content root
+// is ASSUMED -- it is the engine mount-root convention and the SAME assumption the Foreign
+// classification itself rests on (NodeShuffle.cpp:171-172). Nothing measures the product name; the
+// string is a rendering of the mount, not a claim about who authored the asset.
+static void NodeShuffleDeriveForeignResourceLabelParts(const FString& ResourceClassPath,
+    FString& OutMountLabel, FString& OutNameLabel, bool* bOutParsed);
+
 static FString NodeShuffleMakeForeignResourceLabel(const FString& ResourceClassPath, bool* bOutParsed)
 {
+    FString MountRoot;
+    FString Leaf;
+    bool bParsed = false;
+    NodeShuffleDeriveForeignResourceLabelParts(ResourceClassPath, MountRoot, Leaf, &bParsed);
+    if (bOutParsed) { *bOutParsed = bParsed; }
+    if (!bParsed)
+    {
+        return ResourceClassPath;
+    }
+    return MountRoot + TEXT(": ") + Leaf;
+}
+
+// THE PARTS. On a parse failure OutNameLabel is the WHOLE PATH (the T65 contract: a label that cannot
+// name its mount must not look like one that can) and OutMountLabel says the parse failed rather than
+// naming a mount that was never read.
+static void NodeShuffleDeriveForeignResourceLabelParts(const FString& ResourceClassPath,
+    FString& OutMountLabel, FString& OutNameLabel, bool* bOutParsed)
+{
+    OutMountLabel = TEXT("path could not be parsed");
+    OutNameLabel = ResourceClassPath;
     if (bOutParsed) { *bOutParsed = false; }
     if (!ResourceClassPath.StartsWith(TEXT("/"), ESearchCase::CaseSensitive))
     {
-        return ResourceClassPath;
+        return;
     }
     // Mount root = text between the leading slash and the next one.
     const FString AfterLeadingSlash = ResourceClassPath.Mid(1);
     int32 SlashIndex = INDEX_NONE;
     if (!AfterLeadingSlash.FindChar(TEXT('/'), SlashIndex) || SlashIndex <= 0)
     {
-        return ResourceClassPath;
+        return;
     }
-    const FString MountRoot = AfterLeadingSlash.Left(SlashIndex);
+    const FString MountSegment = AfterLeadingSlash.Left(SlashIndex);
+    // T67 item D. The literal mount segment is still what is TESTED; only what is SHOWN changes.
+    const FString MountRoot = (MountSegment == TEXT("Game")) ? FString(TEXT("Satisfactory")) : MountSegment;
 
     // Descriptor name = text after the last '.', or after the last '/' when the path carries no object
     // suffix at all (a package-only path).
@@ -149,10 +188,11 @@ static FString NodeShuffleMakeForeignResourceLabel(const FString& ResourceClassP
     }
     if (MountRoot.IsEmpty() || Leaf.IsEmpty())
     {
-        return ResourceClassPath;
+        return;
     }
+    OutMountLabel = MountRoot;
+    OutNameLabel = Leaf;
     if (bOutParsed) { *bOutParsed = true; }
-    return MountRoot + TEXT(": ") + Leaf;
 }
 
 void FNodeShuffleModule::ResetSeenForeignResources()
@@ -197,7 +237,12 @@ void FNodeShuffleModule::NoteForeignResourceSighting(const FString& ResourceClas
     FNodeShuffleSeenForeignResource& Row = GNodeShuffleSeenForeignResources.Add(ResourceClassPath);
     Row.ResourceClassPath = ResourceClassPath;
     bool bLabelParsed = false;
-    Row.DisplayName = NodeShuffleMakeForeignResourceLabel(ResourceClassPath, &bLabelParsed);
+    // T67: derive ONCE into the two parts, then compose. The panel takes the parts, the notice and the
+    // logs take the composed string, and nothing re-derives either from the other.
+    NodeShuffleDeriveForeignResourceLabelParts(ResourceClassPath, Row.MountLabel, Row.NameLabel,
+        &bLabelParsed);
+    Row.bLabelParsed = bLabelParsed;
+    Row.DisplayName = bLabelParsed ? (Row.MountLabel + TEXT(": ") + Row.NameLabel) : ResourceClassPath;
     ++GNodeShuffleLabelsDerivedThisSession;
     if (!bLabelParsed) { ++GNodeShuffleLabelFallbacksThisSession; }
     Row.FirstNodeClassName = NodeClassName;
@@ -274,12 +319,20 @@ namespace
     //
     // FullPath may be empty at the template-fallback call sites; an empty one leaves the tooltip alone
     // rather than stamping a blank over the template's fallback text.
-    void NodeShuffleStampRowLabel(UConfigPropertySection* Section, const FString& Label,
-        const FString& FullPath)
+    //
+    // ---- T67: THE TWO LABEL SLOTS NOW CARRY DIFFERENT PARTS. -------------------------------------
+    // MEASURED (Widget_CP_Section_Base.uasset, byte-scan 2026-08-11): SML renders a section header as
+    // the literal format `{HeaderText} ({DisplayName})`. T65 stamped ONE string into BOTH, which is why
+    // every row printed as `X (X)`. Neither slot can be left empty -- the parentheses are literal, so
+    // an empty slot renders "X ()" -- so the header takes the resource NAME and the bracket takes the
+    // MOUNT LABEL. Same derivation, same two components T65 declared load-bearing, no repetition.
+    // THIS IS STILL THE ONLY PLACE ANY ROW LABEL SURFACE IS WRITTEN.
+    void NodeShuffleStampRowLabel(UConfigPropertySection* Section, const FString& NameLabel,
+        const FString& MountLabel, const FString& FullPath)
     {
         if (!Section) { return; }
-        const FText LabelText = FText::FromString(Label);
-        Section->DisplayName = LabelText;
+        // The bracket slot. DisplayName is NOT serialized by SML, so this is a UI-only write.
+        Section->DisplayName = FText::FromString(MountLabel);
         if (!FullPath.IsEmpty())
         {
             // EVERY ASSERTION GRADED. "full asset path" and "the row's identity" -- MEASURED: this is
@@ -288,14 +341,18 @@ namespace
             // before the colon is the content folder it comes from" -- MEASURED: the label is built from
             // the first path segment. NOT CLAIMED: anything about who authored the resource, whether it
             // is a base-game asset, or what the other mod would have done to it.
+            // T67: the sentence describing the label follows the label. The row label no longer carries
+            // a colon -- it is "<name> (<content>)" -- so the tooltip says that instead. MEASURED: the
+            // bracketed text is the first path segment of the string printed on the line above it.
             Section->Tooltip = FText::FromString(FString::Printf(
                 TEXT("%s\n\nThat is the resource's full asset path and this row's identity. In the row ")
-                TEXT("label, the name before the colon is the content folder the asset comes from."),
+                TEXT("label, the name in brackets says which content the asset comes from."),
                 *FullPath));
         }
         if (UCP_Section* RowWidget = Cast<UCP_Section>(Section))
         {
-            RowWidget->HeaderText = LabelText;
+            // The header slot.
+            RowWidget->HeaderText = FText::FromString(NameLabel);
         }
     }
 
@@ -375,6 +432,64 @@ void FNodeShuffleModule::LatchForeignResourceOptOutsFromConfig(UObject* WorldCon
         GNodeShuffleForeignOptOutPaths.Num());
 }
 
+// ---- T67 ITEM C: THE MAIN-MENU LABEL PASS --------------------------------------------------------
+// WHY IT EXISTS. SML greys a bRequiresWorldReload property out in the pause menu, so the ONLY place a
+// player can tick or untick a protection row is the MAIN MENU -- and until now the only code that ever
+// stamped a row label ran from ApplyLayout, which is in-world and authority-only. The editable surface
+// was therefore the unlabelled one, which is the wrong way round.
+//
+// WHY IT IS SAFE TO RUN WITHOUT A WORLD'S WORTH OF STATE: the label derives from the row's own path
+// STRING and nothing else -- no actor, no resource descriptor, no world object is read (verified
+// against NodeShuffleDeriveForeignResourceLabelParts above, which takes an FString and returns two).
+//
+// WHAT IT DELIBERATELY DOES NOT DO: add a row, write any value, mark the config dirty, or save. Adding
+// rows is the population pass's job and requires sightings, which only exist in a world; and a
+// main-menu pass that saved would rewrite NodeShuffle.cfg on every boot. DisplayName/HeaderText/Tooltip
+// are not serialized by SML, so this pass cannot change the file even by accident.
+void FNodeShuffleModule::StampForeignResourceRowLabelsFromConfig(UObject* WorldContext)
+{
+    UConfigPropertyArray* Rows = NodeShuffleGetRowsArray(WorldContext, nullptr);
+    if (!Rows)
+    {
+        // Named, not silent -- the same fail-visible rule the latch follows. It reports the branch it
+        // took, and states no reason for it.
+        UE_LOG(LogNodeShuffle, Warning,
+            TEXT("T67MENUSTAMP: the per-resource protection list was not resolvable at this call, so no ")
+            TEXT("row label was stamped. Rows still show the element template's fallback text."));
+        return;
+    }
+
+    int32 RowsWalked = 0;
+    int32 Malformed = 0;
+    int32 BlankPaths = 0;
+    int32 Stamped = 0;
+    int32 Fallbacks = 0;
+    for (UConfigProperty* Element : Rows->Values)
+    {
+        ++RowsWalked;
+        UConfigPropertyString* ResourceProp = nullptr;
+        UConfigPropertyBool* ProtectedProp = nullptr;
+        if (!NodeShuffleReadRow(Element, &ResourceProp, &ProtectedProp)) { ++Malformed; continue; }
+        const FString Path = ResourceProp->Value.TrimStartAndEnd();
+        if (Path.IsEmpty()) { ++BlankPaths; continue; }
+        bool bParsed = false;
+        FString MountLabel;
+        FString NameLabel;
+        NodeShuffleDeriveForeignResourceLabelParts(Path, MountLabel, NameLabel, &bParsed);
+        if (!bParsed) { ++Fallbacks; }
+        NodeShuffleStampRowLabel(Cast<UConfigPropertySection>(Element), NameLabel, MountLabel, Path);
+        ++Stamped;
+    }
+
+    // The census for this pass. Every field is a count this function took on this call; none of them
+    // states a cause, and the fallback count prints with the denominator it was drawn from.
+    // Arity hand-counted: 5 format specifiers, 5 arguments.
+    UE_LOG(LogNodeShuffle, Display,
+        TEXT("T67MENUSTAMP: rowsWalked %d rowsStamped %d rowsMalformedShape %d rowsBlankPath %d ")
+        TEXT("labelFallbacksToFullPath %d"),
+        RowsWalked, Stamped, Malformed, BlankPaths, Fallbacks);
+}
+
 void FNodeShuffleModule::SyncForeignResourceRowsToConfig(UObject* WorldContext)
 {
     // Steady state costs one integer compare. The first pass of a world always runs (LastSynced is -1)
@@ -431,6 +546,12 @@ void FNodeShuffleModule::SyncForeignResourceRowsToConfig(UObject* WorldContext)
     // NodeShuffle.cfg, which is what makes the T65ROUNDTRIP line below a reload measurement.
     int32 BlankPaths = 0;
     int32 RowsWithPathKey = 0;
+    // T65 REVIEW M2, FIX (b): the round-trip line reported how many rows survived a reload but not how
+    // many of them carried the player's UNTICK -- the one field in a row a player can actually set. A
+    // reload that silently reset every tick to the default read identically to a clean one. Counted over
+    // the rows that were already in the array when this pass started, i.e. on the first pass exactly the
+    // rows read back from NodeShuffle.cfg.
+    int32 RowsUntickedOnEntry = 0;
     int32 LabelsDerivedThisPass = 0;
     int32 LabelFallbacksThisPass = 0;
     TArray<FString> FirstSyncLabels; // filled only on the first pass; the T65LABEL listing
@@ -453,6 +574,7 @@ void FNodeShuffleModule::SyncForeignResourceRowsToConfig(UObject* WorldContext)
         const FString Path = ResourceProp->Value.TrimStartAndEnd();
         if (Path.IsEmpty()) { ++BlankPaths; continue; }
         ++RowsWithPathKey;
+        if (!ProtectedProp->Value) { ++RowsUntickedOnEntry; } // M2b
         UConfigPropertySection* Section = Cast<UConfigPropertySection>(Element);
         ExistingByPath.Add(Path, Section);
         // Stamp the UI label every pass we run. DisplayName is not serialized, so a row read back from
@@ -463,11 +585,16 @@ void FNodeShuffleModule::SyncForeignResourceRowsToConfig(UObject* WorldContext)
         // T65: derive once, use for the label AND count it. The FULL PATH goes to the tooltip; it is
         // still the row's stored key and this pass does not write it.
         bool bRowLabelParsed = false;
-        const FString RowLabel = NodeShuffleMakeForeignResourceLabel(Path, &bRowLabelParsed);
+        FString RowMountLabel;
+        FString RowNameLabel;
+        NodeShuffleDeriveForeignResourceLabelParts(Path, RowMountLabel, RowNameLabel, &bRowLabelParsed);
+        // The COMPOSED form is still what the listing prints -- the log's label text must stay
+        // comparable with the notice's and with every earlier session's log.
+        const FString RowLabel = bRowLabelParsed ? (RowMountLabel + TEXT(": ") + RowNameLabel) : Path;
         ++LabelsDerivedThisPass;
         if (!bRowLabelParsed) { ++LabelFallbacksThisPass; }
         if (bFirstSyncThisLoad) { FirstSyncLabels.Add(RowLabel); }
-        NodeShuffleStampRowLabel(Section, RowLabel, Path);
+        NodeShuffleStampRowLabel(Section, RowNameLabel, RowMountLabel, Path);
     }
     if (bFirstSyncThisLoad)
     {
@@ -484,11 +611,16 @@ void FNodeShuffleModule::SyncForeignResourceRowsToConfig(UObject* WorldContext)
         // shape with an empty path; how many labels this pass derived from those rows; and how many of
         // those derivations could not be parsed and fell back to printing the full path.
         // A NON-ZERO diskRowsRead WITH AN EQUAL diskRowsWithPathKey IS THE ROUND-TRIP EVIDENCE.
-        // Arity hand-counted: 6 format specifiers, 6 arguments.
+        // T67 (T65 review M2 fix b) ADDS ONE FIELD: how many of those rows arrived UNTICKED. It is the
+        // only per-row state a player sets, and without it a reload that reset every tick to the default
+        // is indistinguishable from a save that had no unticks. It is a count of rows read this pass,
+        // NOT of the latched opt-out set -- T60CENSUS carries that one, under its own name.
+        // Arity hand-counted: 7 format specifiers, 7 arguments.
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("T65ROUNDTRIP first-sync: diskRowsRead %d diskRowsWithPathKey %d diskRowsMalformedShape ")
-            TEXT("%d diskRowsBlankPath %d labelsDerivedFromDiskRows %d labelFallbacksToFullPath %d"),
-            Rows->Values.Num(), RowsWithPathKey, Malformed, BlankPaths,
+            TEXT("T65ROUNDTRIP first-sync: diskRowsRead %d diskRowsWithPathKey %d diskRowsUnticked %d ")
+            TEXT("diskRowsMalformedShape %d diskRowsBlankPath %d labelsDerivedFromDiskRows %d ")
+            TEXT("labelFallbacksToFullPath %d"),
+            Rows->Values.Num(), RowsWithPathKey, RowsUntickedOnEntry, Malformed, BlankPaths,
             LabelsDerivedThisPass, LabelFallbacksThisPass);
 
         // The listing. VERBOSE and once per world session: it is the only place the derived text itself
@@ -557,7 +689,7 @@ void FNodeShuffleModule::SyncForeignResourceRowsToConfig(UObject* WorldContext)
         {
             // T65: the stored key (Pair.Key, the full path) is what the tooltip carries; the trimmed
             // DisplayName is what the row shows. Both come from the same string.
-            NodeShuffleStampRowLabel(Section, Pair.Value.DisplayName, Pair.Key); // re-review B: both surfaces
+            NodeShuffleStampRowLabel(Section, Pair.Value.NameLabel, Pair.Value.MountLabel, Pair.Key); // re-review B / T67: both slots
         }
         ++AddedThisPass;
 
@@ -572,7 +704,8 @@ void FNodeShuffleModule::SyncForeignResourceRowsToConfig(UObject* WorldContext)
         // "it is now in your settings list" sentence is a report rather than a prediction. It is also
         // the whole cross-session dedup: a resource that already has a row never reaches this branch,
         // so it is never announced twice, with nothing persisted to remember it.
-        FNodeShuffleModule::NoteUnlistedForeignResourceForNotice(Pair.Key, Pair.Value.DisplayName);
+        FNodeShuffleModule::NoteUnlistedForeignResourceForNotice(Pair.Key, Pair.Value.DisplayName,
+            Pair.Value.bLabelParsed); // T67 alternative E: the measured flag, not a re-derivation
     }
 
     if (SharedWithTemplateRows > 0 || SharedBetweenRows > 0)

@@ -326,8 +326,8 @@ void ANodeShuffleSubsystem::LogWellMemberProbeCensus() const
         // ignores the member's own live actor exactly as the gate leg below does — without it, a member
         // probed at its own live actor's transform reads "eye inside solid" from its own collision,
         // printed directly above a now-clean gate verdict. GateSelfIgnoreName is a NAMED local, not a
-        // temporary dereferenced inline, so the %s in the verdict line below stays valid past this
-        // statement.
+        // temporary dereferenced inline, so the verdict line's argument is one named value a lint can
+        // pin, rather than an inline temporary.
         const AActor* GateSelfIgnore = IsValid(LiveActor) ? LiveActor : nullptr;
         const FString GateSelfIgnoreName = GateSelfIgnore
             ? GateSelfIgnore->GetName()

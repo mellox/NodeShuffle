@@ -133,9 +133,20 @@ struct NODESHUFFLE_API FNodeShuffleSeenForeignResource
                                     // derived from ResourceClassPath and falling back to the whole path
                                     // when that parse fails. The mount segment is NOT optional — it is
                                     // what tells two mods' similarly-named resources apart, and for a
-                                    // base-game asset it reads "Game". Still NOT the in-game item name;
-                                    // nothing here reads one. TWO CONSUMERS: the config row's label
-                                    // surfaces, and the T61 chat notice's bullet list.
+                                    // base-game asset it reads "Satisfactory" (T67 item D renders that
+                                    // one mount root; every other is verbatim). Still NOT the in-game
+                                    // item name; nothing here reads one. CONSUMERS after T67: the T61
+                                    // chat notice's bullet list and the T60/T65 log lines. THE PANEL ROW
+                                    // NO LONGER READS IT -- it reads the two parts below, because SML's
+                                    // section widget renders `{HeaderText} ({DisplayName})` and one
+                                    // string in both slots printed every row twice.
+    FString MountLabel;             // T67: the part before the colon of DisplayName, or a statement that
+                                    // the path could not be parsed. Rendered in the row's brackets.
+    FString NameLabel;              // T67: the part after the colon, or the WHOLE PATH when the parse
+                                    // failed (the T65 rule: a fallback must not look like a parse).
+    bool    bLabelParsed = false;   // T67 alternative E: the MEASURED parse outcome, carried forward to
+                                    // the chat notice instead of being re-derived there by searching the
+                                    // rendered label for ": ".
     FString FirstNodeClassName;     // diagnostics only: the node actor class of the first sighting.
     int32   Sightings = 0;          // how many foreign evaluations named this resource this session.
 };
@@ -329,6 +340,16 @@ public:
     // already carry, refreshes each row's UI label, and emits the T60 census line. Cheap in steady state:
     // it early-outs unless the seen-registry revision moved or the labels have not been set this load.
     static void SyncForeignResourceRowsToConfig(class UObject* WorldContext);
+    // T67 item C: LABEL-ONLY pass over the live config rows, for the MAIN MENU. SML greys the protection
+    // list out in the pause menu (bRequiresWorldReload, cold review F10), so the main menu is the only
+    // place a player can edit it -- and the population pass above runs from ApplyLayout, which is
+    // in-world and authority-only, so the editable surface was the unlabelled one. This pass adds no
+    // row, writes no value, marks nothing dirty and saves nothing: it derives each existing row's label
+    // from the path string the row already holds and stamps the two label slots. Called from the root
+    // game instance module's POST_INITIALIZATION, by which point SML has registered the configuration
+    // and loaded NodeShuffle.cfg from disk (ConfigManager::RegisterModConfiguration loads inline, and
+    // registration happens at INITIALIZATION).
+    static void StampForeignResourceRowLabelsFromConfig(class UObject* WorldContext);
     // World init: the registry is module-static and outlives worlds, like the managed-node registry.
     static void ResetSeenForeignResources();
     // Snapshot for callers that want the raw sightings (the sync pass; diagnostics).
@@ -364,8 +385,12 @@ public:
     // Called from SyncForeignResourceRowsToConfig at the point a row has ACTUALLY been added for a
     // resource that had none. Not from the sighting: the message reports the row, so it must be queued
     // after the write, and "already has a row" is the whole cross-load dedup. Do not move this call.
+    // T67 alternative E: bLabelCarriesMount is the MEASURED parse flag from the derivation, passed in
+    // rather than re-derived inside the notice by searching DisplayName for ": ". A resource whose own
+    // name legitimately contains that sequence would have made the re-derivation report a mount it never
+    // parsed; the flag cannot.
     static void NoteUnlistedForeignResourceForNotice(const FString& ResourceClassPath,
-        const FString& DisplayName);
+        const FString& DisplayName, bool bLabelCarriesMount);
     // World init: clears the queue, the announced set and the gate. Called from
     // ResetSeenForeignResources so the notice state and the sighting registry can never disagree.
     static void ResetForeignNoticeState();

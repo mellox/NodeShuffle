@@ -41,6 +41,13 @@ namespace
     {
         FString ResourceClassPath;  // identity, and the announced-set key
         FString DisplayName;        // the label the row carries; the descriptor class name, not an item name
+        // T67 ALTERNATIVE E: the parse outcome as the derivation MEASURED it, carried on the item. The
+        // legend gate used to re-derive this by testing DisplayName for ": ", which asks a different
+        // question than the one it wants: any resource name containing that sequence would answer yes
+        // without a mount ever having been parsed, and a mount label that legitimately lacks a colon
+        // could not answer no. Default false, so an item queued by any future call site that has not
+        // measured it suppresses the legend rather than asserting one.
+        bool bLabelCarriesMount = false;
     };
 
     // Session state. Game-thread only, like every other module static on this path, and cleared per world
@@ -107,7 +114,7 @@ void FNodeShuffleModule::ResetForeignNoticeState()
 }
 
 void FNodeShuffleModule::NoteUnlistedForeignResourceForNotice(const FString& ResourceClassPath,
-    const FString& DisplayName)
+    const FString& DisplayName, bool bLabelCarriesMount)
 {
     if (ResourceClassPath.IsEmpty()) { return; }
     if (GNodeShuffleForeignNoticeAnnounced.Contains(ResourceClassPath)) { return; }
@@ -118,10 +125,15 @@ void FNodeShuffleModule::NoteUnlistedForeignResourceForNotice(const FString& Res
     FNodeShuffleForeignNoticeItem& New = GNodeShuffleForeignNoticeQueue.AddDefaulted_GetRef();
     New.ResourceClassPath = ResourceClassPath;
     New.DisplayName = DisplayName;
+    New.bLabelCarriesMount = bLabelCarriesMount; // T67 alt E
+    // Arity hand-counted: 5 format specifiers, 5 arguments. The parse flag is printed as the caller
+    // measured it; this line does not say why a parse failed, only which value arrived.
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("T61NOTICE: queued resource '%s' (label '%s') -- it had no row in the protection list and one ")
-        TEXT("was just added. Queue now holds %d item(s); %d already announced this session."),
-        *ResourceClassPath, *DisplayName, GNodeShuffleForeignNoticeQueue.Num(),
+        TEXT("T61NOTICE: queued resource '%s' (label '%s', mount-and-name parse succeeded %d) -- it had ")
+        TEXT("no row in the protection list and one was just added. Queue now holds %d item(s); %d ")
+        TEXT("already announced this session."),
+        *ResourceClassPath, *DisplayName, bLabelCarriesMount ? 1 : 0,
+        GNodeShuffleForeignNoticeQueue.Num(),
         GNodeShuffleForeignNoticeAnnounced.Num());
 }
 
@@ -143,7 +155,9 @@ namespace
     //     base game's. The Foreign grade is an OR over two sides (NodeShuffle.cpp:176) -- so passing it
     //     never licensed a claim about the resource side alone.
     //   * the colon legend -- MEASURED: it describes the label derivation in
-    //     NodeShuffleForeignProtectConfig.cpp, which is the first path segment verbatim. It is printed
+    //     NodeShuffleForeignProtectConfig.cpp, which is the first path segment verbatim FOR EVERY MOUNT
+    //     BUT ONE: T67 renders the segment "Game" as "Satisfactory" (user-approved 2026-08-11), so the
+    //     legend's example names that rendering rather than the raw segment. It is printed
     //     ONLY when at least one listed label actually carries a mount prefix, so a session whose labels
     //     all fell back to full paths does not get a sentence about a colon that is not there.
     //     THE ONE ASSUMED TERM: that "/Game/" is the base game's own content root. It is the engine
@@ -164,10 +178,11 @@ namespace
     {
         // MEASURED BRANCH, not a guess about the labels: only print the colon legend if a listed label
         // has one. The label falls back to a bare path when its mount cannot be parsed.
+        // T67 ALTERNATIVE E: read the flag the derivation MEASURED, do not re-derive it from the text.
         bool bAnyLabelCarriesMount = false;
         for (int32 i = 0; i < Items.Num() && i < MaxNamedResources; ++i)
         {
-            if (Items[i]->DisplayName.Contains(TEXT(": "))) { bAnyLabelCarriesMount = true; break; }
+            if (Items[i]->bLabelCarriesMount) { bAnyLabelCarriesMount = true; break; }
         }
 
         FString Body = FString::Printf(
@@ -181,8 +196,11 @@ namespace
             // T65 cold review L4: the gate above is existential (ANY label has a colon), so the legend
             // must not make a universal claim ("each resource"), and "anything else is a mod's" was an
             // ungraded assumption (mount roots also include /Engine/, /Script/, /SML/).
-            Body += TEXT("Where a name has a colon in it, the part before the colon is the content folder\n")
-                    TEXT("that resource's asset lives in - \"Game\" is the base game's own content folder.\n");
+            // T67 item D: the base game's mount root is now RENDERED as "Satisfactory", so the example
+            // in this legend follows it. If it did not, the legend would name a string the list never
+            // prints.
+            Body += TEXT("Where a name has a colon in it, the part before the colon says which content\n")
+                    TEXT("that resource's asset comes from - \"Satisfactory\" is the base game's own.\n");
         }
         Body += TEXT("\n");
         for (int32 i = 0; i < Items.Num() && i < MaxNamedResources; ++i)
@@ -205,9 +223,12 @@ namespace
         }
         else if (FNodeShuffleModule::IsForeignProtectionActingThisWorld())
         {
-            Body += TEXT("\nWhile a row stays ticked, NodeShuffle steps in to stop that removal for\n")
-                    TEXT("that resource. Untick a row and load the save again to hand that one\n")
-                    TEXT("resource back to the other mod.");
+            // T67: the fourth "tries to remove" surface. What is measured at this hook is a REQUIREMENT
+            // EVALUATION -- the other mod's handler asks, and this branch's world answers. "Stop that
+            // removal" asserted an outcome inside the other mod's own code that nothing here observes.
+            Body += TEXT("\nWhile a row stays ticked, NodeShuffle answers that check for that resource\n")
+                    TEXT("and refuses the handler's condition. Untick a row and load the save again to\n")
+                    TEXT("let the other mod decide for that one resource.");
         }
         else
         {

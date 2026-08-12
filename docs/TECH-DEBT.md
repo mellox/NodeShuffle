@@ -621,6 +621,61 @@ copy + regrade of each sentence, no behavior change. Cold review L4's legend rew
 Also queued for the same packet: `diskRowsUnticked %d` on `T65ROUNDTRIP` (review M2 fix b) and the E
 alternative (carry the measured parse flag per notice item instead of re-deriving via `Contains(": ")`).
 
+**T67 STATUS — IMPLEMENTED-PENDING-INGAME (build `t67-2`, 2026-08-11). The packet grew past copy: the
+panel work the author asked for on 2026-08-11 was folded in, and the measurements it produced are
+recorded here because a code comment cited this entry as their record.**
+
+* **THE DOUBLED ROW LABEL (`X (X)`) — ROOT CAUSE MEASURED, NOT INFERRED.** SML's section widget builds
+  its header from a `FormatText` node whose literal pattern is **`{HeaderText} ({DisplayName})`**. The
+  string is present verbatim in
+  `Mods/SML/Content/Interface/UI/Menu/Mods/ConfigProperties/Widgets/BaseClasses/Widget_CP_Section_Base.uasset`
+  (byte-scan of the packaged asset, ASCII + UTF-16, 2026-08-11); it was the only `{…}` format string in
+  that whole asset tree. T65 stamped ONE string into BOTH slots, which is the whole defect, in the
+  stamped path and the template-fallback path alike. **This closes step 3's "which surface is inert"
+  question and the dated TODO in `NodeShuffleConfig.cpp`: the answer is NEITHER — they are two slots
+  of one format. The main-menu observation step 3 also asks for is still owed (T67 checklist steps
+  1-2).** Neither slot may be emptied (the parentheses are literal), so they now
+  carry different parts: `HeaderText` = resource name, `DisplayName` = mount label. A row reads
+  `esc_Wire (AllMinable)`. **Consequence, deliberate: the panel row reads `Resource (Mod)`, not
+  `Mod: Resource`** — the component order is dictated by SML's format, not chosen. The composed
+  `Mod: Resource` form is unchanged in the chat notice and every log line. Whether the slot assignment
+  should flip is DEFERRED until the author has seen both surfaces in game (T67 review A1).
+* **MAIN-MENU LABEL STAMPING.** `StampForeignResourceRowLabelsFromConfig` — a label-only pass hooked from
+  `URootInstance_NodeShuffle::DispatchLifecycleEvent` at `POST_INITIALIZATION`. Measured ordering:
+  `UGameInstanceModule::DispatchLifecycleEvent` calls `RegisterDefaultContent()` at `INITIALIZATION`
+  (`GameInstanceModule.cpp:30-37`) → `UConfigManager::RegisterModConfiguration`, which loads the `.cfg`
+  inline (`ConfigManager.cpp:258-288`). The pass adds no row, writes no value, marks nothing dirty and
+  saves nothing (lint-pinned). Rationale: SML greys a `bRequiresWorldReload` property out in the pause
+  menu (SML's documented contract for the flag; the greying itself is Blueprint-side — graded ASSUMED,
+  runtime step 11 settles it), so the main menu is the only editable surface, and the population pass
+  is in-world/authority-only
+  — the editable surface was the unlabelled one. **UNVERIFIABLE STATICALLY:** that the lifecycle is
+  dispatched at all in the main-menu game instance. `T67MENUSTAMP` in the log is the decider.
+* **ITEM D — `/Game` RENDERS AS `Satisfactory`** (user-approved 2026-08-11), one equality test in the
+  label derivation so panel, notice and logs cannot disagree. The string that is TESTED anywhere is
+  still the literal path. Graded **ASSUMED**, not measured: that `/Game/` is the base game's content root
+  is the engine mount-root convention and the same assumption the Foreign classification rests on.
+* **ITEM A (left-justify the label line, compact the row, kill the per-row scrollbar) — PARKED AT A
+  BLUEPRINT WALL, and this is the measurement so nobody re-derives it.** `UCP_Section`
+  (`SML/Public/Configuration/Properties/WidgetExtension/CP_Section.h`) exposes exactly `WidgetType`,
+  `HasHeader`, `HeaderText`, `Collapsed`. **No SML config property exposes alignment, justification,
+  slot size, fill or padding to C++ at all.** Row layout and header justification live in SML's own
+  Blueprint widgets (`Widget_CP_Section_Base`, `SectionsWidgets/Widget_Section_HB`,
+  `Container/Widget_CP_Container`, `ValueWidgets/Widget_CP_Section_Horizontal`) — SML's assets, not ours.
+  Options, none started: accept the width reduction the doubling fix already gives; shorten our own child
+  `DisplayName` strings (the only remaining C++ lever); ship an SML content override (real fix, and
+  NodeShuffle then carries SML UI that drifts every SML update); or raise it upstream with SML.
+* **OPEN, FILED BY THE T67 COLD REVIEW (F7) — NO CODE CHANGE THIS ROUND.** Item D maps two distinct
+  mount roots onto one displayed string: `/Game/` and any plugin whose mount root is literally
+  `Satisfactory`. Such a plugin's rows would render `Foo (Satisfactory)` in the panel and
+  `Satisfactory: Foo` in the notice, indistinguishable from base-game rows, while the notice legend
+  asserts *"Satisfactory is the base game's own"* — false for those rows. That is the same T62/T63
+  ambiguity the mount segment exists to prevent, at low probability. The free fix is to render
+  `Satisfactory (base game)`; it was deferred because the parenthetical adds width to the row item A
+  is trying to narrow, and that trade-off is the author's.
+  **Whoever takes it must update `check_t67_lint.ps1`'s item-D pin regex AND the legend pin at `:93`
+  in the same edit.**
+
 ### T58. ON A NEW GAME, SF+ DESTROYS EVERY THIRD-PARTY RESOURCE NODE ~0.9 s AFTER WORLD INIT — before our roll can enumerate them — so lead, lithium/Alkali and AllMinable's `Res_*2_C` family are EXTINCT on new saves. **NOT a NodeShuffle regression. Status: DECIDED 2026-08-10 (author: protect veto, option 1, DEFAULT ON) → IMPLEMENTED-PENDING-BUILD-REVIEW-AND-INGAME — see the T58 STATUS block at the end of this entry.**
 **AUTHORITATIVE SOURCE for every claim, quote and option below:
 `_team/nodeshuffle-followups/veto-spawnwindow-regression.md` (read-only investigation, 2026-08-10, at

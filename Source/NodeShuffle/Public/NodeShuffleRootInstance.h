@@ -13,4 +13,11 @@ class NODESHUFFLE_API URootInstance_NodeShuffle : public UGameInstanceModule
 
 public:
     URootInstance_NodeShuffle();
+
+    // T67 item C. SML registers this module's configuration (and loads NodeShuffle.cfg from disk) during
+    // the INITIALIZATION phase — UGameInstanceModule::DispatchLifecycleEvent calls RegisterDefaultContent
+    // there, and UConfigManager::RegisterModConfiguration loads the file inline. POST_INITIALIZATION is
+    // therefore the first phase at which the deserialized rows exist, and it runs in the MAIN MENU game
+    // instance, which is where the protection list is editable.
+    virtual void DispatchLifecycleEvent(ELifecyclePhase Phase) override;
 };

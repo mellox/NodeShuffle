@@ -341,14 +341,25 @@ void UNodeShuffleConfig::PostInitProperties()
         // effect is confined to the KBFL requirement hook, which is the only place this is consulted.
         // NOT CLAIMED, because nothing tests it: that unticking brings back nodes already removed;
         // that the list is a complete inventory of the other mod's resources; any timing in seconds.
+        // ---- T67 (2026-08-11): THE THREE "TRIES TO REMOVE" SENTENCES ON THIS PAGE, RE-GRADED. --------
+        // The old text said another mod's cleanup "tries to remove" nodes and that NodeShuffle "stops
+        // that removal". WHAT THE HOOK ACTUALLY OBSERVES IS A REQUIREMENT EVALUATION: KBFL asks the
+        // requirement asset whether its condition is met, and our requirement answers. T58 measured an
+        // asset evaluating that requirement on nodes it never destroys, so "tries to remove" asserts an
+        // intent this code cannot see, and "stops that removal" asserts an outcome inside the other
+        // mod's own handler. MEASURED and therefore said: another mod's handler CHECKED nodes of this
+        // resource; NodeShuffle answers that check. NOT CLAIMED: that anything was going to be removed,
+        // that anything was saved, or what the other mod does after it gets our answer.
+        // All three sentences on this page plus the chat notice's equivalent are fixed in ONE pass on
+        // purpose (docs/TECH-DEBT.md T67; the T65 review's L5 failure scenario is a partial fix).
         Rows->Tooltip = FText::FromString(
             TEXT("THIS LIST FILLS ITSELF IN — you do not add to it. A resource appears here after ")
-            TEXT("NodeShuffle has seen another mod's cleanup try to remove nodes of that resource at ")
-            TEXT("least once, so the list starts empty and grows as you play with other mods.\n\n")
+            TEXT("another mod's node handler has checked nodes of that resource at least once, so the ")
+            TEXT("list starts empty and grows as you play with other mods.\n\n")
             TEXT("TICKED (the default for everything, including anything not listed yet): NodeShuffle ")
-            TEXT("stops that removal, so the other mod's ore nodes survive.\n\n")
-            TEXT("UNTICKED: NodeShuffle does not step in for that resource, and the other mod's cleanup ")
-            TEXT("runs at that hook. Everything else in the list stays protected.\n\n")
+            TEXT("answers that check for this resource, refusing the handler's condition at that hook.\n\n")
+            TEXT("UNTICKED: NodeShuffle does not answer for that resource, and the other mod's handler ")
+            TEXT("decides on its own at that check. Everything else in the list stays protected.\n\n")
             TEXT("A ROW IS A RESOURCE, NOT A NODE TYPE. Several different node types — possibly from ")
             TEXT("several different mods — can yield the same resource, and one row covers all of them. ")
             TEXT("Untick a row and you hand back every node type that yields that resource, not just the ")
@@ -400,8 +411,9 @@ void UNodeShuffleConfig::PostInitProperties()
         //      so nothing is deleted here; the two are made CONSISTENT instead, in the direction that
         //      makes the label reachable. RUNTIME TEST STEP 3 IS THE DECIDER: open the panel from the
         //      MAIN MENU and record whether a row shows its label.
-        // TODO(2026-08-10, ns-t60 follow-up): once test step 3 has been run, delete whichever of the
-        // two mechanisms it proves inert and record the measurement in docs/TECH-DEBT.md T60.
+        // TODO(2026-08-10, ns-t60 follow-up) — CLOSED 2026-08-11 by T67: test step 3 was run and NEITHER
+        // mechanism is inert; both are slots of one SML format string (the measurement is in the T67
+        // block below, which is the record). Nothing is deleted; the two slots now carry different parts.
         //  (c) RE-REVIEW B: HasHeader=true with HeaderText never set anywhere in Source/ is a THIRD
         //      plausible behaviour -- a blank header bar per row. There are three label surfaces
         //      (DisplayName, HeaderText, the child String's own label) and the sync stamped only one,
@@ -409,19 +421,46 @@ void UNodeShuffleConfig::PostInitProperties()
         //      The fallback reads "(resource)" rather than "Resource": a stamp failure must be
         //      distinguishable from a successful stamp, and it must not collide with the child field's
         //      own label.
-        RowTemplate->DisplayName = FText::FromString(TEXT("(resource)"));
+        //
+        // ---- T67 (2026-08-11): TEST STEP 3 HAS BEEN RUN, AND THE ANSWER WAS "BOTH". ----------------
+        // The 2026-08-11 in-world panel rendered every row as `AllMinable: esc_Wire (AllMinable:
+        // esc_Wire)` -- the SAME string twice, once in brackets. THE ROOT CAUSE IS MEASURED, not
+        // inferred: SML's own section widget builds its header from a FormatText node whose literal
+        // pattern is `{HeaderText} ({DisplayName})`. That string is present verbatim in
+        // SML/Content/Interface/UI/Menu/Mods/ConfigProperties/Widgets/BaseClasses/Widget_CP_Section_Base
+        // .uasset (byte-scan of the packaged asset, both encodings, 2026-08-11). So DisplayName and
+        // HeaderText are not two candidate surfaces of which one is inert -- they are the two SLOTS OF
+        // ONE FORMAT, and T65 stamped the same text into both.
+        // NEITHER SURFACE IS DELETED, because deleting one cannot produce a clean single label: the
+        // parentheses are literal in the format, so an empty slot renders as "X ()" or " (X)". The two
+        // slots are given DIFFERENT PARTS of the same derivation instead -- header = the resource name,
+        // brackets = the content it comes from -- which removes the repetition and keeps the mount
+        // segment T65 declared load-bearing. NodeShuffleForeignProtectConfig.cpp's stamp helper is the
+        // single writer of both, as it has been since re-review B.
+        // NOT REACHABLE FROM C++, and not attempted: the header line's justification and the row's
+        // horizontal slot sizing. UCP_Section exposes exactly WidgetType / HasHeader / HeaderText /
+        // Collapsed (SML CP_Section.h) -- no alignment, no slot size -- so the left-justify and
+        // compaction requests live entirely in SML's Blueprint widgets. See the T67 handoff.
+        //
+        // THE TEMPLATE FALLBACK reads as a two-slot pair for the same reason, and it must stay
+        // distinguishable from a stamped row: a row that has been through the stamp names a resource,
+        // an unstamped one says so. It states only what is true of the row -- no stamp has run -- and
+        // never guesses at the resource.
+        RowTemplate->DisplayName = FText::FromString(TEXT("no label stamped yet"));
         // T65: the TEMPLATE's tooltip is the fallback for a row no sync pass has stamped yet (the same
         // hole F7(a) fixed for the label -- sync runs only from ApplyLayout, which never runs in the
-        // main-menu panel). It says where the identity is, and claims nothing about the resource.
+        // main-menu panel; T67 adds a main-menu stamp pass, and this text remains the fallback for a
+        // row neither pass reached). It says where the identity is, and claims nothing about the
+        // resource.
         RowTemplate->Tooltip = FText::FromString(
             TEXT("The full asset path in this row's text box is the resource's identity. The row label ")
-            TEXT("is a trimmed form of it: the name before the colon is the content folder the asset ")
-            TEXT("comes from."));
+            TEXT("is a trimmed form of it: the name in brackets says which content the asset comes ")
+            TEXT("from."));
         if (UCP_Section* RowWidget = Cast<UCP_Section>(RowTemplate))
         {
             RowWidget->WidgetType = ECP_SectionWidgetType::CPS_Horizontal;
             RowWidget->HasHeader = true; // F7(b)
-            RowWidget->HeaderText = FText::FromString(TEXT("(resource)")); // re-review B
+            RowWidget->HeaderText = FText::FromString(TEXT("(unlabelled row)")); // re-review B / T67
         }
 
         // ---- T65 ROW FIELD ORDER: THE TICK BOX IS DECLARED FIRST, ON PURPOSE. ----------------------
@@ -444,10 +483,11 @@ void UNodeShuffleConfig::PostInitProperties()
         ProtectedProp->Value = true;
         ProtectedProp->DefaultValue = true;
         ProtectedProp->DisplayName = FText::FromString(TEXT("Protected"));
+        // T67: the fourth of the four "tries to remove" surfaces. Same regrade as the list tooltip above.
         ProtectedProp->Tooltip = FText::FromString(
-            TEXT("Ticked: NodeShuffle keeps this resource's nodes alive when another mod's cleanup ")
-            TEXT("tries to remove them. Unticked: that cleanup is allowed to proceed for this one ")
-            TEXT("resource. Takes effect the next time you load the save."));
+            TEXT("Ticked: when another mod's node handler checks this resource's nodes, NodeShuffle ")
+            TEXT("answers that check and refuses the handler's condition. Unticked: that handler's own ")
+            TEXT("answer stands for this one resource. Takes effect the next time you load the save."));
         ProtectedProp->bRequiresWorldReload = true; // F10
         RowTemplate->SectionProperties.Add(TEXT("Protected"), ProtectedProp);
 

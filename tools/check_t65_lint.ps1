@@ -1,4 +1,4 @@
-# ns-t65-panel-and-copy -- THE LINT FOR THE ONE-LINE EDITS THAT UNDO THE PANEL REWORK.
+﻿# ns-t65-panel-and-copy -- THE LINT FOR THE ONE-LINE EDITS THAT UNDO THE PANEL REWORK.
 #
 # T65's contract is three sentences. (1) In a protection row the TICK BOX comes first and the resource
 # label after it, which in C++ is nothing but the order of two SectionProperties.Add calls. (2) The row's
@@ -138,10 +138,10 @@ function Get-T65Failures([string]$cfgText, [string]$protText, [string]$noticeTex
     if ($prot -notmatch 'Section->Tooltip\s*=') {
         $fails += "FAIL: $protFile no longer stamps the row section's Tooltip. The visible label is trimmed by T65, so the tooltip is where the full path went; without it the identity survives only in the text box, and the next edit that hides the text box loses it entirely."
     }
-    if ($prot -notmatch 'NodeShuffleStampRowLabel\(\s*Section,\s*RowLabel,\s*Path\s*\)') {
+    if ($prot -notmatch 'NodeShuffleStampRowLabel\(\s*Section,\s*RowNameLabel,\s*RowMountLabel,\s*Path\s*\)') {
         $fails += "FAIL: $protFile no longer passes the full Path to NodeShuffleStampRowLabel at the DISK-ROW site. Rows read back from NodeShuffle.cfg are exactly the ones the player already has, and they would get a trimmed label with no tooltip behind it."
     }
-    if ($prot -notmatch 'NodeShuffleStampRowLabel\(\s*Section,\s*Pair\.Value\.DisplayName,\s*Pair\.Key\s*\)') {
+    if ($prot -notmatch 'NodeShuffleStampRowLabel\(\s*Section,\s*Pair\.Value\.NameLabel,\s*Pair\.Value\.MountLabel,\s*Pair\.Key\s*\)') {
         $fails += "FAIL: $protFile no longer passes the full path to NodeShuffleStampRowLabel at the NEW-ROW site. Newly added rows would carry a trimmed label with no tooltip, while reloaded rows carry both -- the two sync sites drifting apart is precisely what one shared stamp helper exists to prevent."
     }
 
@@ -245,7 +245,7 @@ $mutants = @(
     @{ Name = 'M4 stop writing the path as the stored key'; File = 'prot';
        Find = '        ResourceProp->Value = Pair.Key;'; Repl = '        ResourceProp->Value = Pair.Value.DisplayName;' },
     @{ Name = 'M5 delete the round-trip census line'; File = 'prot';
-       Find = 'TEXT("T65ROUNDTRIP first-sync: diskRowsRead %d diskRowsWithPathKey %d diskRowsMalformedShape ")';
+       Find = 'TEXT("T65ROUNDTRIP first-sync: diskRowsRead %d diskRowsWithPathKey %d diskRowsUnticked %d ")';
        Repl = 'TEXT("first-sync: rows %d keyed %d malformed ")' },
     @{ Name = 'M6 restore the origin claim in the notice'; File = 'notice';
        Find = 'TEXT("Those nodes'' own classes are not the base game''s; the resources they carry can be\n")';
@@ -265,8 +265,8 @@ $mutants = @(
        Find = 'RowWidget->WidgetType = ECP_SectionWidgetType::CPS_Horizontal;';
        Repl = 'RowWidget->WidgetType = ECP_SectionWidgetType::CPS_Vertical;' },
     @{ Name = 'M12 drop the full path at the disk-row stamp site'; File = 'prot';
-       Find = '        NodeShuffleStampRowLabel(Section, RowLabel, Path);';
-       Repl = '        NodeShuffleStampRowLabel(Section, RowLabel, FString());' },
+       Find = '        NodeShuffleStampRowLabel(Section, RowNameLabel, RowMountLabel, Path);';
+       Repl = '        NodeShuffleStampRowLabel(Section, RowNameLabel, RowMountLabel, FString());' },
     # M13 exercises the ORDER pin itself, which M1 does not: M1 deletes the Protected add and is caught
     # by the vacuity half. This one leaves both adds in place and simply registers Resource FIRST -- the
     # actual regression (a "tidy the declarations" edit), with nothing missing afterwards.

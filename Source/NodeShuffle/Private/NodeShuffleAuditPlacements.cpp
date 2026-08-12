@@ -81,8 +81,22 @@ namespace
         AB_InsideNotMeasured,   // that instrument made no query, so it returned no verdict
         AB_VerdictsDisagreed,   // gate verdict != deep verdict, counted because they are known to differ
         AB_Offenders,           // entries with at least one adverse reading
+        // T66 supersession addendum: the audit's self-ignore fix was SILENT -- no field anywhere said
+        // whether it had run. This bucket counts the audited entries at which a live actor RESOLVED and
+        // was therefore handed to the readings below. What each reading DOES with it differs and the
+        // census says so: readings 1-2 (RaycastGroundAt) and reading 3 (IsSpotEnclosed) take it as an
+        // IGNORED actor; reading 4 (RunTotallyInsideProbe) takes it as its SUBJECT, which classifies its
+        // first hit and only then withholds it for one re-run. The bucket measures POPULATION only:
+        // whether excluding an actor changes a hit is Unreal's collision layer, which no count can reach.
+        AB_SelfActorExcluded,
         AB_BucketCount
     };
+
+    // The backing array is ANodeShuffleSubsystem::PlacementAuditCounts[16]. Adding a bucket past 16
+    // would write out of bounds silently -- the census would still print, with one field reading
+    // whatever follows the array. Fail at compile time instead.
+    static_assert(AB_BucketCount <= 16,
+        "PlacementAuditCounts[16] is too small for EAuditBucket -- grow the array in NodeShuffleSubsystem.h");
 
     // Severity ranks. Printed in the census so the ordering of the offender lines is stated rather than
     // inferred. These rank the OFFENDER LIST only; nothing in the mod reads them.
@@ -205,6 +219,9 @@ void ANodeShuffleSubsystem::PlacementAuditTick()
             continue;
         }
         ++PlacementAuditCounts[AB_Audited];
+        // Counted from the SAME pointer readings 3 and 4 are handed below -- not from a re-test of the
+        // map, which could disagree with what those calls actually received.
+        if (LiveActor != nullptr) { ++PlacementAuditCounts[AB_SelfActorExcluded]; }
 
         int32 Severity = 0;
         FString What;
@@ -323,7 +340,15 @@ void ANodeShuffleSubsystem::PlacementAuditTick()
         TEXT("(docs/TECH-DEBT.md T41) and are reported as separate fields for that reason, never merged. ")
         TEXT("OFFENDERS (at least one adverse reading): %d, ranked totally-inside > below-terrain > ")
         TEXT("water > enclosure-refusal, worst first, at most %d printed. MEASURED COST: %d trace/sweep ")
-        TEXT("queries and %d overlaps issued by the containment instrument. MEASURED: every count above ")
+        TEXT("queries and %d overlaps issued by the containment instrument. SELF-EXCLUSION: of the ")
+        TEXT("audited entries above, %d had a live spawned actor; the remainder had none. At those ")
+        TEXT("entries that actor was passed to the settle probe and to the enclosure gate as an ")
+        TEXT("IGNORED actor, and to the containment instrument as its SUBJECT -- which is a different ")
+        TEXT("mechanism: the instrument's first hit on that actor is classified and counted after the ")
+        TEXT("query returns, and only then is the actor added to that query's own ignore list for one ")
+        TEXT("re-run, so a TOTALLY INSIDE count above is NOT a reading taken with this actor withheld ")
+        TEXT("from the trace. This field is the population the exclusion applied to, not a statement ")
+        TEXT("about what any reading would otherwise have been. MEASURED: every count above ")
         TEXT("is a predicate this walk evaluated just now. NOT MEASURED, AND NOT CLAIMED: why any entry ")
         TEXT("reads the way it does, whether any of these is visible to a player, and whether any of ")
         TEXT("them was placed there by this mod's roll or moved afterwards."),
@@ -341,7 +366,8 @@ void ANodeShuffleSubsystem::PlacementAuditTick()
         PlacementAuditCounts[AB_TotallyInside], PlacementAuditCounts[AB_InsideNotMeasured],
         PlacementAuditCounts[AB_Audited] - PlacementAuditCounts[AB_InsideNotMeasured],
         PlacementAuditCounts[AB_VerdictsDisagreed], PlacementAuditCounts[AB_Offenders],
-        AuditMaxOffenderLines, PlacementAuditQueries, PlacementAuditOverlaps);
+        AuditMaxOffenderLines, PlacementAuditQueries, PlacementAuditOverlaps,
+        PlacementAuditCounts[AB_SelfActorExcluded]);
 
     PlacementAuditOffenders.Sort([](const FNodeShuffleAuditOffender& A, const FNodeShuffleAuditOffender& B)
     {

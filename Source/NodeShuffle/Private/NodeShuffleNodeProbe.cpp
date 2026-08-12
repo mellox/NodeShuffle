@@ -145,8 +145,9 @@ void ANodeShuffleSubsystem::LogNearestNodeProbe()
         TEXT("run, both on its ignore list -- the pawn exactly as NodeShuffle.Here and NodeShuffle.WellProbe ")
         TEXT("hand it, the entry's own actor added by ns-t66 so a probe at this entry's own centre does ")
         TEXT("not self-hit the entry it is measuring -- while the containment instrument is handed THIS ")
-        TEXT("NODE'S OWN actor as its SUBJECT, a different mechanism (hits on it are classified after the ")
-        TEXT("query runs, not withheld from the trace) answering a different question."),
+        TEXT("NODE'S OWN actor as its SUBJECT, a different mechanism (its first hit on that actor is ")
+        TEXT("classified and counted after the query returns, and only then is the actor added to that ")
+        TEXT("query's own ignore list for one re-run) answering a different question."),
         BestIdx + 1, Layout.Num(), *E.AssignedResourceClassPath, *E.OriginalResourceClassPath,
         *E.Location.ToCompactString(), BestDistCm, E.bRayCasted ? 1 : 0, E.bUnderground ? 1 : 0,
         static_cast<int32>(E.ResourceForm), *SubjectName, Eligible);
@@ -177,14 +178,25 @@ void ANodeShuffleSubsystem::LogNearestNodeProbe()
     // given, never a separate claim -- "none" when this entry had no live actor this run, which is the
     // only case where this field's value differs from what the pre-T66 build would have produced.
     const TCHAR* IgnoredOwnActorTok = Subject ? *SubjectName : TEXT("none");
+    // ns-t66 cold review F2: this leg probes E.Location -- the RECORDED centre -- while excluding the
+    // actor the guid resolved to, and nothing here proves those are the same point. WELLPROBE's sibling
+    // leg does prove it (MemberLoc IS LiveActor->GetActorLocation(), under the same IsValid guard); this
+    // one cannot, because a water/cliff redeal moves E.Location and returns without moving the live actor
+    // (TryRedealWaterLockedEntry; its caller relocates the actor only when the settle SUCCEEDED). So the
+    // separation is MEASURED here and printed beside the name, never assumed to be zero. It states no
+    // cause for any separation.
+    const FString IgnoredOwnActorWhere = Subject
+        ? FString::Printf(TEXT(", whose transform is %.0f cm from the point probed"),
+                          FVector::Dist(Subject->GetActorLocation(), E.Location))
+        : FString(TEXT(""));
     UE_LOG(LogNodeShuffle, Display,
         TEXT("NODEPROBE: ENCLOSURE GATE at %s: %d of %d rays blocked, and this build refuses a spot at %d ")
-        TEXT("or more blocked, so the verdict for this entry is %s. ignoredOwnActor=%s. The threshold and ")
+        TEXT("or more blocked, so the verdict for this entry is %s. ignoredOwnActor=%s%s. The threshold and ")
         TEXT("the ray count were read back from the predicate on this run. This gate is horizontal-only ")
         TEXT("at one height (docs/TECH-DEBT.md T37, T41) -- it is not a containment test and a pass from ")
         TEXT("it is not evidence that the centre is in open air."),
         *E.Location.ToCompactString(), Blocked, Total, Threshold,
-        bEnclosed ? TEXT("REFUSE") : TEXT("accept"), IgnoredOwnActorTok);
+        bEnclosed ? TEXT("REFUSE") : TEXT("accept"), IgnoredOwnActorTok, *IgnoredOwnActorWhere);
 
     // ---- THE POSITIVE-ONLY CONTAINMENT INSTRUMENT, AT THE SAME POINT ----
     // ONE EMITTER, T26. The wording is LogTotallyInsideReading's, not this file's: three copies of one
