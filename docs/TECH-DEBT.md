@@ -3159,11 +3159,12 @@ satellite 86.**
 
 ## T68 — ficsit-release config cleanup: seven switches deleted, one promoted, rows sorted (2026-08-11)
 
-**Status: IMPLEMENTED, COLD-REVIEWED (SHIP WITH TESTS), FIX ROUND + SCOPED RE-PASS + F4 ROUND APPLIED, REBUILT (`2026-08-11-t68-3` is the build of record), NOT COMMITTED, NOT REVIEWED. The DEPLOYED DLL
-is `t67-2` (restored); t68-1 AND t68-2 are parked at `%TEMP%\claude\t67-park\*.t68-1`. The distributable
-`ArchivedPlugins\NodeShuffle\NodeShuffle-Windows.zip` WAS REWRITTEN BY THIS BUILD and holds unreviewed
-t68-2 - do not publish from it. The fix round's AUTHORED items (F3, F7, the H1c lint half) owe a
-scoped follow-up review; the VERBATIM ones (F1/F2/F5/F6) do not.** Packet `ns-t68-release-config`, marker `t68-1`.
+**Status (updated 2026-08-12): COMPLETE — COMMITTED `5caea5a` (main packet, post scoped re-passes) +
+`d4e9501` (F4 label round), DEPLOYED `t68-3` (byte-scan 8/8: t68-3 in, t68-2/t67-2 out, old label
+absent, controls present). All authored rounds passed their scoped reviews. OWED: the in-game
+checklist (t68-coldreview.md steps, incl. the F1/F2 honesty repros) and changelog sign-off; the
+`ArchivedPlugins` zips hold t68-3 but were written pre-signoff — REPACKAGE from the reviewed commit
+for any release.** Packet `ns-t68-release-config`, markers `t68-1..3`.
 Spec: `_team/nodeshuffle-followups/ficsit-release-config-audit.md`; decisions taken by the author
 2026-08-11. Handoff: `_team/nodeshuffle-followups/T68-implementation-handoff.md`.
 
@@ -3277,3 +3278,50 @@ the protection-list tooltip, the chat notice, the veto module's log line); all f
 same commit and a repo-wide grep for the old label returns ZERO hits.** New lint half H8 pins the label,
 the SF+ opening, and the absence of the old label from every `TEXT()` literal; M14/M15 mutate the label
 and the SYMMETRY. 8/8 suites, 15/15 mutants. Deployed DLL remains `t67-2`; `t68-3` is parked.
+
+## T69 — Per-row "Show In Scanner" checkbox on the protection list: modded resources clutter the object scanner (2026-08-12)
+
+**Status: FILED (user-requested 2026-08-12). Not designed, not started.**
+
+**What the user hit.** With the FF dirt variants (and the rest of the foreign-resource population)
+all live, the object scanner's resource list is difficult to work with — many entries a player never
+scans for. The protection list already enumerates exactly this population, one row per foreign
+resource.
+
+**The ask.** Add a second per-row checkbox to the protection list: **"Show In Scanner", default
+SHOW (true)** — unticking hides that resource from the scanner's selectable list. Orthogonal to
+the Protected tick (a resource can be protected and scanner-hidden, or vice versa).
+
+**Design questions for the packet (do not assume any):**
+- WHERE the scanner's selectable-resource population is built, and whether a mod can filter it
+  per-descriptor without hooking every consumer — prior art: the scanner phantom-ping fix landed at
+  the `GenerateNodeClusters` SOURCE, not per-consumer (`nodeshuffle-scanner-phantom-ping` memory);
+  start from there. Also check what the installed `MapResourceNodeFilters` mod does — same problem
+  space, possible conflict AND possible pattern to learn from.
+- Whether a second bool fits SML's array-row schema alongside `Protected` + `Resource` (the row is
+  an SML config struct; T65/T67 established what we can and cannot stamp on its widgets).
+- Population: hide-in-scanner must not affect protection, notices, or the audit/census populations
+  — every consumer of the row struct gets enumerated (BLAST RADIUS).
+- Copy: the checkbox claims a scanner outcome — grade it; only ship wording for what is measured.
+
+## T70 — Should the protection list allow manual ADD/REMOVE at all? The +/- affordances have murky semantics on an auto-populated list (2026-08-12)
+
+**Status: FILED (user-raised 2026-08-12). INVESTIGATE before the ficsit release if cheap; otherwise park.**
+
+**The smell.** The list is auto-populated on discovery (T61/T65). SML's array widget still renders
+`+` / `-` on every row and a `+` on the header. Both affordances have unclear semantics here:
+- **Manual ADD** creates a row with a blank/hand-typed path. Blank rows are already counted as a
+  defect population (`diskRowsBlankPath`, expected 0); a typo'd path is a row that matches nothing.
+  No user story needs manual add — discovery adds every real resource.
+- **Manual REMOVE** deletes a row, but the protection policy is default-protected: a path absent
+  from the latched opt-out set is PROTECTED (NodeShuffle.h:331-334). So removing a row does NOT
+  unprotect the resource — it just removes the visible opt-out control until (or unless) discovery
+  re-adds it. Whether the seen-set allows re-add after manual removal is UNMEASURED — measure it
+  before writing any copy about `-`.
+
+**Questions for the packet:** (a) Can the +/- affordances be hidden/disabled from C++ for this one
+array property, or is that Blueprint-side like the T67 row layout (measure the exact boundary —
+`UCP_Section`-style — before promising anything)? (b) If they cannot be hidden: is the cheaper fix
+a tooltip on the list explaining that rows manage themselves, plus making manual removal provably
+harmless (re-add on next discovery)? (c) Interaction with T69: if a second checkbox lands, the row
+becomes more obviously "managed", which strengthens the case for hiding `+`/`-`.
