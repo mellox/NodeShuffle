@@ -151,7 +151,7 @@ to move is the worse defect. D1's text must be re-decided as part of this item, 
 
 ---
 
-#### T54 STATUS: **IMPLEMENTED, PENDING BUILD AND COLD REVIEW** (packet `ns-t54-immediate-hide`, 2026-08-10, boot marker `2026-08-10-t54-1`). **NOT CLOSED — no build has been run and no reviewer has seen it.**
+#### T54 STATUS: **BUILT AND SHIPPED** (packet `ns-t54-immediate-hide`, commit `ee01d38`, 2026-08-10, boot marker `2026-08-10-t54-1`). Cold-reviewed same day — differential FIX-FIRST ×11 → all applied → scoped re-review → 3 residuals applied → lint 0 (`_team/nodeshuffle-followups/t54-coldreview.md`). Verified in-game on a TEST save, 8/8 PASS (`_team/test-logs/2026-08-10-t54-1/run.md`); the REAL-save spot checks (core12 gone-check, `ProbeNearestNode` at the buried lead) were still marked OWED as of the last mention (`_team/NodeShuffle-state.md` 2026-08-11 ~10:3x block) and no later confirmation was found. (status per `_team/NodeShuffle-state.md` 2026-08-10 ~03:0x/~afternoon blocks + `t54-coldreview.md`, 2026-08-12 release-readiness audit)
 
 **THE PRE-SCOPED STARTING POINT ABOVE WAS STALE AND IS THE FIRST THING TO CORRECT.** It describes the
 tree as it was before `ns-t23-rollhide` landed. At `7bf99b4` there are **four** `SuppressVanillaWellGroup`
@@ -243,7 +243,7 @@ were pending on F **and** on H (two loads apart), which is the first datum again
 cheapest next measurement. Do that before choosing an option: if PENDING never empties, this is not a
 dedup defect at all but a stuck allow-list write, and every option above is the wrong fix.
 
-#### T55 STATUS: **MEASURED, THEN DECIDED — OPTION 2. IMPLEMENTED, PENDING BUILD AND COLD REVIEW** (packet `ns-t55-t56-reload`, 2026-08-10, boot marker `2026-08-10-t5556-1`). **The measurement above was taken and it CHANGED the answer.**
+#### T55 STATUS: **MEASURED, THEN DECIDED — OPTION 2. BUILT AND SHIPPED** (packet `ns-t55-t56-reload`, commit `84a23fa`, 2026-08-10, boot marker `2026-08-10-t5556-1`). Cold-reviewed same day, verdict SHIP WITH TESTS, F1/F2 applied before commit (`_team/nodeshuffle-followups/t5556-coldreview.md`). Ran through the full overnight real-save session on top of it (`t61-1`); no T55-specific chat-notice pass/fail line was found recorded in state.md. **The measurement above was taken and it CHANGED the answer.** (status per `t5556-coldreview.md` + `_team/NodeShuffle-state.md` 2026-08-10 ~19:0x block, 2026-08-12 release-readiness audit)
 
 `grep "AUTOALLOW extractor='/AlkaLib" *.log` over the surviving logs, per boot:
 
@@ -310,7 +310,7 @@ player with more than one save — which is the ordinary case, and the author's 
 **Do not "fix" this by persisting the announce set** — see the T55 STATUS block for why that suppresses a
 true notice.
 
-#### T59 STATUS: **DECIDED AND IMPLEMENTED — OPTION 1, KEYED PER SESSION (PLAYTHROUGH), NOT PER SAVE** (author decision 2026-08-10; packet `ns-t59-pack-namespace`, marker `2026-08-10-t59-1`). **NOT BUILT, NOT COLD-REVIEWED, NOT TESTED IN GAME — no build ran in this packet.**
+#### T59 STATUS: **DECIDED AND IMPLEMENTED — OPTION 1, KEYED PER SESSION (PLAYTHROUGH), NOT PER SAVE. BUILT AND SHIPPED** (author decision 2026-08-10; packet `ns-t59-pack-namespace`, commit `5738c32`, marker `2026-08-10-t59-1`). Cold-reviewed same day, verdict SHIP WITH TESTS (`_team/nodeshuffle-followups/t59-coldreview.md`). Deployed and ran a full real-save overnight session on top of it (`t61-1`) with zero LogNodeShuffle errors; the review's own runtime checklist (R1-R9, incl. the `crossNamespaceRemoved=0` PACKCHURN measurement) has no confirmed pass recorded in state.md — still owed. (status per `t59-coldreview.md` + `_team/NodeShuffle-state.md` 2026-08-10 ~19:0x/~23:5x blocks, 2026-08-12 release-readiness audit)
 
 **FORM: a filename prefix inside the SAME pack directory.** Documents are now
 `s-<sessionSlug>--auto-allow-[<mod>-]<class>.cdo.yml`, alongside one shared `pack.yml`.
@@ -391,7 +391,7 @@ here.
 with `otherNamespaceDocsBefore` on the same line as its denominator. A nonzero cross figure is a
 regression to this entry.
 
-### T61. THE HOOK NOW ARMS WHETHER OR NOT THE MASTER GATE IS ON — DEFAULT OFF MEANS *OBSERVE*, NOT *BLIND*. **Status: IMPLEMENTED-PENDING-BUILD-REVIEW-AND-INGAME (packet `ns-t61-observe-always`, 2026-08-10, marker `2026-08-10-t61-1`). NOT BUILT, NOT COLD-REVIEWED, NOT SEEN IN GAME — no build ran in this packet.**
+### T61. THE HOOK NOW ARMS WHETHER OR NOT THE MASTER GATE IS ON — DEFAULT OFF MEANS *OBSERVE*, NOT *BLIND*. **Status: BUILT AND SHIPPED (packet `ns-t61-observe-always`, commit `5472648`, 2026-08-10, marker `2026-08-10-t61-1`). Cold-reviewed same day, verdict SHIP WITH TESTS, then a scoped re-review of 11 fix-applications (doc/string one-liners) — all confirmed correct (`_team/nodeshuffle-followups/t61-coldreview.md`). Verified in-game on the real save overnight: notice pipeline fired correctly (batched EMIT for 34 dirty resources; rows persisted 13→47), scanner-knowledge grew 8→35→42, zero LogNodeShuffle errors all night (`_team/NodeShuffle-state.md` 2026-08-10 ~19:0x block). (status per those sources, 2026-08-12 release-readiness audit)**
 
 **THE AUTHOR'S RULING, verbatim (2026-08-10):** *"default off, but we need detection if off or on to
 build our list and show in chat if not in our list and to show in config the list for allowing users to
@@ -476,7 +476,7 @@ per-evaluation delta.**
 1 removed + 1 added on top of the two deletions. Expect **2 removed, 1 renamed, 0 otherwise-new**; any
 other new NodeShuffle import is a finding, and must not be absorbed into this explanation.
 
-### T60. THE T58 PROTECTION IS ALL-OR-NOTHING, SO A PLAYER WHO WANTS SF+'s RESEARCH GATING BACK FOR **ONE** RESOURCE HAS TO GIVE IT UP FOR ALL OF THEM. **Status: IMPLEMENTED-PENDING-BUILD-REVIEW-AND-INGAME (packet `ns-t60-protect-checkboxes`, 2026-08-10, marker `2026-08-10-t60-1`). NOT BUILT — no build ran in this packet.**
+### T60. THE T58 PROTECTION IS ALL-OR-NOTHING, SO A PLAYER WHO WANTS SF+'s RESEARCH GATING BACK FOR **ONE** RESOURCE HAS TO GIVE IT UP FOR ALL OF THEM. **Status: BUILT AND SHIPPED (packet `ns-t60-protect-checkboxes`, commit `f2b8d67`, 2026-08-10, marker `2026-08-10-t60-1`). Cold-reviewed same day — round 1 DO-NOT-SHIP ×11 → all applied → scoped pass upheld both packet declines, R1+header fixed (`_team/nodeshuffle-followups/t60-coldreview.md`). Verified in-game across the T64-T67 follow-on work: fresh discovery `rowsAddedThisLoad 34` (2026-08-10 night), `T65ROUNDTRIP 49/49/0/0` + `T60CENSUS rowsLoadedFromDisk=49` (2026-08-11), untick round-trip DIRECTION 1 full pass persisted across quit/relaunch (2026-08-11 ~19:4x). Round-trip DIRECTION 2 (re-tick clearing back to 0) VERIFIED 2026-08-12: after the user re-ticked SteelIngot and loaded a world, `FactoryGame.log` printed `T60CENSUS latch: rowsInFileAtLatch 49 untickedRows 0 malformedRows 0 blankRows 0 optOutPathsLatched 0` and `T65ROUNDTRIP first-sync: ... diskRowsUnticked 0` (measured by the orchestrator session, log lines 2465/2590 of that boot). BOTH DIRECTIONS PROVEN. (status per `_team/NodeShuffle-state.md` 2026-08-10 night block + 2026-08-11 ~18:0x/~19:4x blocks, 2026-08-12 orchestrator log measurement, 2026-08-12 release-readiness audit)**
 
 [[T58]] ships one CVar, `NodeShuffle.ProtectForeignNodes`, and it governs every foreign resource at
 once. The author asked (2026-08-10) for a **dynamically-populated checkbox list in the mod-config UI**:
@@ -794,7 +794,7 @@ differential review, not a one-line type change.** [[T54]]/[[T55]]/[[T56]]/[[T57
 2026-08-10 multi-mod-save investigation block; T55 shares this entry's shape — a documented design
 decision, not a bug, that must be **re-decided** rather than patched.
 
-#### T58 STATUS: **IMPLEMENTED-PENDING-BUILD-REVIEW-AND-INGAME** (packet `ns-t58-foreign-protect`, 2026-08-10, boot marker `2026-08-10-t58-1`). **NOT CLOSED — no build has been run, no reviewer has seen it, and nothing has been observed in game.**
+#### T58 STATUS: **BUILT AND SHIPPED, DEFAULT ON** (packet `ns-t58-foreign-protect`, commit `4262b2b`, 2026-08-10, boot marker `2026-08-10-t58-1`). Cold-reviewed across 3 rounds — round 1 DO NOT SHIP (F1 confirmed default-ON regression) → fixed → round 2 FIX-FIRST → fixed → round 3 doc-only fixes, R1-R7 confirmed clean by code re-read (`_team/nodeshuffle-followups/t58-coldreview.md`). Field-confirmed in-game on the real save and a fresh new-game world: lead 6/6 + lithium 23/23 protected, user saw both in-world (`_team/NodeShuffle-state.md` 2026-08-10 ~15:4x and ~19:0x blocks). (status per those sources, 2026-08-12 release-readiness audit)
 
 **THE AUTHOR'S DECISION (2026-08-10, verbatim): *"we are keeping shuffle mod active. we need both
 active to work this situation."*** That selects **option 1, the non-vanilla protect veto — but DEFAULT
@@ -1691,7 +1691,7 @@ code:**
 `WELLH2B-CAPTURE` reports it complete, **save manually**, reload, and read that core's `WELLH2B-ADOPT`
 line. Non-zero ⇒ mechanism 2 (coverage). Zero ⇒ mechanism 1 (round trip), and it is then a P1.
 
-#### T56 STATUS: **DISCRIMINATED — MECHANISM 2 (CAPTURE COVERAGE). Mechanism 1 (lost on the way out) is FALSIFIED. No round-trip fix is needed or shipped; the INVARIANT TEXT was the defect and is corrected.** (packet `ns-t55-t56-reload`, 2026-08-10, marker `2026-08-10-t5556-1`.)
+#### T56 STATUS: **DISCRIMINATED — MECHANISM 2 (CAPTURE COVERAGE). Mechanism 1 (lost on the way out) is FALSIFIED. No round-trip fix is needed or shipped; the INVARIANT TEXT was the defect and is corrected.** (packet `ns-t55-t56-reload`, shipped in commit `84a23fa`, 2026-08-10, marker `2026-08-10-t5556-1`; cold-reviewed same day, verdict SHIP WITH TESTS.) (status per `_team/nodeshuffle-followups/t5556-coldreview.md`, 2026-08-12 release-readiness audit)
 
 The discriminating in-game walk was **not needed** — a session the author started at 15:07 on a fourth save
 (`loadgame=Reshuffle_01`, build `2026-08-10-t58-1`, live `FactoryGame.log`) answers it two ways:
@@ -3307,6 +3307,7 @@ the Protected tick (a resource can be protected and scanner-hidden, or vice vers
 ## T70 — Should the protection list allow manual ADD/REMOVE at all? The +/- affordances have murky semantics on an auto-populated list (2026-08-12)
 
 **Status: FILED (user-raised 2026-08-12). INVESTIGATE before the ficsit release if cheap; otherwise park.**
+2026-08-12 release-readiness audit: not a blocker; +/- affordances unchanged for 1.4.0.
 
 **The smell.** The list is auto-populated on discovery (T61/T65). SML's array widget still renders
 `+` / `-` on every row and a `+` on the header. Both affordances have unclear semantics here:

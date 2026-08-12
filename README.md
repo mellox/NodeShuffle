@@ -55,30 +55,56 @@ This note will be updated as newer versions are confirmed.
 ## Configuration
 
 All settings are in the in-game **Mods → Node Shuffle** panel (and persist to
-`<game>/FactoryGame/Configs/NodeShuffle.cfg`):
+`<game>/FactoryGame/Configs/NodeShuffle.cfg`), in four groups: **the shuffle**,
+**other mods**, **resource wells**, and **troubleshooting**.
+
+### The shuffle
 
 | Setting | Default | Meaning |
 |---|---|---|
-| Enabled | on | Master switch. Off = nothing spawns and no vanilla nodes deactivate (stored changes persist). |
+| Enabled | on | Master switch. Off = nothing spawns and no vanilla nodes deactivate (resource changes already stored in the save persist). |
 | Seed Override | 0 | 0 = random seed at first roll; non-zero = fixed seed. To apply a new seed to an existing save, set it and use **Re-roll Layout**. |
-| Re-roll Layout | off | Turn on to re-roll the whole layout **once** (using Seed Override, or a fresh random seed if 0), then it auto-turns itself off. Applies **live** within a few seconds if toggled in-game, or on the next load otherwise. New locations are map-wide and **reveal as you explore near them** (even previously-visited areas), so the world looks emptier right after. Miners are kept. |
+| Re-roll Layout | off | Turn on to re-roll the whole layout **once** (using Seed Override, or a fresh random seed if 0), then it auto-turns itself off. Applies **live** within a few seconds if toggled in-game, or on the next load otherwise. New locations are map-wide and **reveal as you explore near them** (even previously-visited areas), so the world looks emptier right after. Nodes with a miner on them are kept. |
 | Active Percent Of Node Pool | 70 | % of all locations (vanilla + new) that are active. |
 | New Node Locations | 100 | How many extra locations to generate (0–300). |
 | Minimum Active Nodes Per Resource | 5 | Completability floor for vanilla resources. |
 | Minimum Active Nodes Per Modded Resource | 2 | Same floor for resources added by other mods (0 = no floor). |
 | Randomize Purity | on | Shuffle purities, dealt from the vanilla distribution (overall balance preserved). |
-| Allow Vanilla Nodes To Disappear | on | Off = every vanilla node stays active; only new locations roll. |
-| Include Modded Nodes | on | Shuffle nodes added by other mods too; their solid nodes also **relocate** on a re-roll, like vanilla nodes. |
-| Unlock Scanner Knowledge For Shuffled Modded Resources | on | Registers shuffled modded resources with the resource scanner so it can find them. Some overhaul mods also gate **miner placement** on scanner knowledge, so this can allow placing miners on modded ores earlier than that overhaul's own research intended (crafting stays gated). Turn off to let each mod's own progression grant this. Vanilla resources are never affected. |
-| Spawn-On-Discovery Radius (m) | 600 | New nodes materialize once you come within this range and the terrain has streamed in. |
-| Enable Diagnostic Logging | off | Verbose placement/node logging to `FactoryGame.log` for troubleshooting. The mod's fixes work whether this is on or off. |
 | Starter Nodes Near Spawn | on | New game only: place a small starter set (2 Iron, 2 Limestone, 1 Copper, Pure) near spawn. |
 | Starter Node Radius (m) | 200 | How far from spawn the starter nodes may sit. |
-| Enable Experimental Features | off | Standard opt-in toggle for in-development features. **This version has none**, so it currently does nothing — leave it off. |
+| Spawn-On-Discovery Radius (m) | 600 | New nodes materialize once you come within this range and the terrain has streamed in. |
+
+### Other mods
+
+| Setting | Default | Meaning |
+|---|---|---|
+| Include Modded Nodes | on | Shuffle nodes added by other mods too; their solid nodes also **relocate** on a re-roll, like vanilla nodes. |
+| Unlock Scanner Knowledge For Shuffled Modded Resources | on | Registers shuffled modded resources with the resource scanner so it can find them. Some overhaul mods also gate **miner placement** on scanner knowledge, so this can allow placing miners on modded ores earlier than that overhaul's own research intended (crafting stays gated). Turn off to let each mod's own progression grant this. Vanilla resources are never affected. |
+| Protect Other Mods' Nodes | **on** | Some overhaul mods — Satisfactory Plus is the known case — remove other mods' resource nodes. When on, NodeShuffle **answers those removal checks** for the resources ticked in the list below (refusing the handler's condition — never a claim that it "stops removal" outright). Off, NodeShuffle answers nothing and each mod's own handler decides; the list still fills itself in either way. Takes effect the next time you load the save; doesn't bring back nodes already removed. |
+
+**Protect Other Mods' Nodes (Per Resource)** — the self-filling list under the checkbox above: a
+resource appears once another mod's node handler has checked nodes of that resource at least once,
+so it starts empty and grows as you play alongside other mods. Every row defaults to ticked
+(protected); untick one to let that resource's own mod decide for itself. The console variable
+`NodeShuffle.DestroyerVeto` still overrides the checkbox above whenever it has been explicitly set.
+
+### Resource wells (opt-in, both off by default)
+
+| Setting | Default | Meaning |
+|---|---|---|
+| Shuffle Resource Wells (In Place) | off | Re-rolls what each resource well produces — a nitrogen well may become a water well — **without moving it**, dealt from the wells' own existing mix so a well-only resource never runs short. Wells with a Pressurizer or any Extractor on them are never changed. |
+| Relocate Resource Wells (EXPERIMENTAL) | off | Moves a whole well — core and every satellite — as a rigid body to a new site, keeping its exact pattern. All-or-nothing: if the full footprint won't fit, no partial well appears. Requires Shuffle Resource Wells to also be on. See **Known behaviour** below — a relocated well is genuinely absent from the world for an unbounded time before its replacement appears. |
+
+### Troubleshooting
+
+| Setting | Default | Meaning |
+|---|---|---|
+| Enable Diagnostic Logging | off | Verbose placement/node logging to `FactoryGame.log` for troubleshooting. The mod's fixes work whether this is on or off. |
 
 Generation-time settings (seed, counts, percentages, purity) affect a save only
 at its first roll or an explicit re-roll. Toggles like Diagnostic Logging apply
-live.
+live. Old settings files upgrade automatically — a setting removed in a newer
+version is simply dropped from `NodeShuffle.cfg` the next time you load.
 
 ### Advanced data files
 
@@ -127,27 +153,27 @@ some mods spawn theirs minutes after the world loads, or only once you research 
 Those can be **added after the first roll has already happened**, so they stay vanilla where
 they are until you re-roll. Re-rolling re-scans the live world and brings them in.
 
-### Known behaviour: resource wells can duplicate if you build on one mid-move
+### Known behaviour: a relocated resource well is absent until you reach its new site
 
-**This is a deliberate trade-off, not a bug — and it errs in your favour.**
+**This is a deliberate trade-off, not a bug.**
 
-Resource-well relocation is *not* instant. A well is dealt a destination when the
-layout is rolled, but it cannot actually move until you visit that destination —
-the game has to have the terrain streamed in before we can find ground to place
-it on. Until then the well stays exactly where it is, fully working.
+Resource-well relocation (**Relocate Resource Wells**) is *not* instant, and the
+original is removed **as soon as the well is dealt a destination** — not after the
+replacement exists. The replacement is only built once you travel to the new site
+and its terrain streams in, so between those two moments the well is in
+**neither** place: it is genuinely absent from the world. How long that lasts is
+**not bounded** — destinations are drawn across the whole map, so a well dealt
+somewhere you never visit stays absent for as long as you don't go there.
 
-We only hide the original **after** the new copy provably exists. That ordering is
-deliberate: if we hid it on the roll, a well whose destination you never visit
-would simply vanish from your save, possibly forever.
+A well you have **built on** (a Resource Well Pressurizer on the core, or any
+Extractor on a satellite) is never removed — the mod re-checks that continuously,
+so the move happens by itself once you take the building down. Re-rolling also
+re-considers wells that have already moved, dealing each a new destination like
+any other node.
 
-The consequence: if you **build a Resource Well Pressurizer or Extractor on a well
-that is still waiting to move**, and later travel to its destination, you get
-**two wells** — yours, still standing and still producing, plus a fresh copy at the
-destination. We will never hide or delete a well you have built on.
-
-If you would rather not have duplicates, don't build on resource wells until
-you've explored the area its replacement is headed for — or leave
-`RelocateResourceWells` off and use in-place resource shuffling only.
+If you'd rather not have wells go missing, leave **Relocate Resource Wells** off
+and use **Shuffle Resource Wells (In Place)** instead — it only changes what a
+well produces and never moves it.
 
 ## Building
 
