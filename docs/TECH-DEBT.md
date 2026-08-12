@@ -3154,3 +3154,112 @@ gets its first honest test only after both are fixed.
 excluded actor never returns a hit. (2) Re-run the free regression test above — it must read NOT
 INSIDE. (3) Only then re-run `WellProbe` and grade the members. **Do not tune anything against
 satellite 86.**
+
+---
+
+## T68 — ficsit-release config cleanup: seven switches deleted, one promoted, rows sorted (2026-08-11)
+
+**Status: IMPLEMENTED, COLD-REVIEWED (SHIP WITH TESTS), FIX ROUND + SCOPED RE-PASS ROUND APPLIED, REBUILT (`2026-08-11-t68-2`; the re-pass round was comments+lint only, NO rebuild), NOT COMMITTED, NOT REVIEWED. The DEPLOYED DLL
+is `t67-2` (restored); t68-1 AND t68-2 are parked at `%TEMP%\claude\t67-park\*.t68-1`. The distributable
+`ArchivedPlugins\NodeShuffle\NodeShuffle-Windows.zip` WAS REWRITTEN BY THIS BUILD and holds unreviewed
+t68-2 - do not publish from it. The fix round's AUTHORED items (F3, F7, the H1c lint half) owe a
+scoped follow-up review; the VERBATIM ones (F1/F2/F5/F6) do not.** Packet `ns-t68-release-config`, marker `t68-1`.
+Spec: `_team/nodeshuffle-followups/ficsit-release-config-audit.md`; decisions taken by the author
+2026-08-11. Handoff: `_team/nodeshuffle-followups/T68-implementation-handoff.md`.
+
+**What changed.** Five panel properties deleted and hard-wired: `EnableExperimentalFeatures` (dead,
+zero consumers), `CommitWellsAtRoll` (feature removed outright), `ShowCompatibilityNotices` (both call
+sites pass the literal `true`), `AllowVanillaDisappear` (hard-wired to its shipped default ON — both
+consumers deleted, not defaulted), `RerollRelocatedWells` (hard-wired **ON**: a re-roll now re-considers
+an already-moved well). Two CVars deleted: `NodeShuffle.AutoAllowExtractors` (the KDF allow-list
+generator always runs) and `NodeShuffle.ProtectForeignNodes` (no reachable state of its own). One
+property added: **`ProtectOtherModsNodes`, DEFAULT ON**, a panel checkbox driving the latch
+`NodeShuffle.DestroyerVeto` used to gate alone. Rows re-ordered into the audit's §3 grouping. The
+protection list is now sorted by mount label, then resource name, at both populators. Version bumped
+1.3.0 → 1.4.0 so SML rewrites every `NodeShuffle.cfg` and drops the orphaned keys on first load
+(measured at SML `ConfigManager.cpp:103-117`).
+
+**BEHAVIOUR CHANGES A PLAYER CAN SEE — none of these are silent, and none should be softened:**
+1. **Protection is ON by default.** It shipped OFF (the CVar defaulted to 0). Every existing install
+   that has KBFL + another mod's nodes starts answering that mod's node-handler checks on the next load.
+2. **A re-roll now re-rolls already-moved wells.** On a save with relocated wells, the first re-roll
+   after this build churns most of them, and each is absent until visited. (Author's standing ruling:
+   a shuffle hides ALL the things we shuffle.)
+3. **Anyone who had silenced the compatibility notices is un-silenced.**
+4. Anyone who had turned `AllowVanillaDisappear` OFF gets the default on their **next roll or re-roll**
+   only — this is generation-time code; an already-rolled layout is not re-rolled by the upgrade.
+
+**Checkbox ↔ CVar precedence (decided here, one resolver).** The checkbox is the persisted source of
+truth. `NodeShuffle.DestroyerVeto` is a **session-scoped console override** that wins only when it has
+actually been set — decided by `SetBy` priority, never by comparing its value to the default, so a
+player who deliberately types `NodeShuffle.DestroyerVeto 0` is obeyed. One resolver
+(`NodeShuffleResolveDestroyerVetoRequested`, `NodeShuffle.cpp`) so the latch's two readers cannot
+disagree. Pinned by `tools/check_t61_lint.ps1` (repointed) and `tools/check_t68_lint.ps1` (new).
+
+**T23's opposite-polarity pair is RETIRED, with `tools/check_t23_writers.ps1`.** Its question was "what
+does the roll-time removal toggle do"; the toggle and its arm are gone, so the pair had no subject and
+would have read VACUOUS forever. **Retiring a pair because its FEATURE was removed is the one
+legitimate way a red/green pair dies** — it was not retired to turn a red half green.
+
+**PARKED, NOT DEAD (dated TODOs at every reading surface):**
+* `FNodeShuffleWellSuppressionRecord::bSuppressedAtRoll` — a `SaveGame` field with no writer left. Kept
+  because saves written by ≤1.3.0 carry Roll-stamped records this build must still deserialize and
+  un-hide. `EWellSuppressPhase::Roll` and `SuppressVanillaWellGroup`'s `!bRollPhase` branch are kept for
+  the same reason. Delete only when that back-compat window is closed.
+* The `!bNoticesEnabled` suppression arms in `NodeShufflePendingNoticeEmit.cpp` and
+  `NodeShuffleObserveNotice.cpp` — unreachable now that every caller passes `true`. Kept as the seam a
+  future opt-out would re-enter at. Delete by 1.5.0 if no opt-out is wanted.
+
+**WHAT WAS LOST, recorded because deleting a lever is a real loss:** `NodeShuffle.AutoAllowExtractors=0`
+was the only path that DELETED the generated KDataForge pack. The per-load pass still clears and
+rebuilds the documents it owns, so nothing stale survives a load; what is gone is "remove the pack
+entirely and never write it again". Uninstalling the mod removes the directory. `check_t59_lint.ps1`'s
+half 2 was rewritten from "exactly one tree delete, in the rollback lever" to **zero tree deletes** —
+the invariant is unchanged and now stronger; its exception retired with its feature.
+
+**Row order is semantics-free — proved, not assumed.** Consumers enumerated before the sort was
+written: SML array serialization (positional, but every element is a keyed object and every reader keys
+on the path); the opt-out latch (a `TSet`); the sync pass's `ExistingByPath` (a `TMap`); the add path's
+`RemoveElementAtIndex(Num()-1)` withdrawal (**which is why the sort runs strictly after the add loop**,
+pinned by the T68 lint); the T65LABEL listing's `[i]` indices (a listing, not a key). No lint pins a row
+index. Nothing reads `FNodeShuffleConfigStruct::ProtectedForeignResources`.
+
+**Not verifiable from C++, so it is a runtime step, not a claim:** that the panel RENDERS in
+`SectionProperties` order, and that the sorted rows render sorted. `Widget_CP_Section` is Blueprint —
+the same limit T65 and T67 recorded for the row field order and the row labels.
+
+**Build note (2026-08-11).** The first build failed with ten `error C2001: newline in constant` in
+`NodeShuffleObserveNotice.cpp` - an editing script wrote real newlines into two `TEXT()` literals.
+**No lint and no `arity.py` run could have caught it: a malformed string literal is a compiler-only
+signal.** Repairing it then collided with `check_t67_lint.ps1`, which pins a phrase that must stay
+contiguous on one line - the naive re-wrap would have left that pin green on a mutant. Both are
+recorded because the shape recurs: *a packet that has never been compiled carries an unmeasured
+class of defect, and re-wrapping pinned copy is a silent lint break.*
+
+**Cold review + fix round (2026-08-11, `_team/nodeshuffle-followups/t68-coldreview.md`).** Verdict SHIP
+WITH TESTS. Two player-facing FALSE CLAIMS were caught, both of the `lessons-log-asserted-a-cause`
+family: the chat notice asserted *the checkbox is unticked* on a branch whose predicate is the resolved
+MODE (a player with `NodeShuffle.DestroyerVeto=0` and the box ticked was told to tick it), and the
+tooltip's *"for the rest of the session"* was false for the exact population the CVar was kept for -- an
+`Engine.ini [ConsoleVariables]` entry re-applies at EVERY launch, so the checkbox is inert forever, not
+for one session. Both replacements were applied VERBATIM from the review and then re-verified against
+their predicates. The review also found **a third `TODO(pre-release)` surviving in the PUBLIC header**
+plus four other comments naming deleted switches as live -- **none reachable by any pin**, because every
+tombstone was in the `.cpp` and the next author reads the `.h`
+([[lessons-file-the-rule-where-the-author-works]]). `check_t68_lint.ps1` gained **H1c**, which scans four
+files including headers, comments in scope, exempting only a 6-line window around a dated T68 marker;
+it immediately found a SIXTH stale mention nobody had read. 13/13 mutants.
+
+**Scoped re-pass (2026-08-11, same file, section 2): DO NOT COMMIT AS-IS -- 4 blockers, all comment/lint.**
+The finding that matters: **two of the six AUTHORED comment repoints from the fix round asserted
+something NEW and FALSE** -- a header claiming the KDF pass is "NOT GATED BY ANYTHING" (it is gated three
+ways in its caller, and the claim contradicted another file in the same packet), and an apply-path
+comment claiming "THIS ARM IS NOW THE ONLY PATH THAT HIDES AN ORIGIN" (four live call sites; two can be
+the first hide). **Every VERBATIM item from that round was clean; both false claims were AUTHORED.**
+That is the review-response rule paying for itself twice in one packet. Also caught: `check_t68_lint`'s
+H1c **did not scan `Public/NodeShuffle.h`** -- the file whose defect created the pin -- and adding it
+immediately failed on a SEVENTH stale mention at `:338`; and the mutation grader re-implemented the
+pin's exemption instead of calling it, so a mutant could be graded CAUGHT while the real pin skipped it.
+All fixed; 8/8 suites, 13/13 mutants. **No rebuild: comments and lint only, proven by comparing the
+comment-stripped sources against the robocopy /MIR mirror that produced `t68-2` (md5 identical for all
+three touched files), so `t68-2` remains the build of record and the deployed DLL is still `t67-2`.**

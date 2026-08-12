@@ -44,6 +44,9 @@ void ANodeShuffleSubsystem::EmitPendingNoticeIfReady(bool bNoticesEnabled)
 
     const FString Signature = FNodeShuffleModule::BuildPendingNoticeSignature(PendingNoticeQueue);
 
+    // TODO(2026-08-11, T68) PARKED, NOT LIVE: 'Show Compatibility Notices In Chat' was deleted and every
+    // caller now passes true, so this arm cannot run in a shipped build. Kept as the seam a future
+    // opt-out would re-enter at, and so the suppression stays counted if one ever does.
     if (!bNoticesEnabled)
     {
         UE_LOG(LogNodeShuffle, Display,

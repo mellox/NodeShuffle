@@ -111,6 +111,27 @@ void UNodeShuffleConfig::PostInitProperties()
         Root->SectionProperties.Add(Key, Prop);
     };
 
+    // ---- T68 (ns-t68-release-config, 2026-08-11): REGISTRATION ORDER IS THE PANEL ORDER. --------------
+    // SectionProperties is a TMap iterated in INSERTION ORDER, and nothing here ever removes, so the
+    // order of these Add calls is the single lever C++ has over how the panel reads. The grouping is
+    // audit §3: THE SHUFFLE -> OTHER MODS (including the protection list) -> RESOURCE WELLS ->
+    // TROUBLESHOOTING. There are no visual sub-headers: UCP_Section exposes only WidgetType / HasHeader /
+    // HeaderText / Collapsed and every property is added flat to one RootSection, so the groups are
+    // ordering only. WHETHER THE BLUEPRINT PANEL RENDERS IN SectionProperties ORDER IS NOT PROVABLE FROM
+    // C++ (Widget_CP_Section is Blueprint) -- runtime test step 1 is the decider, exactly as T65 recorded
+    // for the row field order.
+    //
+    // SERIALIZATION IS UNAFFECTED AND THIS IS PROVABLE: UConfigPropertySection::Serialize writes a KEYED
+    // object and Deserialize reads it back with ObjectValue->GetValue(Property.Key) (SML
+    // ConfigPropertySection.cpp:18-42), so nothing is positional. An existing NodeShuffle.cfg round-trips
+    // unchanged; only the key order inside the JSON flips on the next save.
+    //
+    // FIVE PROPERTIES WERE DELETED HERE (EnableExperimentalFeatures, CommitWellsAtRoll,
+    // ShowCompatibilityNotices, AllowVanillaDisappear, RerollRelocatedWells). SML ignores a file key that
+    // is not in the schema on load and drops it on the next save (ConfigPropertySection.cpp:18-42), and
+    // the mod version bump to 1.4.0 forces that save on first load (ConfigManager.cpp:103-117). A player
+    // who had set one of them silently gets the hard-wired value -- see docs/TECH-DEBT.md T68.
+    // ---------------------------------- THE SHUFFLE ---------------------------------------------------
     AddBool(TEXT("Enabled"), true,
         TEXT("Enabled"),
         TEXT("Master switch. When off, NodeShuffle does nothing: no new nodes spawn and no vanilla nodes are deactivated. Resource changes already stored in the save persist."));
@@ -143,25 +164,11 @@ void UNodeShuffleConfig::PostInitProperties()
         TEXT("Randomize Purity"),
         TEXT("Shuffle node purities too (dealt from the vanilla purity distribution, so overall purity balance is preserved). Applied when the layout is rolled."));
 
-    AddBool(TEXT("AllowVanillaDisappear"), true,
-        TEXT("Allow Vanilla Nodes To Disappear"),
-        TEXT("When off, every vanilla node stays active and only the new locations are subject to the active-percent roll."));
-
-    AddBool(TEXT("IncludeModdedNodes"), true,
-        TEXT("Include Modded Nodes"),
-        TEXT("Shuffle nodes added by other mods too (e.g. AllMinable's item nodes, modded ores). When on, modded SOLID nodes also RELOCATE to new locations on a re-roll, like vanilla nodes, instead of shuffling in place. Modded resources use the separate 'Minimum Active Nodes Per Modded Resource' floor. Applied when the layout is rolled."));
-
-    AddInt(TEXT("SpawnRadiusMeters"), 600, 100, 5000,
-        TEXT("Spawn-On-Discovery Radius (m)"),
-        TEXT("New node locations only materialize (their rock + minable node appear) once you come within this many metres AND the terrain there has streamed in, so they always settle correctly on the ground. Smaller = more exploration, fewer live actors at once; larger = nodes pop in from further away. Far, undiscovered nodes stay as data until you reach them."));
-
-    AddBool(TEXT("UnlockModdedKnowledge"), true,
-        TEXT("Unlock Scanner Knowledge For Shuffled Modded Resources"),
-        TEXT("Shuffled modded resources are registered with the resource scanner so scanners recognize them. NOTE: some overhaul mods also gate MINER PLACEMENT on scanner knowledge, so this can let you place miners on modded ores before that overhaul's own research would have allowed it (crafting/recipes stay gated as normal). Turn off if you prefer each mod's own progression to grant this. Vanilla resources are never affected."));
-
-    AddBool(TEXT("EnableDiagnostics"), false,
-        TEXT("Enable Diagnostic Logging (Experimental)"),
-        TEXT("OFF by default. Turn ON only when troubleshooting (e.g. to capture why a miner won't place): the mod writes verbose placement / node diagnostics to FactoryGame.log. Leave OFF for normal play — it keeps your log clean and avoids any overhead. The mod's actual fixes are always active whether this is on or off."));
+    // T68 (audit §5.8): 'Allow Vanilla Nodes To Disappear' is GONE, hard-wired to its shipped default
+    // (ON = vanilla entries take part in the active-percent roll like everything else). Its name and
+    // tooltip were read as "vanilla nodes stay put", which was never what it did -- with it off, vanilla
+    // nodes still relocated and still got retyped; it only forced their bActive to true. The two
+    // consumers that read it are deleted, not defaulted, in NodeShuffleSubsystem.cpp.
 
     AddBool(TEXT("EnableStarterNodes"), true,
         TEXT("Starter Nodes Near Spawn"),
@@ -171,132 +178,68 @@ void UNodeShuffleConfig::PostInitProperties()
         TEXT("Starter Node Radius (m)"),
         TEXT("How far from your spawn point the starter nodes may be placed. Smaller keeps them right at your feet; larger spreads them out. Only used on a brand-new game's first roll."));
 
-    AddBool(TEXT("ShuffleResourceWells"), false,
-        TEXT("Shuffle Resource Wells (In Place)"),
-        TEXT("OFF by default. When ON, each RESOURCE WELL is re-rolled to produce a different resource — a nitrogen well may become a water well, and so on. The wells themselves DO NOT MOVE: only what they yield changes, so your map knowledge still works.\n\nThe overall mix is preserved: the resources are dealt from the wells' own existing set, so a save never ends up short of a well-only resource such as Nitrogen Gas.\n\nWells that already have a Resource Well Pressurizer or any Resource Well Extractor on them are NEVER changed. Applied when the layout is rolled — turn this on and then use 'Re-roll Layout' to apply it to an existing save."));
+    AddInt(TEXT("SpawnRadiusMeters"), 600, 100, 5000,
+        TEXT("Spawn-On-Discovery Radius (m)"),
+        TEXT("New node locations only materialize (their rock + minable node appear) once you come within this many metres AND the terrain there has streamed in, so they always settle correctly on the ground. Smaller = more exploration, fewer live actors at once; larger = nodes pop in from further away. Far, undiscovered nodes stay as data until you reach them."));
 
-    // Packet H2 (ns-wells-h2). A SECOND, separate toggle -- deliberately not folded into the one above.
-    // Retyping a well in place and physically MOVING it are different promises with different risks,
-    // and a player who accepted "my nitrogen well now makes water" has not thereby accepted "my
-    // nitrogen well is now 4 km away". This one also carries a stage warning the other does not.
-    AddBool(TEXT("RelocateResourceWells"), false,
-        TEXT("Relocate Resource Wells (EXPERIMENTAL)"),
-        TEXT("OFF by default and still experimental — leave it off if you want a quiet save.\n\nWhen ON, a whole resource well (its core and every satellite) is MOVED to a new place as a rigid body: the satellites keep their exact spacing and pattern relative to the core, and the whole group is rotated together to find an orientation that fits the terrain. A well is moved all-or-nothing — if the full footprint cannot be placed, no partial well appears at the new site, and once the mod gives up on the move for good it puts the original back.\n\nA relocated well is DRESSED AND BUILDABLE: its rocks and cracks are re-created at the new site, and a Resource Well Pressurizer and its Extractors snap to it and produce.\n\nTHE ORIGINAL IS REMOVED AS SOON AS THE WELL IS DEALT A DESTINATION, not when the new well appears. The replacement is only built once you travel to the new spot and the terrain there loads, so between those two moments the well is in NEITHER place: it is absent from the world. How long that lasts is NOT bounded — destinations are drawn across the whole map, so a well dealt somewhere you never go stays absent for as long as you do not go there.\n\nKNOWN LIMITS:\n- A well you have BUILT ON is never removed. A Resource Well Pressurizer on the core or any Resource Well Extractor on a satellite leaves that whole well exactly where it is, and the mod re-checks that on every pass, so the move happens by itself if you later remove the building.\n- Re-rolling does NOT move a well that has already moved, unless you turn on 'Re-roll Wells That Have Already Moved' below. With that option off, only wells that have not moved yet are dealt a new destination.\n- A well moves with the satellites that had loaded when it was enrolled. If more of its satellites load later, they are left out of the moved well permanently — the well is smaller, and produces less, until you reload the save.\n- A relocated well claims a large build area, and that has not been tested against ordinary resource nodes closer than about 15 m. If a Miner will not place on an ordinary node right beside a relocated well, please report it — that case is untested. (For a Miner that will not place anywhere near a well, see the note at the top of this panel.)\n- Desert-biome wells are unverified and may arrive without their rock graphics.\n\nRequires 'Shuffle Resource Wells' to be on as well, and applies at ROLL time — turn both on, then use 'Re-roll Layout'."));
+    // ---------------------------------- OTHER MODS ----------------------------------------------------
+    AddBool(TEXT("IncludeModdedNodes"), true,
+        TEXT("Include Modded Nodes"),
+        TEXT("Shuffle nodes added by other mods too (e.g. AllMinable's item nodes, modded ores). When on, modded SOLID nodes also RELOCATE to new locations on a re-roll, like vanilla nodes, instead of shuffling in place. Modded resources use the separate 'Minimum Active Nodes Per Modded Resource' floor. Applied when the layout is rolled."));
 
-    // T7b (ns-t7b-reroll). A THIRD well toggle, and it earns its place for the same reason the second
-    // one did: "a well may move" and "a well I have already found may move again" are different
-    // promises. DEFAULT OFF also means the behaviour ships dark -- an existing save keeps today's
-    // semantics until the player asks for the new ones, which matters because the first re-roll after
-    // it is enabled re-considers EVERY already-moved well at once.
-    AddBool(TEXT("RerollRelocatedWells"), false,
-        TEXT("Re-roll Wells That Have Already Moved"),
-        TEXT("OFF by default. Decides what 'Re-roll Layout' does to wells that have ALREADY moved.\n\n")
-        TEXT("OFF: a well that has already moved keeps its spot, and only wells that have not moved yet ")
-        TEXT("are dealt a destination. This is how the mod behaved before this option existed.\n\n")
-        TEXT("ON: an already-moved well is re-considered on every re-roll, like an ordinary node - it is ")
-        TEXT("taken from where it stands and dealt a new destination.\n\n")
-        TEXT("WHAT TO EXPECT ON AN EXISTING SAVE: every well that has already moved is re-considered on ")
-        TEXT("the FIRST re-roll after you turn this on - not a few of them. The save this was developed ")
-        TEXT("against held 17 moved wells out of 20.\n\n")
-        TEXT("A RE-ROLLED WELL DISAPPEARS UNTIL YOU GO AND FIND IT. The old well is removed the moment ")
-        TEXT("you press Re-roll Layout, but the new one is not built until you travel to its new spot ")
-        TEXT("and the terrain loads - exactly like a well moving for the first time. Turn this on with ")
-        TEXT("many moved wells and most of your wells will be gone from the map until you visit each new ")
-        TEXT("location. The log line 'WELLH2-ROLL: re-enrolment teardown' reports how many groups were ")
-        TEXT("removed and how long that frame took.\n\n")
-        TEXT("WHAT STILL DOES NOT MOVE: a well you have built on. A Resource Well Pressurizer on the ")
-        TEXT("core, or any Resource Well Extractor on a satellite, keeps the well exactly where it is. ")
-        TEXT("That check reads the well you can actually see and build on, and it is taken a second time ")
-        TEXT("immediately before anything is removed.\n\n")
-        TEXT("LIMITS YOU CAN HIT:\n")
-        TEXT("- A well is only re-considered while its ORIGINAL satellites are loaded. Re-roll from far ")
-        TEXT("away and it keeps its current spot for that roll.\n")
-        TEXT("- Each well gets a limited number of draws to find a destination that clears water and ")
-        TEXT("spacing (the log's 'deal-failed' count says how often a well ran out). A well that runs ")
-        TEXT("out keeps the spot it already has: nothing is removed for it that roll.\n")
-        TEXT("- A moved well is re-captured from its original satellites, so satellites that loaded ")
-        TEXT("since it moved are included this time and the well can come back a different size.\n")
-        TEXT("- A moved well is only re-considered while the place it currently stands has been loaded ")
-        TEXT("this session. If it has not, the log says '0 of N member handle(s)' and the well keeps its ")
-        TEXT("spot.\n\n")
-        TEXT("Requires 'Shuffle Resource Wells' and 'Relocate Resource Wells' to be on as well, and ")
-        TEXT("applies at ROLL time - turn it on, then use 'Re-roll Layout'."));
+    AddBool(TEXT("UnlockModdedKnowledge"), true,
+        TEXT("Unlock Scanner Knowledge For Shuffled Modded Resources"),
+        TEXT("Shuffled modded resources are registered with the resource scanner so scanners recognize them. NOTE: some overhaul mods also gate MINER PLACEMENT on scanner knowledge, so this can let you place miners on modded ores before that overhaul's own research would have allowed it (crafting/recipes stay gated as normal). Turn off if you prefer each mod's own progression to grant this. Vanilla resources are never affected."));
 
-    // T23 stage 3 (ns-t23-rollhide). A FOURTH well toggle. It changes no destination and no placement --
-    // only WHEN the original is removed -- which is why it is not folded into either of the two above.
+    // ---- T68 (audit §5.12, option (b)): THE PROTECTION MASTER SWITCH, PROMOTED TO THE PANEL. ----------
+    // Before T68 the only way to turn the per-resource protection list on was the console variable
+    // NodeShuffle.DestroyerVeto -- the one place in this whole panel that asked a player to use the
+    // console. This checkbox drives THE SAME LATCH that CVar gates (FNodeShuffleModule::
+    // ArmDestroyerVetoIfEnabled resolves the two into one bObserveOnly, and there is exactly one
+    // resolver so the two readers of the latch cannot disagree).
     //
-    // EVERY FACTUAL ASSERTION IN THE TEXT BELOW IS GRADED, because this panel has shipped false claims
-    // three times (workspace CLAUDE.md, "UI copy is a CLAIM"). Graded MEASURED-IN-CODE: the hide happens
-    // at the roll commit; the replacement is still gated on IsLocationNearAnyPlayer + a settled footprint,
-    // unchanged; a member reporting IsWellMemberInUse is refused by HideOne on both paths; an entry whose
-    // capture is incomplete at the roll takes the old path; a terminally-failed entry records a persisted
-    // un-hide intent that is re-attempted every apply pass and can only complete while the ORIGINAL actor
-    // is resident. NO DURATION IS CLAIMED anywhere in this text: the deferral window has never been
-    // measured to a bound, and stage 0 measured 0 of 17 dealt wells placed on the author's own save.
-    // ns-t54-immediate-hide REWRITE. EVERY CLAIM BELOW IS RE-GRADED, because this option's old text is a
-    // worked example of the failure mode this panel keeps hitting: its OFF paragraph -- "a well that has
-    // not moved yet keeps standing until its replacement has actually been built" -- was true when it was
-    // written and was made FALSE by a change in a different file. Immediate removal is now what the mod
-    // does with this option off, so the only thing this option still decides is whether the removal
-    // happens at the instant of the re-roll or a few seconds later on the next maintenance pass.
-    // Graded MEASURED-IN-CODE: the apply pass initiates the hide for every entry marked as moving
-    // (NodeShuffleWellRelocateApply.cpp, the immediate-hide arm); the roll path hides earlier only for
-    // entries whose look is completely captured at that instant; a member reporting in-use is refused on
-    // both paths through one shared predicate; a well left absent with nothing working on it now has its
-    // original restored (the same file arms the persisted intent). NO DURATION IS CLAIMED: the apply
-    // cadence is not a promise this text may make, and the deferral window has never been bounded.
-    AddBool(TEXT("CommitWellsAtRoll"), false,
-        TEXT("Remove A Moved Well At The Re-roll Itself (EXPERIMENTAL)"),
-        TEXT("OFF by default, and it now makes very little difference. This option no longer decides ")
-        TEXT("WHETHER the original well is removed early - the mod removes it on its own once the well ")
-        TEXT("has been dealt a destination and you are near enough for the original to be loaded. It ")
-        TEXT("only decides whether that happens during the re-roll ")
-        TEXT("itself or on the mod's next maintenance pass shortly afterwards.\n\n")
-        TEXT("OFF: the original is removed on the next maintenance pass after the re-roll, and for a ")
-        TEXT("well whose own area is not loaded at that moment, on the first pass after it does load. ")
-        TEXT("This path retries every pass, so it reaches every well that was dealt a destination and ")
-        TEXT("that you have not built on.\n\n")
-        TEXT("ON: the removal is additionally attempted during the re-roll itself, for wells whose ")
-        TEXT("appearance the mod has fully recorded at that instant. Recording during the re-roll happens ")
-        TEXT("once and is not retried, so wells it does not manage are simply removed by the OFF path ")
-        TEXT("instead. The log line 'WELLH2-ROLLHIDE' names which wells took which route.\n\n")
-        TEXT("WHAT THE REMOVAL MEANS EITHER WAY: the replacement is only built once you travel to the new ")
-        TEXT("location and the terrain there loads. Between the removal and that moment the well is in ")
-        TEXT("NEITHER place: it is absent from the world. HOW LONG THAT LASTS IS NOT BOUNDED. Destinations ")
-        TEXT("are drawn at random across the whole map, on purpose, so a well dealt somewhere you never go ")
-        TEXT("stays absent for as long as you do not go there.\n\n")
-        TEXT("WHAT IS NEVER REMOVED: a well you have built on. A Resource Well Pressurizer on the core, or ")
-        TEXT("a Resource Well Extractor on any satellite, leaves that whole well exactly where it is, with ")
-        TEXT("this option on or off. The mod re-checks it every pass, so removing the building lets the ")
-        TEXT("move happen by itself.\n\n")
-        TEXT("IF A WELL ENDS UP ABSENT WITH NOTHING WORKING ON IT, the mod puts its original back. That ")
-        TEXT("covers a well that can never be placed anywhere, and a well left absent because you turned ")
-        TEXT("'Relocate Resource Wells' or 'Shuffle Resource Wells' off. The attempt only runs while the ")
-        TEXT("original's own area is loaded, so in practice it completes when you are near it again. ONE ")
-        TEXT("CASE IT DOES NOT COVER: a well that keeps failing to assemble at its destination - some of ")
-        TEXT("its pieces are standing there, so putting the original back would give you two partial ")
-        TEXT("wells. That case is counted in the log line 'WELLH2-STRANDED', which must read zero.\n\n")
-        TEXT("Requires 'Shuffle Resource Wells' and 'Relocate Resource Wells' to be on as well."));
-
-    // ns-h1b-notice, anti-nag rule 7: the opt-out. Default TRUE deliberately -- see the struct comment.
-    AddBool(TEXT("ShowCompatibilityNotices"), true,
-        TEXT("Show Compatibility Notices In Chat"),
-        // T61 WIDENED THIS TOOLTIP because a second notice now rides on this same switch, and a
-        // description that named only the first would have understated what the switch turns off.
-        // Both sentences describe what the code does: the extractor notice is the ns-h1b-notice pass,
-        // the resource notice is queued only when a row is actually added to the list below.
-        TEXT("Posts a one-off chat message when a mod's extractor has been cleared for use on shuffled ")
-        TEXT("nodes but needs a game restart to take effect. It also tells you once when another mod's ")
-        TEXT("resource has been added to the protection list further down this page, so you can decide ")
-        TEXT("whether to protect it. Both appear at most once per new situation and say nothing at all ")
-        TEXT("when there is nothing to say. Turn off to silence them."));
-
-    AddBool(TEXT("EnableExperimentalFeatures"), false,
-        TEXT("Enable Experimental Features"),
-        // TODO(2026-08-08, pre-release): this tooltip says nothing is gated by this flag. Both
-        // TODO(pre-release) sites in NodeShuffleAutoAllowExtractors.cpp plan to gate on it -- update
-        // this string in the same commit that does.
-        TEXT("A separate developer gate — it is NOT what the word EXPERIMENTAL means in other options' names. Nothing in this version is gated by this switch, so leaving it off changes nothing. A feature marked EXPERIMENTAL elsewhere in this list carries its own toggle and is not controlled from here."));
+    // PRECEDENCE, DECIDED HERE AND DOCUMENTED AT THE RESOLVER: this checkbox is the PERSISTED source of
+    // truth; NodeShuffle.DestroyerVeto is a SESSION-SCOPED console override that wins only when someone
+    // has actually set it (SetBy is anything other than the constructor default). An untouched CVar does
+    // not fight the checkbox, and a console/Engine.ini set still wins for that session -- which keeps
+    // every existing "set NodeShuffle.DestroyerVeto 1" instruction working.
+    //
+    // DEFAULT ON, AND THAT IS A BEHAVIOUR CHANGE FOR EXISTING INSTALLS: protection was off by default
+    // before this build and is on after it. Say so in the changelog rather than softening it.
+    AddBool(TEXT("ProtectOtherModsNodes"), true,
+        TEXT("Protect Other Mods' Nodes From Removal"),
+        // EVERY FACTUAL ASSERTION HERE IS GRADED -- see docs/TECH-DEBT.md T68 for the grading table.
+        // MEASURED-IN-CODE: the setting is read once while the world loads (ArmDestroyerVetoIfEnabled,
+        // called from the subsystem's BeginPlay) and not re-read while you play; with it off the hook
+        // still arms and still classifies, which is what fills the list below (T61); the per-resource
+        // ticks are only consulted while this is on. NOT CLAIMED: that anything would have been removed,
+        // that anything was saved, or what the other mod does after it gets our answer.
+        TEXT("ON by default. When another mod's node handler checks a resource node that is not the base ")
+        TEXT("game's, NodeShuffle answers that check and refuses the handler's condition, for every ")
+        TEXT("resource still ticked in the list below.\n\n")
+        TEXT("OFF: NodeShuffle answers nothing, and each other mod's handler decides on its own. The list ")
+        TEXT("below still fills up as you play, so you can see what is being checked before you turn this ")
+        TEXT("on.\n\n")
+        TEXT("WHEN A CHANGE TAKES EFFECT: THE NEXT TIME YOU LOAD THE SAVE. This is read once while the ")
+        TEXT("world is loading and is not re-read while you play. It does not bring back nodes that have ")
+        TEXT("already been removed.\n\n")
+        // T68 COLD REVIEW F2 (HIGH) -- THE PARAGRAPH BELOW IS THE REVIEWER'S TEXT, VERBATIM.
+        // THE OLD WORDING ("...OVERRIDES this checkbox for the rest of the session if you set it") WAS
+        // FALSE FOR THE VERY POPULATION THE CVar WAS KEPT FOR. The resolver decides by SetBy priority,
+        // and an Engine.ini [ConsoleVariables] entry is re-applied at EVERY startup with
+        // ECVF_SetByConsoleVariablesIni (0x07000000) -- above ECVF_SetByConstructor (0x00000000), which
+        // the reviewer confirmed against the engine's own IConsoleManager.h. For that player the
+        // override is permanent and this checkbox is inert forever, not for one session.
+        // RE-VERIFIED AGAINST THE PREDICATE after applying: "for the rest of the session if you typed it
+        // at the console" = ECVF_SetByConsole, which is not persisted and is re-asked at every world
+        // init; "on every launch if it is in Engine.ini" = ECVF_SetByConsoleVariablesIni, re-applied by
+        // the engine at startup; "T68VETOGATE reports which of the two decided each world load" = the
+        // census line's decidedBy field, which is the only surface that can say it.
+        TEXT("The console variable NodeShuffle.DestroyerVeto still works and OVERRIDES this checkbox ")
+        TEXT("whenever it has been set — for the rest of the session if you typed it at the console, ")
+        TEXT("or on every launch if it is in Engine.ini. Remove it from Engine.ini if you want this ")
+        TEXT("checkbox to decide. The log line T68VETOGATE reports which of the two decided each ")
+        TEXT("world load."));
 
     // ---- T60 (ns-t60-protect-checkboxes, 2026-08-10): the per-resource protection opt-out list ----
     // A UConfigPropertyArray whose element TEMPLATE is a section of {Resource: String, Protected: Bool}.
@@ -375,9 +318,17 @@ void UNodeShuffleConfig::PostInitProperties()
             TEXT("goes back to being protected and gets a fresh row. Delete a row and it comes back the ")
             TEXT("next time that resource is seen. Adding a row by hand does nothing unless the text ")
             TEXT("happens to be an exact resource path.\n\n")
-            TEXT("NOTHING HERE APPLIES unless the protection feature is on, and it needs BOTH console ")
-            TEXT("variables: NodeShuffle.DestroyerVeto is OFF by default and must be set to 1, and ")
-            TEXT("NodeShuffle.ProtectForeignNodes is already 1. Both take effect at the next world load. ")
+            // ---- T68 (2026-08-11): THE CONSOLE INSTRUCTION IS GONE. ------------------------------
+            // This paragraph used to tell the player to set TWO console variables -- the only place in
+            // the whole panel that asked for the console. NodeShuffle.ProtectForeignNodes has been
+            // deleted (it had no reachable state of its own: inert unless the master gate was on, and
+            // already at its intended value), and the master gate is now the checkbox above.
+            // BOTH REPLACEMENT CLAIMS ARE MEASURED, not assumed: the ticks are read only by the veto's
+            // consumption predicate, which is never reached while the hook is observing; and the rows
+            // are added from the same population pass in either mode (NodeShuffleForeignProtectConfig
+            // .cpp), which is what the sentence after this one says.
+            TEXT("NOTHING HERE APPLIES unless \"Protect Other Mods' Nodes From Removal\" above is ")
+            TEXT("ticked. It is ON by default. A change to it takes effect at the next world load. ")
             // T61 REPLACED THE SENTENCE THAT USED TO SIT HERE. It said the list "stays EMPTY" while
             // NodeShuffle.DestroyerVeto is 0 — true of the build that shipped it, and made FALSE by
             // T61, which arms the detection hook in either state precisely so the list fills before a
@@ -385,9 +336,9 @@ void UNodeShuffleConfig::PostInitProperties()
             // are added from the same population pass in both modes (NodeShuffleForeignProtectConfig
             // .cpp), and the ticks are only ever read by the veto's consumption predicate, which is
             // never reached while the hook is observing.
-            TEXT("The list still FILLS UP while NodeShuffle.DestroyerVeto is 0 — that is what lets you ")
-            TEXT("choose before turning protection on — but every tick in it does nothing at all until ")
-            TEXT("you set that variable to 1 and load again. ")
+            TEXT("The list still FILLS UP while that setting is off — that is what lets you choose ")
+            TEXT("before turning protection on — but every tick in it does nothing at all until it is ")
+            TEXT("ticked and you load again. ")
             TEXT("Resource wells that NodeShuffle itself changed to a modded resource are ")
             TEXT("deliberately NOT listed here, and unticking a row can never affect one — they are ")
             TEXT("NodeShuffle's own doing, not another mod's."));
@@ -505,6 +456,39 @@ void UNodeShuffleConfig::PostInitProperties()
         Rows->DefaultValue = RowTemplate;
         Root->SectionProperties.Add(TEXT("ProtectedForeignResources"), Rows);
     }
+
+    // ---------------------------------- RESOURCE WELLS (opt-in) ---------------------------------------
+    AddBool(TEXT("ShuffleResourceWells"), false,
+        TEXT("Shuffle Resource Wells (In Place)"),
+        TEXT("OFF by default. When ON, each RESOURCE WELL is re-rolled to produce a different resource — a nitrogen well may become a water well, and so on. The wells themselves DO NOT MOVE: only what they yield changes, so your map knowledge still works.\n\nThe overall mix is preserved: the resources are dealt from the wells' own existing set, so a save never ends up short of a well-only resource such as Nitrogen Gas.\n\nWells that already have a Resource Well Pressurizer or any Resource Well Extractor on them are NEVER changed. Applied when the layout is rolled — turn this on and then use 'Re-roll Layout' to apply it to an existing save."));
+
+    // Packet H2 (ns-wells-h2). A SECOND, separate toggle -- deliberately not folded into the one above.
+    // Retyping a well in place and physically MOVING it are different promises with different risks,
+    // and a player who accepted "my nitrogen well now makes water" has not thereby accepted "my
+    // nitrogen well is now 4 km away". This one also carries a stage warning the other does not.
+    AddBool(TEXT("RelocateResourceWells"), false,
+        TEXT("Relocate Resource Wells (EXPERIMENTAL)"),
+        TEXT("OFF by default and still experimental — leave it off if you want a quiet save.\n\nWhen ON, a whole resource well (its core and every satellite) is MOVED to a new place as a rigid body: the satellites keep their exact spacing and pattern relative to the core, and the whole group is rotated together to find an orientation that fits the terrain. A well is moved all-or-nothing — if the full footprint cannot be placed, no partial well appears at the new site, and once the mod gives up on the move for good it puts the original back.\n\nA relocated well is DRESSED AND BUILDABLE: its rocks and cracks are re-created at the new site, and a Resource Well Pressurizer and its Extractors snap to it and produce.\n\nTHE ORIGINAL IS REMOVED AS SOON AS THE WELL IS DEALT A DESTINATION, not when the new well appears. The replacement is only built once you travel to the new spot and the terrain there loads, so between those two moments the well is in NEITHER place: it is absent from the world. How long that lasts is NOT bounded — destinations are drawn across the whole map, so a well dealt somewhere you never go stays absent for as long as you do not go there.\n\nKNOWN LIMITS:\n- A well you have BUILT ON is never removed. A Resource Well Pressurizer on the core or any Resource Well Extractor on a satellite leaves that whole well exactly where it is, and the mod re-checks that on every pass, so the move happens by itself if you later remove the building.\n- RE-ROLLING RE-CONSIDERS A WELL THAT HAS ALREADY MOVED. It is taken from where it stands and dealt a new destination, like any other node, and it is absent until you travel to that new spot. On a save with many moved wells, most of them are gone from the map until you visit each new location. (A well you have built on is still never touched.)\n- A well moves with the satellites that had loaded when it was enrolled. If more of its satellites load later, they are left out of the moved well permanently — the well is smaller, and produces less, until you reload the save.\n- A relocated well claims a large build area, and that has not been tested against ordinary resource nodes closer than about 15 m. If a Miner will not place on an ordinary node right beside a relocated well, please report it — that case is untested. (For a Miner that will not place anywhere near a well, see the note at the top of this panel.)\n- Desert-biome wells are unverified and may arrive without their rock graphics.\n\nRequires 'Shuffle Resource Wells' to be on as well, and applies at ROLL time — turn both on, then use 'Re-roll Layout'."));
+
+    // T68 (audit §5.2, §5.9): TWO WELL TOGGLES WERE DELETED HERE.
+    //  * 'Re-roll Wells That Have Already Moved' (RerollRelocatedWells) is HARD-WIRED ON. A re-roll
+    //    now re-considers a well that has already moved, like any other node -- the author's standing
+    //    ruling that a shuffle hides ALL the things we shuffle. The first re-roll after this build
+    //    churns most already-moved wells on an existing save; the tooltip above says what that means.
+    //  * 'Remove A Moved Well At The Re-roll Itself' (CommitWellsAtRoll) is GONE, feature and all. The
+    //    apply pass already initiates the hide for every entry marked as moving on every pass (T54), so
+    //    the roll-time arm only moved the disappearance earlier by roughly one pass, at the cost of a
+    //    one-shot capture that could not retry. Its opposite-polarity test pair (T23-A/T23-B) and
+    //    tools/check_t23_writers.ps1 were retired in the same commit -- with the toggle gone the pair's
+    //    question no longer exists, which is the one legitimate way a red/green pair dies.
+
+    // ---------------------------------- TROUBLESHOOTING -----------------------------------------------
+    // Kept on the panel deliberately (audit §5.11): it is the route a bug reporter uses, and "tick this
+    // box, reload, send me the log" succeeds far more often than a console instruction.
+    AddBool(TEXT("EnableDiagnostics"), false,
+        TEXT("Enable Diagnostic Logging"),
+        TEXT("OFF by default. Turn ON only when troubleshooting (e.g. to capture why a miner won't place): the mod writes verbose placement / node diagnostics to FactoryGame.log. Leave OFF for normal play — it keeps your log clean and avoids any overhead. The mod's actual fixes are always active whether this is on or off."));
+
 
     RootSection = Root;
 }

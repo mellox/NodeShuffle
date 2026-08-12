@@ -301,17 +301,9 @@ bool ANodeShuffleSubsystem::WellGroupHasSuppressedMember(const FNodeShuffleWellE
     return false;
 }
 
-// ns-t23-rollhide REVIEW-2 (F4): the T23 pair's population, asked of the RECORD's phase rather than of
-// any placement coordinate. See bSuppressedAtRoll's declaration for why no coordinate can answer this.
-bool ANodeShuffleSubsystem::WellGroupHasRollSuppressedMember(const FNodeShuffleWellEntry& E) const
-{
-    if (E.CoreSuppression.bSuppressedByUs && E.CoreSuppression.bSuppressedAtRoll) { return true; }
-    for (const FNodeShuffleWellSatellite& S : E.Satellites)
-    {
-        if (S.Suppression.bSuppressedByUs && S.Suppression.bSuppressedAtRoll) { return true; }
-    }
-    return false;
-}
+// T68 (2026-08-11): WellGroupHasRollSuppressedMember WAS HERE AND IS DELETED with the T23 pair it fed.
+// Its only caller was EmitWellRollHideTestPair. The SaveGame field it read (bSuppressedAtRoll) is kept
+// -- old saves still carry Roll-stamped records -- but nothing reads the phase for a decision any more.
 
 // ------------------------------------------------------------------------------------------------
 // THE ROLL-TIME CAPTURE GATE
@@ -557,65 +549,7 @@ void ANodeShuffleSubsystem::EmitWellStrandedCensus()
     }
 }
 
-// ------------------------------------------------------------------------------------------------
-// THE OPPOSITE-POLARITY PAIR (T23 §6)
-// ------------------------------------------------------------------------------------------------
-// This change spans two landings -- the ledger + un-hide, and the move of suppression to roll time -- and
-// the dangerous state of a two-part change is not "broken", it is HALF APPLIED AND GREEN. So the pair is
-// built as EXACT COMPLEMENTS over one population, which makes a both-green or both-red state
-// unreachable without editing this function:
-//
-//   T23-A  "at least one entry is suppressed by us AND not placed, with the toggle on."
-//          RED before roll-time hide lands (nothing suppresses an unplaced entry). GREEN after.
-//   T23-B  "no member is hidden by us while its entry is not placed, with the toggle on."
-//          GREEN before. RED after, at exactly the same instant A turns green.
-//
-// A ZERO DENOMINATOR IS NOT A PASS. With no enrolled, unplaced, dealt entries the question was never
-// asked, and both verdicts print VACUOUS rather than PASS -- this repo has shipped a vacuous green twice.
-// NEITHER ASSERTION IS SKIPPED OR IGNORED under any condition; the toggle only decides whether the
-// population exists, and when it is off the line says so instead of disappearing.
-void ANodeShuffleSubsystem::EmitWellRollHideTestPair(bool bCommitAtRoll)
-{
-    int32 Candidates = 0, SuppressedUnplaced = 0;
-    for (const FNodeShuffleWellEntry& E : WellLayout)
-    {
-        if (E.bGroupPlaced) { continue; }
-        if (!E.bDestDealt) { continue; }
-        // ns-t23-rollhide REVIEW-2 (F4) -- REPLACING A FILTER THAT DID NOT WORK. The first attempt
-        // excluded entries whose PlacedCoreLocation was non-zero. That filter is defeated by the exact
-        // case it was written for: re-enrolment calls ClearAbandonedWellPlacement AFTER clearing
-        // bGroupPlaced, and that function ZEROES PlacedCoreLocation -- so a previously-placed entry
-        // carrying an APPLY-time suppression looked never-placed, and T23-A read PASS with the toggle
-        // OFF. The pair now asks the suppression record which phase took it; nothing rewrites that.
-        ++Candidates;
-        if (WellGroupHasRollSuppressedMember(E)) { ++SuppressedUnplaced; }
-    }
-
-    const TCHAR* VerdictA = (Candidates == 0) ? TEXT("VACUOUS")
-                          : (SuppressedUnplaced > 0 ? TEXT("PASS") : TEXT("FAIL"));
-    const TCHAR* VerdictB = (Candidates == 0) ? TEXT("VACUOUS")
-                          : (SuppressedUnplaced == 0 ? TEXT("PASS") : TEXT("FAIL"));
-
-    const FString Key = FString::Printf(TEXT("%d|%d|%d"), bCommitAtRoll ? 1 : 0, Candidates,
-                                        SuppressedUnplaced);
-    if (Key == WellRollHideTestLastKey) { return; }
-    WellRollHideTestLastKey = Key;
-
-    UE_LOG(LogNodeShuffle, Display,
-        TEXT("[NodeShuffle][TEST] T23-A %s | T23-B %s -- toggle 'Remove A Moved Well Immediately' is %s. ")
-        TEXT("Only a suppression taken on the ROLL phase counts: an apply-time suppression predates ")
-        TEXT("this feature and answers a different question, and no placement coordinate can tell the ")
-        TEXT("two apart after a re-roll. ")
-        TEXT("Population: %d entr(ies) that are dealt a destination and not yet placed; of those, %d ")
-        TEXT("have at least one member whose suppression was taken AT THE ROLL. ")
-        TEXT("T23-A asserts that number is above zero, ")
-        TEXT("T23-B asserts it is zero: they are exact complements over the same population, so exactly ")
-        TEXT("one of them is red at any time and neither can be quietly skipped. VACUOUS means the ")
-        TEXT("population was empty and the question was never asked -- it is not a pass. ")
-        TEXT("LIMIT OF THIS INSTRUMENT (REVIEW-3 F-1): the phase stamp is not cleared at a re-enrolment, ")
-        TEXT("so a save that has EVER run with the toggle ON can show T23-A PASS while it now reads OFF. ")
-        TEXT("Verify the OFF half on a save that has never had the toggle on. ")
-        TEXT("Before roll-time ")
-        TEXT("removal landed, T23-A was the DELIBERATELY RED one; after it lands they swap."),
-        VerdictA, VerdictB, bCommitAtRoll ? TEXT("ON") : TEXT("OFF"), Candidates, SuppressedUnplaced);
-}
+// T68 (2026-08-11): THE T23 OPPOSITE-POLARITY PAIR (EmitWellRollHideTestPair) WAS HERE AND IS RETIRED.
+// It asked what the roll-time removal toggle did; audit §5.2 deleted that toggle and its roll-time arm,
+// so the pair has no subject left and would print VACUOUS forever. A pair is retired when its FEATURE is
+// removed -- never to make a red half green. tools/check_t23_writers.ps1 goes in the same commit.

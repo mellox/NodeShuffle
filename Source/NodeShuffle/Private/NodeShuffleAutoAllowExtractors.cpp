@@ -157,23 +157,20 @@
 #include "HAL/FileManager.h"
 #include "Misc/DateTime.h"
 
-// Gate. Default ON in THIS DEV BUILD so the user can boot and test the whole mechanism without a
-// rebuild -- their rollback/A-B lever (0 fully restores current, pre-Packet-G behaviour: the pass is
-// skipped AND any previously-generated pack is deleted, so a stale generated entry can never outlive
-// the CVar being turned off). TODO(pre-release): before any public release, move this behind the
-// existing EnableExperimentalFeatures config flag (default false) -- default ON here is deliberate for
-// this dev build only, per the workspace convention that the stable core ships with experimental
-// features off.
-static int32 GNodeShuffleAutoAllowExtractors = 1;
-static FAutoConsoleVariableRef CVarNodeShuffleAutoAllowExtractors(
-    TEXT("NodeShuffle.AutoAllowExtractors"),
-    GNodeShuffleAutoAllowExtractors,
-    TEXT("1 (default, THIS DEV BUILD ONLY) = once per world load, generate a machine-written KDataForge ")
-    TEXT("pack that allow-lists any extractor NodeShuffle's own LAYOUT census shows natively accepts a ")
-    TEXT("node type it manages -- takes effect on the NEXT boot. 0 = fully restores current behaviour: ")
-    TEXT("the pass is skipped and any previously-generated pack is deleted. TODO(pre-release): gate ")
-    TEXT("behind EnableExperimentalFeatures (default false) before public release."),
-    ECVF_Default);
+// T68 (ns-t68-release-config, 2026-08-11): NodeShuffle.AutoAllowExtractors IS DELETED AND THE PASS
+// ALWAYS RUNS. All three TODO(pre-release) notes and the "THIS DEV BUILD ONLY" wording are gone with
+// it -- the third lived in the PUBLIC header NodeShuffle.h and was found by the T68 cold review (F3),
+// not by this file's author, which is the reason check_t68_lint.ps1's H1b now scans the headers too.
+// The reasoning, recorded because deleting a rollback lever is a real loss: this pass writes the
+// KDataForge pack that makes SF+ extractors accept shuffled nodes -- it is the fix for the "Invalid aim
+// location!" class of report, and UNodeShuffleConfig::Description already PROMISES it to the player
+// ("compatibility patches are written during play and read at startup"). Honouring the old TODO would
+// have shipped a release whose own panel description described a feature that was off, and would have
+// needed EnableExperimentalFeatures, which T68 deleted as dead (audit §5.1 + §5.13, decided together).
+// WHAT WAS LOST: the CVar=0 arm that DELETED a previously-generated pack. The per-load pass still
+// clears and rebuilds the pack directory it owns, so a stale entry cannot outlive a load; what is gone
+// is the "remove the pack entirely and never write it again" lever. Uninstalling the mod removes the
+// pack directory with it. Recorded in docs/TECH-DEBT.md T68.
 
 // T59: file-scope so a NEW world load re-arms the loud warnings. A function-local static would spend
 // its 5 loud attempts on world 1 and leave a permanent stall on world 2 visible only at Verbose.
@@ -288,13 +285,15 @@ namespace
 
 void FNodeShuffleModule::LogAutoAllowExtractorsState()
 {
+    // T68: the CVar this line reported is deleted, so the line reports what the build DOES. It states
+    // the arming fact only -- no cause, no prediction about what any pass will find. Count these by
+    // anchoring on "AUTOALLOW: armed"; the sentence contains no token of a printed field's form.
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("AUTOALLOW: NodeShuffle.AutoAllowExtractors=%d (%s). %s"),
-        GNodeShuffleAutoAllowExtractors,
-        GNodeShuffleAutoAllowExtractors != 0 ? TEXT("armed for this session") : TEXT("disabled"),
-        GNodeShuffleAutoAllowExtractors != 0
-            ? TEXT("TODO(pre-release): move behind EnableExperimentalFeatures before public release.")
-            : TEXT("current (pre-Packet-G) behaviour fully restored; any previously-generated pack will be deleted."));
+        TEXT("AUTOALLOW: armed for every world load in this build (T68 removed the console gate). Once ")
+        TEXT("per world load this pass rewrites the KDataForge pack it owns under Mods/NodeShuffle/")
+        TEXT("DataForge/NodeShuffleAutoAllow; the pack is read at the NEXT game start, which is why a ")
+        TEXT("newly-cleared extractor needs one restart. Its own AUTOALLOW lines below report what this ")
+        TEXT("load actually wrote."));
 }
 
 bool FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled(UWorld* World,
@@ -326,38 +325,8 @@ bool FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled(UWorld* World,
         }
     }
 
-    if (GNodeShuffleAutoAllowExtractors == 0)
-    {
-        // ns-review-g G2: every filesystem result is checked -- a rollback lever that reports success
-        // it did not achieve is worse than no lever.
-        if (IFileManager::Get().DirectoryExists(*PackDir))
-        {
-            if (IFileManager::Get().DeleteDirectory(*PackDir, /*RequireExists=*/false, /*Tree=*/true))
-            {
-                UE_LOG(LogNodeShuffle, Display,
-                    TEXT("AUTOALLOW: disabled -- DELETED the previously-generated pack at '%s' (full rollback, ")
-                    TEXT("verified). T59: this is the ONE path that deletes across session name spaces, and ")
-                    TEXT("that is deliberate -- the rollback lever removes EVERY session's generated documents ")
-                    TEXT("plus any legacy un-namespaced ones, because its contract is 'restore pre-mod ")
-                    TEXT("behaviour', not 'tidy this playthrough'. The per-pass regeneration below never does ")
-                    TEXT("this."), *PackDir);
-            }
-            else
-            {
-                UE_LOG(LogNodeShuffle, Error,
-                    TEXT("AUTOALLOW: disabled -- FAILED to delete the previously-generated pack at '%s'. ")
-                    TEXT("ROLLBACK IS INCOMPLETE: KDataForge will still apply that pack on the next boot. ")
-                    TEXT("Delete the directory by hand. Will retry next tick."), *PackDir);
-                return false;
-            }
-        }
-        else
-        {
-            UE_LOG(LogNodeShuffle, Display, TEXT("AUTOALLOW: disabled -- nothing to do"));
-        }
-        return true; // completed (nothing to retry)
-    }
-
+    // T68: the `AutoAllowExtractors == 0` arm (skip the pass and DELETE the generated pack) was here
+    // and is deleted with the CVar. There is no longer a state in which this pass does not run.
     if (!World)
     {
         UE_LOG(LogNodeShuffle, Warning, TEXT("AUTOALLOW: no world -- skipped this pass (will retry)"));
@@ -1004,14 +973,16 @@ bool FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled(UWorld* World,
     // also appends collapses; anything it adds that no current session needs is a stale-but-additive
     // permission, the same staleness the union already carries (see the file header, and T59's staleness
     // note in docs/TECH-DEBT.md). They are never deleted silently -- the only delete is the explicit
-    // NodeShuffle.AutoAllowExtractors=0 rollback lever, which says so in its own log line.
+    // T68-removed NodeShuffle.AutoAllowExtractors=0 rollback lever. No path deletes them now;
+    // uninstalling the mod removes its whole DataForge directory.
     if (PriorLegacyDocs > 0)
     {
         UE_LOG(LogNodeShuffle, Display,
             TEXT("AUTOALLOW: T59 migration -- found %d legacy document(s) with no session prefix in '%s'. ")
             TEXT("They are LEFT IN PLACE and keep applying at boot (they only ever ADD entries to SF+'s ")
             TEXT("allow-list, and its consumer is a set, so duplicates collapse). This pass neither adopts ")
-            TEXT("nor deletes them. To remove them, set NodeShuffle.AutoAllowExtractors=0 and reload once ")
+            TEXT("nor deletes them. T68 removed the console gate that used to delete them; to remove ")
+            TEXT("them, uninstall the mod, which takes its DataForge directory with it ")
             TEXT("(that clears the whole directory), or delete the files named without an 's-' prefix by ")
             TEXT("hand."),
             PriorLegacyDocs, *PackDir);
@@ -1076,16 +1047,16 @@ bool FNodeShuffleModule::RunAutoAllowExtractorsIfEnabled(UWorld* World,
 
     const FString Timestamp = FDateTime::Now().ToString();
     const FString PackYaml = FString::Printf(
-        TEXT("# MACHINE-GENERATED by NodeShuffle Packet G (NodeShuffle.AutoAllowExtractors, default ON in\n")
-        TEXT("# this dev build). DO NOT HAND-EDIT -- rewritten every world load while the CVar is 1.\n")
+        TEXT("# MACHINE-GENERATED by NodeShuffle Packet G. DO NOT HAND-EDIT -- rewritten every world\n")
+        TEXT("# load. T68 (2026-08-11) removed the console gate; this pass now always runs.\n")
         TEXT("# T59: this pack.yml is SHARED by every playthrough. The documents beside it are namespaced\n")
         TEXT("# per session -- 's-<session>--*.cdo.yml' -- and each world load rewrites ONLY the documents\n")
         TEXT("# of the session it loaded. KDataForge applies everything present here at launch, so the\n")
         TEXT("# boot state is the UNION of every playthrough's documents (all of them are appends to one\n")
         TEXT("# set, so duplicates collapse). Documents named without the 's-' prefix predate T59 and are\n")
         TEXT("# left alone by every pass.\n")
-        TEXT("# To regenerate now: reload a save. To roll back completely: set NodeShuffle.AutoAllowExtractors=0\n")
-        TEXT("# and reload once -- that deletes this whole directory, every session included.\n")
+        TEXT("# To regenerate now: reload a save. This directory is rewritten on every world load, and\n")
+        TEXT("# is removed with the mod (T68 removed the console rollback lever that used to delete it).\n")
         TEXT("# Generated: %s | %d document(s) for the session loaded on that run (not the directory total).\n")
         TEXT("ref: NodeShuffleAutoAllow\n")
         TEXT("name: Node Shuffle Auto-Allow Extractors (generated)\n")

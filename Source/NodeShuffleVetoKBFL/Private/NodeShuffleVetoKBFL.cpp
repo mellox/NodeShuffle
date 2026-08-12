@@ -93,12 +93,17 @@ namespace
         if (bProtectForeign)
         {
             UE_LOG(LogNodeShuffle, Display,
-                TEXT("veto: NodeShuffle.ProtectForeignNodes=1 latched for this world — at this hook, ")
+                // T68 (2026-08-11): this line NAMED A CONSOLE VARIABLE THAT NO LONGER EXISTS
+                // (NodeShuffle.ProtectForeignNodes, deleted). Foreign-node protection now follows the
+                // master gate with no switch of its own, so the line reports the LATCH it was handed
+                // and points at the one control that can change it. It states no cause.
+                TEXT("veto: foreign-node protection LATCHED ON for this world — at this hook, ")
                 TEXT("requirement chains of node-sweeping KBFL assets are short-circuited for resource ")
                 TEXT("nodes belonging to OTHER mods (T58). A stock node is unaffected unless NodeShuffle ")
                 TEXT("itself retyped it to a modded resource (well retype writes mResourceClassOverride, ")
-                TEXT("which GetResourceClass reads). Set it to 0 for the pre-T58 behaviour on a save that ")
-                TEXT("has never run with it on."));
+                TEXT("which GetResourceClass reads). Untick 'Protect Other Mods' Nodes From Removal' in ")
+                TEXT("the mod settings (or set NodeShuffle.DestroyerVeto to 0) and load again for the ")
+                TEXT("pre-T58 behaviour."));
         }
 
         // ---- (a) ABI guard. StaticClass() here resolves through our import table into the REAL

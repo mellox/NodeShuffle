@@ -19,9 +19,11 @@
 // re-announced on a later load — the same self-clearing state test the pending notice is built on, with
 // no persisted flag anywhere.
 //
-// WHAT IT DOES NOT DO: it never says the resource is protected unless this world is actually enforcing
-// (IsForeignProtectionActingThisWorld), because the shipped default is observe-only and a notice that
-// promised protection in that state would be a false claim to the player.
+// WHAT IT DOES NOT DO: it never says the resource is protected unless this world is actually enforcing,
+// because a notice that promised protection in the observing state would be a false claim to the player.
+// T68 (2026-08-11): the shipped default is no longer observe-only -- 'Protect Other Mods' Nodes From
+// Removal' defaults ON -- so the enforcing branch is now the common one. The branch condition is
+// unchanged; only which side of it a default install lands on has moved.
 
 #include "NodeShuffle.h"
 
@@ -214,14 +216,44 @@ namespace
         Body += TEXT("\nEach one has been added, TICKED, to \"Protect Other Mods' Nodes (Per\n")
                 TEXT("Resource)\" in NodeShuffle's mod settings.\n");
 
+        // ---- T68 (2026-08-11): THREE BRANCHES BECAME TWO, AND THE CONSOLE INSTRUCTION IS GONE. ------
+        // The third branch (not observing, but foreign protection off) named NodeShuffle.
+        // ProtectForeignNodes and is now UNREACHABLE BY CONSTRUCTION: ArmDestroyerVetoIfEnabled computes
+        // the protection latch as `!bObserveOnly`, so IsForeignProtectionActingThisWorld() is the exact
+        // complement of IsVetoObservingOnlyThisWorld(). It is deleted rather than left dead -- a branch
+        // that can never run is a player-facing claim nobody re-grades.
         if (FNodeShuffleModule::IsVetoObservingOnlyThisWorld())
         {
-            Body += TEXT("\nNodeShuffle is NOT protecting them right now: that protection is off by\n")
-                    TEXT("default. To turn it on, set the console variable NodeShuffle.DestroyerVeto\n")
-                    TEXT("to 1 and load the save again. Until then this is only a heads-up, and\n")
-                    TEXT("NodeShuffle is not changing what any other mod does.");
+            // GRADED. MEASURED-IN-CODE: this branch runs only when the arm pass latched observe-only,
+            // and in that mode the requirement hook returns true for every target and changes nothing in
+            // the world; the setting named here is the one persisted input that decides it. The console
+            // override is deliberately NOT named -- a player reading a chat notice is not at a console,
+            // and the panel checkbox is now the route. NOT CLAIMED: that anything would otherwise have
+            // been removed, or that ticking it brings anything back.
+            // T68 COLD REVIEW F1 (HIGH) -- THE REPLACEMENT TEXT BELOW IS THE REVIEWER'S, VERBATIM.
+            // THE OLD SENTENCE ASSERTED A STATE THIS BRANCH NEVER MEASURED: it said the checkbox is
+            // "unticked in NodeShuffle's mod settings", but the predicate is the RESOLVED MODE, which has
+            // two inputs and in which the console override WINS. A player with NodeShuffle.DestroyerVeto=0
+            // and the checkbox still TICKED was told to tick a box that was already ticked. That is the
+            // lessons-log-asserted-a-cause family: a world-model claim in place of the local boolean.
+            // RE-VERIFIED AGAINST THE PREDICATE, sentence by sentence, after applying it:
+            //   "protection is switched off for this load"      <- exactly what IsVetoObservingOnlyThisWorld
+            //                                                      measured; no input is named as the cause.
+            //   "controlled by <the checkbox> and by <the CVar>, which overrides ... whenever it has been
+            //    set"                                           <- the resolver, NodeShuffle.cpp. Both routes
+            //                                                      named; neither asserted to be the active one.
+            //   "The log line T68VETOGATE says which one decided this world"
+            //                                                    <- that line prints decidedBy on every world
+            //                                                      init. It is the only surface that can.
+            Body += TEXT("\nNodeShuffle is NOT answering those checks in this world: protection is\n")
+                    TEXT("switched off for this load. It is controlled by \"Protect Other Mods'\n")
+                    TEXT("Nodes From Removal\" in NodeShuffle's mod settings, and by the console\n")
+                    TEXT("variable NodeShuffle.DestroyerVeto, which overrides that setting whenever\n")
+                    TEXT("it has been set. The log line T68VETOGATE says which one decided this\n")
+                    TEXT("world. Until then this is only a heads-up, and NodeShuffle is not\n")
+                    TEXT("changing what any other mod does.");
         }
-        else if (FNodeShuffleModule::IsForeignProtectionActingThisWorld())
+        else
         {
             // T67: the fourth "tries to remove" surface. What is measured at this hook is a REQUIREMENT
             // EVALUATION -- the other mod's handler asks, and this branch's world answers. "Stop that
@@ -229,12 +261,6 @@ namespace
             Body += TEXT("\nWhile a row stays ticked, NodeShuffle answers that check for that resource\n")
                     TEXT("and refuses the handler's condition. Untick a row and load the save again to\n")
                     TEXT("let the other mod decide for that one resource.");
-        }
-        else
-        {
-            Body += TEXT("\nNodeShuffle is NOT protecting them this session: NodeShuffle.ProtectForeignNodes\n")
-                    TEXT("is 0. Set it to 1 and load the save again for the ticks in that list to do\n")
-                    TEXT("anything.");
         }
         return Body;
     }
@@ -250,6 +276,10 @@ void FNodeShuffleModule::TickForeignNoticeEmitter(UWorld* World, bool bNoticesEn
     if (GNodeShuffleForeignNoticeQueue.Num() == 0) { return; } // the overwhelmingly common case
     if (!World) { return; }
 
+    // TODO(2026-08-11, T68) PARKED, NOT LIVE: 'Show Compatibility Notices In Chat' was deleted and every
+    // caller now passes true, so this arm cannot run in a shipped build. The parameter and the arm are
+    // KEPT so a future opt-out has a seam to re-enter at, and so the suppression is still counted if one
+    // ever does. Delete both if no opt-out is wanted by 1.5.0.
     if (!bNoticesEnabled)
     {
         UE_LOG(LogNodeShuffle, Display,

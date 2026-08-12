@@ -442,10 +442,118 @@ void FNodeShuffleModule::LatchForeignResourceOptOutsFromConfig(UObject* WorldCon
 // STRING and nothing else -- no actor, no resource descriptor, no world object is read (verified
 // against NodeShuffleDeriveForeignResourceLabelParts above, which takes an FString and returns two).
 //
-// WHAT IT DELIBERATELY DOES NOT DO: add a row, write any value, mark the config dirty, or save. Adding
-// rows is the population pass's job and requires sightings, which only exist in a world; and a
+// WHAT IT DELIBERATELY DOES NOT DO: add a row, write any ROW'S VALUE, mark the config dirty, or save.
+// Adding rows is the population pass's job and requires sightings, which only exist in a world; and a
 // main-menu pass that saved would rewrite NodeShuffle.cfg on every boot. DisplayName/HeaderText/Tooltip
-// are not serialized by SML, so this pass cannot change the file even by accident.
+// are not serialized by SML.
+// T68 COLD REVIEW F6 NARROWED THIS SENTENCE, because the old one ("write any value ... cannot change the
+// file even by accident") became too broad when T68 added the sort: THIS PASS DOES REORDER Rows->Values.
+// The safety property still holds and the reviewer verified it rather than assuming it --
+// UConfigManager::FlushPendingSaves serializes only PendingSaveConfigurations (SML ConfigManager.cpp),
+// the sort calls no MarkDirty, and check_t67_lint.ps1's ban on AddNewElement / `->Value =` / MarkDirty in
+// this pass is untripped. So the order is not written until some OTHER pass saves, and order is
+// semantics-free anyway (see NodeShuffleSortForeignResourceRows' blast-radius header).
+// ---- T68 (ns-t68-release-config, 2026-08-11): ROW ORDER. -----------------------------------------
+// THE AUTHOR ASKED FOR THE LIST SORTED BY MOD, THEN BY RESOURCE NAME. Both label parts come from the
+// row's own stored path through NodeShuffleDeriveForeignResourceLabelParts -- the same derivation the
+// stamp uses -- so the sort key and the visible label can never disagree.
+//
+// BLAST RADIUS, ENUMERATED BEFORE THIS WAS WRITTEN (workspace rule). Every consumer of Values ORDER:
+//   1. SML serialization. UConfigPropertyArray::Serialize writes the elements POSITIONALLY, so this
+//      does change the order of entries inside NodeShuffle.cfg. It does NOT change any entry: each is
+//      a keyed object {Resource, Protected}, Deserialize re-creates one element per JSON entry in file
+//      order, and every consumer below keys on the PATH. Order is therefore semantics-free -- proved,
+//      not assumed, by items 2-5.
+//   2. LatchForeignResourceOptOutsFromConfig -- builds a TSet<FString> of unticked paths. Set, not
+//      list: order cannot reach it.
+//   3. SyncForeignResourceRowsToConfig's ExistingByPath -- a TMap keyed on the path; the add loop asks
+//      only "does this path already have a row". Order cannot reach it.
+//   4. The add path's `RemoveElementAtIndex(Values.Num() - 1)` withdrawal -- it removes THE ELEMENT IT
+//      JUST APPENDED. THIS IS WHY THE SORT RUNS AFTER THE ADD LOOP, NEVER INSIDE IT: sorting between
+//      the AddNewElement and the withdrawal would make Num()-1 a different row. Asserted by the call
+//      sites, both of which sort last.
+//   5. The T65LABEL first-sync listing prints `[i]` indices. Those indices are positions in THIS pass's
+//      listing and are not keys anywhere -- but they DO now come out sorted, which is the only visible
+//      change to any existing log line. No lint pins a row index.
+//   NOT A CONSUMER: FNodeShuffleConfigStruct::ProtectedForeignResources (nothing reads it, by its own
+//   declaration comment); the notice queue (its own container, its own order).
+//
+// STABILITY: the comparator falls through to the full path. T68 COLD REVIEW F7 CORRECTED THE CLAIM THAT
+// USED TO END THIS PARAGRAPH -- it said the order is TOTAL because paths are "unique per row by
+// construction", which the ADD PATH guarantees but a hand-edited NodeShuffle.cfg or a row duplicated in
+// the array widget does not. What is actually guaranteed, and all that is needed: this is a valid STRICT
+// WEAK ORDERING (duplicate keys compare equivalent, which UE's introsort handles), and a re-sort of an
+// already-sorted array leaves every distinct key where it is -- which is what lets both call sites run it
+// every pass for free. Rows sharing a key may swap among themselves; nothing keys on position.
+static void NodeShuffleSortForeignResourceRows(UConfigPropertyArray* Rows, const TCHAR* CallSite)
+{
+    if (!Rows) { return; }
+    // Measured on THIS call, before anything moves.
+    TArray<FString> Before;
+    Before.Reserve(Rows->Values.Num());
+    for (UConfigProperty* Element : Rows->Values)
+    {
+        UConfigPropertyString* R = nullptr;
+        UConfigPropertyBool* P = nullptr;
+        Before.Add(NodeShuffleReadRow(Element, &R, &P) ? R->Value.TrimStartAndEnd() : FString());
+    }
+
+    const auto KeyOf = [](UConfigProperty* Element, FString& OutMount, FString& OutName, FString& OutPath)
+    {
+        UConfigPropertyString* R = nullptr;
+        UConfigPropertyBool* P = nullptr;
+        if (!NodeShuffleReadRow(Element, &R, &P)) { OutMount.Reset(); OutName.Reset(); OutPath.Reset(); return; }
+        OutPath = R->Value.TrimStartAndEnd();
+        bool bParsed = false;
+        NodeShuffleDeriveForeignResourceLabelParts(OutPath, OutMount, OutName, &bParsed);
+    };
+    Rows->Values.Sort([&KeyOf](const TObjectPtr<UConfigProperty>& A, const TObjectPtr<UConfigProperty>& B)
+    {
+        FString AM, AN, AP, BM, BN, BP;
+        KeyOf(A.Get(), AM, AN, AP);
+        KeyOf(B.Get(), BM, BN, BP);
+        const int32 ByMount = AM.Compare(BM, ESearchCase::IgnoreCase);
+        if (ByMount != 0) { return ByMount < 0; }
+        const int32 ByName = AN.Compare(BN, ESearchCase::IgnoreCase);
+        if (ByName != 0) { return ByName < 0; }
+        return AP.Compare(BP, ESearchCase::IgnoreCase) < 0; // last key; see STABILITY above
+    });
+
+    // T68 COLD REVIEW F5: `rowsWithNoReadablePath` CONFLATED TWO POPULATIONS -- an element
+    // NodeShuffleReadRow could not read at all, and a well-formed row whose path string is empty. One
+    // name over two causes is what makes a reader stop looking (lessons-zero-needs-a-denominator, one
+    // field across). They are counted apart now, from the SAME read, so neither is inferred from the
+    // other. The reviewer's own limitation stands and is stated in the line: a move AMONG equal keys
+    // (two blank rows swapping) is invisible to `Before[i] != Now`, so `rowsChangedPosition` is a lower
+    // bound, not a total.
+    int32 Moved = 0;
+    int32 Unreadable = 0;
+    int32 BlankPath = 0;
+    for (int32 i = 0; i < Rows->Values.Num(); ++i)
+    {
+        UConfigPropertyString* R = nullptr;
+        UConfigPropertyBool* P = nullptr;
+        const bool bRead = NodeShuffleReadRow(Rows->Values[i], &R, &P);
+        const FString Now = bRead ? R->Value.TrimStartAndEnd() : FString();
+        if (!bRead) { ++Unreadable; }
+        else if (Now.IsEmpty()) { ++BlankPath; }
+        if (Before.IsValidIndex(i) && Before[i] != Now) { ++Moved; }
+    }
+    // Census. Every field is a count taken on THIS call; "callSite" names the branch that ran, which is
+    // a parameter already in hand, not an inference. No cause is stated and no ordering claim is made
+    // about the RENDERED panel -- SML's row widget is Blueprint and C++ cannot see it (runtime test
+    // step 2). Count these by anchoring on "T68ROWSORT:".
+    // Arity hand-counted: 5 format specifiers, 5 arguments.
+    UE_LOG(LogNodeShuffle, Display,
+        TEXT("T68ROWSORT: callSite %s rowsInArray %d rowsChangedPosition %d rowsUnreadable %d ")
+        TEXT("rowsWithBlankPath %d -- sorted by the content the resource comes from, then by the ")
+        TEXT("resource name, both derived from each row's own stored path. The path stays the key ")
+        TEXT("everywhere it is read, so position carries no meaning; only the order of entries inside ")
+        TEXT("NodeShuffle.cfg changes on the next save. The changed-position count is a LOWER BOUND: two ")
+        TEXT("rows carrying the same key that swap with each other cannot be told apart by it."),
+        CallSite, Rows->Values.Num(), Moved, Unreadable, BlankPath);
+}
+
 void FNodeShuffleModule::StampForeignResourceRowLabelsFromConfig(UObject* WorldContext)
 {
     UConfigPropertyArray* Rows = NodeShuffleGetRowsArray(WorldContext, nullptr);
@@ -480,6 +588,12 @@ void FNodeShuffleModule::StampForeignResourceRowLabelsFromConfig(UObject* WorldC
         NodeShuffleStampRowLabel(Cast<UConfigPropertySection>(Element), NameLabel, MountLabel, Path);
         ++Stamped;
     }
+
+    // T68: SORT LAST. This pass adds nothing, so there is no append to protect here -- but the two call
+    // sites run the SAME helper in the SAME position (after all row work) on purpose: SYMMETRY. A sort
+    // in one populator and not the other would give the in-world panel and the main-menu panel different
+    // orders for the same file.
+    NodeShuffleSortForeignResourceRows(Rows, TEXT("menu-stamp"));
 
     // The census for this pass. Every field is a count this function took on this call; none of them
     // states a cause, and the fallback count prints with the denominator it was drawn from.
@@ -707,6 +821,14 @@ void FNodeShuffleModule::SyncForeignResourceRowsToConfig(UObject* WorldContext)
         FNodeShuffleModule::NoteUnlistedForeignResourceForNotice(Pair.Key, Pair.Value.DisplayName,
             Pair.Value.bLabelParsed); // T67 alternative E: the measured flag, not a re-derivation
     }
+
+    // T68: SORT LAST, AND STRICTLY AFTER THE ADD LOOP ABOVE. The add path withdraws a bad element with
+    // RemoveElementAtIndex(Values.Num() - 1), i.e. by POSITION -- sorting inside that loop would make
+    // Num()-1 name a different row. Sorting here also means the reordered array is what MarkDirty /
+    // FlushPendingSaves below writes, so the sorted order lands in NodeShuffle.cfg on the same pass that
+    // added a row rather than on some later, unrelated save. Same helper, same position, as the
+    // main-menu stamp pass (SYMMETRY).
+    NodeShuffleSortForeignResourceRows(Rows, TEXT("in-world-sync"));
 
     if (SharedWithTemplateRows > 0 || SharedBetweenRows > 0)
     {

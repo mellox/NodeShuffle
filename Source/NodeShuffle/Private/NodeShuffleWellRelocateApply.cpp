@@ -113,7 +113,8 @@
 #include "NodeShuffleSubsystem.h"
 
 #include "NodeShuffle.h"
-#include "NodeShuffleConfig.h"       // ns-t23-rollhide: CommitWellsAtRoll, read once per pass for the TEST line
+#include "NodeShuffleConfig.h"       // FNodeShuffleConfigStruct (T68: the ns-t23-rollhide read of
+                                     // CommitWellsAtRoll that used to justify this include is deleted)
 #include "NodeShuffleWellCensus.h"   // AFGResourceNodeFrackingCore / ...Satellite
 #include "NodeShuffleWellRetype.h"   // WellPathOf / WellShort
 #include "NodeShuffleWellRelocate.h" // the H2 pure helpers
@@ -721,6 +722,11 @@ void ANodeShuffleSubsystem::SuppressVanillaWellGroup(FNodeShuffleWellEntry& E, E
     // WellMeshIndexPass = -1, WellAuditPasses = 0) it would rebuild the whole-world index once PER
     // ENROLLED WELL. Calling it here on the roll path would also silently re-run the capture the roll's
     // completeness gate has already adjudicated.
+    // TODO(2026-08-11, T68) PARKED, NOT LIVE: bRollPhase can no longer be true. The only caller that
+    // passed EWellSuppressPhase::Roll was the roll-time commit arm, deleted with its toggle. The
+    // parameter, the enum value and this branch are KEPT because the SaveGame field bSuppressedAtRoll
+    // still round-trips records written by earlier builds -- a save can hold Roll-stamped records this
+    // build must un-hide correctly. Delete the enum value only if that back-compat window is closed.
     if (!bRollPhase)
     {
         EnsureWellMeshIndex();
@@ -1098,10 +1104,18 @@ void ANodeShuffleSubsystem::ApplyWellRelocation(bool bWellShuffleEnabled, bool b
                 // has anything to do with whether the ORIGIN should still be standing, and putting the hide
                 // beneath them is precisely how it came to be coupled to placement in the first place.
                 //
-                // THE ROLL-TIME PATH IS NOT REPLACED AND NOT DISABLED. CommitWellsAtRoll still hides at the
-                // instant of the roll for entries whose look is completely captured then. This arm covers
-                // what that path structurally cannot: a roll happens once and can only hide what is
-                // RESIDENT AT THAT INSTANT, while this runs every pass.
+                // T68 (2026-08-11) CORRECTED THIS PARAGRAPH -- it said "THE ROLL-TIME PATH IS NOT REPLACED
+                // AND NOT DISABLED. CommitWellsAtRoll still hides at the instant of the roll", which T68
+                // made FALSE: that toggle and its roll-time arm are deleted and SuppressVanillaWellGroup
+                // has ONE live phase (Apply).
+                // SCOPED RE-PASS R2: the first correction over-claimed in the other direction -- it said
+                // "THIS ARM IS NOW THE ONLY PATH THAT HIDES AN ORIGIN", and SuppressVanillaWellGroup has
+                // four live call sites in this file, two of which (:1377, :1409) can be the FIRST hide
+                // for an entry that never reached this arm. THE ROLL-TIME PHASE IS GONE; EVERY HIDE NOW
+                // HAPPENS IN THE APPLY PASS. This arm is where a relocating group's origin is hidden
+                // FIRST; :1377 and :1409 also hide/re-assert. That is also why this arm is the right one
+                // to keep: a roll happens once and could only hide what was RESIDENT AT THAT INSTANT,
+                // while this runs every pass and retries.
                 ++WellImmediateCandidatesThisPass;
 
                 // THE GROUP-SCOPED OCCUPANCY GATE (ns-t24-groupgate), asked here through the SAME shared
@@ -1472,19 +1486,21 @@ void ANodeShuffleSubsystem::ApplyWellRelocation(bool bWellShuffleEnabled, bool b
     // pass's line, not in the next one's. Log only; see NodeShuffleWellStage0.cpp.
     EmitWellDeferralCensus();
 
-    // ns-t23-rollhide: the stranding detector and the opposite-polarity pair, LAST and in that order, for
-    // the same reason -- both must describe the state this pass ended in. Both are log-only.
-    // The toggle is read here, once per pass, ONLY so the test pair can name it: no decision in this
-    // packet reads it outside the roll, because the ledger -- not the config -- is the authority on what
-    // we suppressed. A player who turns the toggle off mid-save still owes the un-hide of what was
-    // already hidden, and gating the restore on the config would strand exactly that population.
+    // ns-t23-rollhide: the stranding detector, LAST, because it must describe the state this pass ended
+    // in. Log-only.
+    // T68 (2026-08-11): THE T23 OPPOSITE-POLARITY PAIR IS RETIRED HERE, TOGETHER WITH THE TOGGLE IT
+    // ASKED ABOUT. T23-A/T23-B asked "does the roll-time toggle hide an unplaced entry"; with
+    // CommitWellsAtRoll and its roll-time arm deleted (audit §5.2) that question no longer has a
+    // subject, and a pair kept past its subject is the lessons-checklist-predates-the-feature failure --
+    // it would read VACUOUS forever and its green half would be a vacuous pass. Retiring a pair BECAUSE
+    // THE FEATURE WAS REMOVED is the one legitimate way a red/green pair dies. tools/check_t23_writers
+    // .ps1 is deleted in the same commit. The T54 pair below is NOT affected: it asks about the apply
+    // pass, which is untouched.
     EmitWellStrandedCensus();
-    EmitWellRollHideTestPair(FNodeShuffleConfigStruct::GetActiveConfig(this).CommitWellsAtRoll);
 
-    // ns-t54-immediate-hide: the census and the T54 pair, AFTER the stranded census and the T23 pair and
-    // for the same reason -- both describe the state this pass ended in, and the T54 pair's hole detector
-    // reads the reason map this pass's arm wrote. Both are log-only. The T23 pair above is NOT superseded:
-    // it answers a question about the roll-time toggle that this packet does not touch.
+    // ns-t54-immediate-hide: the census and the T54 pair, AFTER the stranded census, because both
+    // describe the state this pass ended in and the T54 pair's hole detector reads the reason map this
+    // pass's arm wrote. Both are log-only.
     EmitWellImmediateHideCensus();
     EmitWellImmediateHideTestPair(bOn);
 }

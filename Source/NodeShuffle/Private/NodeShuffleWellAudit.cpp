@@ -205,7 +205,8 @@ ANodeShuffleSubsystem::AuditOneWellGroup(const FNodeShuffleWellEntry& E, const T
     // T19 review F1: THE RETYPE IS PROXIMITY-GATED AND THIS AUDIT IS NOT. The maintenance retype runs
     // inside SpawnWellGroup, called at NodeShuffleWellRelocateApply.cpp:501 only for a group that is
     // IsLocationNearAnyPlayer(PlacedCoreLocation, SpawnRadiusCm); this sweep walks EVERY placed group.
-    // So after a shuffle that re-deals an already-placed well (the RerollRelocatedWells=OFF default),
+    // So after a shuffle that re-deals an already-placed well -- which since T68 (2026-08-11) is EVERY
+    // already-placed well, the re-roll polarity being hard-wired ON rather than a default-OFF toggle --
     // every relocated well the player has not visited legitimately still holds the old resource, and
     // alarming on all of them would fire this file's loudest token ~15x per sweep on a CORRECT build.
     // MEASURED with the SAME predicate and the SAME radius that gate uses: WellLastApplySpawnRadiusCm

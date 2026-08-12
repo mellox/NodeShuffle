@@ -1,6 +1,7 @@
 #include "NodeShuffle.h"
 
 #include "NodeShuffleSubsystem.h"
+#include "NodeShuffleConfig.h" // T68: the veto master gate is a config checkbox with a CVar override
 #include "EngineUtils.h"
 #include "HAL/IConsoleManager.h"
 #include "UObject/ObjectKey.h" // coexist-veto-1: FObjectKey for the managed-node registry
@@ -76,47 +77,61 @@ bool FNodeShuffleModule::AreDiagnosticsEnabled() { return GNodeShuffleDiagnostic
 // module load failure, ABI guard trip) the coexist-1 tombstone backoff remains the coexistence path.
 // ---------------------------------------------------------------------------------------------
 
-// Experimental veto gate. Default OFF; read once per world init (subsystem BeginPlay), so toggling
-// mid-session takes effect at the next world load. Users set it via console or Engine.ini
-// [ConsoleVariables] / [SystemSettings].
+// The veto gate's CONSOLE OVERRIDE. T68 (2026-08-11) demoted it: the persisted answer now lives in the
+// config checkbox ProtectOtherModsNodes (default ON), and this variable is consulted ONLY when it has
+// actually been set this session — see NodeShuffleResolveDestroyerVetoRequested below. Its own default
+// stays 0 so that "unset" and "explicitly set to 0" remain distinguishable by SetBy, never by value.
+// Read once per world init (subsystem BeginPlay), so setting it mid-session takes effect at the next
+// world load. Users set it via console or Engine.ini [ConsoleVariables] / [SystemSettings].
 static int32 GNodeShuffleDestroyerVeto = 0;
 static FAutoConsoleVariableRef CVarNodeShuffleDestroyerVeto(
     TEXT("NodeShuffle.DestroyerVeto"),
     GNodeShuffleDestroyerVeto,
-    TEXT("EXPERIMENTAL. 1 = when KBFL is installed, veto KBFL-based actor destroyers/listeners for the ")
-    TEXT("nodes NodeShuffle spawned (instead of letting them be destroyed and tombstoned per session). ")
-    TEXT("0 = OBSERVE ONLY (default): the hook is still installed and still classifies every node those ")
-    TEXT("destroyers judge — which is what fills the per-resource list in the mod settings and the ")
-    TEXT("VETOCENSUS log line — but it vetoes NOTHING, including NodeShuffle's own nodes, so the game ")
-    TEXT("behaves as if the hook were absent. Takes effect at world load."),
+    TEXT("SESSION OVERRIDE for the mod-settings checkbox 'Protect Other Mods' Nodes From Removal' ")
+    TEXT("(T68). While this variable has never been set, that checkbox decides and this value is not ")
+    TEXT("read; set it either way and it wins for the rest of the session. 1 = when KBFL is installed, ")
+    TEXT("veto KBFL-based actor destroyers/listeners for the nodes NodeShuffle spawned and for nodes ")
+    TEXT("that are not the base game's. 0 = OBSERVE ONLY: the hook is still installed and still ")
+    TEXT("classifies every node those destroyers judge — which is what fills the per-resource list in ")
+    TEXT("the mod settings and the VETOCENSUS log line — but it vetoes NOTHING, including NodeShuffle's ")
+    TEXT("own nodes, so the game behaves as if the hook were absent. Takes effect at world load."),
     ECVF_Default);
 
-// T58 (ns-t58-foreign-protect, 2026-08-10): foreign-node protection gate. DEFAULT ON — the author
-// ruled "we are keeping shuffle mod active. we need both active to work this situation", which
-// DELIBERATELY AMENDS coexist-veto-1's founding as-if-absent contract (288d416) for one narrow class of
-// target: a resource node that is neither ours nor vanilla. See docs/TECH-DEBT.md T58 for the measured
-// mechanism (SF+ kills third-party nodes ~0.9 s after world init, ~6 s before our first spawn) and for
-// the balance consequence this accepts (SF+'s research gating of those resources is overridden).
-// Latched ONCE per world init by the veto's arm pass, like NodeShuffle.DestroyerVeto, so a mid-sweep
-// console flip can never split one KBFL sweep across two policies. Has NO effect unless
-// NodeShuffle.DestroyerVeto=1 — the veto must be armed for this outcome to exist at all.
-static int32 GNodeShuffleProtectForeignNodes = 1;
-static FAutoConsoleVariableRef CVarNodeShuffleProtectForeignNodes(
-    TEXT("NodeShuffle.ProtectForeignNodes"),
-    GNodeShuffleProtectForeignNodes,
-    TEXT("1 = while the KBFL destroyer veto is ENFORCING (NodeShuffle.DestroyerVeto is 1 — with it at 0 ")
-    TEXT("the hook is armed but observing, and this setting does nothing at all that world), also ")
-    TEXT("short-circuit node-sweeping KBFL assets for resource nodes whose class or resource is not ")
-    TEXT("stock (another mod's nodes, plus any vanilla well NodeShuffle itself retyped to a modded ")
-    TEXT("resource), so those nodes are not removed at that hook. 0 = only ")
-    TEXT("NodeShuffle's own nodes are vetoed (the pre-T58 behaviour; note a save that already enrolled ")
-    TEXT("foreign nodes keeps those layout entries and they go dormant instead). Default 1. Takes ")
-    TEXT("effect at world load."),
-    ECVF_Default);
+// T68 (ns-t68-release-config, 2026-08-11): NodeShuffle.ProtectForeignNodes IS DELETED.
+// It had no reachable state of its own -- it defaulted to 1 and was inert unless the master gate was
+// also on (T58's own comment said so), so the only state a player could reach with it was "protection
+// is on but foreign nodes are excluded from it", which nobody asked for and nothing documented as
+// useful. Its behaviour is hard-wired to its shipped default: while the veto is ENFORCING, foreign
+// nodes are protected. FNodeShuffleModule::IsForeignNodeProtectionEnabled() is gone with it; the one
+// expression that used it now reads `!bObserveOnly`.
 
-bool FNodeShuffleModule::IsForeignNodeProtectionEnabled()
+// ---- T68: THE PROTECTION MASTER GATE, RESOLVED IN EXACTLY ONE PLACE. -----------------------------
+// Two inputs, one answer, one resolver -- because the latch has TWO readers (the arm pass's mode
+// decision and the same pass's foreign-protection decision) and a second copy of this question is how
+// they would come to disagree (workspace SYMMETRY rule).
+//
+// PRECEDENCE: the CONFIG CHECKBOX ('Protect Other Mods' Nodes From Removal', default ON) is the
+// persisted source of truth. NodeShuffle.DestroyerVeto is a SESSION-SCOPED CONSOLE OVERRIDE that wins
+// only when someone actually set it -- measured by asking the console variable which SetBy priority it
+// currently carries, NOT by comparing its value to the default (a player who deliberately types
+// `NodeShuffle.DestroyerVeto 0` must be obeyed, and value-comparison could not tell that from an
+// untouched variable). ECVF_SetByConstructor is the untouched state; anything above it is a set.
+//
+// WHY THE CVAR SURVIVES AT ALL: every existing instruction, forum post and Engine.ini in the wild says
+// "set NodeShuffle.DestroyerVeto to 1". Those keep working, and they keep working in BOTH directions.
+enum class ENodeShuffleVetoSource : uint8 { ConfigCheckbox, ConsoleOverride };
+
+static bool NodeShuffleResolveDestroyerVetoRequested(UObject* WorldContext, ENodeShuffleVetoSource& OutSource)
 {
-    return GNodeShuffleProtectForeignNodes != 0;
+    const IConsoleVariable* Var = IConsoleManager::Get().FindConsoleVariable(TEXT("NodeShuffle.DestroyerVeto"));
+    if (Var != nullptr
+        && (Var->GetFlags() & ECVF_SetByMask) != ECVF_SetByConstructor)
+    {
+        OutSource = ENodeShuffleVetoSource::ConsoleOverride;
+        return Var->GetInt() != 0;
+    }
+    OutSource = ENodeShuffleVetoSource::ConfigCheckbox;
+    return FNodeShuffleConfigStruct::GetActiveConfig(WorldContext).ProtectOtherModsNodes;
 }
 
 // T58: see the declaration comment in NodeShuffle.h. Lives in the MAIN module (not the veto module) on
@@ -250,20 +265,36 @@ void FNodeShuffleModule::ArmDestroyerVetoIfEnabled(UWorld* World)
     // policy booleans for this world are decided here, in the module that owns both CVars, and handed
     // to the arm pass; the veto module reads neither CVar. That is what makes "protection is off
     // whenever the master gate is off" a single expression instead of an agreement between two modules.
-    const bool bObserveOnly = (GNodeShuffleDestroyerVeto == 0);
-    const bool bProtectForeignNodes = !bObserveOnly && IsForeignNodeProtectionEnabled();
+    // T68: the master gate is now resolved from the checkbox OR a console override -- see the resolver
+    // above. The SHAPE of the two lines is unchanged and still pinned by tools/check_t61_lint.ps1: the
+    // gate selects the MODE, never whether the hook arms, and the protection term still carries the mode
+    // term so protection can never latch on in an observing world.
+    ENodeShuffleVetoSource VetoSource = ENodeShuffleVetoSource::ConfigCheckbox;
+    const bool bVetoRequested = NodeShuffleResolveDestroyerVetoRequested(World, VetoSource);
+    const bool bObserveOnly = (bVetoRequested == false);
+    const bool bProtectForeignNodes = !bObserveOnly;
     // Published BEFORE anything can arm or evaluate, and rewritten on every world init — a world that
     // fails to arm below therefore reports the inert pair rather than the previous world's mode.
     GNodeShuffleVetoObserveOnlyThisWorld = bObserveOnly;
     GNodeShuffleForeignProtectActingThisWorld = bProtectForeignNodes;
 
+    // T68 CENSUS. Every field is measured on THIS call: which input the resolver actually read, the raw
+    // value it read from that input, and the mode that came out. No cause is asserted -- "decidedBy"
+    // names the branch the resolver took, which is a local boolean it already held, not an inference
+    // about why the player did anything. The legend deliberately contains no `field=value` token that
+    // could collide with the fields it explains (workspace rule): count these lines by anchoring on
+    // "T68VETOGATE:".
+    // Arity hand-counted: 4 format specifiers, 4 arguments.
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("veto: NodeShuffle.DestroyerVeto=%d NodeShuffle.ProtectForeignNodes=%d at world init — ")
-        TEXT("arming in %s mode (T61: the hook arms either way; in observing mode it returns true for ")
-        TEXT("every target and changes nothing in the world)"),
-        GNodeShuffleDestroyerVeto,
-        IsForeignNodeProtectionEnabled() ? 1 : 0,
-        bObserveOnly ? TEXT("OBSERVE-ONLY") : TEXT("ENFORCING"));
+        TEXT("T68VETOGATE: decidedBy %s requested %d mode %s — the console variable overrides the ")
+        TEXT("config checkbox only when it has actually been set this session; otherwise the checkbox ")
+        TEXT("decides. The hook arms either way (T61); in the observing mode it returns true for every ")
+        TEXT("target and changes nothing in the world. Foreign-node protection follows the mode with no ")
+        TEXT("switch of its own since T68 (%d)."),
+        VetoSource == ENodeShuffleVetoSource::ConsoleOverride ? TEXT("console") : TEXT("checkbox"),
+        bVetoRequested ? 1 : 0,
+        bObserveOnly ? TEXT("OBSERVE-ONLY") : TEXT("ENFORCING"),
+        bProtectForeignNodes ? 1 : 0);
 
     if (!FModuleManager::Get().IsModuleLoaded(TEXT("KBFL")))
     {
@@ -530,7 +561,7 @@ using FNodeShuffleActorExtractorLoggedSet = TSet<FNodeShuffleActorExtractorKey>;
 void FNodeShuffleModule::StartupModule()
 {
     UE_LOG(LogNodeShuffle, Log, TEXT("NodeShuffle module loaded"));
-    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle 1.3.0 LOADED (2026-08-11-t67-2) ====="));
+    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle 1.4.0 LOADED (2026-08-11-t68-2) ====="));
     FNodeShuffleModule::LogAutoAllowExtractorsState(); // Packet G: log the CVar state once at startup
 
 #if !WITH_EDITOR

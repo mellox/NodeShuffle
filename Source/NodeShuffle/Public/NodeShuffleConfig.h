@@ -34,6 +34,14 @@ struct NODESHUFFLE_API FNodeShuffleForeignResourceRow
 // Plain struct mirror of the configuration. Field names MUST match the
 // section property keys registered in UNodeShuffleConfig exactly —
 // UConfigManager::FillConfigurationStruct maps them by name.
+//
+// T68 (2026-08-11) REMOVED FIVE FIELDS: AllowVanillaDisappear (hard-wired to its shipped default ON),
+// RerollRelocatedWells (hard-wired ON), CommitWellsAtRoll (feature deleted outright),
+// ShowCompatibilityNotices (hard-wired ON, both call sites pass true), EnableExperimentalFeatures
+// (dead -- it had zero consumers). A key left over in an existing NodeShuffle.cfg is ignored on load
+// and dropped on the next save (SML ConfigPropertySection.cpp:18-42), and the 1.4.0 version bump
+// forces that save on first load (SML ConfigManager.cpp:103-117). Nothing in the save game mirrors a
+// config value, so no removal can touch save data. Grading table: docs/TECH-DEBT.md T68.
 USTRUCT(BlueprintType)
 struct NODESHUFFLE_API FNodeShuffleConfigStruct
 {
@@ -73,10 +81,6 @@ struct NODESHUFFLE_API FNodeShuffleConfigStruct
 
     UPROPERTY(BlueprintReadWrite)
     bool RandomizePurity{true};
-
-    // When false, every vanilla node stays active (new nodes still add on top).
-    UPROPERTY(BlueprintReadWrite)
-    bool AllowVanillaDisappear{true};
 
     // Shuffle mod-added nodes (AllMinable items, modded ores) too. When on, modded
     // SOLID nodes also RELOCATE (move to new locations) on a re-roll, like vanilla
@@ -125,10 +129,10 @@ struct NODESHUFFLE_API FNodeShuffleConfigStruct
     // never moves — only what it yields changes (a nitrogen well may become a water well). Wells with
     // a pressurizer or any fracking extractor already on them are never changed.
     //
-    // DEFAULT OFF, and it is its OWN toggle rather than a use of EnableExperimentalFeatures: that flag
-    // is documented in-UI as "THIS VERSION HAS NO EXPERIMENTAL FEATURES ... leave it off", and it is a
-    // single switch, so hanging wells off it would (a) contradict its own tooltip and (b) mean any
-    // future experimental feature could not be enabled independently of well shuffling. With this off,
+    // DEFAULT OFF, and it is its OWN toggle. (HISTORY: it was written as an alternative to the
+    // EnableExperimentalFeatures flag, on the grounds that one shared switch could not enable two
+    // experimental features independently. T68 (2026-08-11) DELETED that flag as dead -- it had zero
+    // consumers -- so the alternative no longer exists and this toggle is simply the only gate.) With this off,
     // WellLayout is never rolled and ApplyWellRetype returns immediately, so the mod's stable core
     // behaves identically to a build without Packet H1.
     UPROPERTY(BlueprintReadWrite)
@@ -153,66 +157,17 @@ struct NODESHUFFLE_API FNodeShuffleConfigStruct
     UPROPERTY(BlueprintReadWrite)
     bool RelocateResourceWells{false};
 
-    // T7b (ns-t7b-reroll): does a re-roll re-consider a well that has ALREADY been relocated?
+    // ---- T68 (ns-t68-release-config, 2026-08-11): the protection master switch, promoted from the
+    // console variable NodeShuffle.DestroyerVeto to a panel checkbox. DEFAULT TRUE, which is a
+    // BEHAVIOUR CHANGE for every existing install: the CVar defaulted to 0, so protection shipped off.
     //
-    // DEFAULT OFF, and the default is the whole point of the option. With it off, RollWellRelocation
-    // behaves exactly as it did before T7b: a placed group keeps its geography across re-rolls and only
-    // never-moved wells are dealt a destination. With it on, an already-relocated well is re-captured
-    // from its (still standing, suppressed) vanilla actors, torn down and dealt a new destination like
-    // any other well -- which on the author's own save means ~17 of 20 wells churn on the first
-    // re-roll after the toggle is enabled. That is a deliberate act, not a surprise, which is why it
-    // has its own switch rather than riding on RelocateResourceWells.
-    //
-    // A well someone has built on is never re-enrolled: bManaged is false for a pinned well, and since
-    // T16 the pin for a relocated well is decided from the actors WE spawned (the ones a player can
-    // actually reach) rather than from the hidden vanilla core.
-    //
-    // Inert unless BOTH ShuffleResourceWells and RelocateResourceWells are on -- this flag only
-    // widens the population RollWellRelocation considers, it never enables relocation by itself.
+    // PRECEDENCE (one resolver, two inputs -- FNodeShuffleModule::ResolveDestroyerVetoRequested in
+    // NodeShuffle.cpp): this field is the PERSISTED source of truth; the CVar is a session-scoped
+    // override that wins only when someone actually set it. Read ONCE per world init by the veto's arm
+    // pass, exactly as the CVar was, so a mid-session flip can never split one KBFL sweep across two
+    // policies.
     UPROPERTY(BlueprintReadWrite)
-    bool RerollRelocatedWells{false};
-
-    // T23 stage 3 (ns-t23-rollhide): WHEN is the vanilla well removed -- at the ROLL, or once the
-    // replacement has actually been built at the destination?
-    //
-    // ns-t54-immediate-hide (2026-08-10) -- THE PARAGRAPH BELOW THIS ONE IS NOW HISTORY, NOT BEHAVIOUR,
-    // AND IS KEPT BECAUSE IT RECORDS WHAT THE DEFAULT USED TO GUARANTEE. The author ruled that a shuffled
-    // origin must disappear immediately whatever this toggle says, so ApplyWellRelocation now INITIATES
-    // the suppression for every entry marked as moving, on every pass. What survives of this flag: the
-    // roll path additionally attempts the hide at the instant of the roll, for entries whose look is
-    // completely captured then. It is therefore close to a no-op -- it moves the disappearance earlier by
-    // roughly one apply pass and takes on the roll's one-shot-capture fallback to do it.
-    // NOT RETIRED HERE ON PURPOSE: retiring a shipped, save-visible toggle is the author's call, not this
-    // packet's, and its roll-time path is still the only one that can hide before the first apply pass.
-    // Recommendation is filed in docs/TECH-DEBT.md under T54.
-    //
-    // (HISTORY, true until 2026-08-10) DEFAULT OFF, and the default is the feature's own gate. With it
-    // off, suppression happens exactly
-    // where it always has (NodeShuffleWellRelocateApply.cpp, after a COMPLETE spawn), so the roll path
-    // behaves identically to a build without this packet. With it on, a well whose look can be captured
-    // at the roll is hidden at the roll, and the world holds it in NEITHER place until a player reaches
-    // the destination -- an interval that is genuinely unbounded (destinations are dealt uniformly over
-    // the whole map and the author rejected biasing them toward the player, T23 §6 stage 1).
-    //
-    // THE HALF THAT MAKES THIS SHIPPABLE IS THE UN-HIDE, not the hide. See
-    // FNodeShuffleWellSuppressionRecord in NodeShuffleSubsystem.h: without a persisted, re-attempted
-    // restore path, a well whose relocation terminally fails would be deleted from the save permanently.
-    // Inert unless BOTH ShuffleResourceWells and RelocateResourceWells are on.
-    UPROPERTY(BlueprintReadWrite)
-    bool CommitWellsAtRoll{false};
-
-    // ns-h1b-notice: post one chat message when an extractor has been cleared for use on shuffled nodes
-    // but needs a game restart before SF+ will permit it. DEFAULT TRUE -- the entire point is that the
-    // player did not know, and the notice is structurally unable to nag (it is a STATE test that empties
-    // itself one boot after the patches land, so a steady-state profile never sees it at all).
-    UPROPERTY(BlueprintReadWrite)
-    bool ShowCompatibilityNotices{true};
-
-    // The standard experimental gate (workspace convention: every mod keeps this flag, even when
-    // inert). cave-nodes-4: cave placement GRADUATED to always-on — it fixes the cave-drain
-    // regression, so it is not optional. NOTHING is currently gated by this flag.
-    UPROPERTY(BlueprintReadWrite)
-    bool EnableExperimentalFeatures{false};
+    bool ProtectOtherModsNodes{true};
 
     // T60: the per-resource opt-out list. PRESENT BECAUSE THE SCHEMA HAS THE MATCHING ARRAY PROPERTY —
     // see the check() note on FNodeShuffleForeignResourceRow. NOTHING IN THE MOD READS THIS FIELD:

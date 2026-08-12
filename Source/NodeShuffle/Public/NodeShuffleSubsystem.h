@@ -405,6 +405,10 @@ struct FNodeShuffleWellSuppressionRecord
     // PlacedCoreLocation -- so "has this entry ever been placed" is not recoverable from the entry once
     // it has been re-rolled. Written at the same single site as bSuppressedByUs and discharged by the
     // same whole-record reset, so it cannot drift from it.
+    // TODO(2026-08-11, T68) PARKED FIELD, WRITE PATH GONE: the only site that could stamp this true was
+    // the roll-time commit arm, deleted with CommitWellsAtRoll. It is KEPT because it is a SaveGame
+    // field -- a save written by 1.3.0 or earlier can carry Roll-stamped records that this build must
+    // still deserialize and un-hide. Nothing reads it for a decision any more (T23's pair is retired).
     UPROPERTY(SaveGame) bool bSuppressedAtRoll = false;
 
     // The member's state at the instant we FIRST suppressed it. Written only on the false->true
@@ -2441,10 +2445,6 @@ private:
     // commitment no unplaced entry was ever suppressed, so nothing re-asserted for that population.
     bool WellGroupHasSuppressedMember(const FNodeShuffleWellEntry& E) const;
 
-    // ns-t23-rollhide REVIEW-2 (F4): the T23 pair's population, asked of the RECORD's phase rather than
-    // of any placement coordinate. See bSuppressedAtRoll's declaration for why no coordinate can answer
-    // this. Narrower than WellGroupHasSuppressedMember above, which stays the stranded census's question.
-    bool WellGroupHasRollSuppressedMember(const FNodeShuffleWellEntry& E) const;
 
     // =============== ns-t54-immediate-hide: THE AUTHOR'S RULING (docs/TECH-DEBT.md T54) ==============
     // Defined in NodeShuffleWellImmediateHide.cpp; read that file's header for what was MEASURED before
@@ -2526,12 +2526,10 @@ private:
     FString WellStrandedCensusLastKey;
     int32 WellStrandedWarnLastPass = -1000;
 
-    // The OPPOSITE-POLARITY PAIR (T23 §6). T23-A asserts the FINISHED behaviour and T23-B asserts the
-    // DEGRADED behaviour of the unfinished state; they are exact complements over the same population,
-    // so exactly one is red at any time and neither can be quietly skipped. Emitted as
-    // [NodeShuffle][TEST] lines because this repo has no automated test lane -- the log scan IS the test.
-    void EmitWellRollHideTestPair(bool bCommitAtRoll);
-    FString WellRollHideTestLastKey;
+    // T68 (2026-08-11): EmitWellRollHideTestPair and WellRollHideTestLastKey are DELETED. The T23
+    // opposite-polarity pair asked what the roll-time removal toggle did; that toggle and its arm were
+    // removed by T68 (audit §5.2), so the pair has no subject. Retired WITH its feature -- not to turn a
+    // red half green. The T54 pair below is unaffected.
 
     // Session-transient: a hidden mesh piece's collision-enabled value at the instant WE de-collided it,
     // so the un-hide is an EXACT inverse within a session. Component identity is not path-stable and

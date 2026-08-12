@@ -90,27 +90,28 @@ function Get-T59Failures([string]$rawText, [bool]$checkCrossFile) {
         $fails += "FAIL: $passFile no longer builds the document prefix as /TEXT(""s-%s--"")/ -- the prefix form is what the delete step selects on and what tells a namespaced document from a legacy one. Changing it silently orphans every existing document."
     }
 
-    # ---- HALF 2: exactly ONE directory-tree delete, and it must precede the identity gate ----
+    # ---- HALF 2 (REWRITTEN BY T68, 2026-08-11): ZERO directory-tree deletes. ----
+    # T59's contract was "exactly one tree delete, and only in the CVar=0 rollback lever". T68 deleted
+    # NodeShuffle.AutoAllowExtractors and that lever with it (audit §5.13), so the sanctioned site no
+    # longer exists and the SAFE count is now ZERO. THE INVARIANT THIS HALF PROTECTS IS UNCHANGED and is
+    # in fact stronger: a tree delete anywhere in this file removes every playthrough's documents, which
+    # is the T59 defect. The old pins are not weakened -- their exception is retired with its feature.
     $dirDeleteLines = @()
     for ($i = 0; $i -lt $lines.Count; $i++) {
         if ($lines[$i] -match 'DeleteDirectory\s*\(') { $dirDeleteLines += ($i + 1) }
     }
-    $gateLine     = Get-LineNumber $lines 'MakeSessionSlug\s*\(\s*SessionName\s*\)'
-    $rollbackLine = Get-LineNumber $lines 'GNodeShuffleAutoAllowExtractors\s*==\s*0'
-    if ($dirDeleteLines.Count -eq 0) {
-        $fails += "FAIL: $passFile contains no DeleteDirectory call at all -- this check has gone vacuous, and the NodeShuffle.AutoAllowExtractors=0 rollback lever (its only sanctioned use) no longer removes the generated pack."
+    $gateLine = Get-LineNumber $lines 'MakeSessionSlug\s*\(\s*SessionName\s*\)'
+    if ($dirDeleteLines.Count -ne 0) {
+        $fails += "FAIL: $passFile has $($dirDeleteLines.Count) DeleteDirectory call(s) (lines $($dirDeleteLines -join ', ')) -- T68 removed the only sanctioned one with the AutoAllowExtractors CVar, so a tree delete here now removes every playthrough's documents with nothing to roll it back."
     }
-    if ($dirDeleteLines.Count -gt 1) {
-        $fails += "FAIL: $passFile has $($dirDeleteLines.Count) DeleteDirectory calls (lines $($dirDeleteLines -join ', ')) -- exactly one is sanctioned, in the CVar=0 rollback lever. A tree delete anywhere else removes every playthrough's documents, which is the T59 defect."
+    # NON-VACUITY: half 2 is a count of zero, which a deleted FILE would also satisfy. The identity gate
+    # must still be visible, or this half is asserting nothing about a file it can no longer see.
+    if ($gateLine -eq -1) {
+        $fails += "FAIL: $passFile no longer contains the identity gate /MakeSessionSlug(SessionName)/ -- half 2 has gone vacuous."
     }
-    if ($gateLine -eq -1 -or $rollbackLine -eq -1) {
-        $fails += "FAIL: $passFile no longer has both the rollback branch (/GNodeShuffleAutoAllowExtractors == 0/) and the identity gate (/MakeSessionSlug(SessionName)/) -- the ordering check below cannot run, so half 2 is vacuous."
-    } else {
-        foreach ($ln in $dirDeleteLines) {
-            if ($ln -lt $rollbackLine -or $ln -gt $gateLine) {
-                $fails += "FAIL: $passFile line $ln deletes the whole pack directory OUTSIDE the rollback lever (which spans lines $rollbackLine..$gateLine) -- a tree delete in the regeneration path deletes other playthroughs' documents. That is exactly the defect T59 fixed."
-            }
-        }
+    # T68: and the deleted CVar must not be resurrected here by name.
+    if (($lines -join "`n") -match 'GNodeShuffleAutoAllowExtractors') {
+        $fails += "FAIL: $passFile references GNodeShuffleAutoAllowExtractors -- T68 deleted that console variable and the pass now always runs."
     }
 
     # ---- HALF 3: every FILE delete is selected by this session's prefix ----

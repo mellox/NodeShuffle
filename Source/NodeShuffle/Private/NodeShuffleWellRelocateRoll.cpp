@@ -176,14 +176,20 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll, bool 
     // T7b/A4. Read here rather than taken as a parameter because the signature lives in
     // NodeShuffleSubsystem.h, which this packet does not own; FinishWellRollTeardown reads its own gate
     // the same way (NodeShuffleWellSweep.cpp), so this is the file's existing idiom, not a new one.
-    const FNodeShuffleConfigStruct RollConfig = FNodeShuffleConfigStruct::GetActiveConfig(this);
-    const bool bRerollRelocated = RollConfig.RerollRelocatedWells;
-    // ns-t23-rollhide (T23 stage 3): hide the VANILLA well at the roll instead of after the replacement
-    // has been built. Read from the SAME config fetch as the toggle above so the two cannot describe
-    // different config snapshots. ANDed with bRelocationEnabled because a roll that is not relocating
-    // anything must never hide anything -- the parameter is the one the caller actually gated on, and
-    // reading the config's own RelocateResourceWells here instead would let the two disagree.
-    const bool bCommitAtRoll = RollConfig.CommitWellsAtRoll && bRelocationEnabled;
+    // T68 (ns-t68-release-config, 2026-08-11): 'Re-roll Wells That Have Already Moved' IS DELETED AND
+    // HARD-WIRED ON. The author's standing ruling is that a shuffle hides ALL the things we shuffle, and
+    // a re-roll that quietly left already-moved wells alone contradicted the button's own name. The local
+    // is kept (rather than every branch inlined) so the branches, their counters and their diagnostics
+    // stay exactly as T7b shipped them and the ON path is the one that was already exercised.
+    // CONSEQUENCE, STATED: on an existing save with relocated wells, the FIRST re-roll after this build
+    // re-considers every one of them and each is absent until visited. The WELLH2-ROLL re-enrolment
+    // teardown line measures that, per roll.
+    static constexpr bool bRerollRelocated = true;
+    // T68: 'Remove A Moved Well At The Re-roll Itself' (CommitWellsAtRoll) IS DELETED, FEATURE AND ALL.
+    // T54 moved the hide onto the apply pass for every entry marked as moving, on every pass, which left
+    // this toggle moving the disappearance earlier by roughly one pass at the cost of a ONE-SHOT capture
+    // that could not retry. The roll-time hide arm, its two counters and its summary line are gone with
+    // it. The apply path is untouched and is now the only writer of a suppression record.
 
     FNodeShuffleWellCensus Census;
     CollectWellCensus(GetWorld(), Census);
@@ -211,11 +217,16 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll, bool 
 
     int32 PlacedInSave = 0;
     for (const FNodeShuffleWellEntry& E : WellLayout) { if (E.bGroupPlaced) { ++PlacedInSave; } }
+    // T68: the toggle this line used to report is gone (hard-wired ON), so the line reports the
+    // POPULATION it measured on THIS roll instead of a setting. Count these by anchoring on
+    // "WELLH2-ROLL: alreadyRelocated" -- the legend below contains no token of the printed form.
+    // Arity hand-counted: 2 format specifiers, 2 arguments.
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("WELLH2-ROLL: rerollRelocatedWells=%d -- %d of %d well(s) in this save are ALREADY relocated. ")
-        TEXT("With that toggle OFF those %d keep their current spot and this roll does not touch them (the ")
-        TEXT("pre-T7b behaviour); with it ON each of them is re-considered like any other well."),
-        bRerollRelocated ? 1 : 0, PlacedInSave, WellLayout.Num(), PlacedInSave);
+        TEXT("WELLH2-ROLL: alreadyRelocated %d of %d well(s) in this save. Every one of them is ")
+        TEXT("re-considered by this roll and dealt a new destination like any other well, and each is ")
+        TEXT("absent from the world until a player reaches its new spot. Wells someone has built on are ")
+        TEXT("refused separately and counted in the summary at the end of this roll."),
+        PlacedInSave, WellLayout.Num());
 
     // -------- PHASE 1 COUNTERS: these PARTITION WellLayout, and the partition is checked below --------
     // ns-t7b F5: before T7b, AlreadyCaptured was incremented at the TOP of the loop and six later
@@ -223,7 +234,7 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll, bool 
     // bGroupPlaced guard sent placed entries home before any of them. With the guard gone the sets
     // would overlap silently, so the buckets are now mutually exclusive by construction and the sum is
     // asserted against WellLayout.Num() rather than trusted.
-    int32 Captured = 0, CapturedWhilePlaced = 0, AlreadyKept = 0, PermanentlyFailed = 0,
+    int32 Captured = 0, CapturedWhilePlaced = 0, PermanentlyFailed = 0,
           RefusedUnstreamed = 0, RefusedTooFew = 0, RefusedPinned = 0, RefusedPinnedWhilePlaced = 0,
           RefusedGeometry = 0, RefusedNonFinite = 0;
     // CROSS-CUTTING, deliberately NOT part of the partition: how many of ALL the refusals above landed
@@ -293,10 +304,11 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll, bool 
                 TEXT("well keeps the %d satellites it was actually placed with.%s"),
                 *WellShort(E.CorePath), E.CapturedSatelliteCount, E.Satellites.Num(), Uncaptured,
                 *Names, Uncaptured > 5 ? TEXT(", ...") : TEXT(""), E.CapturedSatelliteCount,
-                bRerollRelocated
-                    ? TEXT("")
-                    : TEXT(" Turning ON 'Re-roll Wells That Have Already Moved' lets a later re-roll ")
-                      TEXT("re-capture the whole group."));
+                // T68: the tail used to point at a toggle that no longer exists. A re-roll now always
+                // re-considers an already-moved well, so the group IS re-captured on the next one --
+                // which is a property of this build, measured from the hard-wired constant above, not a
+                // prediction about the player's settings.
+                TEXT(" The next re-roll re-captures the whole group."));
         }
 
         // A well that already exhausted every placement budget in an earlier session stays vanilla for
@@ -322,9 +334,11 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll, bool 
         {
             ++RefusedPinned;
             // ns-t7b-r2 F-D: NoteRefusal writes bRelocate = bGroupPlaced, which flips a state T16
-            // shipped at 5ed3ac2 (a placed pinned well got false). This branch sits ABOVE the A4 gate,
-            // so applying it unconditionally makes a default-OFF toggle change behaviour. Gated.
-            if (bRerollRelocated) { NoteRefusal(E); } else { E.bRelocate = false; }
+            // shipped at 5ed3ac2 (a placed pinned well got false). The gate that used to protect the
+            // default-OFF toggle is gone with the toggle (T68): the ON arm is now the only arm, so this
+            // is unconditional. A placed pinned well therefore keeps bRelocate=true, as it did whenever
+            // the toggle was on.
+            NoteRefusal(E);
             if (bAlreadyPlaced)
             {
                 ++RefusedPinnedWhilePlaced;
@@ -342,12 +356,12 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll, bool 
         // placement across re-rolls of the RESOURCE (which still changes under H1's own toggle through
         // AssignedResourceClassPath), and the only thing said about it is the satellite-growth warning
         // -- which ns-t7b-r2 F-G HOISTED ABOVE this gate, so it is now printed whatever the toggle.
-        if (bAlreadyPlaced && !bRerollRelocated)
-        {
-            ++AlreadyKept;
-            E.bRelocate = true;
-            continue;
-        }
+        // T68: THE GEOGRAPHY GATE IS GONE WITH ITS TOGGLE. It read `bAlreadyPlaced && !bRerollRelocated`
+        // and returned an already-placed well home untouched; with the toggle hard-wired ON that arm was
+        // unreachable, and AlreadyKept could only ever print 0 -- a counter pinned at zero is a legend
+        // that lies about what was measured. Both are deleted rather than left printing a constant. An
+        // already-placed entry now falls through to the ordinary capture path, exactly as it did with the
+        // toggle on.
 
         const FNodeShuffleWellRecord* const* Found = ByCorePath.Find(E.CorePath);
         if (!Found || !*Found)
@@ -526,16 +540,18 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll, bool 
 
     // ns-t7b F5 / RT-7: the buckets must PARTITION the layout. Asserted, not assumed -- the old
     // counters overlapped and nothing said so.
-    const int32 Accounted = PermanentlyFailed + RefusedPinned + AlreadyKept + RefusedUnstreamed
+    // T68: the kept-as-placed bucket is gone with the geography gate that filled it (see above), so the
+    // partition is one term shorter. It is still ASSERTED, not assumed.
+    const int32 Accounted = PermanentlyFailed + RefusedPinned + RefusedUnstreamed
                           + RefusedTooFew + RefusedGeometry + RefusedNonFinite + Captured;
     if (Accounted != WellLayout.Num())
     {
         UE_LOG(LogNodeShuffle, Warning,
             TEXT("WELLH2-ROLL: *** COUNTER PARTITION BROKEN *** phase 1 accounted for %d outcome(s) ")
             TEXT("across %d layout entry(ies). Every entry must land in exactly ONE of: permanently ")
-            TEXT("failed %d, pinned/unmanaged %d, kept-as-placed %d, not streamed %d, below the ")
+            TEXT("failed %d, pinned/unmanaged %d, not streamed %d, below the ")
             TEXT("satellite floor %d, geometry %d, non-finite %d, captured %d."),
-            Accounted, WellLayout.Num(), PermanentlyFailed, RefusedPinned, AlreadyKept,
+            Accounted, WellLayout.Num(), PermanentlyFailed, RefusedPinned,
             RefusedUnstreamed, RefusedTooFew, RefusedGeometry, RefusedNonFinite, Captured);
     }
 
@@ -702,13 +718,9 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll, bool 
     double Stage0IndexMs = 0.0;
     int32 Stage0BuiltAtCommit = 0;
 
-    // ns-t23-rollhide (T23 stage 3) -- counters for the roll-time commitment, and ONE shared index build.
-    // The index rebuild is now wanted by TWO consumers (stage 0's probe and the hide itself) and must
-    // still happen at most ONCE per roll: it is a two-iterator sweep of the whole world, and building it
-    // per enrolled well would cost ~17x and misreport the design's cost. So the build is a lambda both
-    // consumers call, and bStage0IndexBuilt is the single latch.
-    int32 RollHidden = 0, RollFellBack = 0;
-    FString RollFellBackNames;
+    // ONE shared index build per roll. T68 removed the second consumer (the roll-time hide); the probe
+    // below is now the only caller, and it is diagnostics-gated, so on a default build this lambda never
+    // runs and the roll path costs exactly what it did before ns-t23-stage0.
     const auto EnsureRollMeshIndexOnce = [&]() -> void
     {
         if (bStage0IndexBuilt) { return; }
@@ -982,14 +994,11 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll, bool 
         // Gated on the diagnostics flag because the rebuild is real new work on the roll path (see the
         // measured cost printed by the probe itself). With diagnostics off THIS branch does nothing at all.
         //
-        // ns-t23-rollhide REVIEW FIX (cold review F10, comment-only -- the code is deliberately unchanged).
-        // The claim that used to end this paragraph -- "with diagnostics off the roll behaves exactly as it
-        // did before ns-t23-stage0" -- IS NO LONGER TRUE OF THE ROLL AS A WHOLE. The bCommitAtRoll branch
-        // below calls the same EnsureRollMeshIndexOnce latch and is NOT diagnostics-gated, so with
-        // 'Remove A Moved Well Immediately' ON the index rebuild happens on the roll path regardless of
-        // diagnostics. That is load-bearing, not incidental: the hide operates on INDEXED mesh pieces and a
-        // stale index would leave rock standing at the abandoned origin. The cost is bounded to players who
-        // opted into a default-OFF experimental toggle, so it is accepted rather than re-gated.
+        // T68 (2026-08-11) RESTORED THE ORIGINAL CLAIM. Cold review F10 had recorded that "with
+        // diagnostics off the roll behaves exactly as it did before ns-t23-stage0" was no longer true of
+        // the roll as a whole, because the bCommitAtRoll arm called the same latch WITHOUT the
+        // diagnostics gate. That arm is deleted, so this branch is again the ONLY caller of
+        // EnsureRollMeshIndexOnce and the claim holds once more: with diagnostics off, nothing here runs.
         // The reviewer's other half of F10 -- that WELLH2B-ROLLPROBE's "the NEXT WELLH2B-INDEX line"
         // promise could dangle -- does NOT reproduce: that summary is an ungated UE_LOG(Display) at
         // NodeShuffleWellMeshIndex.cpp, so it prints on every rebuild whatever the diagnostics flag says.
@@ -999,73 +1008,12 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll, bool 
             ProbeRollTimeWellMeshIndex(E, Stage0IndexMs, Stage0BuiltAtCommit);
         }
 
-        // ============ ns-t23-rollhide (T23 STAGE 3): COMMIT THE VANILLA WELL AT THE ROLL ============
-        // THE ONE THING THE AUTHOR HAS ASKED FOR REPEATEDLY: when a shuffle happens, the vanilla
-        // original DISAPPEARS NOW instead of standing there until the player travels to the destination.
-        //
-        // ORDER IS FORCED AND IS NOT AN ORDERING PREFERENCE:
-        //   1. RebuildWellMeshIndex (via the shared latch above) -- the hide operates on INDEXED mesh
-        //      pieces, and stage 0 MEASURED that the index is just as complete at roll time as at
-        //      suppression time on the author's save (15 pieces / 135 members, route 3 going 7 -> 8).
-        //   2. CaptureWellGroupVisuals -- the pieces are the last copy of the look we will need at the
-        //      destination, so the capture must run while the originals are still standing.
-        //   3. THE COMPLETENESS GATE -- roll-time capture is ONE SHOT (the apply-time capture retries
-        //      every pass while the origin streams). An entry whose look is not completely captured does
-        //      NOT get roll-time suppression and falls back to today's spawn-then-suppress path, COUNTED
-        //      AND NAMED. That converts a silent fallback into an explicit, denominated refusal.
-        //   4. Suppress, on the ROLL phase -- which is what stops SuppressVanillaWellGroup redoing 1 and
-        //      2 per group, and what makes its summary line name the destination instead of a stale or
-        //      zero PlacedCoreLocation.
-        //
-        // Occupancy is NOT re-tested here: HideOne refuses any member reporting IsWellMemberInUse, on
-        // this path exactly as on the apply path, through the same shared predicate. One predicate,
-        // every site -- do not add a second copy of that question here.
-        if (bCommitAtRoll)
-        {
-            EnsureRollMeshIndexOnce();
-            CaptureWellGroupVisuals(E);
-            // ns-t24-groupgate: four counts, each with its denominator, because the OLD two could not
-            // distinguish "the capture failed" from "there was nothing to capture" -- and the second is
-            // the ordinary case, which is how this gate came to refuse 16 of 17 wells.
-            int32 CapDressable = 0, CapWithPieces = 0, CapCaptured = 0, CapMissing = 0;
-            if (IsWellGroupCaptureComplete(E, CapDressable, CapWithPieces, CapCaptured, CapMissing))
-            {
-                SuppressVanillaWellGroup(E, EWellSuppressPhase::Roll);
-                ++RollHidden;
-                UE_LOG(LogNodeShuffle, Display,
-                    TEXT("WELLH2-ROLLHIDE core='%s': COMMITTED AT THE ROLL -- of %d dressable member(s), ")
-                    TEXT("%d have at least one mesh piece in the index at this instant and every one of ")
-                    TEXT("those holds a captured look (%d member(s) hold one in total). A member with no ")
-                    TEXT("indexed piece is not required to hold a look and is not counted against this ")
-                    TEXT("gate; nothing here measured WHY a member has no piece. So the vanilla group is ")
-                    TEXT("suppressed now rather than after the replacement is built. The replacement is ")
-                    TEXT("still only built when a player reaches %s, so this well is absent from the world ")
-                    TEXT("until then. Every member we hid carries a persisted restore obligation; the ")
-                    TEXT("stranded census names the population that has not been given back."),
-                    *WellShort(E.CorePath), CapDressable, CapWithPieces, CapCaptured,
-                    *P.Dest.ToCompactString());
-            }
-            else
-            {
-                ++RollFellBack;
-                if (RollFellBackNames.Len() < 400)
-                {
-                    RollFellBackNames += (RollFellBackNames.IsEmpty() ? TEXT("") : TEXT(", "));
-                    RollFellBackNames += WellShort(E.CorePath);
-                }
-                UE_LOG(LogNodeShuffle, Display,
-                    TEXT("WELLH2-ROLLHIDE core='%s': NOT committed at the roll -- %d of the %d member(s) ")
-                    TEXT("that HAVE a mesh piece in the index hold no captured look at this instant ")
-                    TEXT("(%d dressable member(s) in the entry, %d holding a look in total), and the ")
-                    TEXT("roll-time capture is taken once and not retried. That is a genuine partial ")
-                    TEXT("capture: these members have something to lose. This entry keeps the ORIGINAL ")
-                    TEXT("behaviour: the vanilla well stays standing and is suppressed only once the ")
-                    TEXT("replacement has been built at %s. Nothing was hidden for it on this roll."),
-                    *WellShort(E.CorePath), CapMissing, CapWithPieces, CapDressable, CapCaptured,
-                    *P.Dest.ToCompactString());
-            }
-        }
-
+        // T68 (2026-08-11): THE ROLL-TIME COMMIT ARM WAS HERE AND IS DELETED. It ran only behind
+        // 'Remove A Moved Well At The Re-roll Itself', which is gone (audit §5.2). What it did --
+        // rebuild the mesh index, capture the group's look once, gate on completeness, and suppress on
+        // the ROLL phase -- is now done by the apply pass for every entry marked as moving, on every
+        // pass, with a capture that RETRIES (T54). SuppressVanillaWellGroup therefore has exactly one
+        // caller phase left, EWellSuppressPhase::Apply.
         ++Enrolled;
         if (P.bWasPlaced) { ++ReEnrolled; }
 
@@ -1086,24 +1034,10 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll, bool 
 
     const double CommitMs = (FPlatformTime::Seconds() - CommitStartSec) * 1000.0;
 
-    // ns-t23-rollhide: the roll-level summary, WITH ITS DENOMINATOR. "0 fell back" means nothing unless
-    // the line says how many entries were given the chance to; and with the toggle OFF the line states
-    // that, rather than being absent and leaving a reader to guess which of the two it is looking at.
-    // The index-rebuild cost is the one this design adds to the roll path and is reported as measured.
-    if (Enrolled > 0)
-    {
-        UE_LOG(LogNodeShuffle, Display,
-            TEXT("WELLH2-ROLLHIDE summary: commit-at-roll was %s for this roll. Of %d committed well(s), ")
-            TEXT("%d had the vanilla group suppressed AT THE ROLL and %d fell back to the original ")
-            TEXT("suppress-after-the-replacement-is-built path because at least one member that HAS a ")
-            TEXT("mesh piece in the index held no captured look at this instant (%s). ns-t24-groupgate: ")
-            TEXT("members with no indexed piece no longer count against this gate -- see the per-well ")
-            TEXT("lines above for each well's own four counts. Mesh index rebuilt %s for this roll, ")
-            TEXT("%.1f ms measured."),
-            bCommitAtRoll ? TEXT("ON") : TEXT("OFF"), Enrolled, RollHidden, RollFellBack,
-            RollFellBackNames.IsEmpty() ? TEXT("none named") : *RollFellBackNames,
-            bStage0IndexBuilt ? TEXT("once") : TEXT("not at all"), Stage0IndexMs);
-    }
+    // T68: the WELLH2-ROLLHIDE roll-level summary is DELETED with the arm it summarised. Its two
+    // counts could only be 0/0 now, and a summary line that reports a constant is the 'zero needs a
+    // denominator' failure wearing the opposite hat. The mesh-index rebuild it also reported is now
+    // diagnostics-only and is already named by WELLH2B-INDEX at its own site.
     if (ReEnrolled > 0 || AbortedAfterTeardown > 0)
     {
         // ns-t7b RT-6: the first re-roll on a save full of relocated wells tears down every one of them
@@ -1127,20 +1061,20 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll, bool 
         TEXT("re-enrolled), %d dealt a destination, %d deal-failed (%d of those kept an existing ")
         TEXT("relocated placement), %d committed (%d moved again, %d first relocation), %d aborted ")
         TEXT("in-use before the teardown, %d aborted after it, %d refused because NO member handle ")
-        TEXT("resolved (ns-t7b-r2 F-A: 0 handles is not a clearance). Kept-as-placed without ")
-        TEXT("re-enrolment %d, ")
+        TEXT("resolved (ns-t7b-r2 F-A: 0 handles is not a clearance). ")
         TEXT("not streamed %d, below the %d-satellite floor %d, pinned/unmanaged %d (%d of them already ")
         TEXT("relocated), geometry-refused %d, non-finite %d, permanently failed %d; %d refusal(s) ")
-        TEXT("landed on an already-relocated well and KEPT its placement. rerollRelocatedWells=%d. ")
+        TEXT("landed on an already-relocated well and KEPT its placement. T68: a re-roll always ")
+        TEXT("re-considers an already-moved well, so there is no kept-as-placed bucket any more. ")
         TEXT("Seed %d (relocation stream %d). Placement is core-first then independent satellites: %d ")
         TEXT("layout attempts, %d made per pass, %d satellite draws per satellite per attempt, %d ")
         TEXT("nudges, %d redeals before a well is left vanilla for good."),
         bIsReroll ? TEXT("re-roll") : TEXT("initial roll"), WellLayout.Num(),
         Captured, CapturedWhilePlaced, Dealt, DealFailed, DealFailedWhilePlaced,
         Enrolled, ReEnrolled, Enrolled - ReEnrolled, AbortedInUse, AbortedAfterTeardown, RefusedNoHandles,
-        AlreadyKept, RefusedUnstreamed, WellMinSatellitesForRelocation, RefusedTooFew,
+        RefusedUnstreamed, WellMinSatellitesForRelocation, RefusedTooFew,
         RefusedPinned, RefusedPinnedWhilePlaced, RefusedGeometry, RefusedNonFinite, PermanentlyFailed,
-        RefusedWhilePlaced, bRerollRelocated ? 1 : 0, Seed, Seed ^ 0x574C5232,
+        RefusedWhilePlaced, Seed, Seed ^ 0x574C5232,
         WellLayoutAttempts, WellLayoutAttemptsPerPass, WellSatPlacementTries,
         WellMaxGroupNudges, WellMaxGroupRedeals);
 }

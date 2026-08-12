@@ -293,8 +293,10 @@ public:
     // roll can enumerate it. The author ruled (2026-08-10) that both mods must work together, so the veto
     // now has a THIRD outcome: a foreign resource node is protected. SCOPE: this hook's interception
     // point ONLY (KBFL WorldRequirement/IsRequirementMet); a mod destroying its own nodes through any
-    // other path is untouched. Reads the NodeShuffle.ProtectForeignNodes CVar (default ON).
-    static bool IsForeignNodeProtectionEnabled();
+    // other path is untouched.
+    // T68 (2026-08-11): the separate NodeShuffle.ProtectForeignNodes CVar and its accessor
+    // IsForeignNodeProtectionEnabled() are DELETED. Foreign-node protection now follows the master gate
+    // with no switch of its own -- ArmDestroyerVetoIfEnabled computes it as `!bObserveOnly`.
     // Classifies ONE actor for the veto. Out-params are optional and filled for LOGGING only:
     // OutNodeClassName = actor class NAME, OutResourceClassPath = resource-class PATH ("<null>" when the
     // node reports none). THEY ARE LEFT UNTOUCHED when the target is not a resource node (F8: writing
@@ -332,9 +334,12 @@ public:
     static bool IsForeignResourceProtectedByConfig(const FString& ResourceClassPath);
 
     // World-init latch. Reads the LIVE config tree (not the struct mirror) once, before the veto arms,
-    // and installs the unchecked-path set. Deliberately latched rather than live-polled: it matches
-    // NodeShuffle.ProtectForeignNodes' own "takes effect at world load" rule, and the sweep this governs
-    // runs ~0.9 s after world init, so a live edit could not affect it in the session it was made.
+    // and installs the unchecked-path set. Deliberately latched rather than live-polled: it matches the
+    // master gate's own "takes effect at world load" rule (T68 (2026-08-11): the rule used to be cited
+    // from the NodeShuffle.ProtectForeignNodes CVar, which this packet DELETED -- it is now the
+    // ProtectOtherModsNodes checkbox and its NodeShuffle.DestroyerVeto override, resolved once per world
+    // init), and the sweep this governs runs ~0.9 s after world init, so a live edit could not affect it
+    // in the session it was made.
     static void LatchForeignResourceOptOutsFromConfig(class UObject* WorldContext);
     // Population pass, called from ApplyLayout. Adds a row for every seen resource the config does not
     // already carry, refreshes each row's UI label, and emits the T60 census line. Cheap in steady state:
@@ -413,9 +418,14 @@ public:
     // work: KAPI resolves/merges that list at GAME-INSTANCE INIT, ~270 ms after KDataForge's own
     // "Initial load finished", both of which complete long before any world (and therefore any
     // NodeShuffle-managed node) exists -- our subsystem starts at world load, structurally after the
-    // window KAPI actually reads). Gated by NodeShuffle.AutoAllowExtractors (default ON in this dev
-    // build; TODO(pre-release): move behind EnableExperimentalFeatures, default false, before public
-    // release). Mirrors ANodeShuffleSubsystem::UnlockModdedScannerKnowledge()'s retry idiom: returns
+    // window KAPI actually reads).
+    // NO SWITCH OF ITS OWN as of T68 (2026-08-11): the CVar gate is deleted. It still runs only where
+    // its caller does -- RefreshTick returns early when the mod is disabled, and this call sits inside
+    // bLayoutGenerated and latches once per load. Both the NodeShuffle.AutoAllowExtractors CVar and the
+    // EnableExperimentalFeatures config flag its old pre-release TODO named are DELETED -- do not
+    // reintroduce either, and do not tell a bug reporter to set them; there is no console lever that
+    // stops this pass or removes the pack it writes.
+    // Mirrors ANodeShuffleSubsystem::UnlockModdedScannerKnowledge()'s retry idiom: returns
     // false when a dependency (the recipe manager) is not ready yet and the caller should retry next
     // tick; true when the pass COMPLETED this tick (including "disabled", "SF+ not installed", and "ran
     // and wrote/cleared the generated pack") -- the caller latches on true only.

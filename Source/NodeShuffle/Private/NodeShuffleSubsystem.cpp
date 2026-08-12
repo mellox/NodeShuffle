@@ -387,11 +387,17 @@ void ANodeShuffleSubsystem::RefreshTick()
                 }
             }
         }
-        EmitPendingNoticeIfReady(Config.ShowCompatibilityNotices);
+        // T68 (2026-08-11, audit §5.6): 'Show Compatibility Notices In Chat' is deleted and TRUE is
+        // passed at BOTH notice call sites -- the literal, not a config read, so the two cannot diverge.
+        // Both notices are STATE tests that empty themselves (the extractor notice one boot after the
+        // patches land; the resource notice only when a row is genuinely added), so a steady-state
+        // profile sees neither and the switch could not stop a nag that structurally cannot happen.
+        // A player who had deliberately silenced them IS un-silenced by the version bump.
+        EmitPendingNoticeIfReady(/*bNoticesEnabled=*/true);
         // T61 (ns-t61-observe-always): the second notice source, gated by the SAME player setting and
         // running the same four gates. It costs one array-length compare on every pass that has nothing
         // to say, which is every pass after the first sighting wave.
-        FNodeShuffleModule::TickForeignNoticeEmitter(GetWorld(), Config.ShowCompatibilityNotices);
+        FNodeShuffleModule::TickForeignNoticeEmitter(GetWorld(), /*bNoticesEnabled=*/true);
         // scanregen-1 consume point (P2 §4 touch-point 3, §9 AMENDMENT — binding): do NOT clear
         // bScannerClusterRefreshPending on the SKIPPED branch. The flag clears ONLY when
         // RefreshScannersAndRadarTowers() actually runs from HERE (it sets bScannerRefreshedThisPass
@@ -1261,10 +1267,12 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     // so the trim loop never has to fight the floors.
     TargetActive = FMath::Max3(TargetActive,
         MinPerResource * VanillaKindCount + MinPerModded * ModdedKindCount, PinnedCount);
-    if (!Config.AllowVanillaDisappear)
-    {
-        TargetActive = FMath::Max(TargetActive, VanillaCount);
-    }
+    // T68 (2026-08-11, audit §5.8): the 'Allow Vanilla Nodes To Disappear' floor is GONE, hard-wired to
+    // that option's shipped default (ON = vanilla entries take part in the active-percent roll like
+    // everything else). With the option ON this branch never raised TargetActive, so deleting it is the
+    // default path byte for byte; only a save whose owner had turned the option OFF sees a different
+    // TargetActive, and only on its NEXT roll or re-roll (this is generation-time code -- an
+    // already-rolled layout is not re-rolled by the upgrade).
     TargetActive = FMath::Min(TargetActive, PoolSize);
 
     // 4. Per-resource quotas: vanilla proportions scaled, floored at the
@@ -1307,14 +1315,17 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
         }
     }
 
-    // 5. Choose the active set: pinned always; all vanilla if disappearing is
-    //    off; then random draws until TargetActive.
+    // 5. Choose the active set: pinned always; then random draws until TargetActive.
+    //    (T68: "all vanilla if disappearing is off" is gone with the option -- see above.)
     TArray<int32> Candidates;
     int32 ActiveCount = 0;
     for (int32 i = 0; i < NewLayout.Num(); i++)
     {
         FNodeShuffleEntry& E = NewLayout[i];
-        if (E.bPinned || (!E.bIsNewNode && !Config.AllowVanillaDisappear))
+        // T68: the second and last consumer of AllowVanillaDisappear. Same hard-wiring as the floor
+        // above -- with the option at its default the `!bIsNewNode && !Allow` term was always false, so
+        // only a pinned entry forced bActive here.
+        if (E.bPinned)
         {
             E.bActive = true;
             ActiveCount++;

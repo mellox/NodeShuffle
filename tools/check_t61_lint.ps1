@@ -125,16 +125,20 @@ function Get-T61Failures([string]$reqText, [string]$armText, [string]$mainText) 
     }
 
     # ---- HALF 3: the arm call is UNCONDITIONAL on the master gate ----
-    $obsDecl = Get-LineNumber $mainL 'const\s+bool\s+bObserveOnly\s*=\s*\(\s*GNodeShuffleDestroyerVeto\s*==\s*0\s*\)'
+    # T68 (2026-08-11) REPOINTED THIS PIN. The master gate is no longer read straight from the CVar --
+    # it is resolved from the config checkbox with the CVar as a session override
+    # (NodeShuffleResolveDestroyerVetoRequested). T61's CONTRACT is unchanged and is what is pinned: the
+    # gate selects the MODE, never whether the hook arms.
+    $obsDecl = Get-LineNumber $mainL 'const\s+bool\s+bObserveOnly\s*=\s*\(\s*bVetoRequested\s*==\s*false\s*\)'
     if ($obsDecl -eq -1) {
-        $fails += "FAIL: $mainFile no longer derives bObserveOnly from /GNodeShuffleDestroyerVeto == 0/ -- the master gate must select the MODE, not whether the hook arms."
+        $fails += "FAIL: $mainFile no longer derives bObserveOnly from /bVetoRequested == false/ -- the resolved master gate must select the MODE, not whether the hook arms."
     }
-    foreach ($ln in (Get-AllLineNumbers $mainL 'GNodeShuffleDestroyerVeto\s*==\s*0')) {
+    foreach ($ln in (Get-AllLineNumbers $mainL 'bVetoRequested\s*==\s*false')) {
         if ($ln -eq $obsDecl) { continue }
         $to = [Math]::Min($mainL.Count - 1, $ln + 11)
         $w  = ($mainL[($ln - 1)..$to]) -join "`n"
         if ($w -match 'return\s*;') {
-            $fails += "FAIL: $mainFile line $ln tests the master gate and returns within 12 lines -- that is the pre-T61 shape where the hook never arms, and it silently removes the census, the per-resource rows and the chat notice."
+            $fails += "FAIL: $mainFile line $ln tests the resolved master gate and returns within 12 lines -- that is the pre-T61 shape where the hook never arms, and it silently removes the census, the per-resource rows and the chat notice."
         }
     }
     # COLD REVIEW F4: the ban above only inspects lines that name the CVar. The same blindness is one
@@ -156,8 +160,28 @@ function Get-T61Failures([string]$reqText, [string]$armText, [string]$mainText) 
     }
 
     # ---- HALF 4: protection can never be latched on while the mode is observing ----
-    if ($main -notmatch '!\s*bObserveOnly\s*&&\s*IsForeignNodeProtectionEnabled\s*\(\s*\)') {
-        $fails += "FAIL: $mainFile no longer computes the protection latch as /!bObserveOnly && IsForeignNodeProtectionEnabled()/ -- without the mode term, NodeShuffle.ProtectForeignNodes could latch ON in a world whose master gate is off, and foreign nodes would be vetoed on a default install."
+    # T68: NodeShuffle.ProtectForeignNodes is deleted, so the second term is gone and the latch IS the
+    # mode. The invariant this half exists for is unchanged and still pinned: protection can never latch
+    # on in an observing world.
+    if ($main -notmatch 'const\s+bool\s+bProtectForeignNodes\s*=\s*!\s*bObserveOnly\s*;') {
+        $fails += "FAIL: $mainFile no longer computes the protection latch as /!bObserveOnly/ -- without the mode term, foreign nodes could be vetoed in a world whose master gate is off."
+    }
+    # T68: and the deleted CVar must not come back by name in either module.
+    foreach ($pair in @(@{n=$mainFile;t=$main}, @{n=$armFile;t=$arm})) {
+        if ($pair.t -match 'IsForeignNodeProtectionEnabled|GNodeShuffleProtectForeignNodes') {
+            $fails += "FAIL: $($pair.n) references the deleted NodeShuffle.ProtectForeignNodes accessor/global -- T68 removed that CVar; foreign-node protection follows the mode with no switch of its own."
+        }
+    }
+    # T68: the resolver must exist, must be the ONLY place the console variable is read for the gate, and
+    # must decide precedence by SetBy rather than by comparing the value to a default.
+    if ($main -notmatch 'static\s+bool\s+NodeShuffleResolveDestroyerVetoRequested') {
+        $fails += "FAIL: $mainFile no longer defines NodeShuffleResolveDestroyerVetoRequested -- the checkbox/CVar precedence must live in exactly one resolver, or the latch's two readers can disagree."
+    }
+    if ($main -notmatch 'ECVF_SetByMask\)\s*!=\s*ECVF_SetByConstructor') {
+        $fails += "FAIL: $mainFile no longer decides the console override by SetBy priority -- comparing the CVar's VALUE to its default cannot tell an untouched variable from a deliberate 'set it to 0'."
+    }
+    if ($main -notmatch 'GetActiveConfig\(WorldContext\)\.ProtectOtherModsNodes') {
+        $fails += "FAIL: $mainFile no longer falls back to the ProtectOtherModsNodes checkbox -- the persisted setting is the source of truth when the CVar was never set."
     }
     # COLD REVIEW F5: half 4 pinned only the MAIN module's expression, so the two-module split could be
     # restored in the arm file with one identifier -- protection would latch ON in an observing world
@@ -216,10 +240,15 @@ $mutants = @(
     @{ Name = 'M2 veto managed nodes ABOVE the observe guard'; File = 'req';
        Find = '    GNodeShuffleVetoEvalCount++;'; Repl = '    GNodeShuffleVetoEvalCount++; if (bManaged) { return false; }' },
     @{ Name = 'M3 restore the master-gate early return in the arm entry point'; File = 'main';
-       Find = "    const bool bProtectForeignNodes = !bObserveOnly && IsForeignNodeProtectionEnabled();";
-       Repl = "    if (GNodeShuffleDestroyerVeto == 0) { return; }`n    const bool bProtectForeignNodes = !bObserveOnly && IsForeignNodeProtectionEnabled();" },
+       Find = "    const bool bProtectForeignNodes = !bObserveOnly;";
+       Repl = "    if (bVetoRequested == false) { return; }`n    const bool bProtectForeignNodes = !bObserveOnly;" },
     @{ Name = 'M4 latch protection without the mode term'; File = 'main';
-       Find = '!bObserveOnly && IsForeignNodeProtectionEnabled()'; Repl = 'IsForeignNodeProtectionEnabled()' },
+       Find = 'const bool bProtectForeignNodes = !bObserveOnly;'; Repl = 'const bool bProtectForeignNodes = true;' },
+    @{ Name = 'M10 (T68) decide the console override by VALUE instead of SetBy'; File = 'main';
+       Find = '(Var->GetFlags() & ECVF_SetByMask) != ECVF_SetByConstructor'; Repl = 'Var->GetInt() != 0' },
+    @{ Name = 'M11 (T68) drop the checkbox and go back to a console-only gate'; File = 'main';
+       Find = '    return FNodeShuffleConfigStruct::GetActiveConfig(WorldContext).ProtectOtherModsNodes;';
+       Repl = '    return false;' },
     @{ Name = 'M5 mode-gate the census timers'; File = 'arm';
        Find = '        if (World)'; Repl = '        if (World && !bObserveOnly)' },
     @{ Name = 'M6 drop the mode field from the census'; File = 'req';
@@ -230,7 +259,7 @@ $mutants = @(
     @{ Name = 'M8 early-return on bObserveOnly inside the arm entry point'; File = 'main';
        Find = '    GNodeShuffleVetoObserveOnlyThisWorld = bObserveOnly;';
        Repl = '    if (bObserveOnly) { return; }' },
-    @{ Name = 'M9 re-split the policy by re-reading the CVar in the arm file'; File = 'arm';
+    @{ Name = 'M9 re-split the policy by re-reading the deleted CVar in the arm file'; File = 'arm';
        Find = 'const bool bProtectForeign = bProtectForeignNodes;';
        Repl = 'const bool bProtectForeign = FNodeShuffleModule::IsForeignNodeProtectionEnabled();' }
 )
