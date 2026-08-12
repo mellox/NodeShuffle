@@ -19,6 +19,8 @@
 #   H5  The row sort runs at BOTH populators, and at each one it runs AFTER the row work (the add path
 #       withdraws by position -- a sort inside that loop would remove the wrong row).
 #   H6  The retired T23 pair stays retired: no emitter, no key, no lint script.
+#   H8  ADDED BY THE F4 ROUND: the generic label, its Satisfactory Plus tooltip opening, and a
+#       SYMMETRY pin that no TEXT() literal anywhere still carries the old label.
 #   H1c ADDED BY THE COLD REVIEW (F3): the deleted identifiers must not survive as CONTRACT TEXT in the
 #       public header or the apply path either. H1b guarded the panel; the next author reads the .h.
 #       (Scoped re-pass R3: Public\NodeShuffle.h -- the .h that carried F3's defect -- is now in the set.)
@@ -158,6 +160,32 @@ if (-not $h1cSawIdent) {
 }
 if (-not $h1cSawExempt) {
     $fails += "FAIL(H1c): the T68-window exemption never fired -- the deletion notes this packet wrote should each trip it, so the window logic is not doing what it claims."
+}
+
+# ---- H8 (F4, author's decision 2026-08-11): THE LABEL, ITS TOOLTIP OPENING, AND EVERY QUOTE OF IT ----
+# The author replaced "Protect Other Mods' Nodes From Removal" with the generic "Protect Other Mods'
+# Nodes" and moved the concrete case into the tooltip, because the cold review graded the old label as
+# an outcome claim T67 established this feature may not make. Three things are pinned:
+#   (a) the label is exactly the generic string;
+#   (b) the tooltip still OPENS with the concrete case naming Satisfactory Plus -- the half of the
+#       trade carrying the meaning the generic label gave up, and the sentence most likely to be
+#       trimmed later by an editor who does not know why it is there;
+#   (c) SYMMETRY: the OLD label appears in NO TEXT() literal ANYWHERE. It was quoted in four other
+#       places (the CVar help, the protection-list tooltip, the chat notice, the veto module's log
+#       line); a label quoted differently in two places is this workspace's most-repeated defect
+#       class, so the scan runs over every pinned file, not just the panel.
+if ($text.cfg -notmatch [regex]::Escape('TEXT("Protect Other Mods'' Nodes"),')) {
+    $fails += "FAIL(H8a): $($files.cfg) no longer registers the checkbox label as the generic ""Protect Other Mods' Nodes"" -- the author chose that wording on 2026-08-11 precisely because the old one asserted an outcome (T67)."
+}
+if ($text.cfg -notmatch [regex]::Escape('Satisfactory Plus is the known case')) {
+    $fails += "FAIL(H8b): $($files.cfg) no longer opens the checkbox tooltip with the concrete Satisfactory Plus case -- that sentence is the half of the F4 trade that carries the meaning the generic label gave up."
+}
+foreach ($k in $text.Keys) {
+    foreach ($ln in ($text[$k] -split "`r?`n")) {
+        if ($ln -match 'TEXT\(' -and $ln -match 'Nodes From Removal') {
+            $fails += "FAIL(H8c): $($files[$k]) still ships the OLD label ""...Nodes From Removal"" in a TEXT() literal -- every quote site must render the label the panel actually shows."
+        }
+    }
 }
 
 # ---- H2: both notice call sites pass the literal true ----
@@ -331,7 +359,15 @@ $mutants = @(
        Find = '    static void ResetSeenForeignResources();';
        Repl = '    // Gated by NodeShuffle.AutoAllowExtractors; TODO(pre-release): move behind EnableExperimentalFeatures.' + [Environment]::NewLine + '    static void ResetSeenForeignResources();' },
     @{ Name = 'M13 (F5) re-conflate the two census populations'; Key = 'prot';
-       Find = 'rowsUnreadable %d '; Repl = 'rowsWithNoReadablePath %d ' }
+       Find = 'rowsUnreadable %d '; Repl = 'rowsWithNoReadablePath %d ' },
+    # F4 ROUND. M14 reverts the author's label decision. M15 is the SYMMETRY failure the review named
+    # -- the label changed in the panel but not at one of the four sites that quote it.
+    @{ Name = 'M14 (F4) revert the label to the outcome-asserting wording'; Key = 'cfg';
+       Find = 'TEXT("Protect Other Mods'' Nodes"),';
+       Repl = 'TEXT("Protect Other Mods'' Nodes From Removal"),' },
+    @{ Name = 'M15 (F4/SYMMETRY) leave one quote site on the old label'; Key = 'main';
+       Find = 'checkbox ''Protect Other Mods'' Nodes'' ';
+       Repl = 'checkbox ''Protect Other Mods'' Nodes From Removal'' ' }
 )
 
 # Each mutant is graded by RE-RUNNING the matching pin against the mutated text, in-memory. Nothing on
@@ -347,6 +383,12 @@ foreach ($m in $mutants) {
     $caught = $false
     switch ($m.Key) {
         'cfg' {
+            # H8 re-run on the mutated text.
+            if ($mutated -notmatch [regex]::Escape('TEXT("Protect Other Mods'' Nodes"),')) { $caught = $true }
+            if ($mutated -notmatch [regex]::Escape('Satisfactory Plus is the known case')) { $caught = $true }
+            foreach ($ln in ($mutated -split "`r?`n")) {
+                if ($ln -match 'TEXT\(' -and $ln -match 'Nodes From Removal') { $caught = $true }
+            }
             foreach ($d in $deleted) { if ($mutated -match ('Add(Bool|Int)\(TEXT\("' + $d + '"\)')) { $caught = $true } }
             foreach ($phrase in $deadCopy) {
                 foreach ($ln in ($mutated -split "`r?`n")) {
@@ -371,6 +413,9 @@ foreach ($m in $mutants) {
             if ($mutated -notmatch 'static\s+constexpr\s+bool\s+bRerollRelocated\s*=\s*true\s*;') { $caught = $true }
         }
         'main' {
+            foreach ($ln in ($mutated -split "`r?`n")) {
+                if ($ln -match 'TEXT\(' -and $ln -match 'Nodes From Removal') { $caught = $true }
+            }
             if ($mutated -notmatch 'ECVF_SetByMask\)\s*!=\s*ECVF_SetByConstructor') { $caught = $true }
             if ($mutated -notmatch 'GetActiveConfig\(WorldContext\)\.ProtectOtherModsNodes') { $caught = $true }
         }

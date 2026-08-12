@@ -207,16 +207,30 @@ void UNodeShuffleConfig::PostInitProperties()
     // DEFAULT ON, AND THAT IS A BEHAVIOUR CHANGE FOR EXISTING INSTALLS: protection was off by default
     // before this build and is on after it. Say so in the changelog rather than softening it.
     AddBool(TEXT("ProtectOtherModsNodes"), true,
-        TEXT("Protect Other Mods' Nodes From Removal"),
+        // T68 F4, DECIDED BY THE AUTHOR 2026-08-11: the label is GENERIC and the concrete case moved
+        // into the tooltip. The cold review graded the old label ("... From Removal") as ASSUMED
+        // PRESENTED AS MEASURED -- T67 established that this feature may say it ANSWERS A CHECK and
+        // REFUSES A CONDITION, and may not assert what the other mod does afterwards, which "From
+        // Removal" did in the most-read string on the page. THE LABEL IS QUOTED IN FOUR OTHER PLACES
+        // (the CVar help, the protection-list tooltip, the chat notice, the veto module's log line);
+        // all four were updated in this same commit, because a label quoted differently in two places
+        // is this workspace's most-repeated defect class.
+        TEXT("Protect Other Mods' Nodes"),
         // EVERY FACTUAL ASSERTION HERE IS GRADED -- see docs/TECH-DEBT.md T68 for the grading table.
         // MEASURED-IN-CODE: the setting is read once while the world loads (ArmDestroyerVetoIfEnabled,
         // called from the subsystem's BeginPlay) and not re-read while you play; with it off the hook
         // still arms and still classifies, which is what fills the list below (T61); the per-resource
         // ticks are only consulted while this is on. NOT CLAIMED: that anything would have been removed,
         // that anything was saved, or what the other mod does after it gets our answer.
-        TEXT("ON by default. When another mod's node handler checks a resource node that is not the base ")
-        TEXT("game's, NodeShuffle answers that check and refuses the handler's condition, for every ")
-        TEXT("resource still ticked in the list below.\n\n")
+        // THE OPENING SENTENCE NAMES SATISFACTORY PLUS, and that naming is MEASURED, not folklore:
+        // docs/TECH-DEBT.md T58 records SF+'s KBFL ResearchNodeRemover destroying every third-party
+        // resource node ~0.9 s after world init on a new game. "the known case" is deliberate -- it
+        // says SF+ is the one we have measured, and does NOT claim it is the only mod that does this.
+        // "answers those removal checks" describes OUR side of the exchange (we answer, we refuse the
+        // condition); it never says the removal was stopped, which is the T67 line.
+        TEXT("ON by default. Some overhaul mods — Satisfactory Plus is the known case — remove other ")
+        TEXT("mods' resource nodes. When this is on, NodeShuffle answers those removal checks for the ")
+        TEXT("resources ticked in the list below, refusing the handler's condition.\n\n")
         TEXT("OFF: NodeShuffle answers nothing, and each other mod's handler decides on its own. The list ")
         TEXT("below still fills up as you play, so you can see what is being checked before you turn this ")
         TEXT("on.\n\n")
@@ -327,8 +341,16 @@ void UNodeShuffleConfig::PostInitProperties()
             // consumption predicate, which is never reached while the hook is observing; and the rows
             // are added from the same population pass in either mode (NodeShuffleForeignProtectConfig
             // .cpp), which is what the sentence after this one says.
-            TEXT("NOTHING HERE APPLIES unless \"Protect Other Mods' Nodes From Removal\" above is ")
-            TEXT("ticked. It is ON by default. A change to it takes effect at the next world load. ")
+            // T68 F4 introduced an AMBIGUITY THIS LINE HAS TO RESOLVE, and it is named here because the
+            // F4 decision created it: the checkbox's new generic label is now a strict PREFIX of THIS
+            // list's own title ("Protect Other Mods' Nodes (Per Resource)"), so an unqualified quote
+            // could be read as pointing at the list the player is already reading about. The
+            // parenthetical says which control. It adds no new claim -- "above" was already asserted by
+            // the sentence this replaces, and rests on the same registration-order argument as every
+            // other ordering statement in this file (runtime test step 2 is the decider, not C++).
+            TEXT("NOTHING HERE APPLIES unless the \"Protect Other Mods' Nodes\" tick box above this ")
+            TEXT("list is ticked. It is ON by default. A change to it takes effect at the next world ")
+            TEXT("load. ")
             // T61 REPLACED THE SENTENCE THAT USED TO SIT HERE. It said the list "stays EMPTY" while
             // NodeShuffle.DestroyerVeto is 0 — true of the build that shipped it, and made FALSE by
             // T61, which arms the detection hook in either state precisely so the list fills before a

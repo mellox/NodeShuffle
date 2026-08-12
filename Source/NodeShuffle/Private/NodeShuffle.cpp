@@ -87,7 +87,7 @@ static int32 GNodeShuffleDestroyerVeto = 0;
 static FAutoConsoleVariableRef CVarNodeShuffleDestroyerVeto(
     TEXT("NodeShuffle.DestroyerVeto"),
     GNodeShuffleDestroyerVeto,
-    TEXT("SESSION OVERRIDE for the mod-settings checkbox 'Protect Other Mods' Nodes From Removal' ")
+    TEXT("SESSION OVERRIDE for the mod-settings checkbox 'Protect Other Mods' Nodes' ")
     TEXT("(T68). While this variable has never been set, that checkbox decides and this value is not ")
     TEXT("read; set it either way and it wins for the rest of the session. 1 = when KBFL is installed, ")
     TEXT("veto KBFL-based actor destroyers/listeners for the nodes NodeShuffle spawned and for nodes ")
@@ -110,7 +110,7 @@ static FAutoConsoleVariableRef CVarNodeShuffleDestroyerVeto(
 // decision and the same pass's foreign-protection decision) and a second copy of this question is how
 // they would come to disagree (workspace SYMMETRY rule).
 //
-// PRECEDENCE: the CONFIG CHECKBOX ('Protect Other Mods' Nodes From Removal', default ON) is the
+// PRECEDENCE: the CONFIG CHECKBOX ('Protect Other Mods' Nodes', default ON) is the
 // persisted source of truth. NodeShuffle.DestroyerVeto is a SESSION-SCOPED CONSOLE OVERRIDE that wins
 // only when someone actually set it -- measured by asking the console variable which SetBy priority it
 // currently carries, NOT by comparing its value to the default (a player who deliberately types
@@ -561,7 +561,7 @@ using FNodeShuffleActorExtractorLoggedSet = TSet<FNodeShuffleActorExtractorKey>;
 void FNodeShuffleModule::StartupModule()
 {
     UE_LOG(LogNodeShuffle, Log, TEXT("NodeShuffle module loaded"));
-    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle 1.4.0 LOADED (2026-08-11-t68-2) ====="));
+    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle 1.4.0 LOADED (2026-08-11-t68-3) ====="));
     FNodeShuffleModule::LogAutoAllowExtractorsState(); // Packet G: log the CVar state once at startup
 
 #if !WITH_EDITOR

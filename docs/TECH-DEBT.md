@@ -3159,7 +3159,7 @@ satellite 86.**
 
 ## T68 — ficsit-release config cleanup: seven switches deleted, one promoted, rows sorted (2026-08-11)
 
-**Status: IMPLEMENTED, COLD-REVIEWED (SHIP WITH TESTS), FIX ROUND + SCOPED RE-PASS ROUND APPLIED, REBUILT (`2026-08-11-t68-2`; the re-pass round was comments+lint only, NO rebuild), NOT COMMITTED, NOT REVIEWED. The DEPLOYED DLL
+**Status: IMPLEMENTED, COLD-REVIEWED (SHIP WITH TESTS), FIX ROUND + SCOPED RE-PASS + F4 ROUND APPLIED, REBUILT (`2026-08-11-t68-3` is the build of record), NOT COMMITTED, NOT REVIEWED. The DEPLOYED DLL
 is `t67-2` (restored); t68-1 AND t68-2 are parked at `%TEMP%\claude\t67-park\*.t68-1`. The distributable
 `ArchivedPlugins\NodeShuffle\NodeShuffle-Windows.zip` WAS REWRITTEN BY THIS BUILD and holds unreviewed
 t68-2 - do not publish from it. The fix round's AUTHORED items (F3, F7, the H1c lint half) owe a
@@ -3263,3 +3263,17 @@ pin's exemption instead of calling it, so a mutant could be graded CAUGHT while 
 All fixed; 8/8 suites, 13/13 mutants. **No rebuild: comments and lint only, proven by comparing the
 comment-stripped sources against the robocopy /MIR mirror that produced `t68-2` (md5 identical for all
 three touched files), so `t68-2` remains the build of record and the deployed DLL is still `t67-2`.**
+
+**F4 decided by the author (2026-08-11), build `t68-3`.** The cold review's one open finding was the
+checkbox's DISPLAY NAME: `"Protect Other Mods' Nodes From Removal"` asserted the outcome T67 spent a
+packet establishing this feature may not assert -- in the most-read string on the page, and the lint
+could not catch it because it bans three literal phrases, not the claim. The author chose **a generic
+label plus the concrete case in the tooltip**: the label is now `Protect Other Mods' Nodes`, and the
+tooltip opens *"Some overhaul mods -- Satisfactory Plus is the known case -- remove other mods' resource
+nodes. When this is on, NodeShuffle answers those removal checks..."*. Naming SF+ is MEASURED (T58's
+~0.9 s ResearchNodeRemover sweep) and "the known case" scopes it to what we measured rather than
+claiming SF+ is the only such mod. **SYMMETRY: the label was quoted at four other sites (the CVar help,
+the protection-list tooltip, the chat notice, the veto module's log line); all four were updated in the
+same commit and a repo-wide grep for the old label returns ZERO hits.** New lint half H8 pins the label,
+the SF+ opening, and the absence of the old label from every `TEXT()` literal; M14/M15 mutate the label
+and the SYMMETRY. 8/8 suites, 15/15 mutants. Deployed DLL remains `t67-2`; `t68-3` is parked.

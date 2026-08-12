@@ -101,7 +101,7 @@ namespace
                 TEXT("requirement chains of node-sweeping KBFL assets are short-circuited for resource ")
                 TEXT("nodes belonging to OTHER mods (T58). A stock node is unaffected unless NodeShuffle ")
                 TEXT("itself retyped it to a modded resource (well retype writes mResourceClassOverride, ")
-                TEXT("which GetResourceClass reads). Untick 'Protect Other Mods' Nodes From Removal' in ")
+                TEXT("which GetResourceClass reads). Untick 'Protect Other Mods' Nodes' in ")
                 TEXT("the mod settings (or set NodeShuffle.DestroyerVeto to 0) and load again for the ")
                 TEXT("pre-T58 behaviour."));
         }

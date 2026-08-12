@@ -21,8 +21,8 @@
 //
 // WHAT IT DOES NOT DO: it never says the resource is protected unless this world is actually enforcing,
 // because a notice that promised protection in the observing state would be a false claim to the player.
-// T68 (2026-08-11): the shipped default is no longer observe-only -- 'Protect Other Mods' Nodes From
-// Removal' defaults ON -- so the enforcing branch is now the common one. The branch condition is
+// T68 (2026-08-11): the shipped default is no longer observe-only -- 'Protect Other Mods' Nodes'
+// defaults ON -- so the enforcing branch is now the common one. The branch condition is
 // unchanged; only which side of it a default install lands on has moved.
 
 #include "NodeShuffle.h"
@@ -245,13 +245,16 @@ namespace
             //   "The log line T68VETOGATE says which one decided this world"
             //                                                    <- that line prints decidedBy on every world
             //                                                      init. It is the only surface that can.
+            // T68 F4: the LABEL inside this reviewer-verbatim F1 text is the new generic one, and the
+            // line wrap moved with it. Nothing else in the F1 replacement changed -- the sentence
+            // structure, the two named routes and the pointer at T68VETOGATE are the reviewer's words.
             Body += TEXT("\nNodeShuffle is NOT answering those checks in this world: protection is\n")
                     TEXT("switched off for this load. It is controlled by \"Protect Other Mods'\n")
-                    TEXT("Nodes From Removal\" in NodeShuffle's mod settings, and by the console\n")
-                    TEXT("variable NodeShuffle.DestroyerVeto, which overrides that setting whenever\n")
-                    TEXT("it has been set. The log line T68VETOGATE says which one decided this\n")
-                    TEXT("world. Until then this is only a heads-up, and NodeShuffle is not\n")
-                    TEXT("changing what any other mod does.");
+                    TEXT("Nodes\" in NodeShuffle's mod settings, and by the console variable\n")
+                    TEXT("NodeShuffle.DestroyerVeto, which overrides that setting whenever it has\n")
+                    TEXT("been set. The log line T68VETOGATE says which one decided this world.\n")
+                    TEXT("Until then this is only a heads-up, and NodeShuffle is not changing what\n")
+                    TEXT("any other mod does.");
         }
         else
         {
