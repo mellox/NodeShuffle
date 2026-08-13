@@ -27,6 +27,10 @@
 
 ### Changed
 
+**Back up your save before upgrading — and never downgrade without a backup.** Measured on 1.3.0:
+a 1.4.0 world loads under the older version, but every well 1.4.0 has moved is absent there, and a
+built-on well does not return when you upgrade again — even if you never saved while downgraded.
+
 **Settings.** The page is now **15 settings in three groups** — the shuffle, other mods, and
 troubleshooting. **Enable Experimental Features** and **Allow Vanilla Nodes To Disappear** are gone,
 both hard-wired to the value they shipped with, so nothing about your world changes (the second never
