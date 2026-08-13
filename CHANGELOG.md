@@ -4,19 +4,21 @@
 
 ### New
 
-- **Resource wells can shuffle.** A new **Shuffle Resource Wells** setting (**off by default**) re-rolls
-  what each resource well yields — a nitrogen well may become a water well. **The wells do not move**, so
-  your map knowledge still works, and the overall mix is preserved so a save is never short of a
-  well-only resource such as Nitrogen Gas. A well with a Pressurizer or any Well Extractor on it is never
-  changed.
-- **Resource wells can relocate — experimental.** A second setting, **Relocate Resource Wells**
-  (**off by default, and still experimental**), moves a whole well — core and every satellite — to a new
-  place as one rigid body, keeping the satellites' exact spacing and rotating the group to fit the
-  terrain. A relocated well is dressed and buildable: its rocks and cracks are rebuilt at the new site
-  and a Pressurizer and its Extractors snap to it and produce. **Read the tooltip before turning this
-  on** — the original is removed as soon as the well is dealt a destination, so the well is in neither
-  place until you travel to the new spot, and how long that lasts is not bounded. A well you have built
-  on is never moved.
+- **Resource wells shuffle too, and there is nothing to switch on.** What each resource well yields is
+  re-rolled — a nitrogen well may become a water well — and the overall mix is preserved, so a save is
+  never short of a well-only resource such as Nitrogen Gas. Whole wells also **move**: core and every
+  satellite travel to a new place as one rigid body, keeping the satellites' exact spacing and rotating
+  the group to fit the terrain. A relocated well is dressed and buildable — its rocks and cracks are
+  rebuilt at the new site, and a Pressurizer and its Extractors snap to it and produce. A well with a
+  Pressurizer or any Well Extractor on it is never changed and never moved.
+- **Read this before you start a save: a moving well is genuinely gone in the meantime.** The original
+  is removed as soon as the well is dealt a destination, and the replacement is only built once you
+  travel to the new spot, so the well is in **neither** place in between — and how long that lasts is
+  **not bounded**, because destinations are drawn across the whole map. Re-rolling re-considers wells
+  that have already moved, so a re-roll sends most of them missing again until you find each one. There
+  is no setting that turns this off; building on a well is the only way to pin it. Two edges are still
+  unverified: desert-biome wells may arrive without their rock graphics, and a relocated well's build
+  area has not been tested against ordinary nodes closer than about 15 m.
 - **Other mods' nodes are protected.** Some overhaul mods sweep the map early on a new game and remove
   resource nodes added by other mods — lead, lithium and similar types could be gone before you ever saw
   them. NodeShuffle now answers that check for the resources it manages, so they survive. **This is on by
@@ -34,17 +36,20 @@
 
 **Settings.**
 
-> **1.4.0 — settings cleanup.** The mod settings page is shorter and re-grouped. Five options were
-> removed and their behaviour fixed at the setting they shipped with, except two, which changed on
-> purpose: **protecting other mods' nodes is now ON by default** (there is a new tick box for it — it
-> used to need a console variable, and it was off unless you set one), and **re-rolling the layout now
-> also re-rolls resource wells that had already moved**, so on a save with moved wells the first re-roll
-> will move most of them again and each is gone from the map until you go and find it. If you had
-> silenced the compatibility chat notices, they are back on. Existing settings files are upgraded
-> automatically on first load.
+> **1.4.0 — settings cleanup.** The mod settings page is shorter and re-grouped: 15 settings in three
+> groups, and the resource-wells group is gone entirely. Seven options were removed. Five had their
+> behaviour fixed at the setting they shipped with; three changed on purpose. **Protecting other mods'
+> nodes is now ON by default** (there is a new tick box for it — it used to need a console variable, and
+> it was off unless you set one). **Resource wells are now part of the shuffle and cannot
+> be turned off on their own**: wells are retyped and they move on every new save, and on an existing
+> save from the first **Re-roll Layout** onwards; the two toggles that used to gate them are deleted. **Re-rolling the layout also re-rolls wells that had already moved**, so on a save with
+> moved wells the first re-roll will move most of them again and each is gone from the map until you go
+> and find it. If you had silenced the compatibility chat notices, they are back on. Existing settings
+> files are upgraded automatically on first load.
 
 *Coming from 1.3.0 specifically:* two settings are gone — **Enable Experimental Features** and **Allow
-Vanilla Nodes To Disappear**. Both are hard-wired to the value they shipped with, so nothing about your
+Vanilla Nodes To Disappear**. (The two well toggles never appeared in a public release either: wells
+arrive already always-on.) Both are hard-wired to the value they shipped with, so nothing about your
 world changes. "Allow Vanilla Nodes To Disappear" never did what its name suggested — with it off,
 vanilla nodes still moved and still got retyped; it only forced them to stay active. The rest of the
 paragraph above describes changes relative to development builds; the three other removed options never

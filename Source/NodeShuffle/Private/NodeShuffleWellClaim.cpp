@@ -437,8 +437,9 @@ int32 ANodeShuffleSubsystem::ReconcileAbandonedWellClaims(const TCHAR* Why)
             // (placed=false, relocate=true, failed=false, claim=live) was skipped here as "mid-search"
             // with NO EXPIRY ANYWHERE. Two reachable routes: commit a footprint, spawn INCOMPLETE, then
             // (a) turn the feature off -- ApplyWellRelocation's per-entry gate `continue`s past this
-            // entry every pass thereafter, so nothing ever advances it -- or (b) simply never walk back
-            // to that destination. Pass A then protects whatever is standing there FOREVER, pass B
+            // entry every pass thereafter (T71: ROUTE (a) IS CLOSED -- there is no switch any more;
+            // route (b) is untouched and is now the only live route into this state) -- or (b) simply
+            // never walk back to that destination. Pass A then protects whatever is standing there FOREVER, pass B
             // reports it OURS-STRANDED FOREVER, and the claim persists in the save FOREVER. A claim
             // with no expiry is the round-9 shape.
             //
@@ -481,8 +482,9 @@ int32 ANodeShuffleSubsystem::ReconcileAbandonedWellClaims(const TCHAR* Why)
             // which would have made RT-11's negative half true BY CONSTRUCTION instead of measurable.
             // We kept design A and adopted D's OBSERVATION instead: name which of the three conditions
             // stopped the apply pass from reaching the footprint commit that resets this counter.
-            //   OFF     -- relocation is disabled, so ApplyWellRelocation's per-entry gate `continue`s
-            //              past this entry every pass. Route (a) in the block above. EXPECTED to tick.
+            //   OFF     -- bWellLastApplyRelocationOn is false. Since T71 that gate is a compile-time
+            //              true, so this arm is NOT expected to tick at all; it now reads as a
+            //              contradiction with the UNKNOWN arm rather than as route (a).
             //   AWAY    -- no player within the spawn radius of DestCoreLocation, so spawn-on-discovery
             //              deferred it. Route (b). EXPECTED to tick.
             //   RETRY   -- relocation IS on AND a player IS near, and the counter still advanced. That
@@ -498,9 +500,15 @@ int32 ANodeShuffleSubsystem::ReconcileAbandonedWellClaims(const TCHAR* Why)
             {
                 TickWhy = TEXT("UNKNOWN(no apply pass yet this session)"); ++TickUnknown;
             }
+            // T71 (2026-08-12): the OFF arm is RETAINED BUT NOW UNREACHABLE IN PRACTICE, and its text
+            // says so rather than asserting a config state the panel no longer has. bWellLastApply-
+            // RelocationOn is written from a compile-time-true conjunction, so a false here means the
+            // field was never written -- which the UNKNOWN arm above already claims. Kept as a
+            // contradiction detector: if this ever prints, one of those two is wrong. It reports the
+            // predicate it tested, not a reason.
             else if (!bWellLastApplyRelocationOn)
             {
-                TickWhy = TEXT("OFF(relocation disabled -- the apply gate skips this entry)"); ++TickOff;
+                TickWhy = TEXT("OFF(bWellLastApplyRelocationOn=0 -- UNEXPECTED since T71 hard-wired the gate ON)"); ++TickOff;
             }
             else if (!IsLocationNearAnyPlayer(E.DestCoreLocation, WellLastApplySpawnRadiusCm))
             {

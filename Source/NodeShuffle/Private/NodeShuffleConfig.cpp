@@ -114,8 +114,11 @@ void UNodeShuffleConfig::PostInitProperties()
     // ---- T68 (ns-t68-release-config, 2026-08-11): REGISTRATION ORDER IS THE PANEL ORDER. --------------
     // SectionProperties is a TMap iterated in INSERTION ORDER, and nothing here ever removes, so the
     // order of these Add calls is the single lever C++ has over how the panel reads. The grouping is
-    // audit §3: THE SHUFFLE -> OTHER MODS (including the protection list) -> RESOURCE WELLS ->
-    // TROUBLESHOOTING. There are no visual sub-headers: UCP_Section exposes only WidgetType / HasHeader /
+    // audit §3: THE SHUFFLE -> OTHER MODS (including the protection list) -> TROUBLESHOOTING. (The
+    // RESOURCE WELLS group existed until T71 and is GONE, not emptied: both of its rows were deleted and
+    // nothing else was ever in it, so there is no remaining well content for a header to head. Wells are
+    // now governed by the same rows as everything else -- 'Enabled', the seed and 'Re-roll Layout'.)
+    // There are no visual sub-headers: UCP_Section exposes only WidgetType / HasHeader /
     // HeaderText / Collapsed and every property is added flat to one RootSection, so the groups are
     // ordering only. WHETHER THE BLUEPRINT PANEL RENDERS IN SectionProperties ORDER IS NOT PROVABLE FROM
     // C++ (Widget_CP_Section is Blueprint) -- runtime test step 1 is the decider, exactly as T65 recorded
@@ -131,6 +134,15 @@ void UNodeShuffleConfig::PostInitProperties()
     // is not in the schema on load and drops it on the next save (ConfigPropertySection.cpp:18-42), and
     // the mod version bump to 1.4.0 forces that save on first load (ConfigManager.cpp:103-117). A player
     // who had set one of them silently gets the hard-wired value -- see docs/TECH-DEBT.md T68.
+    //
+    // T71 (ns-t71-wells-always-on, 2026-08-12) DELETED TWO MORE, and with them the whole RESOURCE WELLS
+    // group: ShuffleResourceWells and RelocateResourceWells. Same removal mechanics as the five above.
+    // THE PANEL IS NOW 15 ROWS (was 17), plus the ProtectedForeignResources array. Author's decision,
+    // overriding the T68 audit's keep-both #7: wells are a natural part of the shuffle, not an opt-in.
+    // What the two OFF paths guaranteed and where each guarantee went: NodeShuffleConfig.h's T71 block
+    // and docs/TECH-DEBT.md T71. The relocation tooltip's UNBOUNDED-ABSENCE warning is NOT deleted --
+    // it moved to the mod Description, README.md and the CHANGELOG 1.4.0 entry, because it now
+    // describes the mod rather than an option.
     // ---------------------------------- THE SHUFFLE ---------------------------------------------------
     AddBool(TEXT("Enabled"), true,
         TEXT("Enabled"),
@@ -479,30 +491,24 @@ void UNodeShuffleConfig::PostInitProperties()
         Root->SectionProperties.Add(TEXT("ProtectedForeignResources"), Rows);
     }
 
-    // ---------------------------------- RESOURCE WELLS (opt-in) ---------------------------------------
-    AddBool(TEXT("ShuffleResourceWells"), false,
-        TEXT("Shuffle Resource Wells (In Place)"),
-        TEXT("OFF by default. When ON, each RESOURCE WELL is re-rolled to produce a different resource — a nitrogen well may become a water well, and so on. The wells themselves DO NOT MOVE: only what they yield changes, so your map knowledge still works.\n\nThe overall mix is preserved: the resources are dealt from the wells' own existing set, so a save never ends up short of a well-only resource such as Nitrogen Gas.\n\nWells that already have a Resource Well Pressurizer or any Resource Well Extractor on them are NEVER changed. Applied when the layout is rolled — turn this on and then use 'Re-roll Layout' to apply it to an existing save."));
-
-    // Packet H2 (ns-wells-h2). A SECOND, separate toggle -- deliberately not folded into the one above.
-    // Retyping a well in place and physically MOVING it are different promises with different risks,
-    // and a player who accepted "my nitrogen well now makes water" has not thereby accepted "my
-    // nitrogen well is now 4 km away". This one also carries a stage warning the other does not.
-    AddBool(TEXT("RelocateResourceWells"), false,
-        TEXT("Relocate Resource Wells (EXPERIMENTAL)"),
-        TEXT("OFF by default and still experimental — leave it off if you want a quiet save.\n\nWhen ON, a whole resource well (its core and every satellite) is MOVED to a new place as a rigid body: the satellites keep their exact spacing and pattern relative to the core, and the whole group is rotated together to find an orientation that fits the terrain. A well is moved all-or-nothing — if the full footprint cannot be placed, no partial well appears at the new site, and once the mod gives up on the move for good it puts the original back.\n\nA relocated well is DRESSED AND BUILDABLE: its rocks and cracks are re-created at the new site, and a Resource Well Pressurizer and its Extractors snap to it and produce.\n\nTHE ORIGINAL IS REMOVED AS SOON AS THE WELL IS DEALT A DESTINATION, not when the new well appears. The replacement is only built once you travel to the new spot and the terrain there loads, so between those two moments the well is in NEITHER place: it is absent from the world. How long that lasts is NOT bounded — destinations are drawn across the whole map, so a well dealt somewhere you never go stays absent for as long as you do not go there.\n\nKNOWN LIMITS:\n- A well you have BUILT ON is never removed. A Resource Well Pressurizer on the core or any Resource Well Extractor on a satellite leaves that whole well exactly where it is, and the mod re-checks that on every pass, so the move happens by itself if you later remove the building.\n- RE-ROLLING RE-CONSIDERS A WELL THAT HAS ALREADY MOVED. It is taken from where it stands and dealt a new destination, like any other node, and it is absent until you travel to that new spot. On a save with many moved wells, most of them are gone from the map until you visit each new location. (A well you have built on is still never touched.)\n- A well moves with the satellites that had loaded when it was enrolled. If more of its satellites load later, they are left out of the moved well permanently — the well is smaller, and produces less, until you reload the save.\n- A relocated well claims a large build area, and that has not been tested against ordinary resource nodes closer than about 15 m. If a Miner will not place on an ordinary node right beside a relocated well, please report it — that case is untested. (For a Miner that will not place anywhere near a well, see the note at the top of this panel.)\n- Desert-biome wells are unverified and may arrive without their rock graphics.\n\nRequires 'Shuffle Resource Wells' to be on as well, and applies at ROLL time — turn both on, then use 'Re-roll Layout'."));
-
-    // T68 (audit §5.2, §5.9): TWO WELL TOGGLES WERE DELETED HERE.
-    //  * 'Re-roll Wells That Have Already Moved' (RerollRelocatedWells) is HARD-WIRED ON. A re-roll
-    //    now re-considers a well that has already moved, like any other node -- the author's standing
-    //    ruling that a shuffle hides ALL the things we shuffle. The first re-roll after this build
-    //    churns most already-moved wells on an existing save; the tooltip above says what that means.
-    //  * 'Remove A Moved Well At The Re-roll Itself' (CommitWellsAtRoll) is GONE, feature and all. The
-    //    apply pass already initiates the hide for every entry marked as moving on every pass (T54), so
-    //    the roll-time arm only moved the disappearance earlier by roughly one pass, at the cost of a
-    //    one-shot capture that could not retry. Its opposite-polarity test pair (T23-A/T23-B) and
-    //    tools/check_t23_writers.ps1 were retired in the same commit -- with the toggle gone the pair's
-    //    question no longer exists, which is the one legitimate way a red/green pair dies.
+    // ---- T71 (ns-t71-wells-always-on, 2026-08-12): THE WHOLE RESOURCE WELLS GROUP WAS DELETED HERE. --
+    // T71: the two rows named here -- 'Shuffle Resource Wells (In Place)' (ShuffleResourceWells) and
+    // T71: 'Relocate Resource Wells (EXPERIMENTAL)' (RelocateResourceWells) -- are both HARD-WIRED ON --
+    // FNodeShuffleConfigStruct::bWellShuffleHardWiredOn / bWellRelocationHardWiredOn. The group header
+    // is not kept for the sake of a heading: those two rows were its ENTIRE content, so with them gone
+    // the group merges away and the panel runs THE SHUFFLE -> OTHER MODS -> TROUBLESHOOTING.
+    // The relocation row's tooltip carried player-facing claims that OUTLIVE it and were NOT deleted:
+    // the unbounded absence between a well being dealt a destination and being rebuilt where you next
+    // travel; a built-on well never being moved; a re-roll re-considering an already-moved well; the
+    // satellites-that-had-not-loaded caveat; the untested ~15 m snap-box case; and unverified
+    // desert-biome rock graphics. They now sit in NodeShuffle.uplugin's Description, README.md's
+    // Resource Wells section and the CHANGELOG 1.4.0 entry -- one level up, because they describe the
+    // mod now rather than an option somebody chose.
+    //
+    // The two T68 deletions this note used to sit beside (RerollRelocatedWells, hard-wired ON;
+    // CommitWellsAtRoll, feature deleted outright, taking its T23-A/T23-B pair and
+    // tools/check_t23_writers.ps1 with it) are recorded in docs/TECH-DEBT.md T68 and at their own gate
+    // sites; they are no longer restated here because the rows they qualified are gone too.
 
     // ---------------------------------- TROUBLESHOOTING -----------------------------------------------
     // Kept on the panel deliberately (audit §5.11): it is the route a bug reporter uses, and "tick this

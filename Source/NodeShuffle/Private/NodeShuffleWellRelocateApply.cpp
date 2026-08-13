@@ -928,13 +928,19 @@ void ANodeShuffleSubsystem::SuppressVanillaWellGroup(FNodeShuffleWellEntry& E, E
 // ------------------------------------------------------------------------------------------------
 // THE PER-PASS DRIVER
 // ------------------------------------------------------------------------------------------------
-void ANodeShuffleSubsystem::ApplyWellRelocation(bool bWellShuffleEnabled, bool bRelocationEnabled,
-                                                float SpawnRadiusCm)
+// T71 (ns-t71-wells-always-on, 2026-08-12): the two `bool` gate parameters are GONE -- the config
+// fields they carried no longer exist and this function has exactly one caller, so both could only ever
+// have been true. `bOn` is KEPT rather than inlined: it is what `bWellLastApplyRelocationOn` records and
+// what the sweep call below is handed, and computing it from the two named constants keeps the
+// retype-AND-relocate conjunction visible at the site that has always enforced it.
+void ANodeShuffleSubsystem::ApplyWellRelocation(float SpawnRadiusCm)
 {
-    // RELOCATION REQUIRES THE RETYPE TOGGLE TOO. A well NodeShuffle does not manage is not a well it
-    // may move -- and with ShuffleResourceWells off, ApplyWellRetype has already returned without
-    // resolving anything, so the entry's AssignedResourceClassPath is not being maintained.
-    const bool bOn = bWellShuffleEnabled && bRelocationEnabled;
+    // RELOCATION REQUIRES THE RETYPE PATH TOO. A well NodeShuffle does not manage is not a well it may
+    // move -- the entry's AssignedResourceClassPath is maintained by ApplyWellRetype, which runs
+    // immediately before this. Both are hard-wired ON since T71, so this conjunction is now always true;
+    // it is written out rather than replaced by `true` so that the requirement survives as a statement.
+    constexpr bool bOn = FNodeShuffleConfigStruct::bWellShuffleHardWiredOn
+                      && FNodeShuffleConfigStruct::bWellRelocationHardWiredOn;
 
     // ns-review-h2-r4 ROUND 9 R-1 -- DIAGNOSTICS ONLY (full rationale on the header declarations).
     // ReconcileAbandonedWellClaims reads these to label each mid-assembly tick OFF / AWAY / RETRY.
@@ -944,34 +950,22 @@ void ANodeShuffleSubsystem::ApplyWellRelocation(bool bWellShuffleEnabled, bool b
     WellLastApplySpawnRadiusCm = SpawnRadiusCm;
 
     // Once per session, BEFORE anything else touches a group: re-match our spawned well actors back to
-    // their layout entries and re-establish every mCore link. This runs even when the toggles are off,
-    // because a save that ALREADY holds relocated wells must keep them linked no matter what the
-    // config now says -- a relocated well whose links are not restored dies silently, and "the user
-    // turned the feature off" is not a reason to let that happen to wells already in their world.
+    // their layout entries and re-establish every mCore link. It is UNCONDITIONAL, and stays so after
+    // T71 removed the toggles that made unconditionality worth arguing for: a relocated well whose
+    // links are not restored dies silently, so nothing -- not a config state, not an early return --
+    // may stand between a loaded save and this call.
     if (!bAdoptedRestoredWells && WellLayout.Num() > 0)
     {
         bAdoptedRestoredWells = true;
         AdoptRestoredWellGroups();
     }
 
-    if (!bOn)
-    {
-        if (!bWellRelocDisabledLogged)
-        {
-            int32 Placed = 0;
-            for (const FNodeShuffleWellEntry& E : WellLayout) { if (E.bGroupPlaced) { ++Placed; } }
-            if (Placed > 0)
-            {
-                bWellRelocDisabledLogged = true;
-                UE_LOG(LogNodeShuffle, Display,
-                    TEXT("WELLH2: relocation is OFF (wellShuffle=%d relocate=%d) but this save holds %d ")
-                    TEXT("already-relocated well(s). They are still SPAWNED and still LINKED every load -- ")
-                    TEXT("turning the toggle off stops us moving wells, it does not move them back."),
-                    bWellShuffleEnabled ? 1 : 0, bRelocationEnabled ? 1 : 0, Placed);
-            }
-        }
-        // Still maintain placed groups: spawn-on-discovery, linking and suppression all continue.
-    }
+    // T71: the `if (!bOn)` block that stood here is DELETED. It emitted "WELLH2: relocation is OFF
+    // (wellShuffle=%d relocate=%d) but this save holds %d already-relocated well(s)" once per session and
+    // then fell through (placed groups were maintained regardless). With both gates hard-wired ON the
+    // branch is unreachable, so it and its bWellRelocDisabledLogged latch are gone rather than left as a
+    // line no log can ever contain. Nothing about the fall-through behaviour changes: this function has
+    // always continued into the maintenance passes below.
 
     ++WellAuditPasses;
 
@@ -1032,10 +1026,12 @@ void ANodeShuffleSubsystem::ApplyWellRelocation(bool bWellShuffleEnabled, bool b
             // back.
             // ns-t54-immediate-hide -- DISABLE-RESTORE, ARMED ABOVE THE CHAIN SO IT DRAINS ON THIS PASS.
             // T54 makes the suppressed-and-unplaced population the ORDINARY case rather than a rarity, and
-            // that turns an already-known hole into a large one: with relocation switched off, nothing
-            // searched for a destination and nothing put the original back, so the well was absent at both
-            // ends forever. The stranded census already named that bucket (`NotWorked`) and the settings
-            // tooltip already disclosed it; neither is a substitute for a restore. Armed ONLY for UNPLACED
+            // that turns an already-known hole into a large one: when an entry is no longer marked as
+            // relocating, nothing searches for a destination and nothing puts the original back, so the
+            // well is absent at both ends forever. (Until T71 the commonest route into that state was the
+            // player switching relocation off; T71 deleted the toggle, so the surviving route is a re-roll
+            // clearing bRelocate -- the hole is unchanged, its entry path is narrower.) The stranded
+            // census names that bucket (`NotWorked`); a count is not a substitute for a restore. Armed ONLY for UNPLACED
             // entries -- a PLACED entry's vanilla twin must stay hidden or the player gets two live copies
             // of the same well, which is D1's duplication with the mod's own hand on it.
             //
@@ -1062,13 +1058,20 @@ void ANodeShuffleSubsystem::ApplyWellRelocation(bool bWellShuffleEnabled, bool b
                     UE_LOG(LogNodeShuffle, Display,
                         TEXT("WELLH2-IMMEDIATE core='%s': RESTORE ARMED -- this entry is not placed and we ")
                         TEXT("hold a suppression record on at least one of its members, and the predicate ")
-                        TEXT("this branch tested is that nothing is working on it -- relocation switched ")
-                        TEXT("off for this pass (1 = off): %d, or this entry no longer marked as ")
-                        TEXT("relocating (1 = not relocating): %d. Nothing here measured WHY either is so. The persisted ")
+                        // T71 cold review F7 (AUTHORED -- the review offered two options, "drop the
+                        // field" or "leave it with a one-line note", and supplied no text; DROPPING is
+                        // taken). The first field printed `bOn ? 0 : 1`, permanently 0 since T71 made bOn
+                        // a compile-time true. TECH-DEBT T5 / the rule quoted in NodeShuffleWellUnhide.cpp
+                        // is that a permanently-invariant field reading as a measurement is worse than an
+                        // absent one -- it invites a reader to treat a constant as evidence. The surviving
+                        // field still varies, so the line remains a real measurement of a real predicate.
+                        TEXT("this branch tested is that nothing is working on it -- this entry is no ")
+                        TEXT("longer marked as relocating (1 = not relocating): %d. Nothing here measured ")
+                        TEXT("WHY that is so. The persisted ")
                         TEXT("restore intent is set and drained on every apply pass on which the ORIGINAL ")
                         TEXT("site resolves; a placed entry is never armed, because its vanilla twin must ")
                         TEXT("stay hidden while the relocated group stands."),
-                        *WellShort(E.CorePath), bOn ? 0 : 1, E.bRelocate ? 0 : 1);
+                        *WellShort(E.CorePath), E.bRelocate ? 0 : 1);
                 }
             }
 
@@ -1449,10 +1452,14 @@ void ANodeShuffleSubsystem::ApplyWellRelocation(bool bWellShuffleEnabled, bool b
     // an abandoned partial group. Do not re-add a gate here.
     //
     // ns-review-h5 F1 (BLOCKING, the finding that parked this packet): bOn IS PASSED IN, and the sweep
-    // refuses to look at the world without it. The `!bOn` block above deliberately does not return --
-    // a save that already holds relocated wells must keep them spawned, linked and suppressed whatever
-    // the config now says -- so this call site was reached with BOTH toggles off, on every session, in
-    // saves that never enabled the feature. With an empty WellLayout the sweep's accounted-for set is
+    // refuses to look at the world without it. This function never returns early on the gate -- a save
+    // that already holds relocated wells must keep them spawned, linked and suppressed regardless --
+    // so before T71 this call site was reached with BOTH toggles off, on every session, in
+    // saves that never enabled the feature. (T71 hard-wired both gates ON, so bOn is now a compile-time
+    // true and THIS PARTICULAR ROUTE IS CLOSED; the argument is kept because the sweep's own gate 2 --
+    // placedGroups > 0 -- is now the ONLY thing standing between an empty WellLayout and the world
+    // scan, which makes the paragraph below load-bearing rather than historical.)
+    // With an empty WellLayout the sweep's accounted-for set is
     // empty, and its location backstop then classified every runtime fracking actor in the world as an
     // orphan and destroyed it at pass 8, ~40 s in. That is the node-destroyer behaviour this mod ships
     // a two-layer defence AGAINST (cookbook §20), and it had no opt-out of its own. The gate is a

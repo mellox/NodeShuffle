@@ -47,6 +47,13 @@ $files = @{
     # defect created it. That is this repo's named vacuous-pass class, occurring inside the artifact
     # written to prevent it. Adding it immediately surfaced a SEVENTH stale mention at :338.
     pubh   = 'NodeShuffle\Public\NodeShuffle.h'
+    # T71 (2026-08-12): the three well files whose gates were hard-wired, plus the subsystem header
+    # that declares them. H1c must reach them or its stale-mention scan is blind exactly where T71
+    # deleted contract text.
+    wellroll = 'NodeShuffle\Private\NodeShuffleWellRoll.cpp'
+    retype   = 'NodeShuffle\Private\NodeShuffleWellRetype.cpp'
+    sweep    = 'NodeShuffle\Private\NodeShuffleWellSweep.cpp'
+    subsysh  = 'NodeShuffle\Public\NodeShuffleSubsystem.h'
 }
 
 # EVERY pinned file is loaded up front and a missing one is a HARD exit, never a skipped check.
@@ -65,8 +72,13 @@ $fails = @()
 # ---- H1: the five deleted properties are gone from BOTH the registration and the struct mirror ----
 # Matched on the KEY as it would be registered / declared, not on loose prose, so the comments that
 # record the deletion (which necessarily name them) do not trip it.
+# T71 (2026-08-12) EXTENDS THIS LIST rather than starting a parallel one: H1 asks exactly the T71
+# question too (is a deleted key still registered / still mirrored), and a second suite asking it in a
+# second file is how two pins drift apart. The T71-specific pins -- the hard-wire anchors and the doc
+# sync -- live in tools/check_t71_lint.ps1 because they have no T68 analogue.
 $deleted = @('EnableExperimentalFeatures', 'CommitWellsAtRoll', 'ShowCompatibilityNotices',
-             'AllowVanillaDisappear', 'RerollRelocatedWells')
+             'AllowVanillaDisappear', 'RerollRelocatedWells',
+             'ShuffleResourceWells', 'RelocateResourceWells')
 foreach ($d in $deleted) {
     if ($text.cfg -match ('Add(Bool|Int)\(TEXT\("' + $d + '"\)')) {
         $fails += "FAIL(H1): $($files.cfg) still REGISTERS the panel property '$d' -- T68 deleted it; a re-registered key persists to NodeShuffle.cfg and is read by nothing."
@@ -80,7 +92,8 @@ foreach ($d in $deleted) {
 # a tooltip that still tells the player to use an option that is no longer on the page.
 $deadCopy = @("Re-roll Wells That Have Already Moved", "Remove A Moved Well At The Re-roll Itself",
               "Remove A Moved Well Immediately", "Allow Vanilla Nodes To Disappear",
-              "Show Compatibility Notices In Chat", "Enable Experimental Features")
+              "Show Compatibility Notices In Chat", "Enable Experimental Features",
+              "Shuffle Resource Wells", "Relocate Resource Wells")
 foreach ($phrase in $deadCopy) {
     foreach ($ln in (Get-Content -Path (Join-Path $src $files.cfg))) {
         if ($ln -match 'TEXT\("' -and $ln -like "*$phrase*") {
@@ -111,6 +124,7 @@ foreach ($phrase in $deadCopy) {
 # accessor exactly.
 $deadIdents = @('EnableExperimentalFeatures', 'CommitWellsAtRoll', 'RerollRelocatedWells',
                 'AllowVanillaDisappear', 'ShowCompatibilityNotices',
+                'ShuffleResourceWells', 'RelocateResourceWells',
                 'NodeShuffle.AutoAllowExtractors', 'GNodeShuffleAutoAllowExtractors',
                 'NodeShuffle.ProtectForeignNodes', 'IsForeignNodeProtectionEnabled',
                 'TODO(pre-release)')
@@ -122,13 +136,20 @@ $deadIdents = @('EnableExperimentalFeatures', 'CommitWellsAtRoll', 'RerollReloca
 # someone deletes rather than fixes. Six lines is a comment paragraph; it is not a licence to leave a
 # stale contract sentence somewhere near a T68 note, because H1c's whole population is FOUR files whose
 # T68 notes are all in one block each.
+# T71: the marker is now 'T68' OR 'T71'. A T71 deletion note is a tombstone by exactly the same
+# argument -- dated, deliberate, and naming what it retired -- and leaving the window T68-only would have
+# made every T71 note fail H1c, which is the shape that gets a suite deleted rather than fixed.
 function Test-T68Window([string[]]$Lines, [int]$Index) {
     $lo = [Math]::Max(0, $Index - 6)
     $hi = [Math]::Min($Lines.Count - 1, $Index + 6)
-    for ($w = $lo; $w -le $hi; $w++) { if ($Lines[$w] -match 'T68') { return $true } }
+    for ($w = $lo; $w -le $hi; $w++) { if ($Lines[$w] -match 'T68|T71') { return $true } }
     return $false
 }
-foreach ($k in @('cfg', 'cfgh', 'main', 'apply', 'pubh')) {
+# T71: the five files T71 edited are added -- a green suite says nothing about a file it never reads
+# (2026-08-11 lint rule, x3).
+# T71 COLD REVIEW F4: 'unhide' was in $files but omitted from THIS scan loop -- loaded and never read,
+# which is the ledgered defect wearing its quietest hat.
+foreach ($k in @('cfg', 'cfgh', 'main', 'apply', 'pubh', 'roll', 'subsys', 'wellroll', 'retype', 'sweep', 'subsysh', 'unhide')) {
     $h1cLines = @(Get-Content -Path (Join-Path $src $files[$k]))
     for ($i = 0; $i -lt $h1cLines.Count; $i++) {
         if (Test-T68Window $h1cLines $i) { continue }

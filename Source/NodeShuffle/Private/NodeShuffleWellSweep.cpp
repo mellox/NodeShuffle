@@ -47,7 +47,7 @@
 #include "NodeShuffleSubsystem.h"
 
 #include "NodeShuffle.h"
-#include "NodeShuffleConfig.h"       // FinishWellRollTeardown's post-roll sweep gate reads ShuffleResourceWells
+#include "NodeShuffleConfig.h"       // T71: the post-roll sweep gate reads the two hard-wired well constants
 #include "NodeShuffleWellCensus.h"   // AFGResourceNodeFrackingCore / ...Satellite
 #include "NodeShuffleWellRetype.h"   // WellShort
 #include "NodeShuffleWellRelocate.h" // IsFiniteVector + WellAdoptMatchRadiusCm
@@ -372,9 +372,10 @@ void ANodeShuffleSubsystem::SweepOrphanedWellActors(const TCHAR* Phase, bool bRe
 // ns-review-h2-r2 F-I: THE ROLL'S TEARDOWN TAIL, moved here from NodeShuffleWellRelocateRoll.cpp
 // (that file was at exactly 500 lines and the F-A fix pushed it over). It belongs next to the sweep
 // it drives anyway: every line of it is about reclaiming what the roll abandoned.
-// `bRelocationEnabled` is RelocateResourceWells as the caller received it -- see the gate note below
-// for why that alone is NOT the sweep's gate.
-void ANodeShuffleSubsystem::FinishWellRollTeardown(bool bRelocationEnabled)
+// T71 (2026-08-12): this took the caller's relocation toggle; that toggle is deleted and hard-wired ON,
+// so the function takes no gate argument and computes the sweep gate from the two named constants. The
+// gate note below still explains why the RELOCATION term alone was never sufficient on its own.
+void ANodeShuffleSubsystem::FinishWellRollTeardown()
 {
     // ns-review-h5 judgement call (1): SWEEP AT THE ROLL'S TAIL, after every entry's fate is decided. A
     // guard at the loop TOP was correctly rejected (it would run before the bGroupPlaced branch and tear
@@ -414,11 +415,16 @@ void ANodeShuffleSubsystem::FinishWellRollTeardown(bool bRelocationEnabled)
 
     const int32 ClaimsWithdrawn = ReconcileAbandonedWellClaims(TEXT("abandoned by this roll"));
     // ns-review-h5 F1: the sweep refuses to look at the world unless relocation is on for this pass, and
-    // bRelocationEnabled ALONE IS NOT that condition -- ApplyWellRelocation's gate is bWellShuffle &&
-    // bRelocation while this function receives RelocateResourceWells only. Passing `true` would re-open
-    // the blocker: a save with ShuffleResourceWells off but Relocate on reaches this line.
-    const bool bSweepOn = FNodeShuffleConfigStruct::GetActiveConfig(this).ShuffleResourceWells
-                       && bRelocationEnabled;
+    // the relocation gate ALONE was never that condition -- ApplyWellRelocation's gate is
+    // bWellShuffle && bRelocation, so this had to read the retype gate too or a save with retype off and
+    // relocate on would reach the world scan.
+    // T71 (2026-08-12): both are hard-wired ON, so the conjunction is a compile-time true and the
+    // parameter this function took is gone. It is still SPELLED OUT rather than replaced by `true`,
+    // because the h5 F1 finding was that the two-term form is the correct one and a bare literal would
+    // erase that. GATE 2 inside the sweep (at least one group actually placed) is untouched and is now
+    // the only gate that can refuse pass B.
+    constexpr bool bSweepOn = FNodeShuffleConfigStruct::bWellShuffleHardWiredOn
+                           && FNodeShuffleConfigStruct::bWellRelocationHardWiredOn;
     UE_LOG(LogNodeShuffle, Display,
         TEXT("WELLH2-ROLL: withdrew the placement claim of %d of %d entry(ies) here at the tail -- each ")
         TEXT("refused by one of the roll's ten branches (h5 F2). The ELEVENTH abandonment route, ")

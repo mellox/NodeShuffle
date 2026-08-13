@@ -547,8 +547,10 @@ struct FNodeShuffleWellEntry
     UPROPERTY(SaveGame) bool bManaged = false;
 
     // ======================= Packet H2 (ns-wells-h2): RIGID RELOCATION =======================
-    // Everything below is inert unless the SEPARATE RelocateResourceWells toggle is on. H1's in-place
-    // retype is untouched and still runs on its own toggle; relocation is strictly additive.
+    // Everything below used to be inert unless a SEPARATE relocation toggle was on. T71 (2026-08-12)
+    // DELETED that toggle and hard-wired it ON, so relocation now runs on every roll -- see
+    // FNodeShuffleConfigStruct::bWellRelocationHardWiredOn. H1's in-place retype is untouched and still
+    // runs first; relocation is still strictly additive on top of it, it is simply no longer optional.
     //
     // FAIL-SAFE DIRECTION, stated once for every field here: at every exhaustion point the well is
     // LEFT AT ITS VANILLA LOCATION (design §Q3 point 4). There is no state in this struct that means
@@ -1314,6 +1316,60 @@ private:
     // resource has no table entry.
     const TArray<TWeakObjectPtr<UMaterialInterface>>* ResolveNodeMaterials(UClass* ResourceClass);
     TMap<FString, TArray<TWeakObjectPtr<UMaterialInterface>>> NodeMaterialCache;
+    // T72 (2026-08-13, SAM-after-reroll visual fallback). BOTH caches above are WEAK, and until T72 a
+    // cache HIT returned `Cached->Get()` with no retry -- so once an entry's asset went away (measured:
+    // SAM rendered quartz on 4/4 dresses after any re-roll, 0/74 for the other eight resources), the
+    // null was terminal for the session and every later spawn fell to the quartz placeholder. These two
+    // workers own the whole resolve for BOTH the per-resource path and the quartz placeholder key:
+    // a dead-or-missing entry is re-resolved by LoadObject EXACTLY ONCE per resolution call (never a
+    // loop, never per frame), the fallback is taken ONLY when that load itself returns null, and every
+    // asset that does load is strong-ref'd in VisualAssetKeepAlive so the unload cannot recur.
+    // Two mechanisms on purpose: the keep-alive PREVENTS the assumed cause (asset unload), the retry
+    // CORRECTS whatever the real cause is -- the forensics graded the unload mechanism ASSUMED, so
+    // neither half may be the only one. KeyKind is log text only ('resource' / 'quartz-placeholder').
+    UStaticMesh* ResolveNodeMeshForKey(const FString& CacheKey, const FName& ShortName, const TCHAR* KeyKind);
+    const TArray<TWeakObjectPtr<UMaterialInterface>>* ResolveNodeMaterialsForKey(
+        const FString& CacheKey, const FName& ShortName, const TCHAR* KeyKind);
+    // T72: strong refs to every mesh/material the resolvers have successfully loaded. Small and bounded
+    // (one row per authored resource, ~10 meshes + ~20 materials), so holding them costs a few pointers
+    // and removes the unload hazard by construction rather than by retry luck.
+    // T72 F7 (cold review): TObjectPtr, not a raw UObject*. Every other reflected pointer member in this
+    // mod uses TObjectPtr, and UE5 gates raw pointer members in reflected properties behind the target's
+    // NativePointerMemberBehavior -- a setting this packet cannot read and has not compiled against.
+    UPROPERTY() TArray<TObjectPtr<UObject>> VisualAssetKeepAlive;
+    // T72 F2: the load-failed branch is per-dress, i.e. per node per pass. Display + a synchronous LoadObject
+    // on every one of them is the 153k-line/35MB failure this file's defer-log backoff comment already names.
+    // Latched per cache key AND ASSET KIND -- entries are `<CacheKey>|mesh` / `<CacheKey>|mat`, never the
+    // bare key. R1 (scoped re-pass): the two workers are handed the SAME key for a resource (both take
+    // GetPathName(); both quartz accessors take "Desc_RawQuartz_C"), so a bare key let the first failing
+    // kind permanently suppress the other kind's line -- and made "at most one line per key per session"
+    // structurally unfailable as a test. The FIRST failure of a kind is the diagnosis, the 4000th is noise.
+    // The RETRY itself is not latched -- self-healing must stay possible; only the LINE is said once.
+    TSet<FString> T72LoadFailLogged;
+    // T72 census counters (session-cumulative; the T72DRESS line is emitted from the apply pass and is
+    // change-driven, see EmitT72DressCensus).
+    int32 T72MeshFreshLoaded = 0;
+    int32 T72MeshCacheHit = 0;
+    int32 T72MeshStaleReloaded = 0;
+    int32 T72MeshLoadFailed = 0;
+    int32 T72MeshNoTableEntry = 0;
+    int32 T72MatFreshLoaded = 0;
+    int32 T72MatCacheHit = 0;
+    int32 T72MatStaleReloaded = 0;
+    int32 T72MatLoadFailed = 0;
+    int32 T72MatNoTableEntry = 0;
+    // T72 F3: an authored row that lists ZERO material slots (the FicsitFarming dirt family) is COVERED.
+    // Counting it as matNoTableEntry made a field count what it does not name.
+    int32 T72MatAuthoredEmptyRow = 0;
+    // T72 F1: the CAPTURED (modded-resource) resolver's branches. Before F1 this population produced no
+    // census column at all, so a dead capture read as a clean census while the node wore quartz.
+    int32 T72CapFreshLoaded = 0;
+    int32 T72CapCacheHit = 0;
+    int32 T72CapStaleReloaded = 0;
+    int32 T72CapLoadFailed = 0;
+    int32 T72CapNoCapture = 0;
+    int32 T72LastCensusSum = -1; // -1 = never emitted; the census emits only when the sum moves
+    void EmitT72DressCensus();
     // The quartz placeholder visual (mesh + materials) used for any spawned node whose resource has
     // no authored table entry (modded resources: esc_/lithium/etc.). Resolved from Desc_RawQuartz_C.
     UStaticMesh* GetQuartzPlaceholderMesh();
@@ -1803,14 +1859,15 @@ private:
     // translation units keeps the code out of an already 8000-line file without giving up that access.
 
     // Deals a resource to every non-pinned well. Called from RollLayout (initial roll AND re-roll) so
-    // wells re-roll with the rest of the layout. No-op (and leaves any existing assignment untouched)
-    // when the ShuffleResourceWells config toggle is off.
+    // wells re-roll with the rest of the layout. T71: the config toggle that used to make this a no-op
+    // is deleted and hard-wired ON, so there is no longer a state in which this returns without dealing.
     void RollWellLayout(int32 Seed, bool bIsReroll);
 
     // Idempotent per-pass apply, called from ApplyLayout. Writes the dealt resource to the core AND
-    // every satellite, asserts they agree afterwards, and NEVER touches purity. bWellShuffleEnabled is
-    // passed in rather than re-read so ApplyLayout's single config fill stays the only one per pass.
-    void ApplyWellRetype(bool bWellShuffleEnabled);
+    // every satellite, asserts they agree afterwards, and NEVER touches purity. T71: it used to take a
+    // bWellShuffleEnabled gate from ApplyLayout's single config fill; the field is gone and the gate is
+    // hard-wired ON, so the parameter went with it. Its remaining skip is 'no roll recorded yet'.
+    void ApplyWellRetype(); // T71: gate parameter deleted -- hard-wired ON
 
     // Writes ResourceClass onto ONE well member (core or satellite) and rebuilds its native visual.
     // Returns true when it actually changed something (so the caller's per-pass counters only count
@@ -1819,8 +1876,10 @@ private:
                           const TCHAR* MemberRole, const TCHAR* CoreName);
 
     // Packet H1: a well is one thing with N members, so it gets its own SaveGame array rather than
-    // being squeezed into Layout. Empty on every save where ShuffleResourceWells was never turned on,
-    // which is what makes the mod's stable core byte-identical with the feature off.
+    // being squeezed into Layout. T71: it used to be empty on every save where the well toggle was never
+    // turned on -- that state no longer exists, so on any save rolled by 1.4.0 or later this array is
+    // populated whenever the world holds wells. A PRE-1.4.0 save still holds an empty one until its
+    // first re-roll, which is the population the 'no well roll recorded yet' WELLH1 line reports.
     UPROPERTY(SaveGame) TArray<FNodeShuffleWellEntry> WellLayout;
     UPROPERTY(SaveGame) bool bWellLayoutRolled = false;
 
@@ -1830,10 +1889,10 @@ private:
     TSet<FString> WellAppliedLogged;   // core paths whose successful retype has been announced
     TSet<FString> WellSkipLogged;      // core paths whose skip reason has been announced
     int32 WellMembersWrittenThisSession = 0;
-    bool bWellDisabledLogged = false;  // "feature off but this save has well data" -- said once
-    // "feature ON but this save has no roll yet" -- said once. Its own latch, not shared with the one
-    // above: the two states are opposites and a user can move between them mid-session by toggling, so
-    // one shared flag would silently suppress the second message.
+    // "this save holds no well roll yet" -- said once per session. T71 deleted the sibling latch that
+    // reported the opposite state ("the toggle is off but this save has well data"); with the toggle
+    // gone that state is unreachable, so this is the only latch ApplyWellRetype has and it guards the
+    // only skip it has left.
     bool bWellNoRollLogged = false;
     // Apply-pass counter, used ONLY to fire the once-per-session live-vs-layout well census on a
     // settled world. Apply runs every ~5 s, so pass 6 is roughly 30 s after the layout starts applying
@@ -1852,11 +1911,11 @@ private:
 
     // Called from RollWellLayout's tail, on the SAME roll. Captures each eligible well's rigid body
     // from the live actors and deals it a destination. Never captures a partially-streamed well.
-    void RollWellRelocation(int32 Seed, bool bIsReroll, bool bRelocationEnabled);
+    void RollWellRelocation(int32 Seed, bool bIsReroll); // T71: gate parameter deleted -- hard-wired ON
 
     // Per-pass driver, called from ApplyLayout right after ApplyWellRetype. Spawn-on-discovery: a
     // group is only searched/placed once a player is within SpawnRadiusCm of its dealt destination.
-    void ApplyWellRelocation(bool bWellShuffleEnabled, bool bRelocationEnabled, float SpawnRadiusCm);
+    void ApplyWellRelocation(float SpawnRadiusCm); // T71: both gate parameters deleted -- hard-wired ON
 
     // ns-t27-corefirst: CORE FIRST, THEN EACH SATELLITE INDEPENDENTLY. Settle and validate the core at
     // the dealt destination -- with the enclosure gate an ordinary node has always had -- then, per
@@ -2120,9 +2179,11 @@ private:
     // The roll's TEARDOWN TAIL (withdraw every claim the roll abandoned -> compute the post-roll sweep
     // gate -> run the sweep). Moved out of RollWellRelocation into NodeShuffleWellSweep.cpp because that
     // file is where the sweep it drives lives, and because NodeShuffleWellRelocateRoll.cpp was at exactly
-    // the 500-line limit when the F-A fix landed. Takes RelocateResourceWells as the caller received it;
-    // it computes the real gate (wellShuffle && relocate) itself.
-    void FinishWellRollTeardown(bool bRelocationEnabled);
+    // the 500-line limit when the F-A fix landed. T71: it used to take the relocation toggle as the
+    // caller received it and compute the real gate (wellShuffle && relocate) itself; both toggles are
+    // hard-wired ON now, so the parameter is gone and the conjunction is a compile-time constant that
+    // is still written out in full at the site (see NodeShuffleWellSweep.cpp).
+    void FinishWellRollTeardown(); // T71: gate parameter deleted -- hard-wired ON
 
     // PASS B, the location backstop -- split into NodeShuffleWellBackstop.cpp for the 500-line rule.
     // LOG-ONLY in this build (see that file's banner). Reports its two headline numbers to the sweep's
@@ -2466,9 +2527,10 @@ private:
 
     // The once-per-pass census of the immediate hide, and the T54 opposite-polarity pair. Both are
     // LOG ONLY and both are emitted at the very end of ApplyWellRelocation so they describe the state
-    // the pass ended in. The T54 pair is NOT the T23 pair: T23 asks whether a suppression was taken on
-    // the ROLL phase (a question about CommitWellsAtRoll), T54 asks whether an origin marked as moving
-    // is still standing. Both ship; neither replaces the other.
+    // the pass ended in. The T54 pair is NOT the T23 pair: T23 asked whether a suppression was taken on
+    // the ROLL phase, T54 asks whether an origin marked as moving is still standing. T68 RETIRED the T23
+    // pair together with the roll-time hide feature it questioned, so T54's is now the only one; this
+    // sentence is kept because the distinction is what stops someone re-deriving the retired pair.
     void EmitWellImmediateHideCensus();
     // ns-t54 cold review F1: takes the pass's own `bOn`. The pair's population MUST be the arm's
     // population, and the arm gates on bOn AND E.bRelocate; a pair that omits bOn counts entries the arm
@@ -2756,7 +2818,6 @@ private:
     TSet<FString> WellRelocLogged;
     TSet<FString> WellRelocFailLogged;
     TSet<FString> WellSuppressLogged;
-    bool bWellRelocDisabledLogged = false;
     int32 WellGroupsPlacedThisSession = 0;
 
     // ns-t27-corefirst: THE RIGID-BODY YAW SEARCH IS GONE. It is replaced by CORE FIRST, THEN EACH

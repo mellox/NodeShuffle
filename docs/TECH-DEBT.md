@@ -1794,6 +1794,12 @@ the same save.** One `grep -o "loadgame=[A-Za-z0-9_]*"` per log would have retir
 it was written up as the deepest of the three.
 
 ### T2. Desert-biome well meshes are unverified
+> **SCOPE CHANGE, T71 (2026-08-12): THIS IS NOW ALWAYS IN SCOPE.** Until T71 this gap could only be
+> reached by a player who had ticked the opt-in **Relocate Resource Wells** box, and that box's own
+> tooltip carried the warning. Both well toggles are deleted and hard-wired ON, so **every** save
+> relocates wells and every desert well is exposed. It is no longer a risk taken by people who opted in.
+> The warning moved to README.md's Resource wells section, the CHANGELOG 1.4.0 entry and the mod
+> Description. Nothing below is re-measured by T71 — only the population it applies to changed.
 H2b's mesh pairing narrows on `Contains("Frack")`. That is corroborated **only** for
 `SM_FrackingNode_Crack_01` / `_Mid_01` / `_Small_01`. `MT_Desert*` variants exist in the
 enum and **no desert fracking mesh name appears anywhere in our evidence**. If desert
@@ -1872,6 +1878,14 @@ the augment has already seen survive*, at any point in a session.
    S1/`Foreign` classification in [[T58]]/[[T60]] is the existing vocabulary for that question).
 
 ### T3. Snap-box overlap — **PARKED 2026-08-08 by the mod author. Watch-only; do not schedule work.**
+> **SCOPE CHANGE, T71 (2026-08-12): THIS IS NOW ALWAYS IN SCOPE.** The park decision below was taken
+> while relocation was an opt-in toggle, so the exposed population was "players who ticked the box".
+> T71 deletes that toggle and hard-wires relocation ON, so every save with a well near an ordinary node
+> is exposed. **The park still stands** — the author's ruling was about whether to open a packet, not
+> about who was exposed, and nothing here has been re-measured. What changes is the watch: a Miner
+> refused beside a relocated well is now something an ordinary player can hit without having opted in,
+> so the "please report it" ask now lives in README.md's Resource wells section rather than in a tooltip
+> only opt-in players ever saw.
 
 **DECISION (author, 2026-08-08):** *"I don't think we should worry about well overlap a node. We can log
 as a possibility for tech debt to explore more or if I run across it."*
@@ -3326,3 +3340,77 @@ array property, or is that Blueprint-side like the T67 row layout (measure the e
 a tooltip on the list explaining that rows manage themselves, plus making manual removal provably
 harmless (re-add on next discovery)? (c) Interaction with T69: if a second checkbox lands, the row
 becomes more obviously "managed", which strengthens the case for hiding `+`/`-`.
+
+
+---
+
+## T71 — Resource wells become a natural part of the shuffle: both well toggles deleted and hard-wired ON (2026-08-12)
+
+**STATUS: CODE COMPLETE, BUILD PENDING (game was running at implementation time).** Marker `t71-1`.
+
+**Author's decision (2026-08-12):** *"make them a natural part of the shuffle."* This OVERRIDES the T68
+release-config audit's recommendation #7, which argued for keeping both well toggles on the grounds that
+relocation was experimental and carried an unbounded-absence risk a player should opt into. The risk is
+unchanged; the ruling is that it is the mod's behaviour rather than an option.
+
+### What was deleted
+
+| Deleted | Was | Now |
+|---|---|---|
+| `ShuffleResourceWells` (panel row *Shuffle Resource Wells (In Place)*) | bool, default OFF | `FNodeShuffleConfigStruct::bWellShuffleHardWiredOn` — `static constexpr bool = true` |
+| `RelocateResourceWells` (panel row *Relocate Resource Wells (EXPERIMENTAL)*) | bool, default OFF | `FNodeShuffleConfigStruct::bWellRelocationHardWiredOn` — `static constexpr bool = true` |
+
+The panel goes **17 rows -> 15** (plus the `ProtectedForeignResources` array, which is not a row). The
+**RESOURCE WELLS group is gone, not emptied**: those two rows were its entire content, so there is no
+remaining well content for a header to head. Group order is now THE SHUFFLE -> OTHER MODS ->
+TROUBLESHOOTING.
+
+### Parity — what each OFF path guaranteed, and where the guarantee went
+
+| OFF path | What it guaranteed | Where it went |
+|---|---|---|
+| `ShuffleResourceWells` OFF | No well ever changes what it yields; `WellLayout` empty on such a save; `RollWellLayout` and `ApplyWellRetype` both returned immediately | **GONE.** Every unpinned, unbuilt-on well is retyped at roll time on every save. |
+| `ShuffleResourceWells` OFF (RT-6 sub-clause) | An already-retyped save KEPT its `WellLayout`, so `BuildManagedNodeGroupsFromLayout` kept emitting groups and fracking machines stayed allow-listed even while we were no longer touching wells | **RETIRED, not lost.** The divergence it described required a state where we hold well data but do not act on it. That state no longer exists. The allow-list itself is unchanged. |
+| `RelocateResourceWells` OFF | **Wells never move.** This is the big one: its tooltip carried the UNBOUNDED-ABSENCE warning — the original is removed the moment a well is dealt a destination and only rebuilt when you travel there, so it is in neither place for as long as you do not go | **GONE as a guarantee; the WARNING SURVIVES and moved up a level** to `NodeShuffle.uplugin`'s `Description`, `README.md` (Resource wells + the Known-behaviour section), and the CHANGELOG 1.4.0 entry — because it now describes the mod rather than an option. |
+| Either OFF | Two unverified edges were only reachable by opting in: desert-biome well mesh names (T2) and relocated-well snap-box overlap within ~15 m of an ordinary node (T3) | **Both are now ALWAYS IN SCOPE.** Scope-change banners added to T2 and T3 above. Neither is re-measured by this packet. |
+| Both OFF | Surviving guarantee, UNCHANGED: a well with a Resource Well Pressurizer on its core or any Resource Well Extractor on a satellite is never retyped and never moved, re-checked every pass | **Unchanged.** This is now the ONLY lever a player has over a specific well. Stated as such in README.md. |
+
+### Blast radius — every consumer of the two flags, before vs after
+
+| Consumer | Before | After | Intended? |
+|---|---|---|---|
+| `RollWellLayout` (`NodeShuffleWellRoll.cpp`) | early return + `WELLH1-ROLL: SKIPPED ... is OFF` line | branch and its `GetActiveConfig()` read deleted; `static_assert` on the constant left in place of the gate | Yes |
+| `ApplyWellRetype` (`NodeShuffleWellRetype.cpp`) | `bool` parameter + OFF branch + `bWellDisabledLogged` latch | parameter, branch and latch deleted; `bWellLayoutRolled` skip retained and its log line de-toggled | Yes |
+| `RollWellRelocation` (`NodeShuffleWellRelocateRoll.cpp`) | `bool` parameter + OFF branch + `WELLH2-ROLL: SKIPPED` line | parameter and branch deleted; `static_assert` on the constant | Yes |
+| `ApplyWellRelocation` (`NodeShuffleWellRelocateApply.cpp`) | two `bool` parameters; `bOn = shuffle && relocate`; `!bOn` log block (fell through) | parameters deleted; `bOn` now `constexpr` from the two named constants; `!bOn` block and `bWellRelocDisabledLogged` deleted. **Fall-through behaviour unchanged** — the function always continued into maintenance | Yes |
+| `FinishWellRollTeardown` (`NodeShuffleWellSweep.cpp`) | `bool` parameter; `bSweepOn = GetActiveConfig().ShuffleResourceWells && param` | parameter deleted; `bSweepOn` `constexpr` from both constants, still written as a two-term conjunction so the h5-F1 finding survives | Yes |
+| `SweepOrphanedWellActors(Phase, bRelocationOn)` | gate 1 could be false | **signature untouched**; both callers now pass a compile-time true, so gate 1 can no longer refuse. **GATE 2 (`PlacedGroups > 0`) is now the only gate that can refuse pass B.** Pass A and the claim reconciliation were already unconditional | Yes — gate 2 was always the save-fact gate and is unaffected |
+| `bWellLastApplyRelocationOn` (diagnostics; read by `ReconcileAbandonedWellClaims` and `NodeShuffleWellUnhide.cpp`) | could be false -> `TickOff` / `NotWorked` | now always true after the first apply pass. `TickOff`'s legend REWRITTEN: it no longer claims "relocation is disabled" (a config state that does not exist) and instead reports the predicate and flags itself as unexpected. `NodeShuffleWellUnhide.cpp:442`'s `!bWellLastApplyRelocationOn OR !E.bRelocate` now decides on `!E.bRelocate` alone | Yes |
+| `WellClaim.cpp` mid-assembly expiry route (a) "turn the feature off" | one of two live routes to an unbounded claim | **route (a) CLOSED**; route (b) "never walk back to that destination" is now the only live route. Comment updated | Yes — strictly fewer ways to reach the bad state |
+| `NodeShuffle.cfg` on disk | held both keys | keys become orphans: ignored on load, dropped on next save (SML `ConfigPropertySection.cpp:18-42`) | Yes |
+| Save game | **no consumer.** Nothing in the save mirrors a config value; `WellLayout` is `UPROPERTY(SaveGame)` and is not a config mirror | unchanged | Yes |
+
+**UNEXAMINED consumers** (named so a reviewer's blast-radius pass starts here, not from zero):
+`NodeShuffleWellUnhide.cpp`'s `NotWorked` counter denominator — the tally is still emitted but one of its
+two disjuncts is now dead; nobody re-derived whether the resulting number still means what its log line
+says. And `NodeShuffleWellSweep.cpp`'s `bWellSweepGatedLogged` throttle, which throttled a GATE line that
+can now only be produced by gate 2.
+
+### Version bump — FINDING: no further bump needed, stay at 1.4.0
+
+`SemVersion` stays **1.4.0**. Verified at `SatisfactoryModLoader/.../Configuration/ConfigManager.cpp`
+(the `LoadConfigurationInternal` tail): the rewrite predicate is
+`if (bSaveOnSchemaChange && FileVersion != ModVersion) { SaveConfigurationInternal(ConfigId); }` — it
+compares the file's recorded mod version against the loaded mod version and **knows nothing about which
+keys exist**. T68 already moved 1.3.0 -> 1.4.0, and 1.4.0 is **unreleased**, so no player has a `.cfg`
+stamped 1.4.0. Every existing file is stamped 1.3.0 or earlier, still differs from 1.4.0, and is still
+rewritten on first load — dropping these two orphan keys along with T68's five. A second bump would
+change nothing.
+
+### Deliberately NOT done
+
+- `SweepOrphanedWellActors`'s `bRelocationOn` parameter is **kept** even though both callers pass a
+  constant. Removing it would delete the ns-review-h5 F1 / h2-r2 F-B two-gate essay's subject, and the
+  parameter still documents which pass the gate belongs to.
+- Historical narrative comments that describe what the toggles USED to do are left in place where they
+  are clearly past-tense. Only comments asserting a CURRENT reachable state were rewritten.

@@ -63,37 +63,35 @@ bool ANodeShuffleSubsystem::RetypeWellMember(AFGResourceNodeBase* Member, UClass
     return true;
 }
 
-void ANodeShuffleSubsystem::ApplyWellRetype(bool bWellShuffleEnabled)
+// T71 (ns-t71-wells-always-on, 2026-08-12): the `bool bWellShuffleEnabled` parameter and the OFF branch
+// it gated are GONE. The config field no longer exists (FNodeShuffleConfigStruct::
+// bWellShuffleHardWiredOn is the hard-wired replacement) and this function had exactly one caller, so
+// the parameter could only ever have been true. The WELLH1 line that reported the retype gate as off
+// (and its bWellDisabledLogged latch) is deleted with it -- that state cannot occur any more. The
+// no-roll-yet branch below is UNAFFECTED and is now the only skip this function has.
+void ANodeShuffleSubsystem::ApplyWellRetype()
 {
-    if (!bWellShuffleEnabled)
-    {
-        if (WellLayout.Num() > 0 && !bWellDisabledLogged)
-        {
-            bWellDisabledLogged = true;
-            UE_LOG(LogNodeShuffle, Display,
-                TEXT("WELLH1: 'Shuffle Resource Wells' is OFF but this save holds %d rolled wells -- NOT applying. "
-                     "Resource changes already written to the save persist (same as the master switch)."),
-                WellLayout.Num());
-        }
-        return;
-    }
     // Gated on "a roll has happened", NOT on "the layout is non-empty". A roll that found ZERO wells is
     // the single most important case for the honesty scan below, and an emptiness early-out would be the
     // one thing that hides it.
     if (!bWellLayoutRolled)
     {
         // ns-review-h1 W3. This branch used to return in silence -- no line, no counter, nothing. It is
-        // also the MOST LIKELY first state a user reaches, because this feature's own config tooltip
-        // tells them to turn it on and THEN re-roll, so "enabled it, forgot the re-roll" produces a
-        // completely empty log and no way to tell it apart from a broken build. Every other skip branch
-        // in this packet states its reason; so does this one now.
+        // still the most likely first state on an EXISTING save (the well deal happens at ROLL time, so
+        // a save that predates any well roll holds none), and an empty log is indistinguishable from a
+        // broken build. Every other skip branch in this packet states its reason; so does this one.
+        //
+        // T71 (2026-08-12): the wording no longer names a toggle. It used to assert that the well
+        // setting was ON and instruct the reader that the toggle takes effect at ROLL time --
+        // both claims are false now that there is no toggle, and a log line that names a setting the
+        // panel does not have is worse than one that says nothing. It reports only what THIS branch
+        // measured: bWellLayoutRolled is false.
         if (!bWellNoRollLogged)
         {
             bWellNoRollLogged = true;
             UE_LOG(LogNodeShuffle, Display,
-                TEXT("WELLH1: 'Shuffle Resource Wells' is ON but this save holds no well roll yet -- nothing to "
-                     "apply. Use 'Re-roll Layout' to deal the wells (the toggle takes effect at ROLL time, not "
-                     "at load time)."));
+                TEXT("WELLH1: no well roll is recorded in this save yet (bWellLayoutRolled=0) -- nothing to "
+                     "apply. Wells are dealt at ROLL time, so use 'Re-roll Layout' once on an existing save."));
         }
         return;
     }

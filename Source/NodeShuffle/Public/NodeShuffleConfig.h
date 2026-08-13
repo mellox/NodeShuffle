@@ -42,6 +42,10 @@ struct NODESHUFFLE_API FNodeShuffleForeignResourceRow
 // and dropped on the next save (SML ConfigPropertySection.cpp:18-42), and the 1.4.0 version bump
 // forces that save on first load (SML ConfigManager.cpp:103-117). Nothing in the save game mirrors a
 // config value, so no removal can touch save data. Grading table: docs/TECH-DEBT.md T68.
+//
+// T71 (2026-08-12) REMOVED TWO MORE: ShuffleResourceWells and RelocateResourceWells, both hard-wired ON
+// (see the block on the constants below). Same removal mechanics as T68 -- orphan keys ignored then
+// dropped, no save-game mirror. Grading table: docs/TECH-DEBT.md T71.
 USTRUCT(BlueprintType)
 struct NODESHUFFLE_API FNodeShuffleConfigStruct
 {
@@ -125,37 +129,34 @@ struct NODESHUFFLE_API FNodeShuffleConfigStruct
     UPROPERTY(BlueprintReadWrite)
     int32 StarterNodeRadiusMeters{200};
 
-    // Packet H1 (ns-wells-h1): shuffle which RESOURCE each resource well produces, IN PLACE. The well
-    // never moves — only what it yields changes (a nitrogen well may become a water well). Wells with
-    // a pressurizer or any fracking extractor already on them are never changed.
+    // ================================================================================================
+    // T71 (ns-t71-wells-always-on, 2026-08-12): THE TWO WELL TOGGLES ARE GONE. WELLS ARE PART OF THE
+    // SHUFFLE. Author's decision 2026-08-12 ("make them a natural part of the shuffle"), overriding the
+    // T68 audit's keep-both recommendation (#7). These are NOT UPROPERTYs and are NOT reflected: they
+    // are the hard-wired replacements for the deleted `ShuffleResourceWells` (Packet H1, in-place
+    // retype) and `RelocateResourceWells` (Packet H2, rigid group relocation) config fields, kept as
+    // NAMED constants rather than inlined `true` so that every gate site still reads a symbol that says
+    // WHICH promise it is gating, and so a revert is one grep away. Same shape as T68's
+    // `static constexpr bool bRerollRelocated = true` (NodeShuffleWellRelocateRoll.cpp).
     //
-    // DEFAULT OFF, and it is its OWN toggle. (HISTORY: it was written as an alternative to the
-    // EnableExperimentalFeatures flag, on the grounds that one shared switch could not enable two
-    // experimental features independently. T68 (2026-08-11) DELETED that flag as dead -- it had zero
-    // consumers -- so the alternative no longer exists and this toggle is simply the only gate.) With this off,
-    // WellLayout is never rolled and ApplyWellRetype returns immediately, so the mod's stable core
-    // behaves identically to a build without Packet H1.
-    UPROPERTY(BlueprintReadWrite)
-    bool ShuffleResourceWells{false};
-
-    // Packet H2 (ns-wells-h2): RIGID RELOCATION of whole well groups. Its OWN toggle, separate from
-    // ShuffleResourceWells above and DEFAULT OFF, because retyping a well in place and physically
-    // moving it are different promises. Relocation additionally REQUIRES ShuffleResourceWells (a
-    // well NodeShuffle does not manage is not one it may move), so the two together are the gate.
-    //
-    // STAGE: H2 shipped the relocation ENGINE (placement, the yaw search, the group-atomic spawn and
-    // the mCore lifecycle); H2b then shipped the group VISUALS, which the engine does not provide for
-    // us (design §2.4: a runtime-spawned node gets no engine AFGNodeMeshActor, and wells have their
-    // own MT_Core / MT_Crack / MT_Satellite mesh vocabulary, so we re-create them ourselves).
-    //
-    // MEASURED 2026-08-08, in game, on a fresh save: a relocated well is dressed and BUILDABLE --
-    // TrySnapToActor -> 1 with bForceAccept=0 onto our own core, and the user confirmed the
-    // pressurizer producing water. Still flagged EXPERIMENTAL in the tooltip because two edges are
-    // unverified rather than known-good: desert-biome mesh names (docs/TECH-DEBT.md T2) and snap-box
-    // overlap with ordinary nodes within ~15 m (T3). Do NOT re-word this into "invisible" -- that
-    // claim was true only before H2b and outlived its truth in three places.
-    UPROPERTY(BlueprintReadWrite)
-    bool RelocateResourceWells{false};
+    // WHAT THE DELETED OFF PATHS GUARANTEED, AND WHERE THAT GUARANTEE WENT (full table: TECH-DEBT T71):
+    //   * ShuffleResourceWells OFF = "no well ever changes what it yields". GONE -- every unpinned,
+    //     unbuilt-on well is now retyped at roll time. A well with a pressurizer or any fracking
+    //     extractor on it is STILL never touched; that is the surviving guarantee and it is unchanged.
+    //   * RelocateResourceWells OFF = "wells never move". GONE -- and this is the one that carried the
+    //     UNBOUNDED-ABSENCE warning: a well is removed from its old site the moment it is dealt a
+    //     destination and only rebuilt when you travel to the new one, so it is in NEITHER place for as
+    //     long as you do not go there. That text does not vanish with the toggle: it now lives in the
+    //     mod Description (NodeShuffle.uplugin), README.md's Resource Wells section, and the CHANGELOG
+    //     1.4.0 entry, because it is now a property of the mod rather than of an opt-in.
+    //   * Two edges stay unverified and are now ALWAYS in scope rather than opt-in: desert-biome well
+    //     mesh names (TECH-DEBT T2) and relocated-well snap-box overlap with ordinary nodes inside
+    //     ~15 m (TECH-DEBT T3).
+    // A key left over in an existing NodeShuffle.cfg is ignored on load and dropped on the next save
+    // (SML ConfigPropertySection.cpp:18-42); the 1.4.0 version bump T68 already made forces that save
+    // (SML ConfigManager.cpp:103-117), and it is version-diff-triggered, so no further bump is needed.
+    static constexpr bool bWellShuffleHardWiredOn = true;
+    static constexpr bool bWellRelocationHardWiredOn = true;
 
     // ---- T68 (ns-t68-release-config, 2026-08-11): the protection master switch, promoted from the
     // console variable NodeShuffle.DestroyerVeto to a panel checkbox. DEFAULT TRUE, which is a

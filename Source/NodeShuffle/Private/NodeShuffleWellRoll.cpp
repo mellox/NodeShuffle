@@ -60,32 +60,26 @@
 
 void ANodeShuffleSubsystem::RollWellLayout(int32 Seed, bool bIsReroll)
 {
-    const FNodeShuffleConfigStruct Config = FNodeShuffleConfigStruct::GetActiveConfig(this);
-    if (!Config.ShuffleResourceWells)
-    {
-        // Leave any EXISTING assignment in the save exactly as it is rather than clearing it. This is
-        // the master switch's own documented semantics ("Resource changes already stored in the save
-        // persist"): turning the toggle off stops us acting, it does not un-retype a world the player
-        // has already been playing. ApplyWellRetype also returns immediately while it is off, so
-        // nothing further touches a well this session.
-        //
-        // RT-6 (ns-review-h1b, DECIDED AND INTENDED -- not an oversight, do not "fix" it). Because
-        // WellLayout is kept rather than cleared, BuildManagedNodeGroupsFromLayout keeps emitting this
-        // save's well groups, and since H1b those groups are LIVE allow-list evidence: fracking machines
-        // stay allow-listed even with this toggle nominally off. Under H1 that was inert; it is not any
-        // more, so it is written down here. It is the correct behaviour and follows directly from the
-        // sentence above: turning the toggle off does NOT un-retype the wells -- they are still retyped in
-        // the save. Withdrawing the allow-list would leave the player holding retyped wells they can no
-        // longer build on, which is strictly worse than either consistent state. The toggle stops us
-        // CHANGING things; it was never a promise to undo what is already written.
-        UE_LOG(LogNodeShuffle, Display,
-            TEXT("WELLH1-ROLL: SKIPPED -- 'Shuffle Resource Wells' is OFF (existing well data in this save: %d wells, kept untouched). ")
-            TEXT("NOTE (RT-6, intended): those %d wells STAY retyped and keep contributing managed groups, so any ")
-            TEXT("fracking machine H1b's pairing rule allow-listed REMAINS allow-listed -- withdrawing it would leave ")
-            TEXT("retyped wells nothing can be built on."),
-            WellLayout.Num(), WellLayout.Num());
-        return;
-    }
+    // ================================================================================================
+    // T71 (ns-t71-wells-always-on, 2026-08-12) -- THE 'Shuffle Resource Wells' OFF GATE IS DELETED.
+    // ================================================================================================
+    // The config field is gone and FNodeShuffleConfigStruct::bWellShuffleHardWiredOn replaces it, so the
+    // early return that used to stand here is unreachable and has been removed rather than left as dead
+    // code (T68's rule: an OFF branch nothing can enter is a trap for the next reader). What it printed
+    // -- WELLH1-ROLL "SKIPPED ... is OFF" -- can therefore never appear again; a log with no
+    // WELLH1-ROLL census line at all now means the roll did not run, not that a toggle was off.
+    //
+    // RT-6 (ns-review-h1b) IS RETIRED WITH IT, and it is worth saying why rather than deleting silently:
+    // it recorded that with the toggle off we KEPT this save's WellLayout, so BuildManagedNodeGroups-
+    // FromLayout kept emitting well groups and fracking machines stayed allow-listed on a save whose
+    // wells we were no longer touching. There is no longer a state in which we do not touch them, so
+    // the divergence it described cannot arise. Nothing about the allow-list itself changed.
+    // The GetActiveConfig() read that stood here went with the branch -- it had no other reader in this
+    // function, and leaving a config fetch nothing consumes is how a dead read becomes a "surely
+    // something uses this" later.
+    static_assert(FNodeShuffleConfigStruct::bWellShuffleHardWiredOn,
+        "T71: well retype is hard-wired ON. If this is ever turned off, RollWellLayout needs its skip "
+        "branch (and the RT-6 allow-list note) back -- see docs/TECH-DEBT.md T71.");
 
     // Session log throttles are per-ROLL as well as per-session: a re-roll deals new resources, so
     // every well's outcome deserves to be announced again.
@@ -144,7 +138,8 @@ void ANodeShuffleSubsystem::RollWellLayout(int32 Seed, bool bIsReroll)
         // The filter belongs HERE and at RollWellRelocation's equivalent loop, NOT inside
         // CollectWellCensus: the census is a shared, deliberately unfiltered primitive and the dump
         // depends on seeing everything. Reachable by the exact sequence this feature's own config
-        // tooltip instructs: enable both toggles, roll, let a well relocate, then Re-roll.
+        // behaviour produces: roll, let a well relocate, then Re-roll. (Until T71 that sequence needed
+        // two toggles turned on first; it is now the default path every save takes.)
         if (FNodeShuffleModule::IsManagedSpawnedNode(Core)) { ++SkippedOurSpawned; continue; }
 
         const FString CorePath = WellPathOf(Core);

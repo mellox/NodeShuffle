@@ -4,10 +4,12 @@
 // owns the mCore lifecycle; NodeShuffleWellRelocate.h says what lives where and holds the shared pure
 // helpers (the yaw permutation in particular has exactly one implementation, on purpose).
 //
-// WHAT H2 ADDS, AND WHAT IT LEAVES ALONE. H1's in-place retype is untouched and still runs on its own
-// toggle. Relocation is strictly additive, behind a SECOND toggle (RelocateResourceWells, default OFF)
-// that additionally REQUIRES ShuffleResourceWells: a well NodeShuffle does not manage is not a well it
-// may move. With either toggle off nothing in this file writes anything.
+// WHAT H2 ADDS, AND WHAT IT LEAVES ALONE. H1's in-place retype is untouched and still runs first.
+// Relocation was strictly additive behind a SECOND toggle that additionally required the retype toggle:
+// a well NodeShuffle does not manage is not a well it may move. T71 (2026-08-12) DELETED BOTH TOGGLES
+// AND HARD-WIRED THEM ON, so the dependency is now a fact rather than a gate -- the retype runs on
+// every roll, and this file therefore always has a managed well to move. There is no longer a
+// configuration in which this file writes nothing.
 //
 // ================================================================================================
 // T7b (ns-t7b-reroll, 2026-08-08) -- A RELOCATED WELL NOW RE-ROLLS LIKE ANY OTHER NODE. READ THIS.
@@ -32,8 +34,11 @@
 //      deal wins -> gate, teardown, claim withdrawal and new destination in ONE commit block. There is
 //      no instant at which the entry names no place at all.
 //
-//   A4 (NodeShuffleConfig.*) -- RerollRelocatedWells, DEFAULT OFF. With it off this file behaves
-//      exactly as it did before T7b, so an existing save does not churn ~17 wells on one keypress.
+//   A4 (NodeShuffleConfig.*) -- T7b shipped this behind a DEFAULT-OFF config switch so an existing save
+//      did not churn ~17 wells on one keypress. T68 (2026-08-11) DELETED that switch and hard-wired it
+//      ON; T71 (2026-08-12) deleted the two well toggles above it for the same reason. There is no
+//      longer any configuration in which this file behaves as it did before T7b. The one surviving
+//      local is `static constexpr bool bRerollRelocated = true` below -- see its own note.
 //
 // THE RE-ENROLMENT PATH HAD NEVER EXECUTED BEFORE T7b -- the re-capture, the DespawnWellGroup
 // ("re-enrolled by a new roll"), the search-state reset and the claim withdrawal were written,
@@ -122,25 +127,17 @@ namespace
     };
 }
 
-void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll, bool bRelocationEnabled)
+// T71 (ns-t71-wells-always-on, 2026-08-12): the `bool bRelocationEnabled` parameter and the OFF branch
+// it gated are GONE -- the config field no longer exists and this function has exactly one caller, so
+// the parameter could only ever have been true. FNodeShuffleConfigStruct::bWellRelocationHardWiredOn is
+// the hard-wired replacement and is read where the gate still has to be COMPUTED (ApplyWellRelocation's
+// bOn, FinishWellRollTeardown's bSweepOn). The "WELLH2-ROLL: SKIPPED -- 'Relocate Resource Wells' is
+// OFF" line is deleted: it can no longer be true, and it named a panel row that no longer exists.
+void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll)
 {
-    if (!bRelocationEnabled)
-    {
-        // Same semantics as the master switch and as ShuffleResourceWells: turning the toggle off
-        // stops us ACTING, it does not un-move a world the player has already been playing. Any
-        // already-relocated group keeps its Placed* coordinates in the save and keeps being spawned
-        // and linked by the apply pass -- withdrawing a well the player has found and built toward
-        // would be strictly worse than either consistent state (the same reasoning H1's RT-6 note
-        // records for the allow-list).
-        int32 AlreadyPlaced = 0;
-        for (const FNodeShuffleWellEntry& E : WellLayout) { if (E.bGroupPlaced) { ++AlreadyPlaced; } }
-        UE_LOG(LogNodeShuffle, Display,
-            TEXT("WELLH2-ROLL: SKIPPED -- 'Relocate Resource Wells' is OFF. %d well(s) in this save are ")
-            TEXT("ALREADY relocated and stay exactly where they are (the toggle stops us moving wells; it ")
-            TEXT("was never a promise to move them back)."),
-            AlreadyPlaced);
-        return;
-    }
+    static_assert(FNodeShuffleConfigStruct::bWellRelocationHardWiredOn,
+        "T71: well relocation is hard-wired ON. If this is ever turned off, RollWellRelocation needs its "
+        "skip branch back and FinishWellRollTeardown needs a real gate -- see docs/TECH-DEBT.md T71.");
 
     // The census is re-run rather than reusing RollWellLayout's, because this function is called from
     // its TAIL and the two want different things from it: the deal wants membership, this wants live
@@ -167,7 +164,7 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll, bool 
     WellUnhideLogged.Empty();
     WellIncompleteSpawnCounts.Empty();  // h5 (2): a re-roll re-decides every placement
     bWellOrphanInUseLogged = false;     // h5 F-4
-    bWellRelocDisabledLogged = false;
+    // T71: bWellRelocDisabledLogged is deleted -- the OFF line it throttled cannot occur.
     // h5 F1: the three new throttles reset too -- silencing a GATE line across a re-roll hides a gate.
     bWellSweepGatedLogged = false;
     bWellSweepCapLogged = false;
@@ -1054,7 +1051,7 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll, bool 
     // ns-review-h2-r2 F-I: the roll's TEARDOWN TAIL lives in NodeShuffleWellSweep.cpp next to the sweep
     // it drives (this file was at exactly 500 lines and the F-A fix pushed it over). It withdraws the
     // claim of every entry this roll abandoned, computes the post-roll sweep gate, and runs the sweep.
-    FinishWellRollTeardown(bRelocationEnabled);
+    FinishWellRollTeardown(); // T71: no gate argument -- relocation is hard-wired ON.
 
     UE_LOG(LogNodeShuffle, Display,
         TEXT("WELLH2-ROLL: %s complete over %d well(s) -- %d captured (%d of them ALREADY RELOCATED and ")

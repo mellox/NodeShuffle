@@ -419,17 +419,19 @@ void ANodeShuffleSubsystem::EmitWellStrandedCensus()
 
         // CLASSIFICATION ORDER IS FIXED AND STATED, because the buckets are not mutually exclusive by
         // construction and a reader summing them must know which one wins. Terminal failure first (it is
-        // permanent); then nobody-is-working-on-it (relocation is off for this pass or for this entry, so
+        // permanent); then nobody-is-working-on-it (the entry is no longer marked as relocating, so
         // no later bucket can be true of it); then stuck-assembling; then no destination dealt; then
         // no-player-near-the-destination; then void probing (the search ran and found no terrain); then
         // searching. Updated for cold review F2/F7 -- the previous order printed an entry with no
-        // destination as "no player near the destination" and an entry with relocation off as "still
+        // destination as "no player near the destination" and an entry no longer marked as relocating
+        // as "still
         // searching", which are labels that lie.
         // ns-t23-rollhide REVIEW FIX (cold review F2): the warning population is "suppressed, unplaced and
-        // NOT BEING WORKED ON", not bRelocationFailed alone. Two states reach the same player outcome and
-        // set no failure flag: relocation switched off after a roll-time hide (the search never runs again,
-        // so terminal failure can never fire), and an entry whose spawn is permanently incomplete
-        // (NoteWellIncompleteSpawn retries indefinitely by design and never stops).
+        // NOT BEING WORKED ON", not bRelocationFailed alone. ONE state reaches that outcome with no
+        // failure flag set: an entry that is no longer marked as relocating (a re-roll clears bRelocate;
+        // until T71 the commoner route was the player switching relocation off, and that toggle is gone).
+        // A second, distinct state is an entry whose spawn is permanently incomplete --
+        // NoteWellIncompleteSpawn retries indefinitely by design and never stops.
         if (E.bRelocationFailed)
         {
             ++Failed;
@@ -439,7 +441,12 @@ void ANodeShuffleSubsystem::EmitWellStrandedCensus()
                 FailedNames += WellShort(E.CorePath);
             }
         }
-        else if (!bWellLastApplyRelocationOn || !E.bRelocate)
+        // T71 cold review F1 (AUTHORED, 2026-08-13): the first disjunct was `!bWellLastApplyRelocationOn`,
+        // which T71 made a compile-time false -- so this bucket is decided by !E.bRelocate ALONE and both
+        // log lines BELOW (the Display split and the WELLH2-STRANDED Warning) now say exactly that. The dead disjunct is removed rather than left in place:
+        // leaving it would keep a reader believing the bucket has two causes when it has one, which is the
+        // same misreading the two rewritten sentences exist to stop.
+        else if (!E.bRelocate)
         {
             ++NotWorked;
         }
@@ -504,8 +511,9 @@ void ANodeShuffleSubsystem::EmitWellStrandedCensus()
             TEXT("TRANSIENT-AWAITING-PLACEMENT: no-player-near, probing-found-no-terrain and ")
             TEXT("still-searching. Split of ")
             TEXT("the not-placed ones, in this classification order: relocation permanently FAILED %d, ")
-            TEXT("nobody is working on it because relocation is switched off for this pass or for this ")
-            TEXT("entry %d, keeps failing to assemble at its destination %d, has never been dealt a ")
+            TEXT("nobody is working on it: this entry is no longer marked as relocating ")
+            TEXT("(bRelocate=0) %d, keeps failing to assemble at its destination %d, has never been ")
+            TEXT("dealt a ")
             TEXT("destination %d (this is expected to be structurally zero: every writer that leaves an ")
             TEXT("unplaced entry undealt also clears bRelocate, so a non-zero here means that invariant ")
             TEXT("broke), no player near the destination %d, probing found no terrain %d, still ")
@@ -534,8 +542,9 @@ void ANodeShuffleSubsystem::EmitWellStrandedCensus()
             TEXT("WELLH2-STRANDED *** %d WELL(S) ARE SUPPRESSED BY US, NOT PLACED, AND IN A STATE WHERE ")
             TEXT("NO SEARCH FOR A DESTINATION IS RUNNING *** out of %d entr(ies) we suppressed and %d in ")
             TEXT("the layout. Which kind: relocation ")
-            TEXT("permanently FAILED %d, relocation switched off while the original was already removed ")
-            TEXT("%d, keeps failing to assemble at its destination %d. THE FIRST TWO KINDS ARE ABSENT AT ")
+            TEXT("permanently FAILED %d, no longer marked as relocating while its origin was already ")
+            TEXT("removed %d, keeps failing to assemble at its destination %d. THE FIRST TWO KINDS ARE ")
+            TEXT("ABSENT AT ")
             TEXT("BOTH ENDS. THE KEEPS-FAILING-TO-ASSEMBLE KIND IS NOT: an incomplete spawn leaves the ")
             TEXT("members that DID spawn standing at the destination, so that bucket is a PARTIAL well, ")
             TEXT("not an absent one. Named where we have names (the FAILED kind only): '%s'. THIS LINE ")

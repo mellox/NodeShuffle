@@ -147,11 +147,15 @@ void ANodeShuffleSubsystem::EmitWellImmediateHideCensus()
 // ------------------------------------------------------------------------------------------------
 // THE OPPOSITE-POLARITY PAIR FOR T54
 // ------------------------------------------------------------------------------------------------
-// THE T23 PAIR (T23-A / T23-B, NodeShuffleWellUnhide.cpp) IS NOT THIS PAIR AND IS DELIBERATELY LEFT
-// EXACTLY AS IT WAS. It asks whether a suppression was taken on the ROLL phase, which is a question
-// about the CommitWellsAtRoll toggle and is unaffected by this packet: T54's hide is taken on the
-// APPLY phase, so T23-A stays red with that toggle off and T23-B stays green. Deleting or re-pointing
-// it would silently retire the only instrument covering the roll-time path.
+// THE T23 PAIR (T23-A / T23-B) IS GONE -- do not go looking for it. It asked whether a suppression was
+// taken on the ROLL phase, a question about the CommitWellsAtRoll toggle; T68 (2026-08-11) deleted that
+// toggle feature-and-all and RETIRED the pair with it, along with tools/check_t23_writers.ps1. That is
+// the one legitimate way a red/green pair dies: its question stopped existing. This banner claimed until
+// 2026-08-13 that the pair had been left exactly as it was, and described which half of it stayed red
+// with the toggle off -- stale since T68, and it pointed a future author at an instrument that is not
+// there. The old wording is NOT quoted here: check_t71_lint.ps1's H9 greps for it, and a tombstone that
+// exemplifies the string its own pin hunts is the legend-collision defect this repo has hit twice.
+// (T71 cold review F2, second half -- AUTHORED, no reviewer text was supplied for this clause.)
 //
 // THIS pair is the T54 complement, over the population T54 is about:
 //   T54-A  "no well the roll marked as moving is still standing at its vanilla origin while nothing
@@ -230,9 +234,9 @@ void ANodeShuffleSubsystem::EmitWellImmediateHideTestPair(bool bRelocationOnThis
     UE_LOG(LogNodeShuffle, Display,
         TEXT("[NodeShuffle][TEST] T54-A %s | T54-B %s -- population: %d unplaced well entr(ies) that the ")
         TEXT("roll marked as moving (relocating, offsets captured, a destination dealt, not terminally ")
-        TEXT("failed, measured only while well relocation is switched on for the pass; with it off this ")
-        TEXT("pair is VACUOUS by construction and the disable-restore census is the instrument that ")
-        TEXT("applies). %d of them carry a suppression record on at least one member. %d were BLOCKED on ")
+        TEXT("failed; well relocation is hard-wired ON since T71, so this pair is measured on every ")
+        TEXT("pass and a VACUOUS verdict now means the SAVE held no eligible entry, never a setting). ")
+        TEXT("%d of them carry a suppression record on at least one member. %d were BLOCKED on ")
         TEXT("this pass for a stated, counted cause on the WELLH2-IMMEDIATE line (a member in use, or no ")
         TEXT("vanilla core resolved) and are excluded from the denominator, which leaves %d eligible and ")
         // The phrase "take no member at all" is kept CONTIGUOUS ON ONE SOURCE LINE deliberately:

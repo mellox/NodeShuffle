@@ -1757,8 +1757,9 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     // relocation on shifts no draw of the node layout or of the well retype. (ns-review-h2 F15: that
     // isolation is per-roll, NOT across re-rolls -- H2's footprint probes teach the persistent learned
     // water grid, which gates the ordinary water-locked redeal later. See NodeShuffleWellRelocateRoll.cpp.)
-    // Self-gated: a no-op that leaves already-relocated wells exactly where they are when the toggle is off.
-    RollWellRelocation(Seed, bIsReroll, FNodeShuffleConfigStruct::GetActiveConfig(this).RelocateResourceWells);
+    // T71 (2026-08-12): the self-gate is gone with the toggle -- relocation is hard-wired ON, so this
+    // always deals. It no longer has a no-op form.
+    RollWellRelocation(Seed, bIsReroll);
 
     UE_LOG(LogNodeShuffle, Display,
         TEXT("Rolled layout: seed %d, pool %d (vanilla %d, new %d), active %d, pinned %d"),
@@ -2249,16 +2250,17 @@ void ANodeShuffleSubsystem::ApplyLayout()
     // yet is written on whichever later pass it appears, exactly like SuppressOriginalNodes' hide funnel.
     // NOTHING ELSE IN THIS PASS TOUCHES WELLS: they are excluded from the regular node population by
     // IsFrackingActor, so this call is the mod's entire well surface.
-    ApplyWellRetype(Config.ShuffleResourceWells);
+    ApplyWellRetype();
 
     // Packet H2 (ns-wells-h2): the relocation pass -- spawn-on-discovery placement of relocated well
     // GROUPS, plus the mCore re-link that every load depends on. Deliberately AFTER ApplyWellRetype, so
     // a group is only ever spawned with a resource the retype has already resolved and asserted.
-    // NOT self-gated on the toggles in the same way the others are: its first act is the once-per-
-    // session AdoptRestoredWellGroups, which must run even with relocation switched OFF -- a save that
-    // already holds relocated wells must keep them linked whatever the config now says, because an
-    // unlinked satellite is invisible in every way except the well producing nothing.
-    ApplyWellRelocation(Config.ShuffleResourceWells, Config.RelocateResourceWells, SpawnRadiusCm);
+    // Its first act is the once-per-session AdoptRestoredWellGroups. That used to be justified by "it
+    // must run even with relocation switched OFF"; T71 deleted the OFF state, so the justification is
+    // now simply ordering -- adoption must precede every reader of the links, and a save that already
+    // holds relocated wells must be re-linked before anything walks them, because an unlinked satellite
+    // is invisible in every way except the well producing nothing.
+    ApplyWellRelocation(SpawnRadiusCm);
 
     SettleNewNodesNearPlayers();
     ReassociateOrphanedExtractors();
@@ -2297,6 +2299,12 @@ void ANodeShuffleSubsystem::ApplyLayout()
             TEXT("Spawned-node visuals (this pass): %d vanilla rock + %d quartz placeholder (modded) + %d oil decal"),
             SpawnedRockVanilla, SpawnedRockQuartz, SpawnedRockLiquid);
     }
+
+    // T72: the visual-resolution census. Placed HERE, next to the outcome summary above, because the
+    // pair answers the two halves of the same question -- that line says how many rocks came out quartz,
+    // this one says WHICH resolver branch produced them. Change-driven and ungated (a stale/failed
+    // resolve must be visible without EnableDiagnostics; the per-branch detail lines above it are not).
+    EmitT72DressCensus();
 
     // playtest-fixes-1 (defer-log backoff): ONE summary line when the deferral count changes, instead
     // of re-logging every stuck entry every 5 s (153k lines / 35 MB in one session). Per-entry detail
@@ -2398,21 +2406,127 @@ UStaticMesh* ANodeShuffleSubsystem::ResolveNodeMesh(UClass* OverrideClass)
     {
         return nullptr;
     }
-    const FString ResPath = OverrideClass->GetPathName();
-    if (const TWeakObjectPtr<UStaticMesh>* Cached = NodeMeshCache.Find(ResPath))
+    // T72: the whole resolve (cache probe, single retry on a dead entry, keep-alive, branch logging)
+    // lives in ResolveNodeMeshForKey so the per-resource key and the quartz-placeholder key cannot
+    // drift apart -- pre-T72 they were two copies of the same no-retry defect.
+    return ResolveNodeMeshForKey(OverrideClass->GetPathName(), FName(*OverrideClass->GetName()), TEXT("resource"));
+}
+
+UStaticMesh* ANodeShuffleSubsystem::ResolveNodeMeshForKey(const FString& CacheKey, const FName& ShortName,
+                                                          const TCHAR* KeyKind)
+{
+    // T72 (2026-08-13). FIVE branches, each logged with the predicate THIS run produced:
+    //   cache-hit             -- the cached weak pointer is still live (the steady-state path).
+    //   fresh-loaded          -- first resolution for this key, LoadObject succeeded.
+    //   cache-stale-reloaded  -- the cached entry was dead/null AND the table has a path: ONE LoadObject
+    //                            retry, which succeeded. Pre-T72 this branch did not exist; the dead
+    //                            pointer was returned as-is and the caller fell to quartz forever.
+    //   load-failed-fallback  -- the table has a path and LoadObject returned null THIS RUN. This is the
+    //                            ONLY branch that may hand the caller a null for an authored resource.
+    //   no-table-entry        -- the resource has no authored row (modded resources: by design -> quartz).
+    // The retry is ONCE PER RESOLUTION CALL. There is no loop and no per-frame retry: a resolution call
+    // happens when a node is dressed, so a permanently missing asset costs one LoadObject per dress.
+    const FNodeShuffleVisual* Visual = FNodeShuffleNodeAssets::FindVisual(ShortName);
+    const TCHAR* AuthoredPath = (Visual && Visual->MeshPath) ? Visual->MeshPath : nullptr;
+    const bool bDiag = FNodeShuffleModule::AreDiagnosticsEnabled();
+
+    if (TWeakObjectPtr<UStaticMesh>* Cached = NodeMeshCache.Find(CacheKey))
     {
-        return Cached->Get();
-    }
-    UStaticMesh* Mesh = nullptr;
-    const FName ShortName(*OverrideClass->GetName());
-    if (const FNodeShuffleVisual* Visual = FNodeShuffleNodeAssets::FindVisual(ShortName))
-    {
-        if (Visual->MeshPath)
+        if (UStaticMesh* Live = Cached->Get())
         {
-            Mesh = LoadObject<UStaticMesh>(nullptr, Visual->MeshPath);
+            T72MeshCacheHit++;
+            if (bDiag)
+            {
+                UE_LOG(LogNodeShuffle, Verbose,
+                    TEXT("T72RESOLVE: kind %s key '%s' asset mesh branch=cache-hit resolved '%s'"),
+                    KeyKind, *CacheKey, *Live->GetName());
+            }
+            return Live;
+        }
+        if (!AuthoredPath)
+        {
+            T72MeshNoTableEntry++;
+            if (bDiag)
+            {
+                UE_LOG(LogNodeShuffle, Verbose,
+                    TEXT("T72RESOLVE: kind %s key '%s' asset mesh branch=no-table-entry resolved none"),
+                    KeyKind, *CacheKey);
+            }
+            return nullptr;
+        }
+        // THE T72 FIX. The cached weak pointer is dead (or a previous call cached a null), and the table
+        // DOES carry a path -- so re-resolve once instead of treating the cached null as the answer.
+        UStaticMesh* Reloaded = LoadObject<UStaticMesh>(nullptr, AuthoredPath);
+        *Cached = Reloaded;
+        if (Reloaded)
+        {
+            VisualAssetKeepAlive.AddUnique(Reloaded);
+            T72MeshStaleReloaded++;
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("T72RESOLVE: kind %s key '%s' asset mesh branch=cache-stale-reloaded resolved '%s' -- the cached ")
+                TEXT("weak pointer was null when this call read it and the single LoadObject retry returned an object; ")
+                TEXT("this call returned a live asset; whether the caller then took a fallback is decided elsewhere and ")
+                TEXT("not tested here. (Why the pointer was null is not tested here.)"),
+                KeyKind, *CacheKey, *Reloaded->GetName());
+            return Reloaded;
+        }
+        T72MeshLoadFailed++;
+        // T72 F2: LATCHED per cache key AND ASSET KIND. The census above still counts every occurrence, so
+        // the RATE stays true; only the prose is said once. The retry itself is NOT latched -- self-healing
+        // must stay possible. R1 (scoped re-pass): the key alone is SHARED by the mesh and material workers
+        // (both are handed GetPathName(), and both quartz accessors are handed "Desc_RawQuartz_C"), so a
+        // bare CacheKey let the first failing kind permanently suppress the other kind's line.
+        const FString FailKey = CacheKey + TEXT("|mesh");
+        if (!T72LoadFailLogged.Contains(FailKey))
+        {
+            T72LoadFailLogged.Add(FailKey);
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("T72RESOLVE: kind %s key '%s' asset mesh branch=load-failed-fallback resolved none -- the cached weak ")
+                TEXT("pointer was null and LoadObject on the authored path '%s' also returned null on this call, so the ")
+                TEXT("caller falls back. (Said once per key per asset kind per session; the census counts every occurrence.)"),
+                KeyKind, *CacheKey, AuthoredPath);
+        }
+        return nullptr;
+    }
+
+    // First resolution for this key.
+    UStaticMesh* Mesh = AuthoredPath ? LoadObject<UStaticMesh>(nullptr, AuthoredPath) : nullptr;
+    NodeMeshCache.Add(CacheKey, Mesh);
+    if (Mesh)
+    {
+        VisualAssetKeepAlive.AddUnique(Mesh);
+        T72MeshFreshLoaded++;
+        if (bDiag)
+        {
+            UE_LOG(LogNodeShuffle, Verbose,
+                TEXT("T72RESOLVE: kind %s key '%s' asset mesh branch=fresh-loaded resolved '%s'"),
+                KeyKind, *CacheKey, *Mesh->GetName());
         }
     }
-    NodeMeshCache.Add(ResPath, Mesh);
+    else if (!AuthoredPath)
+    {
+        T72MeshNoTableEntry++;
+        if (bDiag)
+        {
+            UE_LOG(LogNodeShuffle, Verbose,
+                TEXT("T72RESOLVE: kind %s key '%s' asset mesh branch=no-table-entry resolved none"),
+                KeyKind, *CacheKey);
+        }
+    }
+    else
+    {
+        T72MeshLoadFailed++;
+        const FString FailKey = CacheKey + TEXT("|mesh"); // T72 F2/R1: latched per key AND kind, see above
+        if (!T72LoadFailLogged.Contains(FailKey))
+        {
+            T72LoadFailLogged.Add(FailKey);
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("T72RESOLVE: kind %s key '%s' asset mesh branch=load-failed-fallback resolved none -- first resolution ")
+                TEXT("for this key and LoadObject on the authored path '%s' returned null, so the caller falls back. ")
+                TEXT("(Said once per key per asset kind per session; the census counts every occurrence.)"),
+                KeyKind, *CacheKey, AuthoredPath);
+        }
+    }
     return Mesh;
 }
 
@@ -2429,57 +2543,213 @@ const TArray<TWeakObjectPtr<UMaterialInterface>>* ANodeShuffleSubsystem::Resolve
     {
         return nullptr;
     }
-    const FString ResPath = OverrideClass->GetPathName();
-    if (const TArray<TWeakObjectPtr<UMaterialInterface>>* Cached = NodeMaterialCache.Find(ResPath))
+    // T72: same worker as the mesh side, same single-retry contract (see ResolveNodeMaterialsForKey).
+    return ResolveNodeMaterialsForKey(OverrideClass->GetPathName(), FName(*OverrideClass->GetName()), TEXT("resource"));
+}
+
+const TArray<TWeakObjectPtr<UMaterialInterface>>* ANodeShuffleSubsystem::ResolveNodeMaterialsForKey(
+    const FString& CacheKey, const FName& ShortName, const TCHAR* KeyKind)
+{
+    // T72 (2026-08-13). Materials are an ARRAY of weak pointers, so "stale" has two shapes and both are
+    // tested against the table, never assumed: the cached array's length disagrees with the authored row
+    // (a row edited since the cache was filled), or any slot's weak pointer is dead. Either one triggers
+    // ONE rebuild pass -- one LoadObject per authored slot, once per resolution call, no loop.
+    // An EMPTY cached array for a resource with NO authored row is the correct answer, not staleness
+    // (length 0 == authored 0), so an uncovered modded resource never re-enters the load path.
+    const FNodeShuffleVisual* Visual = FNodeShuffleNodeAssets::FindVisual(ShortName);
+    const int32 AuthoredCount = Visual ? Visual->MaterialPaths.Num() : 0;
+    const bool bDiag = FNodeShuffleModule::AreDiagnosticsEnabled();
+    // T72 F3 (cold review): branch on whether a ROW EXISTS, not on its slot count. Three authored rows (the
+    // FicsitFarming dirt family) legitimately list zero materials -- counting them as 'no table entry'
+    // inflates matNoEntry with resources that ARE covered and hides them from matHit.
+    const bool bHasRow = (Visual != nullptr);
+
+    if (TArray<TWeakObjectPtr<UMaterialInterface>>* Cached = NodeMaterialCache.Find(CacheKey))
     {
+        bool bStale = (Cached->Num() != AuthoredCount);
+        int32 DeadSlots = 0;
+        for (const TWeakObjectPtr<UMaterialInterface>& M : *Cached)
+        {
+            if (!M.IsValid()) { DeadSlots++; }
+        }
+        bStale = bStale || (DeadSlots > 0);
+        if (!bStale)
+        {
+            // T72 F3: three populations, three counters. matEmptyRow is the SPLIT the review asked for --
+            // an authored row that lists zero material slots is COVERED, and folding it into either
+            // matNoEntry (uncovered) or matHit (slots resolved) makes a field count what it does not name.
+            if (!bHasRow) { T72MatNoTableEntry++; }
+            else if (AuthoredCount == 0) { T72MatAuthoredEmptyRow++; }
+            else { T72MatCacheHit++; }
+            if (bDiag)
+            {
+                UE_LOG(LogNodeShuffle, Verbose,
+                    TEXT("T72RESOLVE: kind %s key '%s' asset materials branch=%s resolved %d slot(s)"),
+                    KeyKind, *CacheKey, bHasRow ? TEXT("cache-hit") : TEXT("no-table-entry"),
+                    Cached->Num());
+            }
+            return Cached;
+        }
+        // T72 F6 (cold review): reachable only with an authored row -- a keyless entry is always cached
+        // EMPTY (see the first-resolution branch), so length-0 == authored-0 is never stale. Guarded
+        // anyway: this is the one deref in the worker whose safety is an argument about another branch
+        // rather than a local test.
+        if (!Visual)
+        {
+            return Cached;
+        }
+        // THE T72 FIX (material side). Rebuild in place: Add on an EXISTING key assigns into the existing
+        // element, so no other key's returned pointer is disturbed.
+        TArray<TWeakObjectPtr<UMaterialInterface>> Rebuilt;
+        int32 LoadedOk = 0;
+        for (const TCHAR* MatPath : Visual->MaterialPaths)
+        {
+            UMaterialInterface* Mat = LoadObject<UMaterialInterface>(nullptr, MatPath); // keep slot order
+            if (Mat) { VisualAssetKeepAlive.AddUnique(Mat); LoadedOk++; }
+            Rebuilt.Add(Mat);
+        }
+        const int32 PrevNum = Cached->Num();
+        *Cached = MoveTemp(Rebuilt);
+        if (LoadedOk == AuthoredCount)
+        {
+            T72MatStaleReloaded++;
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("T72RESOLVE: kind %s key '%s' asset materials branch=cache-stale-reloaded resolved %d slot(s) ")
+                TEXT("(cached array held %d slot(s), %d of them dead when this call read it; the authored row has %d) ")
+                TEXT("-- every slot re-loaded on the single retry; this call returned live assets; whether the caller ")
+                TEXT("then took a fallback is decided elsewhere and not tested here."),
+                KeyKind, *CacheKey, LoadedOk, PrevNum, DeadSlots, AuthoredCount);
+        }
+        else
+        {
+            T72MatLoadFailed++;
+            const FString FailKey = CacheKey + TEXT("|mat"); // T72 F2/R1: latched per key AND kind
+            if (!T72LoadFailLogged.Contains(FailKey))
+            {
+                T72LoadFailLogged.Add(FailKey);
+                UE_LOG(LogNodeShuffle, Display,
+                    TEXT("T72RESOLVE: kind %s key '%s' asset materials branch=load-failed-fallback resolved %d slot(s) ")
+                    TEXT("of the %d the authored row lists (cached array held %d slot(s), %d dead) -- LoadObject returned ")
+                    TEXT("null for at least one authored path on this call. (Said once per key per asset kind per ")
+                    TEXT("session; the census counts every occurrence.)"),
+                    KeyKind, *CacheKey, LoadedOk, AuthoredCount, PrevNum, DeadSlots);
+            }
+        }
         return Cached;
     }
+
+    // First resolution for this key.
     TArray<TWeakObjectPtr<UMaterialInterface>> Mats;
-    const FName ShortName(*OverrideClass->GetName());
-    if (const FNodeShuffleVisual* Visual = FNodeShuffleNodeAssets::FindVisual(ShortName))
+    int32 LoadedOk = 0;
+    if (Visual)
     {
         for (const TCHAR* MatPath : Visual->MaterialPaths)
         {
-            Mats.Add(LoadObject<UMaterialInterface>(nullptr, MatPath)); // keep slot order
+            UMaterialInterface* Mat = LoadObject<UMaterialInterface>(nullptr, MatPath); // keep slot order
+            if (Mat) { VisualAssetKeepAlive.AddUnique(Mat); LoadedOk++; }
+            Mats.Add(Mat);
         }
     }
-    return &NodeMaterialCache.Add(ResPath, MoveTemp(Mats));
+    if (!bHasRow)
+    {
+        T72MatNoTableEntry++;
+        if (bDiag)
+        {
+            UE_LOG(LogNodeShuffle, Verbose,
+                TEXT("T72RESOLVE: kind %s key '%s' asset materials branch=no-table-entry resolved 0 slot(s)"),
+                KeyKind, *CacheKey);
+        }
+    }
+    else if (AuthoredCount == 0)
+    {
+        // T72 F3 split: an authored row that lists zero material slots (the FicsitFarming dirt family).
+        T72MatAuthoredEmptyRow++;
+        if (bDiag)
+        {
+            UE_LOG(LogNodeShuffle, Verbose,
+                TEXT("T72RESOLVE: kind %s key '%s' asset materials branch=fresh-loaded resolved 0 slot(s) ")
+                TEXT("(the authored row lists none)"),
+                KeyKind, *CacheKey);
+        }
+    }
+    else if (LoadedOk == AuthoredCount)
+    {
+        T72MatFreshLoaded++;
+        if (bDiag)
+        {
+            UE_LOG(LogNodeShuffle, Verbose,
+                TEXT("T72RESOLVE: kind %s key '%s' asset materials branch=fresh-loaded resolved %d slot(s)"),
+                KeyKind, *CacheKey, LoadedOk);
+        }
+    }
+    else
+    {
+        T72MatLoadFailed++;
+        const FString FailKey = CacheKey + TEXT("|mat"); // T72 F2/R1: latched per key AND kind
+        if (!T72LoadFailLogged.Contains(FailKey))
+        {
+            T72LoadFailLogged.Add(FailKey);
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("T72RESOLVE: kind %s key '%s' asset materials branch=load-failed-fallback resolved %d slot(s) of the ")
+                TEXT("%d the authored row lists -- first resolution for this key and LoadObject returned null for at ")
+                TEXT("least one authored path. (Said once per key per asset kind per session; the census counts every ")
+                TEXT("occurrence.)"),
+                KeyKind, *CacheKey, LoadedOk, AuthoredCount);
+        }
+    }
+    return &NodeMaterialCache.Add(CacheKey, MoveTemp(Mats));
+}
+
+void ANodeShuffleSubsystem::EmitT72DressCensus()
+{
+    // T72 census. ONE Display line per ApplyLayout pass, and only when a counter has moved since the
+    // last emit -- a settled world adds no lines. Field names are UNIQUE per column (the mesh and
+    // material columns are prefixed apart, never a bare "hit") and the trailing explanation carries NO
+    // name-then-equals token of its own, so a grep anchored on a column name cannot match this line's
+    // own legend. THE LINT ENFORCES THAT ON THIS WHOLE FUNCTION, COMMENTS INCLUDED -- and it caught this
+    // very comment doing it, which is why the rule reads the way it does rather than naming an example.
+    const int32 Sum = T72MeshFreshLoaded + T72MeshCacheHit + T72MeshStaleReloaded + T72MeshLoadFailed
+                    + T72MeshNoTableEntry + T72MatFreshLoaded + T72MatCacheHit + T72MatStaleReloaded
+                    + T72MatLoadFailed + T72MatNoTableEntry + T72MatAuthoredEmptyRow
+                    + T72CapFreshLoaded + T72CapCacheHit + T72CapStaleReloaded + T72CapLoadFailed
+                    + T72CapNoCapture;
+    if (Sum == T72LastCensusSum)
+    {
+        return;
+    }
+    T72LastCensusSum = Sum;
+    UE_LOG(LogNodeShuffle, Display,
+        TEXT("T72DRESS: meshFresh=%d meshHit=%d meshStale=%d meshLoadFail=%d meshNoEntry=%d ")
+        TEXT("matFresh=%d matHit=%d matStale=%d matLoadFail=%d matNoEntry=%d matEmptyRow=%d ")
+        TEXT("capFresh=%d capHit=%d capStale=%d capLoadFail=%d capNoCapture=%d ")
+        TEXT("| counts are visual-resolution CALLS this session, not nodes; a stale column above zero means a cached ")
+        TEXT("weak pointer was dead and the single retry re-loaded the asset (pre-T72 that node would have rendered ")
+        TEXT("the quartz placeholder); a loadFail column above zero means an authored path would not load at all; the ")
+        TEXT("cap columns are the CAPTURED modded-resource resolver, the population a mesh or material column can ")
+        TEXT("never report on; an emptyRow count is an authored row that lists zero material slots, which is covered, ")
+        TEXT("not uncovered."),
+        T72MeshFreshLoaded, T72MeshCacheHit, T72MeshStaleReloaded, T72MeshLoadFailed, T72MeshNoTableEntry,
+        T72MatFreshLoaded, T72MatCacheHit, T72MatStaleReloaded, T72MatLoadFailed, T72MatNoTableEntry,
+        T72MatAuthoredEmptyRow,
+        T72CapFreshLoaded, T72CapCacheHit, T72CapStaleReloaded, T72CapLoadFailed, T72CapNoCapture);
 }
 
 UStaticMesh* ANodeShuffleSubsystem::GetQuartzPlaceholderMesh()
 {
     // redesign-1: the quartz placeholder for any spawned node whose resource has no authored table
     // entry (modded resources). Resolved from the Desc_RawQuartz_C table row (ResourceNode_Quartz).
+    // T72: the placeholder used the SAME weak cache with the SAME no-retry hit, i.e. the fallback could
+    // itself go stale and leave SpawnVisualRockForNode with no mesh at all. Same worker, same key
+    // (the short name, unchanged from pre-T72), so the two can no longer diverge.
     static const FName QuartzKey(TEXT("Desc_RawQuartz_C"));
-    if (const TWeakObjectPtr<UStaticMesh>* Cached = NodeMeshCache.Find(QuartzKey.ToString()))
-    {
-        return Cached->Get();
-    }
-    UStaticMesh* Mesh = nullptr;
-    if (const FNodeShuffleVisual* Visual = FNodeShuffleNodeAssets::FindVisual(QuartzKey))
-    {
-        if (Visual->MeshPath) { Mesh = LoadObject<UStaticMesh>(nullptr, Visual->MeshPath); }
-    }
-    NodeMeshCache.Add(QuartzKey.ToString(), Mesh);
-    return Mesh;
+    return ResolveNodeMeshForKey(QuartzKey.ToString(), QuartzKey, TEXT("quartz-placeholder"));
 }
 
 const TArray<TWeakObjectPtr<UMaterialInterface>>* ANodeShuffleSubsystem::GetQuartzPlaceholderMaterials()
 {
+    // T72: as GetQuartzPlaceholderMesh above -- one worker, one retry contract, same key as pre-T72.
     static const FName QuartzKey(TEXT("Desc_RawQuartz_C"));
-    if (const TArray<TWeakObjectPtr<UMaterialInterface>>* Cached = NodeMaterialCache.Find(QuartzKey.ToString()))
-    {
-        return Cached;
-    }
-    TArray<TWeakObjectPtr<UMaterialInterface>> Mats;
-    if (const FNodeShuffleVisual* Visual = FNodeShuffleNodeAssets::FindVisual(QuartzKey))
-    {
-        for (const TCHAR* MatPath : Visual->MaterialPaths)
-        {
-            Mats.Add(LoadObject<UMaterialInterface>(nullptr, MatPath));
-        }
-    }
-    return &NodeMaterialCache.Add(QuartzKey.ToString(), MoveTemp(Mats));
+    return ResolveNodeMaterialsForKey(QuartzKey.ToString(), QuartzKey, TEXT("quartz-placeholder"));
 }
 
 AFGRadioactivitySubsystem* ANodeShuffleSubsystem::GetRadSubsystem() const
@@ -2501,27 +2771,72 @@ const FNodeShuffleCapturedVisual* ANodeShuffleSubsystem::FindCapturedVisual(cons
 
 const ANodeShuffleSubsystem::FNodeShuffleResolvedCapture* ANodeShuffleSubsystem::ResolveCapturedVisual(const FString& ResourceClassName)
 {
+    // T72 F1 (cold review): this cache has the SAME shape as NodeMeshCache/NodeMaterialCache -- weak
+    // pointers, and until now a HIT was returned without testing liveness. It serves the CAPTURED
+    // (modded-resource) population, which by the T72 forensics' own hypothesis has FEWER referencers
+    // than SAM, not more. A dead entry here is invisible to the T72 census (it counts no branch) and
+    // lands the node on quartz for the session.
+    // Same contract as the T72 workers: drop the dead entry, re-resolve at most ONCE per call below.
+    // T72 R3 (scoped re-pass): the cap columns must be MUTUALLY EXCLUSIVE per call, like their eleven
+    // neighbours, or the census legend's "counts are visual-resolution CALLS" is false for this family
+    // alone. So staleness is recorded as a LOCAL here and only spent in the success tail: a call that
+    // found a dead entry and then failed to reload is ONE failure (capLoadFail), not one recovery plus
+    // one failure.
+    bool bWasStale = false;
     if (const FNodeShuffleResolvedCapture* Cached = ResolvedCaptureCache.Find(ResourceClassName))
     {
-        return Cached;
+        const bool bMeshDead = !Cached->Mesh.IsValid();
+        bool bMatDead = false;
+        for (const TWeakObjectPtr<UMaterialInterface>& M : Cached->Materials) { if (!M.IsValid()) { bMatDead = true; break; } }
+        if (!bMeshDead && !bMatDead)
+        {
+            T72CapCacheHit++;
+            return Cached;
+        }
+        bWasStale = true; // R3: spent in the success tail below, never alongside capLoadFail
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("T72RESOLVE: kind captured key '%s' asset capture branch=cache-stale-reloaded resolved none yet -- the ")
+            TEXT("cached capture held a dead pointer when this call read it (mesh dead %d, any material slot dead %d), so ")
+            TEXT("the entry is dropped and re-resolved once below. (Why the pointer was null is not tested here.)"),
+            *ResourceClassName, bMeshDead ? 1 : 0, bMatDead ? 1 : 0);
+        ResolvedCaptureCache.Remove(ResourceClassName);
     }
     const FNodeShuffleCapturedVisual* Cap = FindCapturedVisual(ResourceClassName);
     if (!Cap)
     {
+        T72CapNoCapture++;
         return nullptr; // no persisted capture — do NOT negative-cache (a capture may land later this session)
     }
     FNodeShuffleResolvedCapture Resolved;
+    // T72 F1: both load sites feed the keep-alive, exactly as the two T72 workers do -- an asset this
+    // path loads is otherwise held by nothing but our own rock, which the re-roll teardown destroys.
     Resolved.Mesh = LoadObject<UStaticMesh>(nullptr, *Cap->MeshPath);
+    if (Resolved.Mesh.IsValid()) { VisualAssetKeepAlive.AddUnique(Resolved.Mesh.Get()); }
     for (const FString& MatPath : Cap->MaterialPaths)
     {
-        Resolved.Materials.Add(LoadObject<UMaterialInterface>(nullptr, *MatPath)); // slot order; null-safe downstream
+        UMaterialInterface* Mat = LoadObject<UMaterialInterface>(nullptr, *MatPath); // slot order; null-safe downstream
+        if (Mat) { VisualAssetKeepAlive.AddUnique(Mat); }
+        Resolved.Materials.Add(Mat);
     }
     Resolved.Scale = Cap->MeshScale;
     if (!Resolved.Mesh.IsValid())
     {
+        // R3: owns the failed-after-stale case too, so exactly one cap column moves per call. NOTE this
+        // tests the MESH reload only -- a materials-only failure in the captured path is counted by no
+        // cap column (pre-existing, named in the re-pass, deliberately not widened here because widening
+        // it would re-introduce the double-increment this fix removes).
+        T72CapLoadFailed++;
         UE_LOG(LogNodeShuffle, Warning,
             TEXT("CAPTURE: persisted mesh path for %s failed to load ('%s') — falling back to quartz"),
             *ResourceClassName, *Cap->MeshPath);
+    }
+    else if (bWasStale)
+    {
+        T72CapStaleReloaded++; // a dead cached capture that DID come back on the single re-resolve
+    }
+    else
+    {
+        T72CapFreshLoaded++;
     }
     return &ResolvedCaptureCache.Add(ResourceClassName, MoveTemp(Resolved));
 }

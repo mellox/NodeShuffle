@@ -55,8 +55,10 @@ This note will be updated as newer versions are confirmed.
 ## Configuration
 
 All settings are in the in-game **Mods → Node Shuffle** panel (and persist to
-`<game>/FactoryGame/Configs/NodeShuffle.cfg`), in four groups: **the shuffle**,
-**other mods**, **resource wells**, and **troubleshooting**.
+`<game>/FactoryGame/Configs/NodeShuffle.cfg`), in three groups: **the shuffle**,
+**other mods**, and **troubleshooting** — 15 settings plus the protected-resource
+list. There is no resource-wells group: since 1.4.0 wells are part of the shuffle
+and have no switches of their own (see **Resource wells** below).
 
 ### The shuffle
 
@@ -88,12 +90,33 @@ so it starts empty and grows as you play alongside other mods. Every row default
 (protected); untick one to let that resource's own mod decide for itself. The console variable
 `NodeShuffle.DestroyerVeto` still overrides the checkbox above whenever it has been explicitly set.
 
-### Resource wells (opt-in, both off by default)
+### Resource wells (no settings — always on since 1.4.0)
 
-| Setting | Default | Meaning |
-|---|---|---|
-| Shuffle Resource Wells (In Place) | off | Re-rolls what each resource well produces — a nitrogen well may become a water well — **without moving it**, dealt from the wells' own existing mix so a well-only resource never runs short. Wells with a Pressurizer or any Extractor on them are never changed. |
-| Relocate Resource Wells (EXPERIMENTAL) | off | Moves a whole well — core and every satellite — as a rigid body to a new site, keeping its exact pattern. All-or-nothing: if the full footprint won't fit, no partial well appears. Requires Shuffle Resource Wells to also be on. See **Known behaviour** below — a relocated well is genuinely absent from the world for an unbounded time before its replacement appears. |
+Resource wells shuffle with everything else. They used to be behind two opt-in
+toggles; **both are gone**, and both behaviours now happen on every roll — on a
+new save immediately, and on a save started before 1.4.0 from its first
+**Re-roll Layout** onwards (nothing about an existing save's wells changes just
+by loading it):
+
+- **What a well produces is re-rolled** — a nitrogen well may become a water
+  well — dealt from the wells' own existing mix, so a well-only resource never
+  runs short.
+- **A whole well moves** — core and every satellite, as a rigid body to a new
+  site, keeping its exact pattern. All-or-nothing: if the full footprint won't
+  fit, no partial well appears.
+
+**A well you have built on is never touched** — a Resource Well Pressurizer on
+the core or any Resource Well Extractor on a satellite leaves that whole well
+exactly where it is, and the mod re-checks that continuously, so the move
+happens by itself once you take the building down.
+
+**Read "Known behaviour" below before you start a save.** A relocated well is
+genuinely absent from the world for an **unbounded** time before its replacement
+appears, and that now applies to every save rather than to people who opted in.
+Two edges are still unverified: **desert-biome wells** may arrive without their
+rock graphics, and a relocated well's build area has **not** been tested against
+ordinary resource nodes closer than about 15 m — if a Miner won't place on an
+ordinary node right beside a relocated well, please report it.
 
 ### Troubleshooting
 
@@ -157,7 +180,7 @@ they are until you re-roll. Re-rolling re-scans the live world and brings them i
 
 **This is a deliberate trade-off, not a bug.**
 
-Resource-well relocation (**Relocate Resource Wells**) is *not* instant, and the
+Resource-well relocation is *not* instant, and the
 original is removed **as soon as the well is dealt a destination** — not after the
 replacement exists. The replacement is only built once you travel to the new site
 and its terrain streams in, so between those two moments the well is in
@@ -171,9 +194,13 @@ so the move happens by itself once you take the building down. Re-rolling also
 re-considers wells that have already moved, dealing each a new destination like
 any other node.
 
-If you'd rather not have wells go missing, leave **Relocate Resource Wells** off
-and use **Shuffle Resource Wells (In Place)** instead — it only changes what a
-well produces and never moves it.
+**There is no setting that turns wells off on their own.** Until 1.4.0 well relocation was an
+opt-in toggle; wells are now a natural part of the shuffle, so this applies to every save the mod
+is running on. Building on a well is the only way to pin one well in place — a Pressurizer on the
+core (or any Extractor on a satellite) holds that whole well permanently.
+Turning **Enabled** off stops the mod rolling, moving or maintaining anything further, but it does
+not move anything back — nodes it has already placed stay where they are, and the build-gun and
+scanner rules it installs at startup keep applying to them.
 
 ## Building
 

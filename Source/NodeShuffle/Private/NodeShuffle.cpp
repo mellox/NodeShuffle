@@ -561,7 +561,12 @@ using FNodeShuffleActorExtractorLoggedSet = TSet<FNodeShuffleActorExtractorKey>;
 void FNodeShuffleModule::StartupModule()
 {
     UE_LOG(LogNodeShuffle, Log, TEXT("NodeShuffle module loaded"));
-    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle 1.4.0 LOADED (2026-08-11-t68-3) ====="));
+    // BUILD TAG. 2026-08-13: bumped for the COMBINED T71 + T72 build. NEITHER packet bumped it -- both
+    // ran while the game was up and stopped at BUILD-PENDING -- so the tree was about to produce an
+    // UNREVIEWED binary printing the REVIEWED t68-3 banner, which is the one state that makes a
+    // deployed DLL indistinguishable from its parked predecessor in a log. Bump the tag in the same
+    // action as the build, never after it.
+    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle 1.4.0 LOADED (2026-08-13-t71t72-2) ====="));
     FNodeShuffleModule::LogAutoAllowExtractorsState(); // Packet G: log the CVar state once at startup
 
 #if !WITH_EDITOR
