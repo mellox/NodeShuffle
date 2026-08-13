@@ -3439,3 +3439,21 @@ session with no template source; the same cold-start gap is reachable without ev
 early-out (`WellVisuals.cpp:147` returns before the fill at `:205`), plus a bundled fallback rock
 mesh so no group ever dresses with zero pieces. **Cosmetic sibling:** origin geysers survive the
 well's removal — decide keep-as-landmark vs hide when this is picked up.
+
+## T74 — SML exit-flush crash (their bug, our trigger surface) + the protection list's KBFL dependency. Both DOCUMENTED-DECLINED (2026-08-13)
+
+**Status: FILED as knowledge, author declined both actions (2026-08-13): no EndPlay flush
+mitigation in 1.4.0, no upstream SML report. Evidence:
+`_team/nodeshuffle-followups/exit-crash-pending-save-forensics.md`.**
+
+* **Crash signature (SML's bug):** `EXCEPTION_ACCESS_VIOLATION reading 0x40` at AppPreExit →
+  `UConfigManager::FlushPendingSaves` (bound to OnPreExit, ConfigManager.cpp:304) →
+  `SaveConfigurationInternal:46` derefs a null ModLoadingLibrary (0x40 = member offset;
+  second latent copy at :105-107). ANY config-owning mod with a pending save at exit can crash;
+  our two dirty sites both flush immediately (no asymmetry, measured); SML's own panel widgets
+  mark-dirty on a 0.2 s timer and can leave the pending entry. Not routine (3 clean exits same
+  day), undocumented upstream as of 2026-08-13. If a player reports this stack: it is not ours.
+* **Protection-list dependency (by design, easy to misread):** `NoteForeignResourceSighting` has
+  exactly one caller — the KBFL veto requirement hook. WITHOUT KBFL INSTALLED, NO foreign resource
+  ever gets a row, regardless of reloads; the list stays empty because nothing checks (and nothing
+  threatens). Do not tell users a row "will appear after a reload" on a KBFL-less install.
