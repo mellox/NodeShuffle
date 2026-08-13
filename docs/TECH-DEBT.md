@@ -3415,29 +3415,27 @@ change nothing.
 - Historical narrative comments that describe what the toggles USED to do are left in place where they
   are clearly past-tense. Only comments asserting a CURRENT reachable state were rewritten.
 
-## T73 — Well rebuild is refused when the group's own attached buildings block the enclosure gate; a downgrade round-trip strands built-on wells permanently (2026-08-13)
+## T73 — Well visuals are a session cold-start gap: a group dressed before any pieces are indexed stays invisible for that whole session (2026-08-13)
 
-**Status: FILED, author priority LOW (2026-08-13) — shipped as a documented warning in 1.4.0
-(CHANGELOG + mod page: back up before upgrading; never downgrade without a backup), NOT fixed.**
+**Status: FILED, author priority LOW (2026-08-13) — documented as a known issue with a player
+recovery on the 1.4.0 mod page; NOT fixed. This entry's ORIGINAL text (enclosure-gate refusal,
+permanent loss after downgrade) was FALSIFIED by measurement the same day — full evidence chain in
+`_team/nodeshuffle-followups/downgrade-well-loss-forensics.md` incl. Addendum 3. The enclosure-gate
+reading came from the read-only WellProbe instrument self-hitting the player's Pressurizer, not
+from the live path; placed groups are maintained, never re-gated.**
 
-**Measured (downgrade lane of the 1.3↔1.4 regression matrix, evidence in
-`_team/nodeshuffle-followups/downgrade-well-loss-forensics.md` + the WellProbe at log ~4540-4554):**
-running published 1.3.0 (no well code) on a 1.4.0 save left every moved well's actors unbuilt; back
-on t71t72-2, the group's records are PRESENT (`WELLPROBE: group 'BP_FrackingCore15' ... the nearest
-PLACED relocated well, 7 m from its saved core location`) but the rebuild is REFUSED: the enclosure
-gate reads 8/8 rays BLOCKED at 0 cm by `Build_FrackingSmasher_C` — the PLAYER'S OWN extractor built
-on that well. Core + well stay absent; the buildings stand orphaned. The user never saved under
-1.3.0 (verified by SaveGames mtimes), so this is a validation refusal, not record loss.
+**Mechanism (measured):** a relocated well's rock geometry is not saved until CAPTURED once from
+its origin members. Dressing runs once per member per session; a group dressed while the session
+has indexed zero pieces gets zero pieces and stays invisible (and unbuildable-looking) for that
+session. Origins are only HIDDEN (`NodeShuffleWellRelocateApply.cpp:815` `SetActorHiddenInGame` —
+no destroy call exists in the apply/hide/despawn files), so a later visit re-indexes them and the
+capture persists in the save; origin geysers are never touched (useful landmark, cosmetic sibling
+below). Player recovery VERIFIED end-to-end 2026-08-13: fly near any fracking well or the origin
+geyser (capture fires — Core15: +17 pieces, 8/8 members, group COMPLETE), then reload; the group
+dresses from its own captured pieces permanently. The downgrade round-trip merely manufactured a
+session with no template source; the same cold-start gap is reachable without ever downgrading.
 
-**The defect class:** T66 taught the enclosure gate to ignore the entry's OWN actor; nobody taught
-it to ignore the group's ATTACHED PLAYER BUILDINGS. Invisible in normal play because a built-on well
-is never torn down and re-validated inside one install; any actor-loss scenario (downgrade
-round-trip; possibly other actor-teardown paths) forces re-placement through the gate, which the
-building then blocks.
-
-**Fix shape (when picked up):** extend the gate's ignore set for well re-placement to the group's
-own attached buildings — the built-on detection already identifies them (Pressurizer on core / Well
-Extractors on satellites, `NodeShuffleWellRoll.cpp:29-31` area); SYMMETRY duty with T66's
-self-ignore. **Also worth measuring first: does dismantling the blocking building let the well
-rebuild on next approach?** If yes, that recovery step upgrades the mod-page warning into a
-recovery procedure. UNMEASURED as of filing.
+**Fix shape (when picked up):** persist the session template and fill it outside the first-capture
+early-out (`WellVisuals.cpp:147` returns before the fill at `:205`), plus a bundled fallback rock
+mesh so no group ever dresses with zero pieces. **Cosmetic sibling:** origin geysers survive the
+well's removal — decide keep-as-landmark vs hide when this is picked up.

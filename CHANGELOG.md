@@ -9,7 +9,7 @@
   new site that is dressed and buildable. A well you have built on is never touched; a new game shuffles
   wells from the start, an existing world from the first **Re-roll Layout**. Saving and loading
   never re-rolls anything.
-- **Read this first: a moving well is genuinely gone in the meantime.** The original is removed the
+- **Read this first: a moving well is gone in the meantime.** The original is removed the
   moment a destination is dealt and the replacement is only built when you travel there, so it is in
   **neither** place in between, for an **unbounded** time — and a re-roll sends most already-moved
   wells missing again. Nothing turns this off; building on a well is the only way to pin it.
@@ -27,9 +27,10 @@
 
 ### Changed
 
-**Back up your save before upgrading — and never downgrade without a backup.** Measured on 1.3.0:
-a 1.4.0 world loads under the older version, but every well 1.4.0 has moved is absent there, and a
-built-on well does not return when you upgrade again — even if you never saved while downgraded.
+**Back up your save before upgrading, and before any downgrade.** On an older NodeShuffle a 1.4.0
+world loads, but every well 1.4.0 has moved is absent there; they return when you come back to
+1.4.0. A returning well can appear as bare ground at first — see the known-issue note on the mod
+page for the quick fix (fly near any fracking well, then reload).
 
 **Settings.** The page is now **15 settings in three groups** — the shuffle, other mods, and
 troubleshooting. **Enable Experimental Features** and **Allow Vanilla Nodes To Disappear** are gone,
