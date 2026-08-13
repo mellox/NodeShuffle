@@ -115,7 +115,7 @@ exactly where it is, and the mod re-checks that continuously, so the move
 happens by itself once you take the building down.
 
 **Read "Known behaviour" below before you start a save.** A relocated well is
-genuinely absent from the world for an **unbounded** time before its replacement
+absent from the world for an **unbounded** time before its replacement
 appears, and that now applies to every save rather than to people who opted in.
 Two edges are still unverified: **desert-biome wells** may arrive without their
 rock graphics, and a relocated well's build area has **not** been tested against
@@ -162,7 +162,7 @@ learned as you play and **shipped prebuilt** inside the mod. See
 
 ### What needs you nearby, and what doesn't
 
-Two different things get confused here, so plainly:
+Two different things get confused here:
 
 **Not gated on you at all.** Deciding *which resource goes where* and *hiding the original
 rock* cover the **whole map, at load** — every one of the game's resource nodes is already
@@ -170,7 +170,7 @@ live the moment your save opens (measured: all 630 of them, in a single frame, a
 biomes tens of kilometres apart). You do not have to explore for the shuffle to reach a
 node, and exploring does not "unlock" more of it.
 
-**Genuinely gated on you.** *Spawning a replacement rock* and *moving a resource well* both
+**Gated on you.** *Spawning a replacement rock* and *moving a resource well* both
 need the ground itself to be loaded, because we place them with a downward trace and you
 cannot trace terrain that isn't there. So a dealt node materialises when you come within
 the Spawn-On-Discovery radius, and a well moves when you visit its destination.
@@ -188,7 +188,7 @@ Resource-well relocation is *not* instant, and the
 original is removed **as soon as the well is dealt a destination** — not after the
 replacement exists. The replacement is only built once you travel to the new site
 and its terrain streams in, so between those two moments the well is in
-**neither** place: it is genuinely absent from the world. How long that lasts is
+**neither** place: it is absent from the world. How long that lasts is
 **not bounded** — destinations are drawn across the whole map, so a well dealt
 somewhere you never visit stays absent for as long as you don't go there.
 
