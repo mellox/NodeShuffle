@@ -6,12 +6,16 @@ locations** across the map and shuffles which are active, what resource each
 carries, and their purity — for **solids, oil/liquids, and modded nodes** alike —
 so every world is a fresh puzzle, while staying completable.
 
-## Compatibility note — Satisfactory Plus
+## Compatibility — Satisfactory Plus and other overhauls
 
-There is a known interaction between NodeShuffle and some Satisfactory Plus ecosystem versions
-that can cause occasional stuttering and some modded nodes not appearing. **Confirmed compatible
-with NodeShuffle:** KBFL 2026.2.267, MkPlusSFPlus 1.3.0-alpha, KPatchwork 2026.3.26, and earlier.
-This note will be updated as newer versions are confirmed.
+NodeShuffle is built to run alongside the Satisfactory Plus ecosystem: it writes the extractor
+compatibility patches an overhaul needs while you play (restart the game once to pick them up), and
+protection for other mods' nodes is on by default.
+
+*On the game's August 2026 anniversary update:* that update broke many overhaul mods' own builds, and
+several are still rebuilding for it. Compatibility gets re-confirmed as they update. The versions last
+confirmed working with NodeShuffle, **before** the update, were KBFL 2026.2.267, MkPlusSFPlus
+1.3.0-alpha and KPatchwork 2026.3.26 (and earlier) — a historical record, not a current pass.
 
 ## What it does
 
