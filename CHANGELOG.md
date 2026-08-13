@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.4.0 <!-- date stamped at release push -->
+## 1.4.0 — 2026-08-13
 
 ### New
 
