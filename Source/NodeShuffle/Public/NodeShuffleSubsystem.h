@@ -178,8 +178,8 @@ struct FNodeShufflePointInsideReading
     int32 OutboundDetailSuppressed = 0;
 };
 
-// One node-pool entry of the per-save layout. The layout is rolled exactly
-// once per save (seeded) and afterwards only ever *applied*; it is the single
+// One node-pool entry of the per-save layout. The initial layout is seeded;
+// late originals append new entries without rerolling existing ones. This is the single
 // source of truth for which nodes exist, are active, and what they carry.
 USTRUCT()
 struct FNodeShuffleEntry
@@ -220,6 +220,10 @@ struct FNodeShuffleEntry
 
     // The vanilla node Blueprint class to spawn new nodes from.
     UPROPERTY(SaveGame) FString NodeClassPath;
+
+    // A Base-only original cannot be spawned by the AFGResourceNode placement pipeline.
+    // Keep its original identity above; this optional representative is only for spawning.
+    UPROPERTY(SaveGame) FString SpawnNodeClassPath;
 
     // FIX C (overlap guard): how many times this new node's location has been
     // spiral-nudged off an overlap. Persisted so retries don't restart each load.
@@ -265,11 +269,10 @@ struct FNodeShuffleSuppressedOriginal
     // to Location, which is TRUE at initial capture and STALE (the previous relocated dest) after a
     // re-roll rebuild; see SuppressOriginalNodes/TryRematchStaleRecord in NodeShuffleSubsystem.cpp.
     UPROPERTY(SaveGame) FVector TrueLocation = FVector::ZeroVector;
-    // correct-visual-6: true when this record's node is MODDED-origin (original resource class path
-    // not under /Game/). Such nodes are LEFT NATIVE and must NEVER be suppressed/hidden — set inside
-    // RollLayout's Hide & Replace conversion (NodeShuffleSubsystem.cpp, the ONLY place OriginalNodeRecord
-    // is built; P5: the dead CaptureOriginalNodeRecord() this comment used to name has been removed) so
-    // SuppressOriginalNodes can skip them in BOTH hide loops.
+    // Durable identity even when an inactive original has no surviving layout entry.
+    UPROPERTY(SaveGame) FString OriginalNodeClassPath;
+    UPROPERTY(SaveGame) FString OriginalResourceClassPath;
+    // Origin metadata; both initial and late capture hide unoccupied modded originals.
     UPROPERTY(SaveGame) bool bModdedOrigin = false;
 };
 
@@ -948,6 +951,15 @@ private:
     // premise is false — see MinVanillaNodesForRoll in NodeShuffleSubsystem.cpp.)
     bool IsWorldReadyForReroll() const;
     void RollLayout(int32 Seed, bool bIsReroll);
+    // Two discovery scans per world session: after readiness/adoption, then 60 game seconds later.
+    // These scheduling fields are deliberately not SaveGame; every load gets a fresh schedule.
+    void MaybeCaptureLateOriginalNodes();
+    int32 LateNodeScansCompleted = 0;
+    double FirstLateNodeScanTime = 0.0;
+    // Appends only; never rerolls existing entries or touches wells.
+    void CaptureLateOriginalNodes();
+    FString LastLateCaptureCensus;
+    TSet<FString> LateDeferredClassWarnings;
     // ns-truth-diagnostics B: the once-per-roll `ROLLCENSUS:` truth line + the ZERO-ACTIVE alarm.
     // DIAGNOSTICS ONLY -- reads Layout and does one read-only live actor pass; writes nothing.
     // Every field it prints is a measurement and names its own test; nothing in it asserts a cause.

@@ -4,6 +4,7 @@
 #include "NodeShuffleNodeAssets.h"
 #include "NodeShuffleResourceNode.h"
 #include "NodeShuffleNodeComponent.h"
+#include "NodeShuffleLateNodePolicy.h"
 #include "NodeShuffleCentreShadow.h" // ns-t42-centreshadow: the one shadow-reading emitter
 #include "NodeShuffleTotallyInside.h" // ns-t53-totallyinside: the positive-only containment probe
 #include "NodeShuffleGroundIdentity.h" // ns-t45-verticaldiag: hit-identity + cave-store emitters
@@ -219,6 +220,8 @@ ANodeShuffleSubsystem::ANodeShuffleSubsystem()
 void ANodeShuffleSubsystem::BeginPlay()
 {
     Super::BeginPlay();
+    LateNodeScansCompleted = 0;
+    FirstLateNodeScanTime = 0.0;
     if (!HasAuthority())
     {
         return;
@@ -828,6 +831,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
             E.bPinned = bOccupied;
             E.bActive = true;
             E.NodeClassPath = Old.NodeClassPath;
+            E.SpawnNodeClassPath = Old.SpawnNodeClassPath;
             // rehide-1: carry the durable anchor through the rebuild. Opportunistically stamp it when
             // Old never got one but is STILL a raw (unconverted) original (!bIsNewNode) with a live,
             // path-resolvable node — Live above IS that node itself in this case, a true first-hand
@@ -1574,9 +1578,8 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     // itself is recorded for whole-actor hiding (SuppressOriginalNodes). Occupied/pinned originals
     // stay exactly where they are, 100% untouched (save-safety — built miners keep working).
     //
-    // Build OriginalNodeRecord HERE — the only place it is built (P5: the dead standalone
-    // CaptureOriginalNodeRecord() this comment used to contrast against has been removed) — because
-    // after this conversion the unoccupied originals are no longer present in Layout as non-new entries.
+    // Build the roll's OriginalNodeRecord here. CaptureLateOriginalNodes subsequently appends
+    // records for newly discovered originals without replacing this roll's entries.
     OriginalNodeRecord.Reset();
     {
         // Count the unoccupied originals that need a relocated home (active ones carry a resource;
@@ -1627,6 +1630,8 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                 // whenever it's set).
                 Rec.TrueLocation = !E.OriginalTrueLocation.IsNearlyZero() ? E.OriginalTrueLocation : E.Location;
                 Rec.bModdedOrigin = !E.OriginalResourceClassPath.StartsWith(TEXT("/Game/"));
+                Rec.OriginalNodeClassPath = E.NodeClassPath;
+                Rec.OriginalResourceClassPath = E.OriginalResourceClassPath;
                 OriginalNodeRecord.Add(Rec);
                 Recorded++;
             }
@@ -2154,13 +2159,9 @@ void ANodeShuffleSubsystem::ApplyLayout()
     {
         // Our own spawned (relocated) nodes are never cached as originals. dirtdress-1 (cold review)
         // NOTE: this exclusion is one layer of the capture poison-guard, but the safety ultimately
-        // rests on OriginalNodeRecord being built SOLELY from !bIsNewNode entries at roll time (the
-        // Hide & Replace conversion in RollLayout — the ONLY place it is built) — so SuppressOriginalNodes
-        // can only ever hand true originals to CaptureOriginalVisualIfNeeded. Any future refactor that
-        // widens SuppressOriginalNodes' caller population must re-verify our-node exclusion end to end.
-        // The transient first-pass cache gap (restored-not-yet-adopted spawned nodes, before
-        // AdoptRestoredSpawnedNodes runs) is unreachable today for exactly that reason: their paths
-        // are never in OriginalNodeRecord.
+        // rests on the roll and late-capture paths excluding managed actors. Late capture runs AFTER
+        // adoption and independently checks the managed registry, component and legacy class;
+        // it does not trust this cache's pre-adoption population as proof of original ownership.
         if (NodeShuffleIsOurNode(*It)) { continue; } // our own spawned (relocated) nodes, not originals
         TWeakObjectPtr<AFGResourceNodeBase>& Slot = VanillaNodeCache.FindOrAdd(It->GetPathName());
         if (!Slot.IsValid()) { Slot = *It; CacheAdded++; }
@@ -2182,6 +2183,10 @@ void ANodeShuffleSubsystem::ApplyLayout()
     // redesign-1: pair each original node to its own AFGNodeMeshActor so SuppressOriginalNodes can
     // hide the paired mesh actor when an unoccupied original streams in. Rebuilt each pass.
     RebuildMeshActorCache();
+
+    // Restored managed actors have been adopted above. Capture only additional originals;
+    // the normal spawn/hide/scanner paths below apply the appended entries this pass.
+    MaybeCaptureLateOriginalNodes();
 
     // redesign-1: reset per-pass spawned-visual coverage counters (logged at pass end).
     SpawnedRockVanilla = 0;
@@ -2342,7 +2347,7 @@ void ANodeShuffleSubsystem::ApplyLayout()
             SteadyAliveNodes.Num(), SteadyHiddenOriginals.Num(), DormantThisSession.Num(), DeferredThisPass);
     }
 
-    if (bChangedWorld)
+    if (bChangedWorld || SuppressChangesLastPass > 0)
     {
         RefreshScannersAndRadarTowers();
     }
@@ -4686,6 +4691,10 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
         return;
     }
     SpawnFailCounts.Remove(Entry.EntryGuid); // success resets the consecutive-failure budget
+    if (ANodeShuffleResourceNode* Legacy = Cast<ANodeShuffleResourceNode>(Node))
+    {
+        Legacy->EntryGuid = Entry.EntryGuid; // the fallback is adopted by GUID on reload
+    }
     // P3 (deckevict-1): SpawnForm hoisted from its original declaration further below (still used there,
     // for the visual-dress branch) so it's available here too, for the ProvenSpawnClassByForm record.
     const EResourceForm SpawnForm = UFGItemDescriptor::GetForm(TSubclassOf<UFGItemDescriptor>(ResourceClass));
@@ -5092,6 +5101,20 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
         // is an O(1)-ish cache hit, so resolving every record each pass is cheap. esc_ (Base-only) originals
         // resolve via the BASE finder too.
         AFGResourceNodeBase* Node = FindOriginalBaseByPath(Rec.VanillaNodePath);
+        // Runtime names can be reused for a different actor after a mod changes spawn order.
+        // New records carry enough identity to reject that path hit before hiding anything.
+        if (Node && !Rec.OriginalNodeClassPath.IsEmpty())
+        {
+            const UClass* Resource = Node->GetResourceClass();
+            const FVector Anchor = Rec.TrueLocation.IsNearlyZero() ? Rec.Location : Rec.TrueLocation;
+            if (NodeShuffleIsOurNode(Node) || FNodeShuffleModule::IsManagedSpawnedNode(Node)
+                || Node->GetClass()->GetPathName() != Rec.OriginalNodeClassPath
+                || !Resource || Resource->GetPathName() != Rec.OriginalResourceClassPath
+                || FVector::DistSquared(Node->GetActorLocation(), Anchor) >= FMath::Square(AdoptMatchRadiusCm))
+            {
+                Node = nullptr; // use the same identity-based re-match as a missing path
+            }
+        }
         if (!Node)
         {
             // rehide-1: the record's path is dead — most likely a spawner mod re-created this node with
@@ -5657,10 +5680,24 @@ AFGResourceNodeBase* ANodeShuffleSubsystem::TryRematchStaleRecord(FNodeShuffleSu
     FNodeShuffleEntry* MatchEntry = nullptr;
     for (FNodeShuffleEntry& E : Layout)
     {
-        if (E.VanillaNodePath == Rec.VanillaNodePath) { MatchEntry = &E; break; }
+        if (E.VanillaNodePath != Rec.VanillaNodePath) { continue; }
+        // A spawner can swap two originals' names on reload. Rebinding the first record
+        // may temporarily give two entries the same path; select by durable identity too.
+        if (!Rec.OriginalNodeClassPath.IsEmpty()
+            && !NodeShuffleLateNodePolicy::MatchesOriginalIdentity(
+                E.NodeClassPath == Rec.OriginalNodeClassPath,
+                E.OriginalResourceClassPath == Rec.OriginalResourceClassPath,
+                FVector::DistSquared(E.OriginalTrueLocation, Anchor), FMath::Square(AdoptMatchRadiusCm)))
+        {
+            continue;
+        }
+        MatchEntry = &E;
+        break;
     }
-    const FString ExpectedClassPath = MatchEntry ? MatchEntry->NodeClassPath : FString();
-    const FString ExpectedResourcePath = MatchEntry ? MatchEntry->OriginalResourceClassPath : FString();
+    const FString ExpectedClassPath = !Rec.OriginalNodeClassPath.IsEmpty()
+        ? Rec.OriginalNodeClassPath : (MatchEntry ? MatchEntry->NodeClassPath : FString());
+    const FString ExpectedResourcePath = !Rec.OriginalResourceClassPath.IsEmpty()
+        ? Rec.OriginalResourceClassPath : (MatchEntry ? MatchEntry->OriginalResourceClassPath : FString());
     const FString LegacyClassToken = RehideClassNameToken(Rec.VanillaNodePath);
     const FString ClassLabel = !ExpectedClassPath.IsEmpty()
         ? FPackageName::ObjectPathToObjectName(ExpectedClassPath) : LegacyClassToken;
@@ -6787,13 +6824,14 @@ bool ANodeShuffleSubsystem::TryRedealWaterLockedEntry(FNodeShuffleEntry& Entry)
 
 FString ANodeShuffleSubsystem::ResolveSpawnNodeClassPath(const FNodeShuffleEntry& Entry) const
 {
-    // P3 (deckevict-1): the class an entry should ACTUALLY spawn from. Identical to Entry.NodeClassPath
-    // unless that class was evicted this session -> nothing persists (design §2.2). Num()==0 fast path
+    // The actual spawn class: a saved representative for Base-only originals, then any session eviction.
+    // Original NodeClassPath remains the identity used to find and hide the original. Num()==0 fast path
     // mirrors the established idiom elsewhere in this file (e.g. VanillaNodeCache/SteadyHiddenOriginals
     // early-outs) — the common case (no eviction ever happened) is a single int compare.
-    if (SpawnRefusedClassSubstitute.Num() == 0) { return Entry.NodeClassPath; }
-    const FString* Sub = SpawnRefusedClassSubstitute.Find(Entry.NodeClassPath);
-    return (Sub && !Sub->IsEmpty()) ? *Sub : Entry.NodeClassPath;
+    const FString& ClassPath = Entry.SpawnNodeClassPath.IsEmpty() ? Entry.NodeClassPath : Entry.SpawnNodeClassPath;
+    if (SpawnRefusedClassSubstitute.Num() == 0) { return ClassPath; }
+    const FString* Sub = SpawnRefusedClassSubstitute.Find(ClassPath);
+    return (Sub && !Sub->IsEmpty()) ? *Sub : ClassPath;
 }
 
 // ns-review-g G1 (Packet G, CRITICAL fix): see the declaration comment in NodeShuffleSubsystem.h for
@@ -7087,7 +7125,8 @@ void ANodeShuffleSubsystem::EvictSpawnRefusingClass(const FString& RefusedPath, 
     for (FNodeShuffleEntry& E : Layout)
     {
         if (!E.bIsNewNode || !E.bActive || E.bPinned) { continue; }  // occupied originals + pinned: untouched
-        if (E.NodeClassPath != RefusedPath) { continue; }
+        const FString& SpawnPath = E.SpawnNodeClassPath.IsEmpty() ? E.NodeClassPath : E.SpawnNodeClassPath;
+        if (SpawnPath != RefusedPath) { continue; }
         if (DormantThisSession.Contains(E.EntryGuid)) { continue; } // dormant entries do no work
         if (SpawnedNodes.Contains(E.EntryGuid)) { continue; }       // defensive: cannot happen, class never spawned
         if (Substitute.IsEmpty())

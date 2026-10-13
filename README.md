@@ -41,7 +41,9 @@ confirmed working with NodeShuffle, **before** the update, were KBFL 2026.2.267,
 - **Starter nodes (optional)** — on a brand-new game, a small guaranteed set
   near spawn (Iron/Limestone/Copper) keeps the early game playable.
 - **Per-save, deterministic** — the layout is rolled once per save from a seed
-  and persists; identical on every reload. Never re-rolled unless you opt in.
+  and persists. With modded-node inclusion enabled, eligible additions are captured
+  once after each new game/load is ready and again 60 game seconds later. Discovery
+  then stops until the next load; existing entries are not re-rolled unless you opt in.
 - **Balance guarantees** — every vanilla resource keeps a configurable minimum
   number of active nodes, so no playthrough becomes impossible.
 - **Respects your factory** — any node with a miner or extractor on it is never
@@ -51,10 +53,11 @@ confirmed working with NodeShuffle, **before** the update, were KBFL 2026.2.267,
 - **Multiplayer-aware** — all logic is server-side; overrides replicate.
 
 > **Note on player-built nodes** (if you use a mod that lets you *build* resource
-> nodes): the shuffle is rolled once per save, so a node you build during normal
-> play is left alone. But if you **re-roll**, an unoccupied built node is shuffled
-> just like any world node — to keep one exactly as built, place a miner on it
-> first (occupied nodes are always pinned and never moved or retyped).
+> nodes): with modded-node inclusion enabled, newly discovered eligible nodes
+> can join during those two startup/load scans. Occupied nodes are recorded in place;
+> unoccupied nodes present at a scan can move. Nodes appearing after the follow-up
+> wait until a later load. The follow-up runs on the first refresh at or after 60
+> game seconds; pausing the game pauses that delay. Scan duration and additions are logged.
 
 ## Configuration
 
