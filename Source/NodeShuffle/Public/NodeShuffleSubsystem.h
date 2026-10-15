@@ -5,6 +5,7 @@
 #include "FGSaveInterface.h"
 #include "Resources/FGResourceNode.h"
 #include "NodeShuffle.h" // ns-h1b-notice: FNodeShufflePendingEntry, held by value in a member below
+#include "NodeShuffleMapMode.h" // RWG P1: ENodeShuffleMapMode, held by value in a member below
 #include "NodeShuffleSubsystem.generated.h"
 
 class AFGNodeMeshActor;
@@ -958,6 +959,42 @@ private:
     double FirstLateNodeScanTime = 0.0;
     // Appends only; never rerolls existing entries or touches wells.
     void CaptureLateOriginalNodes();
+
+    // ---- RWG P1 (2026-10-14): map identity + observe-only readiness. Defined in NodeShuffleMapMode.cpp. ----
+    // GetMapMode latches on the first call that can read the persistent level's package; a call with no
+    // world returns Unknown WITHOUT latching. Everything below except GetMapMode/LogMapModeOnce runs ONLY
+    // off vanilla (RefreshTick returns into RwgObserveTick before any vanilla code when the map is not vanilla).
+    ENodeShuffleMapMode GetMapMode() const;
+    void LogMapModeOnce();
+    void RwgObserveTick();
+    void RwgCountNodes(int32& OutNodes, int32& OutFracking, int32& OutDeposits) const;
+    void RwgDiscoverGenerator();
+    bool RwgReadGeneratorState(FString& OutGenState, FString& OutProgressStage) const;
+    void RwgLogProbe();
+    void RwgLogReadyDiagnostics();
+    void RwgLogCollision(bool bEmitWater);
+    void RwgLogRock();
+    mutable ENodeShuffleMapMode MapMode = ENodeShuffleMapMode::Unlatched;
+    mutable FString MapPackageName;
+    TWeakObjectPtr<UObject> RwgGenerator;
+    FString RwgGeneratorClassPath;
+    int32 RwgFallbackScans = 0;
+    int32 RwgObserveTicks = 0;
+    int32 RwgPrevNodeCount = -1;
+    int32 RwgStableTicks = 0;
+    int32 RwgReadyNodeCount = 0;
+    bool bRwgReady = false; // observe-only latch in P1; IsWorldReadyForReroll ANDs it off vanilla (spec B4)
+    bool bRwgProbeLogged = false;
+    bool bRwgWaitWarned = false;
+    bool bRwgLayoutNoticeLogged = false;
+    bool bRwgPawnFirstSet = false;
+    FVector RwgPawnFirst = FVector::ZeroVector;
+    float RwgZMin = 0.f;
+    float RwgZMax = 0.f;
+    float RwgMeanZ = 0.f;
+    // Store-isolation once-latches for the off-vanilla flush skips (const functions; log-only).
+    mutable bool bStoreWaterFlushSkipLogged = false;
+    mutable bool bStoreCaveFlushSkipLogged = false;
     FString LastLateCaptureCensus;
     TSet<FString> LateDeferredClassWarnings;
     // ns-truth-diagnostics B: the once-per-roll `ROLLCENSUS:` truth line + the ZERO-ACTIVE alarm.

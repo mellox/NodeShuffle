@@ -226,6 +226,8 @@ void ANodeShuffleSubsystem::BeginPlay()
     {
         return;
     }
+    // RWG P1: latch the map identity for this world and print MAPMODE (the only new vanilla-visible effect).
+    LogMapModeOnce();
     // coexist-veto-1: fresh world, fresh managed-node registry (it is module-static, so it outlives
     // worlds; stale FObjectKeys from a previous world can never match a new actor, but clearing keeps
     // it tight). Then arm the optional KBFL destroyer veto for THIS world. Timing matters: actor
@@ -271,6 +273,15 @@ void ANodeShuffleSubsystem::RefreshTick()
         return;
     }
     bLoggedDisabled = false;
+
+    // RWG P1 (spec §B3/§H): OFF VANILLA this build is OBSERVE-ONLY. It returns here, before the starter-node
+    // capture, the roll, the re-roll, ApplyLayout and everything ApplyLayout drives (late scans, adoption,
+    // knowledge, AutoAllow, rocks). On vanilla this is one compare of a latched enum and nothing below moves.
+    if (GetMapMode() != ENodeShuffleMapMode::Vanilla)
+    {
+        RwgObserveTick();
+        return;
+    }
 
     // redesign-1 STARTER NODES: capture the player's REAL spawn location as early as possible on a
     // BRAND-NEW game (before the layout is first rolled, before the player wanders). Works with
@@ -462,6 +473,13 @@ bool ANodeShuffleSubsystem::IsWorldReadyForReroll() const
     // Gate instead on enough LOADED resource nodes of ANY kind, after a short post-load settle.
     // (ns-truth-diagnostics: the settle is a cheap "let the world finish coming up" delay, not a
     // streaming wait — see MinVanillaNodesForRoll.)
+    // RWG P1 (spec §B4): off vanilla this gate also ANDs the RWG readiness latch. Both consumers (the re-roll
+    // branch in RefreshTick and late scan 1 in NodeShuffleLateNodes.cpp) inherit it from this one site. P1
+    // never reaches either off vanilla (RefreshTick returns into RwgObserveTick first); the AND is for P2.
+    if (GetMapMode() != ENodeShuffleMapMode::Vanilla && !bRwgReady)
+    {
+        return false;
+    }
     if (GetWorld() && GetWorld()->GetTimeSeconds() < 8.0f)
     {
         return false;
@@ -2112,6 +2130,14 @@ bool ANodeShuffleSubsystem::ReadCustomLocationsJson(TArray<FVector>& OutLocation
 
 void ANodeShuffleSubsystem::WriteGeneratedLocationsJson(const TArray<FVector>& Locations) const
 {
+    // RWG P1 (spec §A3): write-only debug export, vanilla only (no reader in Source).
+    if (GetMapMode() != ENodeShuffleMapMode::Vanilla)
+    {
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("GENERATEDNODES: non-vanilla map: Configs/NodeShuffle_GeneratedNodes.json not written (%d locations)"),
+            Locations.Num());
+        return;
+    }
     TArray<TSharedPtr<FJsonValue>> Nodes;
     for (const FVector& Loc : Locations)
     {
@@ -5914,6 +5940,19 @@ int32 ANodeShuffleSubsystem::MergeWaterGridFromJson(const FString& Path, bool bK
 void ANodeShuffleSubsystem::EnsureWaterGridLoaded() const
 {
     if (bWaterGridLoaded) { return; }
+    // RWG P1 (spec §A2): a non-vanilla map never opens the vanilla learned file and never merges the baked
+    // vanilla grid. The grid it learns this session stays in memory (Flush below refuses to write it).
+    if (GetMapMode() != ENodeShuffleMapMode::Vanilla)
+    {
+        // Unresolvable map (no world/level yet): load nothing and do NOT latch, so a later call decides.
+        // Latching here would let a later vanilla flush overwrite the file with a grid that never loaded it.
+        if (MapMode == ENodeShuffleMapMode::Unlatched) { return; }
+        bWaterGridLoaded = true;
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("WATERGRID: non-vanilla map package '%s': session-only store; Configs/NodeShuffle_WaterGrid.json and the embedded baked grid were not loaded"),
+            *MapPackageName);
+        return;
+    }
     bWaterGridLoaded = true;
     // 1. The user's LOCAL learned grid (authoritative).
     const FString LocalPath = FPaths::Combine(FPaths::ProjectDir(), TEXT("Configs"), TEXT("NodeShuffle_WaterGrid.json"));
@@ -5936,6 +5975,21 @@ void ANodeShuffleSubsystem::EnsureWaterGridLoaded() const
 
 void ANodeShuffleSubsystem::FlushWaterGridIfDirty() const
 {
+    // RWG P1 (spec §A2): every flush trigger (EndPlay, PreSaveGame, the 500-sample safety flush) lands here,
+    // so this one guard keeps non-vanilla cells out of the vanilla file. The counter reset mirrors the
+    // failed-write path below: it stops the per-sample retry; nothing is ever written off vanilla.
+    if (GetMapMode() != ENodeShuffleMapMode::Vanilla)
+    {
+        if (bWaterGridDirty && !bStoreWaterFlushSkipLogged)
+        {
+            bStoreWaterFlushSkipLogged = true;
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("WATERGRID: non-vanilla map: flush to Configs/NodeShuffle_WaterGrid.json skipped; %d cells held in session memory only (later skips not logged)"),
+                WaterGrid.Num());
+        }
+        WaterGridNewSamples = 0;
+        return;
+    }
     if (!bWaterGridDirty) { return; }
     TArray<TSharedPtr<FJsonValue>> Land, Water, Mixed;
     for (const auto& Pair : WaterGrid)
@@ -6119,6 +6173,18 @@ int32 ANodeShuffleSubsystem::MergeCaveStoreFromJson(const FString& Path, bool bK
 void ANodeShuffleSubsystem::EnsureCaveStoreLoaded() const
 {
     if (bCaveStoreLoaded) { return; }
+    // RWG P1 (spec §A2): mirror of EnsureWaterGridLoaded -- no vanilla file, no baked vanilla atlas off vanilla.
+    if (GetMapMode() != ENodeShuffleMapMode::Vanilla)
+    {
+        // Unresolvable map (no world/level yet): load nothing and do NOT latch, so a later call decides.
+        // Latching here would let a later vanilla flush overwrite the file with a grid that never loaded it.
+        if (MapMode == ENodeShuffleMapMode::Unlatched) { return; }
+        bCaveStoreLoaded = true;
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("CAVESTORE: non-vanilla map package '%s': session-only store; Configs/NodeShuffle_CaveFloors.json and the embedded baked atlas were not loaded"),
+            *MapPackageName);
+        return;
+    }
     bCaveStoreLoaded = true;
     // 1. The user's LOCAL learned store (authoritative).
     int32 LocalSeedCount = 0;
@@ -6145,6 +6211,19 @@ void ANodeShuffleSubsystem::EnsureCaveStoreLoaded() const
 
 void ANodeShuffleSubsystem::FlushCaveStoreIfDirty() const
 {
+    // RWG P1 (spec §A2): mirror of FlushWaterGridIfDirty's guard (EndPlay, PreSaveGame, record-count triggers).
+    if (GetMapMode() != ENodeShuffleMapMode::Vanilla)
+    {
+        if (bCaveStoreDirty && !bStoreCaveFlushSkipLogged)
+        {
+            bStoreCaveFlushSkipLogged = true;
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("CAVESTORE: non-vanilla map: flush to Configs/NodeShuffle_CaveFloors.json skipped; %d cells and %d classified originals held in session memory only (later skips not logged)"),
+                CaveFloors.Num(), CaveSeedsDone.Num());
+        }
+        CaveStoreNewRecords = 0;
+        return;
+    }
     if (!bCaveStoreDirty) { return; }
     TArray<TSharedPtr<FJsonValue>> Seeds, Cells;
     for (const FString& S : CaveSeedsDone) { Seeds.Add(MakeShared<FJsonValueString>(S)); }
