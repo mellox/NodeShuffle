@@ -498,6 +498,7 @@ void ANodeShuffleSubsystem::RestoreOriginalsForReroll()
     // rehide-1 (cold review): same lifecycle for the no-match REHIDE throttle — rebuilt records keep
     // their old path keys, so without this a still-stale record stays log-silent after a re-roll.
     RematchNoMatchLogged.Empty();
+    PathIdentityRejectLogged.Empty();
 
     int32 Unhidden = 0;
     for (const FNodeShuffleSuppressedOriginal& Rec : OriginalNodeRecord)
@@ -1630,8 +1631,12 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                 // whenever it's set).
                 Rec.TrueLocation = !E.OriginalTrueLocation.IsNearlyZero() ? E.OriginalTrueLocation : E.Location;
                 Rec.bModdedOrigin = !E.OriginalResourceClassPath.StartsWith(TEXT("/Game/"));
-                Rec.OriginalNodeClassPath = E.NodeClassPath;
                 Rec.OriginalResourceClassPath = E.OriginalResourceClassPath;
+                // OriginalNodeClassPath arms SuppressOriginalNodes' path-hit identity check (class, resource AND
+                // distance to TrueLocation), so stamp it ONLY when the anchor above is first-hand. A converted
+                // pre-rehide-1 entry has no OriginalTrueLocation and its E.Location is the previous relocated
+                // destination; leaving the class empty keeps the 1.4.0 trust-the-path behaviour for it.
+                if (!E.OriginalTrueLocation.IsNearlyZero()) { Rec.OriginalNodeClassPath = E.NodeClassPath; }
                 OriginalNodeRecord.Add(Rec);
                 Recorded++;
             }
@@ -5107,12 +5112,20 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
         {
             const UClass* Resource = Node->GetResourceClass();
             const FVector Anchor = Rec.TrueLocation.IsNearlyZero() ? Rec.Location : Rec.TrueLocation;
-            if (NodeShuffleIsOurNode(Node) || FNodeShuffleModule::IsManagedSpawnedNode(Node)
-                || Node->GetClass()->GetPathName() != Rec.OriginalNodeClassPath
-                || !Resource || Resource->GetPathName() != Rec.OriginalResourceClassPath
-                || FVector::DistSquared(Node->GetActorLocation(), Anchor) >= FMath::Square(AdoptMatchRadiusCm))
+            const bool bOurs = NodeShuffleIsOurNode(Node) || FNodeShuffleModule::IsManagedSpawnedNode(Node);
+            const bool bClassOk = Node->GetClass()->GetPathName() == Rec.OriginalNodeClassPath;
+            const bool bResOk = Resource && Resource->GetPathName() == Rec.OriginalResourceClassPath;
+            const float DistCm = FVector::Dist(Node->GetActorLocation(), Anchor);
+            if (bOurs || !bClassOk || !bResOk || DistCm >= AdoptMatchRadiusCm)
             {
-                Node = nullptr; // use the same identity-based re-match as a missing path
+                if (!PathIdentityRejectLogged.Contains(Rec.VanillaNodePath))
+                {
+                    PathIdentityRejectLogged.Add(Rec.VanillaNodePath);
+                    UE_LOG(LogNodeShuffle, Display,
+                        TEXT("REHIDE path-identity reject: path='%s' ours=%d classMatch=%d resourceMatch=%d distToRecordAnchorCm=%.0f radiusCm=%.0f; path hit discarded, record handled as unresolved"),
+                        *Rec.VanillaNodePath, bOurs ? 1 : 0, bClassOk ? 1 : 0, bResOk ? 1 : 0, DistCm, AdoptMatchRadiusCm);
+                }
+                Node = nullptr;
             }
         }
         if (!Node)

@@ -1127,6 +1127,7 @@ private:
     // log to once per record (the record itself still retries silently every pass, covering late/lazy
     // spawners; see TryRematchStaleRecord).
     TSet<FString> RematchNoMatchLogged;
+    TSet<FString> PathIdentityRejectLogged;
     // P5 (addenda item 3): the standalone CaptureOriginalNodeRecord() declaration that used to sit
     // here was dead code (no callers) and has been removed. OriginalNodeRecord — the persistent record
     // of every unoccupied original node location (vanilla AND modded) that SuppressOriginalNodes hides

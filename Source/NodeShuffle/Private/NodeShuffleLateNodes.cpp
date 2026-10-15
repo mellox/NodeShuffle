@@ -24,9 +24,10 @@ void ANodeShuffleSubsystem::MaybeCaptureLateOriginalNodes()
     if (LateNodeScansCompleted == 0) { FirstLateNodeScanTime = Now; }
     ++LateNodeScansCompleted; // Count empty/deferred scans too: never create an unbounded retry loop.
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("LATE-NODES scan=%d/2 elapsedSinceFirst=%.1fs durationMs=%.2f addedEntries=%d addedHideRecords=%d discoveryComplete=%d"),
+        TEXT("LATE-NODES scan=%d/2 elapsedSinceFirst=%.1fs durationMs=%.2f addedEntries=%d addedHideRecords=%d layoutTotal=%d hideRecordsTotal=%d scheduleExhausted=%d"),
         LateNodeScansCompleted, Now - FirstLateNodeScanTime, (FPlatformTime::Seconds() - Started) * 1000.0,
-        Layout.Num() - LayoutBefore, OriginalNodeRecord.Num() - RecordsBefore, LateNodeScansCompleted == 2);
+        Layout.Num() - LayoutBefore, OriginalNodeRecord.Num() - RecordsBefore, Layout.Num(), OriginalNodeRecord.Num(),
+        LateNodeScansCompleted == 2);
 }
 
 // Additional originals are dealt into new locations, without changing the existing draw.
@@ -71,7 +72,7 @@ void ANodeShuffleSubsystem::CaptureLateOriginalNodes()
     }
 
     TArray<AFGResourceNodeBase*> Candidates;
-    int32 Seen = 0, Managed = 0, Known = 0, Ineligible = 0, AnchorDeferred = 0;
+    int32 Seen = 0, Managed = 0, Known = 0, Ineligible = 0, OnOurDestination = 0, AnchorDeferred = 0;
     for (TActorIterator<AFGResourceNodeBase> It(GetWorld()); It; ++It)
     {
         AFGResourceNodeBase* Node = *It;
@@ -94,6 +95,20 @@ void ANodeShuffleSubsystem::CaptureLateOriginalNodes()
             ++Ineligible;
             continue;
         }
+        // Mirror of AdoptRestoredSpawnedNodes' key (active new-node entry, same dealt resource, within
+        // 300 cm of E.Location): an actor on one of OUR destinations is never treated as a fresh original.
+        bool bOnOurDestination = false;
+        for (const FNodeShuffleEntry& E : Layout)
+        {
+            if (!E.bIsNewNode || !E.bActive) { continue; }
+            if (E.AssignedResourceClassPath == Resource->GetPathName()
+                && FVector::DistSquared(E.Location, Node->GetActorLocation()) < FMath::Square(300.0f))
+            {
+                bOnOurDestination = true;
+                break;
+            }
+        }
+        if (bOnOurDestination) { ++OnOurDestination; continue; }
 
         // Spawner mods recreate actors with new names on reload. Never treat an actor at
         // a recorded original's anchor as a fresh discovery while re-matching is pending.
@@ -128,8 +143,8 @@ void ANodeShuffleSubsystem::CaptureLateOriginalNodes()
     }
 
     const FString Census = FString::Printf(
-        TEXT("seen=%d managed=%d knownPath=%d ineligible=%d recordedAnchor=%d candidates=%d"),
-        Seen, Managed, Known, Ineligible, AnchorDeferred, Candidates.Num());
+        TEXT("seen=%d managed=%d knownPath=%d ineligible=%d onOurDestination=%d recordedAnchor=%d candidates=%d"),
+        Seen, Managed, Known, Ineligible, OnOurDestination, AnchorDeferred, Candidates.Num());
     if (Census != LastLateCaptureCensus)
     {
         UE_LOG(LogNodeShuffle, Display, TEXT("LATE-NODES census: %s"), *Census);
