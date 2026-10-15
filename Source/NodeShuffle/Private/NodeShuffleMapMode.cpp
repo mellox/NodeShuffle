@@ -202,8 +202,8 @@ void ANodeShuffleSubsystem::RwgDiscoverGenerator()
         {
             if (!IsValid(O)) { continue; }
             ++Instances;
-            if (!FirstAny) { FirstAny = O; }
             if (O->GetWorld() == World) { Found = O; break; }
+            if (!FirstAny && O->GetWorld() == nullptr) { FirstAny = O; }
         }
         if (!Found) { Found = FirstAny; }
     }
@@ -299,7 +299,15 @@ void ANodeShuffleSubsystem::RwgObserveTick()
     if (!World) { return; }
     if (GetMapMode() == ENodeShuffleMapMode::Unknown)
     {
-        // Spec decision 2 (recommendation): an unrecognised map idles. MAPMODE already printed the package.
+        // Spec decision 2: an unrecognised map idles -- loudly, once, naming both strings. Fail CLOSED by design.
+        if (MapMode == ENodeShuffleMapMode::Unknown && !bRwgUnknownWarned)
+        {
+            bRwgUnknownWarned = true;
+            UE_LOG(LogNodeShuffle, Warning,
+                TEXT("MAPMODE: map package '%s' equals neither '%s' nor '%s'; this session NodeShuffle runs no roll and no layout apply on this map and reads and writes neither NodeShuffle_WaterGrid.json nor NodeShuffle_CaveFloors.json; saved layout entries %d, hide records %d"),
+                *MapPackageName, NodeShuffleMapMode::VanillaPackage(), NodeShuffleMapMode::RwgPackage(),
+                Layout.Num(), OriginalNodeRecord.Num());
+        }
         return;
     }
     ++RwgObserveTicks;
@@ -332,9 +340,9 @@ void ANodeShuffleSubsystem::RwgObserveTick()
         const bool bVeto = bReadable && (Gen == TEXT("WaitingForSeed") || Gen == TEXT("BuildingWorld")
             || Gen == TEXT("SpawningContent") || Gen == TEXT("RestoringSave"));
         const bool bDone = bReadable && !bVeto && (Gen == TEXT("Running") || Stage == TEXT("Ready"));
-        const int32 Required = bReadable ? NodeShuffleMapMode::RwgStableTicksWithGenerator
-                                         : NodeShuffleMapMode::RwgStableTicksRequired;
-        const bool bReadyNow = Nodes >= RwgMinNodes && RwgStableTicks >= Required && (!bReadable || bDone);
+        const int32 Required = bDone ? NodeShuffleMapMode::RwgStableTicksWithGenerator
+                                     : NodeShuffleMapMode::RwgStableTicksRequired;
+        const bool bReadyNow = Nodes >= RwgMinNodes && !bVeto && RwgStableTicks >= Required;
         const FString GenShown = bReadable ? Gen : FString(TEXT("<unreadable>"));
         const FString StageShown = Stage.IsEmpty() ? FString(TEXT("<unreadable>")) : Stage;
         if (!bReadyNow)
@@ -389,7 +397,7 @@ void ANodeShuffleSubsystem::RwgObserveTick()
             ? static_cast<float>(FVector::Dist(Pawn->GetActorLocation(), RwgPawnFirst) / 100.0) : -1.f;
         UE_LOG(LogNodeShuffle, Display,
             TEXT("RWGREADY: by=%s t=%.1fs realT=%.1fs nodes=%d fracking=%d deposits=%d stableTicks=%d genState='%s' progressStage='%s' zMin=%.0f zMax=%.0f meanZ=%.0f boxKm=%.1fx%.1f pawnMovedSinceFirstTickM=%.0f rollOffVanillaEnabled=%d"),
-            bReadable ? TEXT("generator") : TEXT("quiescence"), T, RealT, Nodes, Fracking, Deposits, RwgStableTicks,
+            bDone ? TEXT("generator") : TEXT("quiescence"), T, RealT, Nodes, Fracking, Deposits, RwgStableTicks,
             *GenShown, *StageShown, RwgZMin, RwgZMax, RwgMeanZ, BoxXKm, BoxYKm, MovedM,
             NodeShuffleMapMode::bRwgRollEnabled ? 1 : 0);
         RwgLogReadyDiagnostics();

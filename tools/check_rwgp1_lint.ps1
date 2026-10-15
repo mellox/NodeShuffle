@@ -99,6 +99,17 @@ $gen = Get-Body $text.subsys ('void ' + $cls + 'WriteGeneratedLocationsJson(cons
 if (-not $gen -or $gen.IndexOf($notVanilla) -lt 0 -or $gen.IndexOf($notVanilla) -gt $gen.IndexOf('SaveStringToFile(')) {
     $fails += 'R3: WriteGeneratedLocationsJson must test the map mode before writing'
 }
+# R3b: each off-vanilla guard block must END in `return;` directly before the vanilla path (R3 pins order, not the return).
+$tails = [ordered]@{
+    'EnsureWaterGridLoaded() const' = 'return;\s*\}\s*bWaterGridLoaded = true;\s*// 1\. The user'
+    'EnsureCaveStoreLoaded() const' = 'return;\s*\}\s*bCaveStoreLoaded = true;\s*// 1\. The user'
+    'FlushWaterGridIfDirty() const' = 'WaterGridNewSamples = 0;\s*return;\s*\}\s*if \(!bWaterGridDirty\) \{ return; \}'
+    'FlushCaveStoreIfDirty() const' = 'CaveStoreNewRecords = 0;\s*return;\s*\}\s*if \(!bCaveStoreDirty\) \{ return; \}'
+}
+foreach ($fn in $tails.Keys) {
+    $b = Get-Body $text.subsys ('void ' + $cls + $fn)
+    if (-not $b -or $b -notmatch $tails[$fn]) { $fails += "R3b: $fn guard block does not end in return; before the vanilla path" }
+}
 
 # R4
 $van = '/Game/FactoryGame/Map/GameLevel01/' + 'Persistent_Level'
@@ -114,6 +125,7 @@ if (-not $gm) { $fails += 'R4: GetMapMode body not found' } else {
     if (([regex]::Matches($gm, 'MapPackageName\.Equals\(')).Count -ne 2) { $fails += 'R4: GetMapMode must classify with exactly two Equals comparisons' }
     if ($gm -match ('MapPackageName\.(Starts' + 'With|Con' + 'tains|Ends' + 'With)')) { $fails += 'R4: GetMapMode uses a fuzzy package match' }
 }
+if ($gm -and $gm -notmatch ('Equals\(NodeShuffleMapMode::VanillaPackage\(\), ESearchCase::IgnoreCase\)\)\s*\{\s*MapMode = ENodeShuffleMapMode::' + 'Vanilla;')) { $fails += 'R4b: the vanilla package literal no longer classifies as Vanilla' }
 
 # R5
 $rr = Get-Body $text.subsys ('bool ' + $cls + 'IsWorldReadyForReroll() const')

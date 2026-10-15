@@ -987,6 +987,7 @@ private:
     bool bRwgProbeLogged = false;
     bool bRwgWaitWarned = false;
     bool bRwgLayoutNoticeLogged = false;
+    bool bRwgUnknownWarned = false;
     bool bRwgPawnFirstSet = false;
     FVector RwgPawnFirst = FVector::ZeroVector;
     float RwgZMin = 0.f;

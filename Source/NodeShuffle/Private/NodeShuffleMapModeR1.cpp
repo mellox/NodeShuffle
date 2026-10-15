@@ -139,10 +139,10 @@ void ANodeShuffleSubsystem::RwgLogRock()
             I + 1, Nodes.Num(), *Nodes[I]->GetClass()->GetName(),
             Nodes[I]->GetResourceClass() ? *Nodes[I]->GetResourceClass()->GetName() : TEXT("<none>"),
             FVector::Dist(Nodes[I]->GetActorLocation(), From) / 100.0,
-            Linked ? *Linked->GetClass()->GetName() : TEXT("<none loaded>"),
+            Linked ? *Linked->GetClass()->GetName() : TEXT("<unresolved or unset>"),
             MeshActorNear[I], NearCount[I], *Near[I]);
     }
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("RWGROCK: sampled=%d withLinkedMeshActorLoaded=%d withNodeMeshActorWithin8m=%d"),
+        TEXT("RWGROCK: sampled=%d withLinkedMeshActorResolved=%d withNodeMeshActorWithin8m=%d"),
         Nodes.Num(), WithMeshActorLink, WithNodeMeshActorNear);
 }
