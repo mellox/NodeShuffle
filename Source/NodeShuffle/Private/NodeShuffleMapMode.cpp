@@ -7,8 +7,8 @@
 // hides, spawns, adopts or writes a file. Nothing gates on its predicate except IsWorldReadyForReroll's
 // off-vanilla AND (spec B4), which P1 never reaches because RefreshTick returns before the re-roll branch.
 // Every log line reports what it MEASURED (counts, names, predicate branches); none states a cause.
-#include "NodeShuffleSubsystem.h"
 #include "NodeShuffleMapMode.h"
+#include "NodeShuffleSubsystem.h"
 #include "NodeShuffleNodeComponent.h"
 #include "NodeShuffleResourceNode.h"
 #include "EngineUtils.h"
