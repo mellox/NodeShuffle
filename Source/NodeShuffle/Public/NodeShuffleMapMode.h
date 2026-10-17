@@ -32,12 +32,19 @@ namespace NodeShuffleMapMode
     // pin deliberately. A code constant, not a config row (spec §H).
     constexpr bool bRwgRollEnabled = false;
 
-    // TODO(2026-10-14, RWG P1 -> R0): PLACEHOLDER. Quiescence needs this many consecutive 5 s ticks with an
-    // unchanged non-ours node count (12 = 60 s). R0 (the Enabled=false measurement run) sets it from the
-    // longest gap between RWG's spawn-progress lines. Read only by the observe-only readiness predicate.
+    // RWG P2a (2026-10-17, brief `_team/nodeshuffle-rwg-p2-spec.md` §1): readiness v2 needs this many
+    // consecutive 5 s ticks with an unchanged non-ours node count, counted ONLY from the first tick that read
+    // the generator's EPWProgressStage as Ready (that tick zeroes the counter; 12 = 60 s after it). Ticks
+    // before the first Ready never count. Read only by the observe-only readiness predicate in RwgObserveTick.
     constexpr int32 RwgStableTicksRequired = 12;
-    // With a readable generator that reads done, the stable requirement drops to this (spec §B1).
-    constexpr int32 RwgStableTicksWithGenerator = 2;
+    // Consecutive unreadable-stage ticks before the one-shot RWGWAIT unreadable Warning (12 = 60 s).
+    constexpr int32 RwgUnreadableWarnTicks = 12;
+    // Post-Ready re-probes (RWGWATER2 / RWGROCK2 / RWGHEIGHTAPI): at the latch, then every 12 ticks (60 s)
+    // until 120 ticks (10 min) after it.
+    constexpr int32 RwgReprobeWindowTicks = 120;
+    // Mirror of MinVanillaNodesForRoll (NodeShuffleSubsystem.cpp anonymous namespace, 50). Kept equal by hand.
+    // Shared by NodeShuffleMapMode.cpp and NodeShuffleMapModeR1.cpp (moved here from the .cpp in P2a).
+    constexpr int32 RwgMinNodes = 50;
     // RWGWAIT cadence (every 6th tick = 30 s), the post-ready observe cadence (60 s), the one-shot warning.
     constexpr int32 RwgWaitEveryTicks = 6;
     constexpr int32 RwgObserveEveryTicks = 12;

@@ -973,7 +973,15 @@ private:
     void RwgLogProbe();
     void RwgLogReadyDiagnostics();
     void RwgLogCollision(bool bEmitWater);
-    void RwgLogRock();
+    void RwgLogRock(bool bPerNode);
+    // ---- RWG P2a (2026-10-17): readiness v2 + post-Ready re-probes + RWGHEIGHTAPI. Observe-only; off vanilla only. ----
+    void RwgReadContentFields(int32& OutContentSpawned, int32& OutFillPct) const; // -1 = field absent / wrong type
+    int32 RwgCountStrictNodes() const;      // diagnostic: same predicate as IsWorldReadyForRoll, uncapped
+    bool RwgAnyLoadedNodesAtFloor() const;  // mirror of IsWorldReadyForReroll's count loop (save with a layout)
+    void RwgNoteStage(const FString& Stage, int32 ContentSpawned, int32 FillPct, double T, double RealT);
+    void RwgLogReprobes(bool bFull);
+    void RwgLogWater2();
+    void RwgLogHeightApi(bool bFull);       // NodeShuffleMapModeHeightApi.cpp
     mutable ENodeShuffleMapMode MapMode = ENodeShuffleMapMode::Unlatched;
     mutable FString MapPackageName;
     TWeakObjectPtr<UObject> RwgGenerator;
@@ -981,7 +989,6 @@ private:
     int32 RwgFallbackScans = 0;
     int32 RwgObserveTicks = 0;
     int32 RwgPrevNodeCount = -1;
-    int32 RwgStableTicks = 0;
     int32 RwgReadyNodeCount = 0;
     bool bRwgReady = false; // observe-only latch in P1; IsWorldReadyForReroll ANDs it off vanilla (spec B4)
     bool bRwgProbeLogged = false;
@@ -993,6 +1000,18 @@ private:
     float RwgZMin = 0.f;
     float RwgZMax = 0.f;
     float RwgMeanZ = 0.f;
+    // RWG P2a readiness v2 state (non-SaveGame; a reload starts it fresh, so the stage sequence prints again).
+    bool bRwgStageReadySeen = false;   // a tick read EPWProgressStage == Ready and no later tick read otherwise
+    double RwgFirstReadyT = -1.0;      // world seconds of that first Ready tick; -1 = none
+    int32 RwgStableSinceReady = 0;     // consecutive delta==0 ticks after RwgFirstReadyT (that tick zeroes it)
+    int32 RwgUnreadableTicks = 0;      // consecutive ticks with no readable stage
+    bool bRwgUnreadableWarned = false;
+    bool bRwgStageRegressLogged = false;
+    bool bRwgStageNoted = false;       // RwgLastStage holds a real previous read
+    FString RwgLastStage;
+    int32 RwgLastContentSpawned = -2;
+    int32 RwgReadyTick = -1;           // RwgObserveTicks value at the latch
+    bool bRwgFloorByAnyNode = false;   // the floor clause used the any-node count (save holds a layout)
     // Store-isolation once-latches for the off-vanilla flush skips (const functions; log-only).
     mutable bool bStoreWaterFlushSkipLogged = false;
     mutable bool bStoreCaveFlushSkipLogged = false;

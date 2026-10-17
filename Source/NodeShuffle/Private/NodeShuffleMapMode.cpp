@@ -1,5 +1,8 @@
 // RWG P1 (2026-10-14) -- map identity and OBSERVE-ONLY readiness on non-vanilla maps.
 // Spec: _team/nodeshuffle-rwg-fullshuffle-spec.md §A1, §B1-B4, §G (R1-only lines), §H (P1).
+// RWG P2a (2026-10-17, _team/nodeshuffle-rwg-p2-spec.md §1/§3): readiness v2 -- ready only when the
+// generator's EPWProgressStage reads Ready, the count has held 12 ticks counted from the first Ready tick,
+// and the floor holds. Unreadable stage = never ready (no quiescence fallback). Still observe-only.
 //
 // WHAT THIS FILE MAY CHANGE. On vanilla: nothing but one MAPMODE line at BeginPlay -- RefreshTick only
 // enters RwgObserveTick when GetMapMode() != Vanilla, and every other function here is reached only from
@@ -28,8 +31,6 @@
 
 namespace
 {
-    // Mirror of MinVanillaNodesForRoll (NodeShuffleSubsystem.cpp anonymous namespace, 50). Kept equal by hand.
-    constexpr int32 RwgMinNodes = 50;
     const TCHAR* const GeneratorClassPath = TEXT("/Script/ProceduralWorld.PWWorldGenerator");
 
     const TCHAR* MapModeName(ENodeShuffleMapMode M)
@@ -80,6 +81,8 @@ namespace
 
     // Walks Obj's own (non-engine) class chain for an EPWGeneratorState-typed property and a PWProgressState
     // struct holding an EPWProgressStage. A missing type = an empty out-string, never a crash.
+    // P2a: returns STAGE readability. P1 returned the EPWGeneratorState hit, and RWG 0.1.7 has no such
+    // UPROPERTY (R1 RWGPROBE: 41 props, none of that enum), so P1's readiness never evaluated the stage.
     bool FindGeneratorFields(UObject* Obj, FString& OutGen, FString& OutStage)
     {
         bool bGen = false;
@@ -111,7 +114,8 @@ namespace
                 }
             }
         }
-        return bGen;
+        (void)bGen; // OutGen stays a print-only field (RWGWAIT prints 'absent' when it is empty)
+        return !OutStage.IsEmpty();
     }
 }
 
@@ -211,7 +215,8 @@ void ANodeShuffleSubsystem::RwgDiscoverGenerator()
     if (!Found && RwgFallbackScans < 10 && (RwgObserveTicks % NodeShuffleMapMode::RwgWaitEveryTicks) == 1)
     {
         // Spec B2 fallback: one actor scan, each distinct class's superclass chain checked for an RWG prefix;
-        // the first such actor that HAS a readable EPWGeneratorState property is taken.
+        // the first such actor with a readable EPWProgressStage (P2a; P1 keyed this on the absent
+        // EPWGeneratorState, so the scan could never take an actor) is taken.
         ++RwgFallbackScans;
         Route = TEXT("actorScan");
         TSet<UClass*> Checked;
@@ -253,7 +258,8 @@ bool ANodeShuffleSubsystem::RwgReadGeneratorState(FString& OutGenState, FString&
     OutProgressStage.Reset();
     UObject* Gen = RwgGenerator.Get();
     if (!IsValid(Gen)) { return false; }
-    return FindGeneratorFields(Gen, OutGenState, OutProgressStage);
+    // P2a: readable == the progress-stage string was read (FindGeneratorFields returns exactly that).
+    return FindGeneratorFields(Gen, OutGenState, OutProgressStage) && !OutProgressStage.IsEmpty();
 }
 
 void ANodeShuffleSubsystem::RwgLogProbe()
@@ -327,48 +333,95 @@ void ANodeShuffleSubsystem::RwgObserveTick()
         RwgPawnFirst = Pawn->GetActorLocation();
     }
 
+    // P2a: discovery, the stage and the content fields run EVERY tick (pre- and post-latch) so RWGSTAGE
+    // times each change; RwgDiscoverGenerator returns at once when the generator is already held.
+    RwgDiscoverGenerator();
+    FString Gen, Stage;
+    const bool bStageReadable = RwgReadGeneratorState(Gen, Stage);
+    int32 ContentSpawned = -1, FillPct = -1;
+    RwgReadContentFields(ContentSpawned, FillPct);
+    RwgNoteStage(Stage, ContentSpawned, FillPct, T, RealT);
+    // genState stays in the lines (greps keep working); RWG 0.1.7 has no such UPROPERTY, so it prints 'absent'.
+    const FString GenShown = Gen.IsEmpty() ? FString(TEXT("absent")) : Gen;
+    const FString StageShown = Stage.IsEmpty() ? FString(TEXT("<unreadable>")) : Stage;
+
     if (!bRwgReady)
     {
-        RwgDiscoverGenerator();
         int32 Nodes = 0, Fracking = 0, Deposits = 0;
         RwgCountNodes(Nodes, Fracking, Deposits);
         const int32 Delta = RwgPrevNodeCount < 0 ? Nodes : Nodes - RwgPrevNodeCount;
-        RwgStableTicks = (RwgPrevNodeCount >= 0 && Delta == 0) ? RwgStableTicks + 1 : 0;
         RwgPrevNodeCount = Nodes;
-        FString Gen, Stage;
-        const bool bReadable = RwgReadGeneratorState(Gen, Stage);
-        const bool bVeto = bReadable && (Gen == TEXT("WaitingForSeed") || Gen == TEXT("BuildingWorld")
-            || Gen == TEXT("SpawningContent") || Gen == TEXT("RestoringSave"));
-        const bool bDone = bReadable && !bVeto && (Gen == TEXT("Running") || Stage == TEXT("Ready"));
-        const int32 Required = bDone ? NodeShuffleMapMode::RwgStableTicksWithGenerator
-                                     : NodeShuffleMapMode::RwgStableTicksRequired;
-        const bool bReadyNow = Nodes >= RwgMinNodes && !bVeto && RwgStableTicks >= Required;
-        const FString GenShown = bReadable ? Gen : FString(TEXT("<unreadable>"));
-        const FString StageShown = Stage.IsEmpty() ? FString(TEXT("<unreadable>")) : Stage;
+        const bool bStageReady = bStageReadable && Stage == TEXT("Ready");
+        if (bStageReady && !bRwgStageReadySeen)
+        {
+            // First tick that reads Ready: it starts the stability count at 0 and does not count itself.
+            bRwgStageReadySeen = true;
+            RwgFirstReadyT = T;
+            RwgStableSinceReady = 0;
+        }
+        else if (bStageReady)
+        {
+            RwgStableSinceReady = (Delta == 0) ? RwgStableSinceReady + 1 : 0;
+        }
+        else if (bRwgStageReadySeen)
+        {
+            // A non-Ready or unreadable read after a Ready read, before the latch: the count starts over.
+            bRwgStageReadySeen = false;
+            RwgFirstReadyT = -1.0;
+            RwgStableSinceReady = 0;
+            if (!bRwgStageRegressLogged)
+            {
+                bRwgStageRegressLogged = true;
+                UE_LOG(LogNodeShuffle, Display,
+                    TEXT("RWGWAIT: stageRegressed=1 t=%.0fs progressStage='%s' nodes=%d; firstReadyT and stableSinceReady reset to none and 0"),
+                    T, *StageShown, Nodes);
+            }
+        }
+        RwgUnreadableTicks = bStageReadable ? 0 : RwgUnreadableTicks + 1;
+        if (!bRwgUnreadableWarned && RwgUnreadableTicks >= NodeShuffleMapMode::RwgUnreadableWarnTicks)
+        {
+            bRwgUnreadableWarned = true;
+            UE_LOG(LogNodeShuffle, Warning,
+                TEXT("RWGWAIT: progress stage unreadable for %d ticks; generatorFound=%d; NodeShuffle does not roll on this map while the stage stays unreadable"),
+                RwgUnreadableTicks, RwgGenerator.IsValid() ? 1 : 0);
+        }
+        const int32 Strict = RwgCountStrictNodes();
+        // Floor: a new game uses IsWorldReadyForRoll (strict /Game/ solid count, the vanilla gate, called as
+        // is); a save that already holds a layout uses the any-node count mirror (brief §1).
+        bRwgFloorByAnyNode = bLayoutGenerated;
+        const bool bFloor = bLayoutGenerated ? RwgAnyLoadedNodesAtFloor() : IsWorldReadyForRoll();
+        const bool bStable = RwgStableSinceReady >= NodeShuffleMapMode::RwgStableTicksRequired;
+        const TCHAR* GatedBy = !bStageReadable ? TEXT("unreadable") : !bStageReady ? TEXT("stageNotReady")
+            : !bStable ? TEXT("unstable") : !bFloor ? TEXT("floor") : TEXT("none");
+        // READINESS V2. Every clause needs the stage read; there is no quiescence-only path.
+        const bool bReadyNow = bStageReadable && bStageReady && bStable && bFloor;
         if (!bReadyNow)
         {
             if ((RwgObserveTicks % NodeShuffleMapMode::RwgWaitEveryTicks) == 1)
             {
                 UE_LOG(LogNodeShuffle, Display,
-                    TEXT("RWGWAIT: t=%.0fs realT=%.0fs nodes=%d fracking=%d deposits=%d delta=%d stableTicks=%d/%d genState='%s' progressStage='%s' generatorVeto=%d generatorDone=%d"),
-                    T, RealT, Nodes, Fracking, Deposits, Delta, RwgStableTicks, Required, *GenShown, *StageShown,
-                    bVeto ? 1 : 0, bDone ? 1 : 0);
+                    TEXT("RWGWAIT: t=%.0fs realT=%.0fs nodes=%d strict=%d fracking=%d deposits=%d delta=%d stageReady=%d firstReadyT=%.0f stableSinceReady=%d/%d genState='%s' progressStage='%s' contentSpawned=%d fillPct=%d floorBy=%s gatedBy=%s"),
+                    T, RealT, Nodes, Strict, Fracking, Deposits, Delta, bStageReady ? 1 : 0, RwgFirstReadyT,
+                    RwgStableSinceReady, NodeShuffleMapMode::RwgStableTicksRequired, *GenShown, *StageShown,
+                    ContentSpawned, FillPct, bLayoutGenerated ? TEXT("anyNode") : TEXT("strict"), GatedBy);
             }
             if (!bRwgWaitWarned && T >= NodeShuffleMapMode::RwgWaitWarnSeconds)
             {
                 bRwgWaitWarned = true;
                 UE_LOG(LogNodeShuffle, Warning,
-                    TEXT("RWGWAIT: readiness predicate still false at t=%.0fs; nodes=%d stableTicks=%d/%d genState='%s' progressStage='%s'; observe-only build, no roll off vanilla"),
-                    T, Nodes, RwgStableTicks, Required, *GenShown, *StageShown);
+                    TEXT("RWGWAIT: readiness predicate still false at t=%.0fs; nodes=%d strict=%d stableSinceReady=%d/%d progressStage='%s' gatedBy=%s; observe-only build, no roll off vanilla"),
+                    T, Nodes, Strict, RwgStableSinceReady, NodeShuffleMapMode::RwgStableTicksRequired, *StageShown, GatedBy);
             }
             return;
         }
 
         bRwgReady = true;
+        RwgReadyTick = RwgObserveTicks;
         RwgReadyNodeCount = Nodes;
-        // Originals' extent for the P2 trace window and deal box (spec C2): same 2nd-98th percentile rule as
-        // GenerateNewLocations, over every non-ours resource node counted above.
-        TArray<float> Xs, Ys;
+        // Extent for the P2b trace window / deal box (brief §1 extent fix): 2nd-98th percentile box, Z range and
+        // mean over STRICT nodes only (/Game/ solid, the IsWorldReadyForRoll predicate); the box over every
+        // non-ours node is printed beside it for comparison (brief §4: a >2 % difference decides a P2b filter).
+        TArray<float> Xs, Ys, AXs, AYs;
         double ZSum = 0.0;
         RwgZMin = TNumericLimits<float>::Max();
         RwgZMax = TNumericLimits<float>::Lowest();
@@ -377,6 +430,10 @@ void ANodeShuffleSubsystem::RwgObserveTick()
             AFGResourceNodeBase* Node = *It;
             if (!IsValid(Node) || NodeShuffleMapMode::IsOursForRwg(Node)) { continue; }
             const FVector L = Node->GetActorLocation();
+            AXs.Add(L.X);
+            AYs.Add(L.Y);
+            const AFGResourceNode* Rn = Cast<AFGResourceNode>(Node);
+            if (!Rn || !IsEligibleVanillaNode(Rn, false, false)) { continue; }
             Xs.Add(L.X);
             Ys.Add(L.Y);
             ZSum += L.Z;
@@ -387,40 +444,34 @@ void ANodeShuffleSubsystem::RwgObserveTick()
         RwgMeanZ = Xs.Num() > 0 ? static_cast<float>(ZSum / Xs.Num()) : 0.f;
         Xs.Sort();
         Ys.Sort();
+        AXs.Sort();
+        AYs.Sort();
         const auto Pct = [](const TArray<float>& S, float P) -> float
         {
             return S.Num() == 0 ? 0.f : S[FMath::Clamp(FMath::RoundToInt(P * (S.Num() - 1)), 0, S.Num() - 1)];
         };
-        const float BoxXKm = (Pct(Xs, 0.98f) - Pct(Xs, 0.02f)) / 100000.f;
-        const float BoxYKm = (Pct(Ys, 0.98f) - Pct(Ys, 0.02f)) / 100000.f;
+        const auto BoxKm = [&Pct](const TArray<float>& S) { return (Pct(S, 0.98f) - Pct(S, 0.02f)) / 100000.f; };
         const float MovedM = (Pawn && bRwgPawnFirstSet)
             ? static_cast<float>(FVector::Dist(Pawn->GetActorLocation(), RwgPawnFirst) / 100.0) : -1.f;
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("RWGREADY: by=%s t=%.1fs realT=%.1fs nodes=%d fracking=%d deposits=%d stableTicks=%d genState='%s' progressStage='%s' zMin=%.0f zMax=%.0f meanZ=%.0f boxKm=%.1fx%.1f pawnMovedSinceFirstTickM=%.0f rollOffVanillaEnabled=%d"),
-            bDone ? TEXT("generator") : TEXT("quiescence"), T, RealT, Nodes, Fracking, Deposits, RwgStableTicks,
-            *GenShown, *StageShown, RwgZMin, RwgZMax, RwgMeanZ, BoxXKm, BoxYKm, MovedM,
+            TEXT("RWGREADY: by=stage t=%.1fs realT=%.1fs firstReadyT=%.1fs nodes=%d strict=%d fracking=%d deposits=%d stableSinceReady=%d genState='%s' progressStage='%s' contentSpawned=%d fillPct=%d floorBy=%s zMin=%.0f zMax=%.0f meanZ=%.0f strictInExtent=%d boxKmStrict=%.1fx%.1f boxKmAll=%.1fx%.1f allInBox=%d pawnMovedSinceFirstTickM=%.0f rollOffVanillaEnabled=%d"),
+            T, RealT, RwgFirstReadyT, Nodes, Strict, Fracking, Deposits, RwgStableSinceReady, *GenShown, *StageShown,
+            ContentSpawned, FillPct, bLayoutGenerated ? TEXT("anyNode") : TEXT("strict"),
+            RwgZMin, RwgZMax, RwgMeanZ, Xs.Num(), BoxKm(Xs), BoxKm(Ys), BoxKm(AXs), BoxKm(AYs), AXs.Num(), MovedM,
             NodeShuffleMapMode::bRwgRollEnabled ? 1 : 0);
         RwgLogReadyDiagnostics();
         return;
     }
 
-    // Post-ready, observe-only: a 60 s census so a later count change (per-chunk spawning, spec risk 3) shows.
-    if ((RwgObserveTicks % NodeShuffleMapMode::RwgObserveEveryTicks) != 0) { return; }
+    // Post-ready, observe-only: a 60 s census counted from the latch, plus the §3 re-probes for 10 min.
+    const int32 SinceReady = RwgObserveTicks - RwgReadyTick;
+    if ((SinceReady % NodeShuffleMapMode::RwgObserveEveryTicks) != 0) { return; }
     int32 Nodes = 0, Fracking = 0, Deposits = 0;
     RwgCountNodes(Nodes, Fracking, Deposits);
-    FString Gen, Stage;
-    const bool bReadable = RwgReadGeneratorState(Gen, Stage);
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("RWGOBSERVE: t=%.0fs realT=%.0fs nodes=%d fracking=%d deposits=%d changeSinceReady=%d genState='%s' progressStage='%s' sessionWaterCells=%d sessionCaveCells=%d"),
-        T, RealT, Nodes, Fracking, Deposits, Nodes - RwgReadyNodeCount,
-        bReadable ? *Gen : TEXT("<unreadable>"), Stage.IsEmpty() ? TEXT("<unreadable>") : *Stage,
-        WaterGrid.Num(), CaveFloors.Num());
+        TEXT("RWGOBSERVE: t=%.0fs realT=%.0fs nodes=%d fracking=%d deposits=%d changeSinceReady=%d genState='%s' progressStage='%s' contentSpawned=%d fillPct=%d sessionWaterCells=%d sessionCaveCells=%d"),
+        T, RealT, Nodes, Fracking, Deposits, Nodes - RwgReadyNodeCount, *GenShown, *StageShown,
+        ContentSpawned, FillPct, WaterGrid.Num(), CaveFloors.Num());
     RwgLogCollision(/*bEmitWater=*/false);
-}
-
-void ANodeShuffleSubsystem::RwgLogReadyDiagnostics()
-{
-    if (!bRwgProbeLogged) { RwgLogProbe(); }
-    RwgLogCollision(/*bEmitWater=*/true);
-    RwgLogRock();
+    if (SinceReady > 0 && SinceReady <= NodeShuffleMapMode::RwgReprobeWindowTicks) { RwgLogReprobes(/*bFull=*/false); }
 }
