@@ -9,6 +9,7 @@
 #include "NodeShuffleMapMode.h"
 #include "EngineUtils.h"
 #include "Engine/World.h"
+#include "Engine/OverlapResult.h"
 #include "Engine/StaticMesh.h"
 #include "Components/StaticMeshComponent.h"
 #include "GameFramework/Pawn.h"
@@ -322,8 +323,8 @@ void ANodeShuffleSubsystem::RwgLogRock(bool bPerNode)
         {
             const UPrimitiveComponent* C = O.GetComponent();
             if (!C) { continue; }
-            const AActor* Owner = C->GetOwner();
-            if (Owner && Owner->IsA<AFGNodeMeshActor>()) { ++MeshActorHere; }
+            const AActor* CompOwner = C->GetOwner();
+            if (CompOwner && CompOwner->IsA<AFGNodeMeshActor>()) { ++MeshActorHere; }
             const UStaticMeshComponent* Smc = Cast<UStaticMeshComponent>(C);
             const FString MeshName = (Smc && Smc->GetStaticMesh()) ? Smc->GetStaticMesh()->GetName() : FString(TEXT("<no mesh>"));
             const bool bInst = C->GetClass()->GetName().Contains(TEXT("Instanced"));
@@ -331,7 +332,7 @@ void ANodeShuffleSubsystem::RwgLogRock(bool bPerNode)
             if (bPerNode && Listed < 6)
             {
                 List += FString::Printf(TEXT("%s%s/%s/%s/inst%d"), Listed > 0 ? TEXT("; ") : TEXT(""), *C->GetClass()->GetName(),
-                    Owner ? *Owner->GetClass()->GetName() : TEXT("<no owner>"), *MeshName, bInst ? 1 : 0);
+                    CompOwner ? *CompOwner->GetClass()->GetName() : TEXT("<no owner>"), *MeshName, bInst ? 1 : 0);
                 ++Listed;
             }
         }
