@@ -6653,6 +6653,7 @@ bool ANodeShuffleSubsystem::IsPointInWater(const FVector& Point) const
     {
         return false;
     }
+    if (GetMapMode() != ENodeShuffleMapMode::Vanilla && RwgWaterVolumes.Num() > 0) { return RwgIsPointInWaterCached(Point); } // RWG P2b: same EncompassesPoint test, bounds-prefiltered; vanilla keeps the loop
     for (TActorIterator<AFGWaterVolume> It(GetWorld()); It; ++It)
     {
         AFGWaterVolume* Water = *It;

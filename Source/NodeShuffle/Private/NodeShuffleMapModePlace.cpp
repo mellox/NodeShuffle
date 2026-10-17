@@ -180,6 +180,7 @@ bool ANodeShuffleSubsystem::TryRedealRwgEntry(FNodeShuffleEntry& Entry, float Sp
         {
             if (&Other != &Entry && FVector::DistSquared2D(Other.Location, C) < SpacingSq) { bTooClose = true; break; }
         }
+        if (!bTooClose) { for (const FNodeShuffleSuppressedOriginal& Rec : OriginalNodeRecord) { const FVector A = Rec.TrueLocation.IsNearlyZero() ? Rec.Location : Rec.TrueLocation; if (FVector::DistSquared2D(A, C) < SpacingSq) { bTooClose = true; break; } } }
         if (bTooClose) { ++Spacing; continue; }
         Entry.Location = C;
         Entry.Rotation = FRotator(0.f, Rng.FRandRange(0.f, 360.f), 0.f);
@@ -199,29 +200,42 @@ bool ANodeShuffleSubsystem::RwgResolveAtSpawn(FNodeShuffleEntry& Entry, bool& bO
     const NodeShuffleMapMode::FRwgGroundQuery Q(GetWorld(), RwgGenerator.Get());
     if (!Q.IsUsable()) { ++RwgPcFallback; return false; }
     bOutApiUsed = true;
-    // Centre the existing settle trace on the API surface so its window (+200 m / -400 m) brackets the ground.
-    Entry.Location.Z = Q.SurfaceZ(Entry.Location.X, Entry.Location.Y);
-    if (RaycastSettle(Entry, nullptr, nullptr, &bOutWaterNoLand))
+    if (RwgWaterVolumes.Num() == 0) { RwgBuildWaterVolumeCache(); }
+    // The deal predicates again at this XY (starter, fallback-dealt and spiral-moved spots never passed RwgDealOneSpot).
+    const double X0 = Entry.Location.X, Y0 = Entry.Location.Y;
+    if (Q.Outside(X0, Y0)) { bOutWaterNoLand = true; return false; }
+    const double ApiZ0 = Q.SurfaceZ(X0, Y0);
+    if (RwgIsPointInWaterCached(FVector(X0, Y0, ApiZ0))) { bOutWaterNoLand = true; return false; }
+    Entry.Location.Z = ApiZ0;
+    // Agreement BEFORE classification: a far hit (canopy, water sheet, overhang) or a miss spawns at the API Z, yaw-only.
+    FVector HitLoc = Entry.Location;
+    FRotator HitRot = Entry.Rotation;
+    bool bHitWater = false, bHitSteep = false;
+    const bool bHit = RaycastGroundAt(Entry.Location, Entry.Location.Z, nullptr, nullptr, HitLoc, HitRot, bHitWater, false, &bHitSteep);
+    if (!bHit || FMath::Abs(HitLoc.Z - ApiZ0) > NodeShuffleMapMode::RwgTraceAgreeCm)
     {
-        // A hit (possibly spiral-moved off a cliff): trust it only near the API surface at its final XY; a hit
-        // metres off is foliage or a water sheet (R2 census), so the node takes the API Z with yaw-only rotation.
-        const double ApiZ = Q.SurfaceZ(Entry.Location.X, Entry.Location.Y);
-        if (FMath::Abs(Entry.Location.Z - ApiZ) <= NodeShuffleMapMode::RwgTraceAgreeCm) { ++RwgPcTraceHit; return true; }
-        Entry.Location.Z = ApiZ;
         Entry.Rotation = FRotator(0.f, Entry.Rotation.Yaw, 0.f);
-        ++RwgPcTraceFar;
+        if (bHit) { ++RwgPcTraceFar; return true; }
+        ++RwgPcTraceMiss;
         return true;
     }
-    if (bOutWaterNoLand) { return false; } // water/steep hit with no placeable spot nearby: the caller redeals
-    // A miss: the terrain collision is not resident here. Z is already resolved, so this is NOT a deferral.
-    Entry.Location.Z = Q.SurfaceZ(Entry.Location.X, Entry.Location.Y);
+    if (!bHitWater && !bHitSteep) { Entry.Location = HitLoc; Entry.Rotation = HitRot; ++RwgPcTraceHit; return true; }
+    // Terrain agreeing with the API but wet or steep: the established spiral looks for flat dry land nearby.
+    if (!RaycastSettle(Entry, nullptr, nullptr, &bOutWaterNoLand)) { return false; } // no spot: redeal; all probes missed: defer
+    const double X1 = Entry.Location.X, Y1 = Entry.Location.Y;
+    if (Q.Outside(X1, Y1)) { bOutWaterNoLand = true; return false; }
+    const double ApiZ1 = Q.SurfaceZ(X1, Y1);
+    if (FMath::Abs(Entry.Location.Z - ApiZ1) <= NodeShuffleMapMode::RwgTraceAgreeCm) { ++RwgPcTraceHit; return true; }
+    if (RwgIsPointInWaterCached(FVector(X1, Y1, ApiZ1))) { bOutWaterNoLand = true; return false; }
+    Entry.Location.Z = ApiZ1;
     Entry.Rotation = FRotator(0.f, Entry.Rotation.Yaw, 0.f);
-    ++RwgPcTraceMiss;
+    ++RwgPcTraceFar;
     return true;
 }
 
 void ANodeShuffleSubsystem::RwgSpawnPass(float SpawnRadiusCm, bool& bChangedWorld)
 {
+    if (RwgWaterVolumes.Num() == 0) { RwgBuildWaterVolumeCache(); }
     TArray<FVector> Pawns;
     for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
     {
@@ -237,6 +251,7 @@ void ANodeShuffleSubsystem::RwgSpawnPass(float SpawnRadiusCm, bool& bChangedWorl
         FNodeShuffleEntry& E = Layout[I];
         if (!E.bIsNewNode || !E.bActive) { continue; }
         if (DormantThisSession.Num() > 0 && DormantThisSession.Contains(E.EntryGuid)) { continue; }
+        if (SpawnParkedThisSession.Num() > 0 && SpawnParkedThisSession.Contains(E.EntryGuid)) { continue; }
         AFGResourceNode* const* Live = SpawnedNodes.Find(E.EntryGuid);
         if (Live && IsValid(*Live))
         {
@@ -262,10 +277,29 @@ void ANodeShuffleSubsystem::RwgSpawnPass(float SpawnRadiusCm, bool& bChangedWorl
     }
     RwgPcBudgetSkipped += Cands.Num() - N;
     ++RwgPcPasses;
+    if ((RwgPcPasses % 12) == 1)
+    {
+        // RWG P2b review SF4 (spec P2b section 3): hide-stickiness sample. Up to 50 hide records at stride Num/50;
+        // each is resolved by path and its hidden flag read. hidden < resolvedByPath is legitimate for originals
+        // occupied after the roll; the line reports counts only.
+        const int32 Records = OriginalNodeRecord.Num();
+        const int32 Stride = FMath::Max(1, Records / 50);
+        int32 Sampled = 0, Resolved = 0, Hidden = 0;
+        for (int32 Ri = 0; Ri < Records && Sampled < 50; Ri += Stride)
+        {
+            ++Sampled;
+            const AFGResourceNodeBase* Orig = FindOriginalBaseByPath(OriginalNodeRecord[Ri].VanillaNodePath);
+            if (!Orig) { continue; }
+            ++Resolved;
+            if (Orig->IsHidden()) { ++Hidden; }
+        }
+        UE_LOG(LogNodeShuffle, Display, TEXT("RWGHIDECHECK: pass=%d sampled=%d resolvedByPath=%d hidden=%d records=%d"),
+            RwgPcPasses, Sampled, Resolved, Hidden, Records);
+    }
     if (RwgPcSpawned > 0 || (RwgPcPasses % 12) == 1) // bounded: a pass that spawned, else once a minute
     {
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("PLACECENSUS: pass=%d attempted=%d spawned=%d notSpawned=%d deferredSettle=%d waterRedeals=%d redealsViaApi=%d budgetSkipped=%d farNoAttempt=%d liveReasserted=%d spawnTraceHit=%d spawnTraceMiss=%d spawnTraceFar=%d fallbackNoApi=%d attemptRadiusM=%.0f spawnRadiusM=%.0f layoutEntries=%d"),
+            TEXT("PLACECENSUS: pass=%d attempted=%d spawned=%d notSpawned=%d deferredSettle=%d waterLockedNew=%d apiRedealCalls=%d budgetSkipped=%d farNoAttempt=%d liveReasserted=%d spawnTraceHit=%d spawnTraceMiss=%d spawnTraceFar=%d fallbackNoApi=%d attemptRadiusM=%.0f spawnRadiusM=%.0f layoutEntries=%d"),
             RwgPcPasses, RwgPcAttempted, RwgPcSpawned, RwgPcAttempted - RwgPcSpawned, DeferredThisPass - DeferredBefore,
             WaterLockedThisSession.Num() - WaterLockedBefore, RwgPcRedealApi, RwgPcBudgetSkipped, RwgPcFarNoAttempt, RwgPcLive,
             RwgPcTraceHit, RwgPcTraceMiss, RwgPcTraceFar, RwgPcFallback, AttemptRadiusCm / 100.f, SpawnRadiusCm / 100.f, Layout.Num());
@@ -280,15 +314,25 @@ void ANodeShuffleSubsystem::RwgEmitPlaceCensus()
     // actor so P3 can decide. Population: every non-ours node in VanillaNodeCache at that pass.
     if (RwgRockChecked == 0)
     {
+        // RWG P2b review SF5: the P3 rule needs the recorded originals, so a second count keeps only cache keys whose
+        // path is in OriginalNodeRecord.
+        TSet<FString> RecordedPaths;
+        RecordedPaths.Reserve(OriginalNodeRecord.Num());
+        for (const FNodeShuffleSuppressedOriginal& Rec : OriginalNodeRecord) { RecordedPaths.Add(Rec.VanillaNodePath); }
+        int32 RecChecked = 0, RecLinked = 0;
         for (const TPair<FString, TWeakObjectPtr<AFGResourceNodeBase>>& KV : VanillaNodeCache)
         {
             const AFGResourceNodeBase* Node = KV.Value.Get();
             if (!IsValid(Node)) { continue; }
             ++RwgRockChecked;
-            if (Node->mMeshActor.Get() != nullptr) { ++RwgRockLinked; }
+            const bool bLinked = Node->mMeshActor.Get() != nullptr;
+            if (bLinked) { ++RwgRockLinked; }
+            if (RecordedPaths.Contains(KV.Key)) { ++RecChecked; if (bLinked) { ++RecLinked; } }
         }
-        UE_LOG(LogNodeShuffle, Display, TEXT("PLACECENSUS: rockLinked=%d of %d cached originals (rock hiding skipped on RWG this build)"),
+        UE_LOG(LogNodeShuffle, Display, TEXT("PLACECENSUS: rockLinkedAll=%d of %d cached non-ours nodes (deposits, fracking and modded included; rock hiding skipped on RWG this build)"),
             RwgRockLinked, RwgRockChecked);
+        UE_LOG(LogNodeShuffle, Display, TEXT("PLACECENSUS: rockLinkedRecorded=%d of %d cached nodes whose path is in the hide records; records=%d"),
+            RecLinked, RecChecked, OriginalNodeRecord.Num());
         if (RwgRockChecked == 0) { RwgRockChecked = -1; } // empty cache: do not rescan every pass
     }
     RwgPcAttempted = RwgPcSpawned = RwgPcBudgetSkipped = RwgPcFarNoAttempt = RwgPcLive = 0;

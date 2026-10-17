@@ -392,7 +392,8 @@ void ANodeShuffleSubsystem::RwgObserveTick()
         // Floor: a new game uses IsWorldReadyForRoll (strict /Game/ solid count, the vanilla gate, called as
         // is); a save that already holds a layout uses the any-node count mirror (brief §1).
         bRwgFloorByAnyNode = bLayoutGenerated;
-        const bool bFloor = bLayoutGenerated ? RwgAnyLoadedNodesAtFloor() : IsWorldReadyForRoll();
+        const int32 SavedFloor = FMath::Max(NodeShuffleMapMode::RwgMinNodes, OriginalNodeRecord.Num() / 2);
+        const bool bFloor = bLayoutGenerated ? (RwgAnyLoadedNodesAtFloor() && Nodes >= SavedFloor) : IsWorldReadyForRoll();
         const bool bStable = RwgStableSinceReady >= NodeShuffleMapMode::RwgStableTicksRequired;
         const TCHAR* GatedBy = !bStageReadable ? TEXT("unreadable") : !bStageReady ? TEXT("stageNotReady")
             : !bStable ? TEXT("unstable") : !bFloor ? TEXT("floor") : TEXT("none");
@@ -400,8 +401,8 @@ void ANodeShuffleSubsystem::RwgObserveTick()
         const bool bClauseA = bStageReadable && bStageReady && bStable && bFloor;
         // RWG P2b clause B (apply a SAVED layout only, never a roll): layout exists AND count unchanged for
         // RwgApplyStableTicks ticks at any stage AND count >= RwgMinNodes. Brief "R2 measurements" (reload unmeasured).
-        const bool bClauseB = bLayoutGenerated && RwgStableAnyStage >= NodeShuffleMapMode::RwgApplyStableTicks
-            && Nodes >= NodeShuffleMapMode::RwgMinNodes;
+        const bool bClauseB = bLayoutGenerated && T >= NodeShuffleMapMode::RwgApplyFallbackSeconds
+            && RwgStableAnyStage >= NodeShuffleMapMode::RwgApplyStableTicks && Nodes >= SavedFloor;
         const bool bReadyNow = bClauseA || bClauseB;
         if (!bReadyNow)
         {

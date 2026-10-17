@@ -37,6 +37,9 @@
 #       used; a trace miss spawns at the resolved Z (no defer); the ApplyLayout loop defers RWG actor creation to the
 #       capped, nearest-first RwgSpawnPass.
 #   R16 Cave learning, the vanilla depth floor and the redeal cave branch are gated to vanilla at their sites.
+# RWG P2b-2 (2026-10-17 cold review fixes): R9 clause B also needs t >= RwgApplyFallbackSeconds and the saved-records
+#   floor (MF1), and its counter resets on any change (M16); R15 pins the API agreement test BEFORE RaycastSettle (MF2);
+#   R16 also pins rock pairing/hiding to vanilla (M17) and IsPointInWater's off-vanilla cached route (SF3).
 #   R17 The byte-signature gate refuses after the export refusal and before calls are allowed; the ground query
 #       makes no RWG call unless the binding is usable.
 #
@@ -195,9 +198,10 @@ if ($fgf -lt 0 -or $fgfEnd -lt 0) { $fails += 'R8: FindGeneratorFields not found
 $ot = Get-Body $text.mapcpp ('void ' + $cls + 'RwgObserveTick()')
 if (-not $ot) { $fails += 'R9: RwgObserveTick body not found' } else {
     if ($ot -notmatch ('const bool bClauseA = bStageReadable && bStageReady && bStable && ' + 'bFloor;')) { $fails += 'R9: clause A must AND stage-readable, stage-Ready, stable and floor' }
-    if ($ot -notmatch ('const bool bClauseB = bLayout' + 'Generated && RwgStableAnyStage >= NodeShuffleMapMode::RwgApplyStableTicks\s*&& Nodes >= NodeShuffleMapMode::RwgMinNodes;')) { $fails += 'R9: clause B must require a saved layout, the any-stage stable count and the node floor' }
+    if ($ot -notmatch ('const bool bClauseB = bLayout' + 'Generated && T >= NodeShuffleMapMode::RwgApplyFallbackSeconds\s*&& RwgStableAnyStage >= NodeShuffleMapMode::RwgApplyStableTicks && Nodes >= Saved' + 'Floor;')) { $fails += 'R9: clause B must require a saved layout, the world-time floor, the any-stage stable count and the saved-records floor' }
+    if ($ot -notmatch ('const int32 SavedFloor = FMath::Max\(NodeShuffleMapMode::RwgMinNodes, OriginalNode' + 'Record\.Num\(\) / 2\);')) { $fails += 'R9: the saved-layout floor must be max(RwgMinNodes, half the hide records)' }
     if ($ot -notmatch ('const bool bReadyNow = bClauseA \|\| ' + 'bClauseB;')) { $fails += 'R9: the latch must be clause A or clause B, nothing else' }
-    if ($ot -notmatch ('RwgStableAnyStage = bLayout' + 'Generated \? ')) { $fails += 'R9: the clause-B counter must count only on a save holding a layout' }
+    if ($ot -notmatch ('RwgStableAnyStage = bLayout' + 'Generated \? \(\(Delta == 0\) \? RwgStableAnyStage \+ 1 : 0\) : 0;')) { $fails += 'R9: the clause-B counter must count only on a save holding a layout and reset on any count change' }
     if ($ot -notmatch ('else if \(bStageReady\)\s*\{\s*RwgStableSinceReady = \(Delta == 0\) \? RwgStable' + 'SinceReady \+ 1 : 0;')) { $fails += 'R9: the stable counter must advance only in the stage-Ready branch' }
     if ($ot -notmatch ('RwgFirstReadyT = T;\s*RwgStable' + 'SinceReady = 0;')) { $fails += 'R9: the first Ready tick must zero the stable counter' }
     if (([regex]::Matches($ot, 'RwgStableSinceReady\s*=\s*\(')).Count -ne 1) { $fails += 'R9: the stable counter is advanced at more than one site' }
@@ -286,7 +290,7 @@ if (-not $gn -or $gn -notmatch ('if \(' + [regex]::Escape($notVanilla) + '\)\s*\
 # R15
 if ($text.subsys -notmatch ('bool bSettled = \(GetMapMode\(\) == ENodeShuffleMapMode::Rwg\) \? RwgResolveAtSpawn\(Entry, bRwgApiUsed, bWaterNoLand\) : false;\s*if \(!bRwgApiUsed\) \{ bSettled = Raycast' + 'Settle\(Entry, nullptr, nullptr, &bWaterNoLand\); \}')) { $fails += 'R15: the settle block must ask RwgResolveAtSpawn on RWG and RaycastSettle only when the API was not used' }
 $ra = Get-Body $text.place ('bool ' + $cls + 'RwgResolveAtSpawn(FNodeShuffleEntry& Entry, bool& bOutApiUsed, bool& bOutWaterNoLand)')
-if (-not $ra -or $ra -notmatch ('if \(bOutWaterNoLand\) \{ return false; \}[^\n]*\n(?:[^\n]*\n){0,4}\s*\+\+RwgPcTrace' + 'Miss;\s*return true;')) { $fails += 'R15: a trace miss on the API path must spawn at the resolved Z (++RwgPcTraceMiss; return true;)' }
+if (-not $ra -or $ra -notmatch ('if \(bHit\) \{ \+\+RwgPcTraceFar; return true; \}\s*\+\+RwgPcTrace' + 'Miss;\s*return true;') -or $ra.IndexOf('FMath::Abs(HitLoc.Z - Api' + 'Z0)') -lt 0 -or $ra.IndexOf('FMath::Abs(HitLoc.Z - Api' + 'Z0)') -gt $ra.IndexOf('Raycast' + 'Settle(')) { $fails += 'R15: the API agreement test must precede RaycastSettle and a miss must spawn at the API Z' }
 $sp = Get-Body $text.place ('void ' + $cls + 'RwgSpawnPass(float SpawnRadiusCm, bool& bChangedWorld)')
 if (-not $sp -or $sp.IndexOf('Cands.' + 'Sort(') -lt 0 -or $sp -notmatch ('FMath::Min\(Cands\.Num\(\), NodeShuffleMapMode::RwgMaxSpawn' + 'AttemptsPerPass\)')) { $fails += 'R15: RwgSpawnPass must sort nearest-first and cap attempts at RwgMaxSpawnAttemptsPerPass' }
 if ($text.subsys -notmatch ('if \(' + [regex]::Escape($notVanilla) + '\) \{ continue; \}\s*if \(Entry\.bActive && IsLocationNearAnyPlayer\(Entry\.Location, SpawnRadiusCm\)\)')) { $fails += 'R15: the ApplyLayout loop must hand RWG actor creation to RwgSpawnPass before its inline spawn' }
@@ -295,10 +299,13 @@ $gates = @(
     ('if (GetMapMode() == ENodeShuffleMapMode::Vanilla) { ClassifyOriginal' + 'Underground(Node, Rec.VanillaNodePath); }'),
     ('if (GetMapMode() == ENodeShuffleMapMode::Vanilla) { ExpandCave' + 'FloorsBudgeted(); }'),
     ('OutLoc.Z < DeepWaterFloorZ && GetMapMode() == ENodeShuffleMapMode::' + 'Vanilla;'),
-    ('Entry.ResourceForm != 2 /* liquid */ && GetMapMode() == ENodeShuffleMapMode::' + 'Vanilla)')
+    ('Entry.ResourceForm != 2 /* liquid */ && GetMapMode() == ENodeShuffleMapMode::' + 'Vanilla)'),
+    ('if (GetMapMode() == ENodeShuffleMapMode::Vanilla) { Orphan' + 'RockCleanup(); }'),
+    ('if (GetMapMode() == ENodeShuffleMapMode::Vanilla) { Rebuild' + 'MeshActorCache(); }')
 )
 foreach ($gt in $gates) { if (([regex]::Matches($text.subsys, [regex]::Escape($gt))).Count -ne 1) { $fails += "R16: vanilla-only gate missing: $gt" } }
 if (([regex]::Matches($text.subsys, 'ClassifyOriginal' + 'Underground\(Node')).Count -ne 1) { $fails += 'R16: an ungated ClassifyOriginalUnderground call exists' }
+if (([regex]::Matches($text.subsys, [regex]::Escape('&& RwgWaterVolumes.Num() > 0) { return RwgIsPointInWater' + 'Cached(Point); }'))).Count -ne 1) { $fails += 'R16: IsPointInWater must route off vanilla through the cached volume test (vanilla keeps the loop)' }
 # R17
 if ($tb -ge 0) {
     $tbb2 = $text.hapi.Substring($tb)

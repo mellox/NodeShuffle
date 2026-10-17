@@ -45,6 +45,10 @@ namespace NodeShuffleMapMode
     // Apply-on-load clause B: a save holding a layout applies once the all-non-ours node count is unchanged for
     // this many consecutive 5 s ticks (any stage) AND at least RwgMinNodes. TODO(2026-10-17, RWG P2b -> R3 reload).
     constexpr int32 RwgApplyStableTicks = 12;
+    // A saved layout latches (clause A or B) only once the non-ours count reaches half its hide records (our own restored,
+    // not-yet-adopted nodes and modded fixed-coordinate nodes stand stable long before RWG's burst); clause B also never before
+    // this world time. TODO(2026-10-17, RWG P2b -> R3 reload): re-derive both from the reload trace.
+    constexpr double RwgApplyFallbackSeconds = 600.0;
     // A spawn-time trace hit counts as the ground only within this distance of the API surface Z; otherwise the
     // node spawns at the API Z (R2: terrain-mesh hits p95 |dZ| 37.5 cm; foliage/water hits differ by metres).
     constexpr double RwgTraceAgreeCm = 300.0;
