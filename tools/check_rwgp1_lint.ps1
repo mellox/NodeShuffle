@@ -224,10 +224,23 @@ if (-not $lh) { $fails += 'R11: RwgLogHeightApi body not found' } else {
     if ($g -lt 0 -or -not $fc.Success -or $fc.Index -lt $g) { $fails += 'R11: an RWG call precedes the callsAllowed guard in RwgLogHeightApi' }
 }
 if ($text.hapi -match ('#pragma comment\(' + 'lib')) { $fails += 'R11: the HeightApi file links a library; the binding must stay runtime-only' }
+# R11b: GetField's hidden return slot is the SECOND argument (x64 MSVC instance method: this RCX, slot RDX; measured by disassembling build 705, 2026-10-17).
+$gf = 'using FnGetField = FFieldPtr* (*)(const void* This, FFieldPtr* Return' + 'Slot);'
+if (([regex]::Matches($text.hapi, [regex]::Escape($gf))).Count -ne 1) { $fails += 'R11b: FnGetField must take (This, ReturnSlot) in that order, once' }
+if ($text.hapi -notmatch ('A\.GetField\(Gen, &Field\);\s*const void\* F = Field\.Get\(\);\s*if \(!' + 'F\)')) { $fails += 'R11b: GetField must be called as (Gen, &Field) and null-checked before use' }
+# R11c: RWG calls happen only from the latch or the post-latch window.
+$hcalls = ([regex]::Matches(($text.mapcpp + $text.r1cpp + $text.subsys + $text.late), 'RwgLogHeight' + 'Api\(')).Count
+$rp = Get-Body $text.r1cpp ('void ' + $cls + 'RwgLogReprobes(bool bFull)')
+if (-not $rp -or $rp.IndexOf('RwgLogHeight' + 'Api(bFull);') -lt 0 -or $hcalls -ne 1) { $fails += 'R11c: RwgLogHeightApi must be called once, from RwgLogReprobes only' }
+if ($ot) {
+    $sr = $ot.IndexOf('const int32 Since' + 'Ready = RwgObserveTicks - RwgReadyTick;')
+    $rc = [regex]::Matches($ot, 'RwgLog' + 'Reprobes\(')
+    if ($sr -lt 0 -or $rc.Count -ne 1 -or $rc[0].Index -lt $sr) { $fails += 'R11c: RwgObserveTick may call RwgLogReprobes only after the latch' }
+}
 
 if ($fails.Count -gt 0) {
     $fails | ForEach-Object { Write-Host "FAIL $_" }
     exit 1
 }
-Write-Host "PASS: RWG P1/P2a lint -- R1..R11 hold across $($files.Count) loaded files"
+Write-Host "PASS: RWG P1/P2a lint -- R1..R11c hold across $($files.Count) loaded files"
 exit 0

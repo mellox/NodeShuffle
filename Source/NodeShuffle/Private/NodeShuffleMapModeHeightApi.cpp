@@ -12,6 +12,7 @@
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "Templates/SharedPointer.h"
+#include "Components/PrimitiveComponent.h"
 #include "UObject/UnrealType.h"
 #if PLATFORM_WINDOWS
 #include "Windows/WindowsHWrapper.h"
@@ -240,17 +241,21 @@ void ANodeShuffleSubsystem::RwgLogHeightApi(bool bFull)
             WaterBelowIn += (!bWaterAbove && bIn) ? 1 : 0;
             WaterBelowOut += (!bWaterAbove && !bIn) ? 1 : 0;
             const AActor* HA = Hit.GetActor();
+            const UPrimitiveComponent* HC = Hit.GetComponent();
             const FString HitClass = HA ? HA->GetClass()->GetName() : FString(TEXT("<no actor>"));
+            const FString HitComp = HC ? HC->GetName() : FString(TEXT("<no component>"));
+            // Terrain subset keyed on the hit COMPONENT: APWTerrainChunk also owns WaterMesh and foliage/tree components.
+            const bool bTerrainMesh = HitClass.Contains(TEXT("TerrainChunk")) && HitComp.Contains(TEXT("Terrain"));
             AbsDz.Add(FMath::Abs(Dz));
             SignedDz.Add(Dz);
-            if (HitClass.Contains(TEXT("TerrainChunk"))) { TerrainAbsDz.Add(FMath::Abs(Dz)); }
+            if (bTerrainMesh) { TerrainAbsDz.Add(FMath::Abs(Dz)); }
             const bool bDisagree = FMath::Abs(Dz) >= 50.0 || bWaterAbove != bIn;
             if (bFull || (bDisagree && Listed < 16))
             {
                 ++Listed;
                 UE_LOG(LogNodeShuffle, Display,
-                    TEXT("RWGHEIGHTAPI point %d: x=%.0f y=%.0f traceZ=%.1f apiZ=%.1f dZ=%.1f hitClass='%s' waterLevelApi=%.1f inVolumeAtHit=%d"),
-                    AbsDz.Num(), X, Y, TraceZ, ApiZ, Dz, *HitClass, WaterZ, bIn ? 1 : 0);
+                    TEXT("RWGHEIGHTAPI point %d: x=%.0f y=%.0f traceZ=%.1f apiZ=%.1f dZ=%.1f hitClass='%s' hitComponent='%s' terrainMesh=%d waterLevelApi=%.1f inVolumeAtHit=%d"),
+                    AbsDz.Num(), X, Y, TraceZ, ApiZ, Dz, *HitClass, *HitComp, bTerrainMesh ? 1 : 0, WaterZ, bIn ? 1 : 0);
             }
         }
     }
@@ -259,10 +264,12 @@ void ANodeShuffleSubsystem::RwgLogHeightApi(bool bFull)
     TerrainAbsDz.Sort();
     const auto Under50 = [](const TArray<double>& V) { int32 C = 0; for (double D : V) { C += D < 50.0 ? 1 : 0; } return V.Num() ? double(C) / V.Num() : 0.0; };
     const double Frac = Under50(AbsDz);
+    const double TerrainFrac = Under50(TerrainAbsDz);
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("RWGHEIGHTAPI: census n=%d targetN=64 candidates=%d absDzUnder50Frac=%.3f under50FracAtLeast95=%d absDzMedian=%.1f absDzP95=%.1f signedDzMedian=%.1f terrainChunkHitN=%d terrainChunkAbsDzUnder50Frac=%.3f terrainChunkAbsDzMedian=%.1f terrainChunkAbsDzP95=%.1f waterAboveHitInVolume=%d waterAboveHitNotInVolume=%d waterNotAboveHitInVolume=%d waterNotAboveHitNotInVolume=%d globalSurfaceCm=%.1f..%.1f traceWindowZ=%.0f..%.0f pawn=(%.0f,%.0f,%.0f) pawnApiZ=%.1f sameGeneratorAsReflected=%d apiUsPerCall=%.2f linesListed=%d"),
-        AbsDz.Num(), Candidates, Frac, (AbsDz.Num() > 0 && Frac >= 0.95) ? 1 : 0, PctOf(AbsDz, 0.5), PctOf(AbsDz, 0.95),
-        PctOf(SignedDz, 0.5), TerrainAbsDz.Num(), Under50(TerrainAbsDz), PctOf(TerrainAbsDz, 0.5), PctOf(TerrainAbsDz, 0.95),
+        TEXT("RWGHEIGHTAPI: census n=%d targetN=64 candidates=%d absDzUnder50Frac=%.3f absDzMedian=%.1f absDzP95=%.1f signedDzMedian=%.1f terrainMeshHitN=%d terrainMeshAbsDzUnder50Frac=%.3f terrainMeshAbsDzMedian=%.1f terrainMeshAbsDzP95=%.1f terrainMeshNAtLeast64AndUnder50FracAtLeast95=%d waterAboveHitInVolume=%d waterAboveHitNotInVolume=%d waterNotAboveHitInVolume=%d waterNotAboveHitNotInVolume=%d globalSurfaceCm=%.1f..%.1f traceWindowZ=%.0f..%.0f pawn=(%.0f,%.0f,%.0f) pawnApiZ=%.1f sameGeneratorAsReflected=%d apiUsPerCall=%.2f linesListed=%d"),
+        AbsDz.Num(), Candidates, Frac, PctOf(AbsDz, 0.5), PctOf(AbsDz, 0.95), PctOf(SignedDz, 0.5),
+        TerrainAbsDz.Num(), TerrainFrac, PctOf(TerrainAbsDz, 0.5), PctOf(TerrainAbsDz, 0.95),
+        (TerrainAbsDz.Num() >= 64 && TerrainFrac >= 0.95) ? 1 : 0,
         WaterAboveIn, WaterAboveOut, WaterBelowIn, WaterBelowOut, GMin, GMax, Top, Bottom, P.X, P.Y, P.Z, PawnApiZ, SameGen,
         ApiCalls > 0 ? ApiSec * 1.0e6 / ApiCalls : 0.0, Listed);
     if (!bFull) { return; }

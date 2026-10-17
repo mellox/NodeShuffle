@@ -36,6 +36,7 @@ namespace NodeShuffleMapMode
     // consecutive 5 s ticks with an unchanged non-ours node count, counted ONLY from the first tick that read
     // the generator's EPWProgressStage as Ready (that tick zeroes the counter; 12 = 60 s after it). Ticks
     // before the first Ready never count. Read only by the observe-only readiness predicate in RwgObserveTick.
+    // TODO(2026-10-17, RWG P2a -> R2): 12 rests on ONE machine's 30.9 s post-plan burst (R1); RWG estimates 116 s on a 2700X. Re-check against R2's RWGSTAGE/RWGWAIT deltas before P2b.
     constexpr int32 RwgStableTicksRequired = 12;
     // Consecutive unreadable-stage ticks before the one-shot RWGWAIT unreadable Warning (12 = 60 s).
     constexpr int32 RwgUnreadableWarnTicks = 12;

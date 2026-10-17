@@ -210,15 +210,18 @@ void ANodeShuffleSubsystem::RwgLogWater2()
     }
     const double LargestTop = LOrigin.Z + LExtent.Z;
     TMap<FString, int32> RwgWaterClasses;
+    TMap<const UClass*, bool> IsRwgWaterClass;
     for (TActorIterator<AActor> It(World); It; ++It)
     {
         const UClass* C = It->GetClass();
-        const FString Path = C->GetPathName();
-        if ((Path.StartsWith(TEXT("/Script/ProceduralWorld.")) || Path.StartsWith(TEXT("/RandomWorldGenerator/")))
-            && C->GetName().Contains(TEXT("Water")))
+        const bool* Known = IsRwgWaterClass.Find(C);
+        if (!Known)
         {
-            RwgWaterClasses.FindOrAdd(C->GetName())++;
+            const FString Path = C->GetPathName();
+            Known = &IsRwgWaterClass.Add(C, (Path.StartsWith(TEXT("/Script/ProceduralWorld.")) || Path.StartsWith(TEXT("/RandomWorldGenerator/")))
+                && C->GetName().Contains(TEXT("Water")));
         }
+        if (*Known) { RwgWaterClasses.FindOrAdd(C->GetName())++; }
     }
     int32 RwgWaterActors = 0;
     for (const TPair<FString, int32>& Pair : RwgWaterClasses) { RwgWaterActors += Pair.Value; }
