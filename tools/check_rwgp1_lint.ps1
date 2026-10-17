@@ -25,6 +25,20 @@
 #   R11 RWGHEIGHTAPI: the accepted RWG build is one code constant; each decorated export name lives once, in
 #       the HeightApi file only; TryBind refuses on version BEFORE it refuses on exports and allows calls only
 #       after both; no RWG call precedes the callsAllowed guard in RwgLogHeightApi; no library is linked.
+# RWG P2b (2026-10-17, P2 spec §2 + "R2 measurements": roll ON for mode=rwg, placement v2, apply-on-load) changes R1
+# (pinned TRUE now, deliberately), R2 (RefreshTick falls through on RWG once RwgPipelineMayRun allows), R9 (clause A is
+# the v2 predicate; clause B applies a SAVED layout only), R10, and adds:
+#   R12 RwgPipelineMayRun: the map/roll/ready guard is its FIRST test; the legacy-layout check sits after it and
+#       re-rolls through RollLayout(Seed, true) only after the RWGLAYOUT legacy line.
+#   R13 RwgLayoutVersion is stamped at ONE site, inside the RWG-only test in RollLayout; nothing else assigns it.
+#   R14 The RWG deal rejects outside then resolves Z then water-rejects, all BEFORE the spacing scan; no cave spots
+#       off vanilla (GenerateNewLocations nulls the cave output first); the volume test decides water.
+#   R15 Spawn: on RWG the settle block asks RwgResolveAtSpawn first and RaycastSettle only when the API was not
+#       used; a trace miss spawns at the resolved Z (no defer); the ApplyLayout loop defers RWG actor creation to the
+#       capped, nearest-first RwgSpawnPass.
+#   R16 Cave learning, the vanilla depth floor and the redeal cave branch are gated to vanilla at their sites.
+#   R17 The byte-signature gate refuses after the export refusal and before calls are allowed; the ground query
+#       makes no RWG call unless the binding is usable.
 #
 # Needles that name forbidden or pinned literals are BUILT BY CONCATENATION so this file cannot match itself.
 # Exit 0 = all hold. Exit 1 = at least one does not. Exit 2 = a pinned FILE is missing.
@@ -41,6 +55,7 @@ $files = [ordered]@{
     subsysh = 'NodeShuffle\Public\NodeShuffleSubsystem.h'
     late    = 'NodeShuffle\Private\NodeShuffleLateNodes.cpp'
     hapi    = 'NodeShuffle\Private\NodeShuffleMapModeHeightApi.cpp'
+    place   = 'NodeShuffle\Private\NodeShuffleMapModePlace.cpp'
 }
 $text = @{}
 foreach ($k in $files.Keys) {
@@ -66,10 +81,10 @@ $cls = 'ANodeShuffle' + 'Subsystem::'
 $notVanilla = 'GetMapMode() != ENodeShuffleMapMode::' + 'Vanilla'
 
 # R1
-$rollConst = 'constexpr bool bRwgRoll' + 'Enabled = false;'
+$rollConst = 'constexpr bool bRwgRoll' + 'Enabled = true;'
 $n = ([regex]::Matches($text.maph, [regex]::Escape($rollConst))).Count
-if ($n -ne 1) { $fails += "R1: the parked off-vanilla roll constant must appear exactly once as false in NodeShuffleMapMode.h (found $n)" }
-foreach ($k in @('mapcpp','r1cpp','subsys','subsysh','hapi')) {
+if ($n -ne 1) { $fails += "R1: the off-vanilla roll constant must appear exactly once as true in NodeShuffleMapMode.h (P2b; found $n)" }
+foreach ($k in @('mapcpp','r1cpp','subsys','subsysh','hapi','place')) {
     if ($text[$k] -match ('bRwgRoll' + 'Enabled\s*=')) { $fails += "R1: '$($files[$k])' assigns the roll constant; it lives only in NodeShuffleMapMode.h" }
 }
 
@@ -85,7 +100,7 @@ if (-not $tick) { $fails += 'R2: RefreshTick body not found' } else {
     elseif (-not ($guard -lt $obs -and $obs -lt $cap -and $cap -lt $roll)) { $fails += 'R2: the observe branch must precede the starter capture and the IsWorldReadyForRoll gate' }
     else {
         $after = $tick.Substring($obs, 80)
-        if ($after -notmatch '^RwgObserveTick\(\);\s*return;') { $fails += 'R2: RwgObserveTick() must be followed immediately by return;' }
+        if ($after -notmatch ('^RwgObserveTick\(\);\s*if \(!RwgPipeline' + 'MayRun\(\)\) \{ return; \}')) { $fails += 'R2: RwgObserveTick() must be followed immediately by the RwgPipelineMayRun return gate' }
     }
 }
 
@@ -128,7 +143,7 @@ $rwg = '/RandomWorldGenerator/Maps/ProceduralWorldLevel/' + 'ProceduralWorldLeve
 foreach ($lit in @($van, $rwg)) {
     $inH = ([regex]::Matches($text.maph, [regex]::Escape($lit))).Count
     $elsewhere = 0
-    foreach ($k in @('mapcpp','r1cpp','subsys','subsysh','late','hapi')) { $elsewhere += ([regex]::Matches($text[$k], [regex]::Escape($lit))).Count }
+    foreach ($k in @('mapcpp','r1cpp','subsys','subsysh','late','hapi','place')) { $elsewhere += ([regex]::Matches($text[$k], [regex]::Escape($lit))).Count }
     if ($inH -ne 1 -or $elsewhere -ne 0) { $fails += "R4: package literal '$lit' must appear once, in NodeShuffleMapMode.h only (h=$inH elsewhere=$elsewhere)" }
 }
 $gm = Get-Body $text.mapcpp ('ENodeShuffleMapMode ' + $cls + 'GetMapMode() const')
@@ -153,7 +168,7 @@ if ($text.hapi -notmatch ('TEXT\("' + 'RWGHEIGHTAPI[: ]')) { $fails += "R6: 'RWG
 if ($text.late.IndexOf('!IsWorldReady' + 'ForReroll()') -lt 0) { $fails += 'R6: the late-node first-scan gate no longer calls IsWorldReadyForReroll (R5 would not reach it)' }
 
 # R7: inside every TEXT("...") of the new files, no parenthetical contains name=value.
-foreach ($k in @('mapcpp','r1cpp','hapi')) {
+foreach ($k in @('mapcpp','r1cpp','hapi','place')) {
     foreach ($m in [regex]::Matches($text[$k], 'TEXT\("((?:[^"\\]|\\.)*)"\)')) {
         $fmt = $m.Groups[1].Value
         foreach ($p in [regex]::Matches($fmt, '\(([^()]*)\)')) {
@@ -179,7 +194,10 @@ if ($fgf -lt 0 -or $fgfEnd -lt 0) { $fails += 'R8: FindGeneratorFields not found
 # R9
 $ot = Get-Body $text.mapcpp ('void ' + $cls + 'RwgObserveTick()')
 if (-not $ot) { $fails += 'R9: RwgObserveTick body not found' } else {
-    if ($ot -notmatch ('const bool bReadyNow = bStageReadable && bStageReady && bStable && ' + 'bFloor;')) { $fails += 'R9: the ready predicate must AND stage-readable, stage-Ready, stable and floor' }
+    if ($ot -notmatch ('const bool bClauseA = bStageReadable && bStageReady && bStable && ' + 'bFloor;')) { $fails += 'R9: clause A must AND stage-readable, stage-Ready, stable and floor' }
+    if ($ot -notmatch ('const bool bClauseB = bLayout' + 'Generated && RwgStableAnyStage >= NodeShuffleMapMode::RwgApplyStableTicks\s*&& Nodes >= NodeShuffleMapMode::RwgMinNodes;')) { $fails += 'R9: clause B must require a saved layout, the any-stage stable count and the node floor' }
+    if ($ot -notmatch ('const bool bReadyNow = bClauseA \|\| ' + 'bClauseB;')) { $fails += 'R9: the latch must be clause A or clause B, nothing else' }
+    if ($ot -notmatch ('RwgStableAnyStage = bLayout' + 'Generated \? ')) { $fails += 'R9: the clause-B counter must count only on a save holding a layout' }
     if ($ot -notmatch ('else if \(bStageReady\)\s*\{\s*RwgStableSinceReady = \(Delta == 0\) \? RwgStable' + 'SinceReady \+ 1 : 0;')) { $fails += 'R9: the stable counter must advance only in the stage-Ready branch' }
     if ($ot -notmatch ('RwgFirstReadyT = T;\s*RwgStable' + 'SinceReady = 0;')) { $fails += 'R9: the first Ready tick must zero the stable counter' }
     if (([regex]::Matches($ot, 'RwgStableSinceReady\s*=\s*\(')).Count -ne 1) { $fails += 'R9: the stable counter is advanced at more than one site' }
@@ -190,7 +208,7 @@ foreach ($k in @('mapcpp','r1cpp','subsysh','maph')) {
 if ($text.mapcpp -match ('by=quies' + 'cence|TEXT\("quies' + 'cence"\)')) { $fails += 'R9: a quiescence readiness branch is back in NodeShuffleMapMode.cpp' }
 
 # R10
-if ($text.mapcpp -notmatch ('TEXT\("RWGWAIT: t=%\.0fs [^"]* gated' + 'By=%s"\)')) { $fails += 'R10: the RWGWAIT census format must end in gatedBy=%s' }
+if ($text.mapcpp -notmatch ('TEXT\("RWGWAIT: t=%\.0fs [^"]* gated' + 'By=%s savedLayout=%d stableAnyStage=%d/%d"\)')) { $fails += 'R10: the RWGWAIT census format must carry gatedBy then the clause-B fields' }
 
 # R11
 $acc = 'constexpr int32 RwgHeightApiAccepted' + 'Build = 705;'
@@ -206,7 +224,7 @@ $syms = @(
 foreach ($sym in $syms) {
     $inH = ([regex]::Matches($text.hapi, [regex]::Escape('"' + $sym + '"'))).Count
     $else = 0
-    foreach ($k in @('mapcpp','r1cpp','subsys','subsysh','maph','late')) { $else += ([regex]::Matches($text[$k], [regex]::Escape($sym))).Count }
+    foreach ($k in @('mapcpp','r1cpp','subsys','subsysh','maph','late','place')) { $else += ([regex]::Matches($text[$k], [regex]::Escape($sym))).Count }
     if ($inH -ne 1 -or $else -ne 0) { $fails += "R11: decorated export '$sym' must appear once, as a literal in the HeightApi file only (hapi=$inH elsewhere=$else)" }
 }
 $tb = $text.hapi.IndexOf('void TryBind(FRwgHeightApi& A)')
@@ -238,9 +256,68 @@ if ($ot) {
     if ($sr -lt 0 -or $rc.Count -ne 1 -or $rc[0].Index -lt $sr) { $fails += 'R11c: RwgObserveTick may call RwgLogReprobes only after the latch' }
 }
 
+# R12
+$pm = Get-Body $text.place ('bool ' + $cls + 'RwgPipelineMayRun()')
+if (-not $pm) { $fails += 'R12: RwgPipelineMayRun body not found' } else {
+    $g1 = $pm.IndexOf('if (GetMapMode() != ENodeShuffleMapMode::Rwg || !NodeShuffleMapMode::bRwgRollEnabled || !bRwg' + 'Ready)')
+    $firstIf = $pm.IndexOf('if (')
+    $lv = $pm.IndexOf('if (RwgLayoutVersion >= NodeShuffleMapMode::RwgLayout' + 'VersionP2b)')
+    $lg = $pm.IndexOf('RWGLAYOUT: legacy layout ' + 'ignored')
+    $rr = $pm.IndexOf('RollLayout(Seed, ' + 'true);')
+    if ($g1 -lt 0 -or $g1 -ne $firstIf) { $fails += 'R12: the map/roll/ready guard must be the first test in RwgPipelineMayRun' }
+    elseif ($lv -lt $g1 -or $lg -lt $lv -or $rr -lt $lg) { $fails += 'R12: the legacy check must follow the guard, and the re-roll must follow the RWGLAYOUT legacy line' }
+}
+# R13
+$stamp = 'if (GetMapMode() == ENodeShuffleMapMode::Rwg) { RwgLayout' + 'Version = NodeShuffleMapMode::RwgLayoutVersionP2b; }'
+$assigns = 0
+foreach ($k in @('mapcpp','r1cpp','subsys','hapi','place','late')) { $assigns += ([regex]::Matches($text[$k], 'RwgLayout' + 'Version\s*=[^=]')).Count }
+$rl = Get-Body $text.subsys ('void ' + $cls + 'RollLayout(int32 Seed, bool bIsReroll)')
+if (-not $rl -or ([regex]::Matches($rl, [regex]::Escape($stamp))).Count -ne 1 -or $assigns -ne 1) { $fails += "R13: RwgLayoutVersion must be assigned once, inside the RWG-only test in RollLayout (assignments=$assigns)" }
+# R14
+$d1 = Get-Body $text.place ('bool ' + $cls + 'RwgDealOneSpot(const NodeShuffleMapMode::FRwgGroundQuery& Q, FRandomStream& Rng, FVector& OutSpot,')
+if (-not $d1) { $fails += 'R14: RwgDealOneSpot body not found' } else {
+    $o = $d1.IndexOf('if (Q.Outside(X, Y)) { ++Outside; return false; }'); $z = $d1.IndexOf('const double Z = Q.Surface' + 'Z(X, Y);'); $w = $d1.IndexOf('if (bVolume) { ++Water; return ' + 'false; }')
+    if ($o -lt 0 -or $z -lt 0 -or $w -lt 0 -or -not ($o -lt $z -and $z -lt $w)) { $fails += 'R14: RwgDealOneSpot must reject outside, then resolve Z, then reject volume water' }
+}
+$gl = Get-Body $text.place ('bool ' + $cls + 'GenerateRwgLocations(FRandomStream& Rng, const TArray<FVector>& AvoidLocations, int32 Count,')
+if (-not $gl -or $gl.IndexOf('RwgDealOne' + 'Spot(') -lt 0 -or $gl.IndexOf('RwgDealOne' + 'Spot(') -gt $gl.IndexOf('DistSquared' + '2D(')) { $fails += 'R14: the RWG deal must call RwgDealOneSpot before its spacing scan' }
+$gn = Get-Body $text.subsys ('void ' + $cls + 'GenerateNewLocations(FRandomStream& Rng, const TArray<FVector>& VanillaLocations,')
+if (-not $gn -or $gn -notmatch ('if \(' + [regex]::Escape($notVanilla) + '\)\s*\{\s*OutUnderground' + 'Indices = nullptr;') -or $gn.IndexOf('OutUnderground' + 'Indices = nullptr;') -gt $gn.IndexOf('CaveChance')) { $fails += 'R14: GenerateNewLocations must null the cave output off vanilla before any cave share' }
+# R15
+if ($text.subsys -notmatch ('bool bSettled = \(GetMapMode\(\) == ENodeShuffleMapMode::Rwg\) \? RwgResolveAtSpawn\(Entry, bRwgApiUsed, bWaterNoLand\) : false;\s*if \(!bRwgApiUsed\) \{ bSettled = Raycast' + 'Settle\(Entry, nullptr, nullptr, &bWaterNoLand\); \}')) { $fails += 'R15: the settle block must ask RwgResolveAtSpawn on RWG and RaycastSettle only when the API was not used' }
+$ra = Get-Body $text.place ('bool ' + $cls + 'RwgResolveAtSpawn(FNodeShuffleEntry& Entry, bool& bOutApiUsed, bool& bOutWaterNoLand)')
+if (-not $ra -or $ra -notmatch ('if \(bOutWaterNoLand\) \{ return false; \}[^\n]*\n(?:[^\n]*\n){0,4}\s*\+\+RwgPcTrace' + 'Miss;\s*return true;')) { $fails += 'R15: a trace miss on the API path must spawn at the resolved Z (++RwgPcTraceMiss; return true;)' }
+$sp = Get-Body $text.place ('void ' + $cls + 'RwgSpawnPass(float SpawnRadiusCm, bool& bChangedWorld)')
+if (-not $sp -or $sp.IndexOf('Cands.' + 'Sort(') -lt 0 -or $sp -notmatch ('FMath::Min\(Cands\.Num\(\), NodeShuffleMapMode::RwgMaxSpawn' + 'AttemptsPerPass\)')) { $fails += 'R15: RwgSpawnPass must sort nearest-first and cap attempts at RwgMaxSpawnAttemptsPerPass' }
+if ($text.subsys -notmatch ('if \(' + [regex]::Escape($notVanilla) + '\) \{ continue; \}\s*if \(Entry\.bActive && IsLocationNearAnyPlayer\(Entry\.Location, SpawnRadiusCm\)\)')) { $fails += 'R15: the ApplyLayout loop must hand RWG actor creation to RwgSpawnPass before its inline spawn' }
+# R16
+$gates = @(
+    ('if (GetMapMode() == ENodeShuffleMapMode::Vanilla) { ClassifyOriginal' + 'Underground(Node, Rec.VanillaNodePath); }'),
+    ('if (GetMapMode() == ENodeShuffleMapMode::Vanilla) { ExpandCave' + 'FloorsBudgeted(); }'),
+    ('OutLoc.Z < DeepWaterFloorZ && GetMapMode() == ENodeShuffleMapMode::' + 'Vanilla;'),
+    ('Entry.ResourceForm != 2 /* liquid */ && GetMapMode() == ENodeShuffleMapMode::' + 'Vanilla)')
+)
+foreach ($gt in $gates) { if (([regex]::Matches($text.subsys, [regex]::Escape($gt))).Count -ne 1) { $fails += "R16: vanilla-only gate missing: $gt" } }
+if (([regex]::Matches($text.subsys, 'ClassifyOriginal' + 'Underground\(Node')).Count -ne 1) { $fails += 'R16: an ungated ClassifyOriginalUnderground call exists' }
+# R17
+if ($tb -ge 0) {
+    $tbb2 = $text.hapi.Substring($tb)
+    $e2 = $tbb2.IndexOf('if (A.Required != 6) { A.Status = '); $sg = $tbb2.IndexOf('if (bRequiredSigBad) { A.Status = ' + 'TEXT("signatureMismatch"); return; }'); $u2 = $tbb2.IndexOf('A.bUsable = ' + 'true;')
+    if ($sg -lt 0 -or -not ($e2 -lt $sg -and $sg -lt $u2)) { $fails += 'R17: the byte-signature refusal must sit between the export refusal and A.bUsable = true' }
+}
+$gq = $text.hapi.IndexOf('NodeShuffleMapMode::FRwgGroundQuery::FRwgGroundQuery(UWorld* World, UObject* Generator)')
+if ($gq -lt 0) { $fails += 'R17: FRwgGroundQuery constructor not found' } else {
+    $gqb = $text.hapi.Substring($gq)
+    $gg = $gqb.IndexOf('if (!A.bUsable || !World)'); $gc = $gqb.IndexOf('A.Get(' + 'World)')
+    if ($gg -lt 0 -or $gc -lt 0 -or $gc -lt $gg) { $fails += 'R17: the ground query calls RWG before checking the binding is usable' }
+}
+foreach ($tag in @('ROLLCENSUS','PLACECENSUS','RWGLAYOUT')) {
+    if ($text.place -notmatch ('TEXT\("' + $tag + '[: ]')) { $fails += "R6: '$tag' line missing from NodeShuffleMapModePlace.cpp" }
+}
+
 if ($fails.Count -gt 0) {
     $fails | ForEach-Object { Write-Host "FAIL $_" }
     exit 1
 }
-Write-Host "PASS: RWG P1/P2a lint -- R1..R11c hold across $($files.Count) loaded files"
+Write-Host "PASS: RWG P1/P2a/P2b lint -- R1..R17 hold across $($files.Count) loaded files"
 exit 0

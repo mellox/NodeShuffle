@@ -322,9 +322,9 @@ void ANodeShuffleSubsystem::RwgObserveTick()
     if (bLayoutGenerated && !bRwgLayoutNoticeLogged)
     {
         bRwgLayoutNoticeLogged = true;
-        UE_LOG(LogNodeShuffle, Warning,
-            TEXT("RWGOBSERVE: this save holds a NodeShuffle layout (%d entries, %d hide records) on a non-vanilla map; this build is observe-only off vanilla, so the layout is not applied, adopted or late-scanned this session"),
-            Layout.Num(), OriginalNodeRecord.Num());
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("RWGLAYOUT: save holds a layout; entries=%d hideRecords=%d rwgLayoutVersion=%d mapRwg=%d; it is applied only after an apply clause latches and RWGREADY prints"),
+            Layout.Num(), OriginalNodeRecord.Num(), RwgLayoutVersion, GetMapMode() == ENodeShuffleMapMode::Rwg ? 1 : 0);
     }
     APawn* Pawn = NodeShuffleMapMode::FirstPlayerPawn(World);
     if (Pawn && !bRwgPawnFirstSet)
@@ -351,6 +351,9 @@ void ANodeShuffleSubsystem::RwgObserveTick()
         RwgCountNodes(Nodes, Fracking, Deposits);
         const int32 Delta = RwgPrevNodeCount < 0 ? Nodes : Nodes - RwgPrevNodeCount;
         RwgPrevNodeCount = Nodes;
+        // RWG P2b apply-on-load clause B: consecutive unchanged-count ticks at ANY stage, counted only on a save
+        // that holds a layout (a new game uses clause A alone).
+        RwgStableAnyStage = bLayoutGenerated ? ((Delta == 0) ? RwgStableAnyStage + 1 : 0) : 0;
         const bool bStageReady = bStageReadable && Stage == TEXT("Ready");
         if (bStageReady && !bRwgStageReadySeen)
         {
@@ -393,29 +396,36 @@ void ANodeShuffleSubsystem::RwgObserveTick()
         const bool bStable = RwgStableSinceReady >= NodeShuffleMapMode::RwgStableTicksRequired;
         const TCHAR* GatedBy = !bStageReadable ? TEXT("unreadable") : !bStageReady ? TEXT("stageNotReady")
             : !bStable ? TEXT("unstable") : !bFloor ? TEXT("floor") : TEXT("none");
-        // READINESS V2. Every clause needs the stage read; there is no quiescence-only path.
-        const bool bReadyNow = bStageReadable && bStageReady && bStable && bFloor;
+        // READINESS V2 (clause A). Every clause needs the stage read; there is no quiescence-only path for a NEW game.
+        const bool bClauseA = bStageReadable && bStageReady && bStable && bFloor;
+        // RWG P2b clause B (apply a SAVED layout only, never a roll): layout exists AND count unchanged for
+        // RwgApplyStableTicks ticks at any stage AND count >= RwgMinNodes. Brief "R2 measurements" (reload unmeasured).
+        const bool bClauseB = bLayoutGenerated && RwgStableAnyStage >= NodeShuffleMapMode::RwgApplyStableTicks
+            && Nodes >= NodeShuffleMapMode::RwgMinNodes;
+        const bool bReadyNow = bClauseA || bClauseB;
         if (!bReadyNow)
         {
             if ((RwgObserveTicks % NodeShuffleMapMode::RwgWaitEveryTicks) == 1)
             {
                 UE_LOG(LogNodeShuffle, Display,
-                    TEXT("RWGWAIT: t=%.0fs realT=%.0fs nodes=%d strict=%d fracking=%d deposits=%d delta=%d stageReady=%d firstReadyT=%.0f stableSinceReady=%d/%d genState='%s' progressStage='%s' contentSpawned=%d fillPct=%d floorBy=%s gatedBy=%s"),
+                    TEXT("RWGWAIT: t=%.0fs realT=%.0fs nodes=%d strict=%d fracking=%d deposits=%d delta=%d stageReady=%d firstReadyT=%.0f stableSinceReady=%d/%d genState='%s' progressStage='%s' contentSpawned=%d fillPct=%d floorBy=%s gatedBy=%s savedLayout=%d stableAnyStage=%d/%d"),
                     T, RealT, Nodes, Strict, Fracking, Deposits, Delta, bStageReady ? 1 : 0, RwgFirstReadyT,
                     RwgStableSinceReady, NodeShuffleMapMode::RwgStableTicksRequired, *GenShown, *StageShown,
-                    ContentSpawned, FillPct, bLayoutGenerated ? TEXT("anyNode") : TEXT("strict"), GatedBy);
+                    ContentSpawned, FillPct, bLayoutGenerated ? TEXT("anyNode") : TEXT("strict"), GatedBy,
+                    bLayoutGenerated ? 1 : 0, RwgStableAnyStage, NodeShuffleMapMode::RwgApplyStableTicks);
             }
             if (!bRwgWaitWarned && T >= NodeShuffleMapMode::RwgWaitWarnSeconds)
             {
                 bRwgWaitWarned = true;
                 UE_LOG(LogNodeShuffle, Warning,
-                    TEXT("RWGWAIT: readiness predicate still false at t=%.0fs; nodes=%d strict=%d stableSinceReady=%d/%d progressStage='%s' gatedBy=%s; observe-only build, no roll off vanilla"),
+                    TEXT("RWGWAIT: readiness predicate still false at t=%.0fs; nodes=%d strict=%d stableSinceReady=%d/%d progressStage='%s' gatedBy=%s; no roll and no layout apply on this map while it stays false"),
                     T, Nodes, Strict, RwgStableSinceReady, NodeShuffleMapMode::RwgStableTicksRequired, *StageShown, GatedBy);
             }
             return;
         }
 
         bRwgReady = true;
+        RwgReadyBy = bClauseA ? TEXT("stage") : TEXT("savedLayoutStable");
         RwgReadyTick = RwgObserveTicks;
         RwgReadyNodeCount = Nodes;
         // Extent for the P2b trace window / deal box (brief §1 extent fix): 2nd-98th percentile box, Z range and
@@ -454,8 +464,8 @@ void ANodeShuffleSubsystem::RwgObserveTick()
         const float MovedM = (Pawn && bRwgPawnFirstSet)
             ? static_cast<float>(FVector::Dist(Pawn->GetActorLocation(), RwgPawnFirst) / 100.0) : -1.f;
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("RWGREADY: by=stage t=%.1fs realT=%.1fs firstReadyT=%.1fs nodes=%d strict=%d fracking=%d deposits=%d stableSinceReady=%d genState='%s' progressStage='%s' contentSpawned=%d fillPct=%d floorBy=%s zMin=%.0f zMax=%.0f meanZ=%.0f strictInExtent=%d boxKmStrict=%.1fx%.1f boxKmAll=%.1fx%.1f allInBox=%d pawnMovedSinceFirstTickM=%.0f rollOffVanillaEnabled=%d"),
-            T, RealT, RwgFirstReadyT, Nodes, Strict, Fracking, Deposits, RwgStableSinceReady, *GenShown, *StageShown,
+            TEXT("RWGREADY: by=%s t=%.1fs realT=%.1fs firstReadyT=%.1fs nodes=%d strict=%d fracking=%d deposits=%d stableSinceReady=%d genState='%s' progressStage='%s' contentSpawned=%d fillPct=%d floorBy=%s zMin=%.0f zMax=%.0f meanZ=%.0f strictInExtent=%d boxKmStrict=%.1fx%.1f boxKmAll=%.1fx%.1f allInBox=%d pawnMovedSinceFirstTickM=%.0f rollOffVanillaEnabled=%d"),
+            *RwgReadyBy, T, RealT, RwgFirstReadyT, Nodes, Strict, Fracking, Deposits, RwgStableSinceReady, *GenShown, *StageShown,
             ContentSpawned, FillPct, bLayoutGenerated ? TEXT("anyNode") : TEXT("strict"),
             RwgZMin, RwgZMax, RwgMeanZ, Xs.Num(), BoxKm(Xs), BoxKm(Ys), BoxKm(AXs), BoxKm(AYs), AXs.Num(), MovedM,
             NodeShuffleMapMode::bRwgRollEnabled ? 1 : 0);

@@ -6,6 +6,7 @@
 #include "Resources/FGResourceNode.h"
 #include "NodeShuffle.h" // ns-h1b-notice: FNodeShufflePendingEntry, held by value in a member below
 #include "NodeShuffleMapMode.h" // RWG P1: ENodeShuffleMapMode, held by value in a member below
+class AFGWaterVolume; // RWG P2b: RwgWaterVolumes cache (weak pointers only)
 #include "NodeShuffleSubsystem.generated.h"
 
 class AFGNodeMeshActor;
@@ -982,6 +983,31 @@ private:
     void RwgLogReprobes(bool bFull);
     void RwgLogWater2();
     void RwgLogHeightApi(bool bFull);       // NodeShuffleMapModeHeightApi.cpp
+    // ---- RWG P2b (2026-10-17): roll ON for mode=rwg, placement v2, apply-on-load. NodeShuffleMapModePlace.cpp. ----
+    // Every function below is called only behind a `GetMapMode() != Vanilla` / `== Rwg` test at its call site.
+    bool RwgPipelineMayRun();               // RefreshTick: false = return this tick
+    bool GenerateRwgLocations(FRandomStream& Rng, const TArray<FVector>& AvoidLocations, int32 Count, float SpacingCm,
+                              TArray<FVector>& OutLocations);          // false = API unusable, caller deals the fallback
+    bool RwgDealOneSpot(const NodeShuffleMapMode::FRwgGroundQuery& Q, FRandomStream& Rng, FVector& OutSpot,
+                        int32& Outside, int32& Water, int32& WaterApiDisagree);
+    bool TryRedealRwgEntry(FNodeShuffleEntry& Entry, float SpacingCm, int32 Tries, bool& bOutMoved); // false = API unusable, caller keeps its path
+    bool RwgResolveAtSpawn(FNodeShuffleEntry& Entry, bool& bOutApiUsed, bool& bOutWaterNoLand); // !bOutApiUsed = caller keeps its path
+    void RwgSpawnPass(float SpawnRadiusCm, bool& bChangedWorld);
+    void RwgEmitPlaceCensus();
+    void RwgBuildWaterVolumeCache();
+    bool RwgIsPointInWaterCached(const FVector& P) const;
+    void RwgLogSkipOnce(int32 Bit, const TCHAR* What);
+    TArray<TPair<FBox, TWeakObjectPtr<AFGWaterVolume>>> RwgWaterVolumes; // session cache, built per roll/redeal batch
+    bool bRwgLegacyChecked = false;     // per session: the RwgLayoutVersion check ran once
+    int32 RwgStableAnyStage = 0;        // clause B: consecutive delta==0 ticks at ANY stage (only counted with a saved layout)
+    FString RwgReadyBy;                 // which apply/roll clause latched bRwgReady (printed by RWGREADY / RWGLAYOUT)
+    int32 RwgSkipLogged = 0;            // bitmask of once-per-session "skipped off vanilla" lines
+    // PLACECENSUS per-pass counters (zeroed by RwgEmitPlaceCensus).
+    int32 RwgPcAttempted = 0, RwgPcSpawned = 0, RwgPcBudgetSkipped = 0, RwgPcFarNoAttempt = 0, RwgPcLive = 0;
+    int32 RwgPcTraceHit = 0, RwgPcTraceMiss = 0, RwgPcTraceFar = 0, RwgPcFallback = 0, RwgPcRedealApi = 0;
+    int32 RwgPcPasses = 0;
+    // Session totals for the hide-time rock census (rocks are NOT hidden on RWG in P2b; P3 decides).
+    int32 RwgRockLinked = 0, RwgRockChecked = 0;
     mutable ENodeShuffleMapMode MapMode = ENodeShuffleMapMode::Unlatched;
     mutable FString MapPackageName;
     TWeakObjectPtr<UObject> RwgGenerator;
@@ -1792,6 +1818,10 @@ private:
     // at roll time; on load, an older saved value triggers migration (see PostLoadGame_Implementation).
     static constexpr int32 CurrentLayoutVersion = 2;
     UPROPERTY(SaveGame) int32 LayoutVersion = 1;
+    // RWG P2b (2026-10-17): stamped NodeShuffleMapMode::RwgLayoutVersionP2b by a roll on RWG ONLY. Default 0 =
+    // legacy/absent (every older save; written as 0 on vanilla saves and never read there). On RWG a layout with 0
+    // was rolled by an unguarded or earlier build: it is ignored and re-rolled once (RWGLAYOUT legacy line).
+    UPROPERTY(SaveGame) int32 RwgLayoutVersion = 0;
     UPROPERTY(SaveGame) TArray<FNodeShuffleEntry> Layout;
 
     // redesign-1: persistent record of EVERY unoccupied original node location (vanilla AND

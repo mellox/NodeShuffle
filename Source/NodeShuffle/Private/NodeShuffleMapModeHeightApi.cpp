@@ -133,6 +133,36 @@ namespace
         const bool bVersion = A.Build == RwgHeightApiAcceptedBuild && A.SemVer == RwgHeightApiAcceptedSemVer;
         if (!bVersion) { A.Status = TEXT("versionMismatch"); return; }
         if (A.Required != 6) { A.Status = TEXT("exportMissing"); return; }
+        // RWG P2b BYTE-SIGNATURE GATE (P2a cold review alternative 2): each export's leading bytes must equal the
+        // build-705 disassembly (dumpbin /DISASM, 2026-10-17); -1 = wildcard (GetField's F40h is the field offset
+        // a same-version rebuild could move; IsOutsideWorld's RIP displacement is skipped). Mismatch = fail closed.
+        static const int16 SigGet[] = { 0x48,0x83,0xEC,0x28,0x48,0x85,0xC9 };
+        static const int16 SigField[] = { 0x48,0x8B,0x81,0x40,0x0F,0x00,0x00,0x48,0x89,0x02 };
+        static const int16 SigSpliced[] = { 0x48,0x8B,0x81,0x90,0x00,0x00,0x00,0xC3 };
+        static const int16 SigSurface[] = { 0x40,0x53,0x48,0x83,0xEC,0x40,0x0F,0x29,0x74,0x24,0x30,0x48,0x8B,0xD9 };
+        static const int16 SigOutside[] = { 0xF2,0x0F,0x10,0x1D,-1,-1,-1,-1,0xF2,0x0F,0x10,0x41,0x08,0x0F,0x54,0xCB };
+        static const int16 SigWater[] = { 0x48,0x8B,0xC4,0x44,0x89,0x48,0x20,0x48,0x89,0x48,0x08 };
+        static const int16 SigGMin[] = { 0xF2,0x0F,0x10,0x41,0x18,0xC3 };
+        static const int16 SigGMax[] = { 0xF2,0x0F,0x10,0x41,0x20,0xC3 };
+        const auto SigOk = [](const void* Fn, const int16* Sig, int32 N) -> bool
+        {
+            const uint8* B = static_cast<const uint8*>(Fn);
+            for (int32 I = 0; I < N; ++I) { if (Sig[I] >= 0 && B[I] != static_cast<uint8>(Sig[I])) { return false; } }
+            return true;
+        };
+        FString SigBad;
+        bool bRequiredSigBad = false;
+        const auto Check = [&](const void* Fn, const int16* Sig, int32 N, const TCHAR* Name) { if (!SigOk(Fn, Sig, N)) { bRequiredSigBad = true; SigBad += FString(SigBad.IsEmpty() ? TEXT("") : TEXT(" ")) + Name; } };
+        Check(A.Get, SigGet, UE_ARRAY_COUNT(SigGet), TEXT("Get"));
+        Check(A.GetField, SigField, UE_ARRAY_COUNT(SigField), TEXT("GetField"));
+        Check(A.GetSpliced, SigSpliced, UE_ARRAY_COUNT(SigSpliced), TEXT("GetSpliced"));
+        Check(A.Surface, SigSurface, UE_ARRAY_COUNT(SigSurface), TEXT("SurfaceHeightCm"));
+        Check(A.Outside, SigOutside, UE_ARRAY_COUNT(SigOutside), TEXT("IsOutsideWorld"));
+        Check(A.Water, SigWater, UE_ARRAY_COUNT(SigWater), TEXT("WaterLevelCmAt"));
+        if (A.GMin && !SigOk(A.GMin, SigGMin, UE_ARRAY_COUNT(SigGMin))) { A.GMin = nullptr; SigBad += TEXT(" GlobalMinSurfaceCm(optional,dropped)"); }
+        if (A.GMax && !SigOk(A.GMax, SigGMax, UE_ARRAY_COUNT(SigGMax))) { A.GMax = nullptr; SigBad += TEXT(" GlobalMaxSurfaceCm(optional,dropped)"); }
+        UE_LOG(LogNodeShuffle, Display, TEXT("RWGHEIGHTAPI: signature check mismatched='%s' (empty = all 8 match build 705)"), *SigBad);
+        if (bRequiredSigBad) { A.Status = TEXT("signatureMismatch"); return; }
         A.bUsable = true;
         A.Status = TEXT("bound");
 #else
@@ -292,4 +322,52 @@ void ANodeShuffleSubsystem::RwgLogHeightApi(bool bFull)
         TEXT("RWGHEIGHTAPI: edge halfExtentCm=%.0f edgeSource=%s outsideTrue=%d of 8 pawnControlOutside=%d [%s]"),
         Half, WorldM > 0.0 ? TEXT("GenerationParams.WorldSizeMeters") : TEXT("researchConstant"), OutsideTrue,
         A.Outside(F, P.X, P.Y) ? 1 : 0, *Pts);
+}
+
+// ---------------------------------------------------------------- RWG P2b ground query ----
+// Used by the RWG deal / redeal / spawn resolve (NodeShuffleMapModePlace.cpp). Same binding, same gates as the
+// census above (version, exports, byte signatures), plus the plausibility range and the half extent; any refusal
+// leaves F null so IsUsable() is false and the caller takes the trace-and-defer fallback.
+NodeShuffleMapMode::FRwgGroundQuery::FRwgGroundQuery(UWorld* World, UObject* Generator)
+{
+    FRwgHeightApi& A = Api();
+    if (!A.bTried) { TryBind(A); }
+    if (!A.bUsable || !World) { StatusText = FString::Printf(TEXT("binding:%s"), *A.Status); return; }
+    void* Gen = A.Get(World);
+    if (!Gen) { StatusText = TEXT("getReturnedNull"); return; }
+    A.GetField(Gen, &Field);
+    const void* Fp = Field.Get();
+    if (!Fp) { StatusText = TEXT("emptyField"); return; }
+    S = A.GetSpliced(Fp);
+    const double GMin = A.GMin ? A.GMin(Fp) : -1.0;
+    const double GMax = A.GMax ? A.GMax(Fp) : 1.0;
+    const bool bRangeOk = FMath::IsFinite(GMin) && FMath::IsFinite(GMax) && GMin < GMax && GMin > -200000.0 && GMax < 360000.0;
+    const double WorldM = ReadWorldSizeMeters(Generator);
+    if (!bRangeOk || !S || WorldM <= 0.0)
+    {
+        StatusText = FString::Printf(TEXT("refused range=%d spliced=%d worldSizeM=%.0f"), bRangeOk ? 1 : 0, S ? 1 : 0, WorldM);
+        S = nullptr;
+        return;
+    }
+    HalfExtentCm = WorldM * 50.0; // WorldSizeMeters is the full side; half of it, in cm (R2: 1,500,000)
+    F = Fp;
+    StatusText = TEXT("usable");
+}
+
+NodeShuffleMapMode::FRwgGroundQuery::~FRwgGroundQuery() = default;
+
+bool NodeShuffleMapMode::FRwgGroundQuery::Outside(double X, double Y) const
+{
+    return F ? Api().Outside(F, X, Y) : true;
+}
+
+double NodeShuffleMapMode::FRwgGroundQuery::SurfaceZ(double X, double Y) const
+{
+    return F ? Api().Surface(F, X, Y) : 0.0;
+}
+
+double NodeShuffleMapMode::FRwgGroundQuery::WaterLevelZ(double X, double Y) const
+{
+    // The int argument's meaning is UNVERIFIED (P2a); 0 is passed as in the census. Out-of-range XY exits early.
+    return (F && S) ? Api().Water(S, X, Y, 0) : TNumericLimits<double>::Lowest();
 }

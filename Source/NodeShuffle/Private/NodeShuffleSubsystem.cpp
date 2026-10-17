@@ -277,10 +277,12 @@ void ANodeShuffleSubsystem::RefreshTick()
     // RWG P1 (spec §B3/§H): OFF VANILLA this build is OBSERVE-ONLY. It returns here, before the starter-node
     // capture, the roll, the re-roll, ApplyLayout and everything ApplyLayout drives (late scans, adoption,
     // knowledge, AutoAllow, rocks). On vanilla this is one compare of a latched enum and nothing below moves.
+    // RWG P2b: on RWG the pipeline below runs once readiness latched (RwgPipelineMayRun: v2 or the apply-on-load
+    // clause, plus the one-time legacy-layout check); Unknown maps and an unlatched RWG still return here.
     if (GetMapMode() != ENodeShuffleMapMode::Vanilla)
     {
         RwgObserveTick();
-        return;
+        if (!RwgPipelineMayRun()) { return; }
     }
 
     // redesign-1 STARTER NODES: capture the player's REAL spawn location as early as possible on a
@@ -1775,6 +1777,10 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     // taking draws from Rng would shift every later draw and change the NODE layout for a given seed,
     // i.e. merely enabling well shuffling would silently re-shuffle the player's ordinary nodes too.
     // Self-gated: a no-op that leaves any existing well data untouched when the config toggle is off.
+    // RWG P2b: wells are skipped off vanilla until P4 (spec decision 1); the layout-version stamp is RWG-only.
+    if (GetMapMode() != ENodeShuffleMapMode::Vanilla) { RwgLogSkipOnce(0, TEXT("well roll (RollWellLayout + RollWellRelocation)")); }
+    if (GetMapMode() == ENodeShuffleMapMode::Rwg) { RwgLayoutVersion = NodeShuffleMapMode::RwgLayoutVersionP2b; }
+    if (GetMapMode() == ENodeShuffleMapMode::Vanilla) {
     RollWellLayout(Seed, bIsReroll);
 
     // Packet H2 (ns-wells-h2): RIGID RELOCATION of whole well groups, dealt immediately after the
@@ -1788,6 +1794,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     // T71 (2026-08-12): the self-gate is gone with the toggle -- relocation is hard-wired ON, so this
     // always deals. It no longer has a no-op form.
     RollWellRelocation(Seed, bIsReroll);
+    }
 
     UE_LOG(LogNodeShuffle, Display,
         TEXT("Rolled layout: seed %d, pool %d (vanilla %d, new %d), active %d, pinned %d"),
@@ -1946,6 +1953,13 @@ void ANodeShuffleSubsystem::GenerateNewLocations(FRandomStream& Rng, const TArra
     if (VanillaLocations.Num() == 0 || Count <= 0)
     {
         return;
+    }
+    // RWG P2b: off vanilla there are NO cave spots (no atlas; brief §2). On RWG the API dealer resolves each spot
+    // (outside/water/Z) at roll time; it returns false only when the binding is unusable -> the deal below runs.
+    if (GetMapMode() != ENodeShuffleMapMode::Vanilla)
+    {
+        OutUndergroundIndices = nullptr;
+        if (GetMapMode() == ENodeShuffleMapMode::Rwg && GenerateRwgLocations(Rng, AvoidLocations, Count, MinNodeSpacing, OutLocations)) { return; }
     }
 
     // MAP-WIDE SPREAD: the previous version anchored each new spot to a randomly
@@ -2213,7 +2227,8 @@ void ANodeShuffleSubsystem::ApplyLayout()
 
     // redesign-1: pair each original node to its own AFGNodeMeshActor so SuppressOriginalNodes can
     // hide the paired mesh actor when an unoccupied original streams in. Rebuilt each pass.
-    RebuildMeshActorCache();
+    if (GetMapMode() == ENodeShuffleMapMode::Vanilla) { RebuildMeshActorCache(); } // RWG P2b: no rock pairing off vanilla (P3)
+    else { RwgLogSkipOnce(1, TEXT("rock pairing and orphan-rock cleanup (RebuildMeshActorCache + OrphanRockCleanup)")); }
 
     // Restored managed actors have been adopted above. Capture only additional originals;
     // the normal spawn/hide/scanner paths below apply the appended entries this pass.
@@ -2267,6 +2282,8 @@ void ANodeShuffleSubsystem::ApplyLayout()
             }
             // SPAWN-ON-DISCOVERY: materialize an active relocated node once a player is within
             // SpawnRadius and the terrain has streamed in. Far nodes stay as data until explored.
+            // RWG P2b: off vanilla, actor creation runs in RwgSpawnPass after this loop (nearest first, capped).
+            if (GetMapMode() != ENodeShuffleMapMode::Vanilla) { continue; }
             if (Entry.bActive && IsLocationNearAnyPlayer(Entry.Location, SpawnRadiusCm))
             {
                 EnsureNewNodeSpawned(Entry, bChangedWorld);
@@ -2286,6 +2303,8 @@ void ANodeShuffleSubsystem::ApplyLayout()
     // yet is written on whichever later pass it appears, exactly like SuppressOriginalNodes' hide funnel.
     // NOTHING ELSE IN THIS PASS TOUCHES WELLS: they are excluded from the regular node population by
     // IsFrackingActor, so this call is the mod's entire well surface.
+    if (GetMapMode() != ENodeShuffleMapMode::Vanilla) { RwgSpawnPass(SpawnRadiusCm, bChangedWorld); }
+    if (GetMapMode() == ENodeShuffleMapMode::Vanilla) { // RWG P2b: wells skipped off vanilla (logged once at the roll)
     ApplyWellRetype();
 
     // Packet H2 (ns-wells-h2): the relocation pass -- spawn-on-discovery placement of relocated well
@@ -2297,6 +2316,7 @@ void ANodeShuffleSubsystem::ApplyLayout()
     // holds relocated wells must be re-linked before anything walks them, because an unlinked satellite
     // is invisible in every way except the well producing nothing.
     ApplyWellRelocation(SpawnRadiusCm);
+    }
 
     SettleNewNodesNearPlayers();
     ReassociateOrphanedExtractors();
@@ -2310,7 +2330,7 @@ void ANodeShuffleSubsystem::ApplyLayout()
 
     // cave-nodes-1/2: always-on cavern discovery (budgeted traces near players). Placement happens
     // only where locations are DEALT (roll/redeal draws) — never by actively re-homing entries.
-    ExpandCaveFloorsBudgeted();
+    if (GetMapMode() == ENodeShuffleMapMode::Vanilla) { ExpandCaveFloorsBudgeted(); } // RWG P2b: no cave learning off vanilla
 
     // redesign-9 SNAPDIAG: one-shot collision/component comparison of a spawned node vs a vanilla node,
     // so the log names the exact delta the extractor hologram detects (Mk1 works on vanilla, not ours).
@@ -2325,7 +2345,7 @@ void ANodeShuffleSubsystem::ApplyLayout()
     // the untouched occupied originals remain. Reliable across sessions via the persistent record.
     SuppressOriginalNodes();
 
-    OrphanRockCleanup();
+    if (GetMapMode() == ENodeShuffleMapMode::Vanilla) { OrphanRockCleanup(); } // RWG P2b: no rock hiding off vanilla
 
     // Once new nodes materialize we KEEP them for the session (far-node despawn was removed long ago).
 
@@ -4361,7 +4381,10 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
         // to fire and not an outcome; the two refusal counters below split ONLY by the flag
         // RaycastSettle sets, because that is the only sub-reason it exposes.
         ++NodeGateSettleReached;
-        bool bSettled = RaycastSettle(Entry, nullptr, nullptr, &bWaterNoLand);
+        // RWG P2b: on RWG the API resolves Z (a trace miss spawns at that Z, never defers); unusable API -> RaycastSettle.
+        bool bRwgApiUsed = false;
+        bool bSettled = (GetMapMode() == ENodeShuffleMapMode::Rwg) ? RwgResolveAtSpawn(Entry, bRwgApiUsed, bWaterNoLand) : false;
+        if (!bRwgApiUsed) { bSettled = RaycastSettle(Entry, nullptr, nullptr, &bWaterNoLand); }
         // playtest-fixes-1 / steepfix-1 (unplaceable redeal): a hit that is water OR too steep, with
         // no flat land within the 300 m spiral, is DEFINITIVE (the ground is there, it just can't
         // host a mineable node) — re-deal the entry instead of retrying the same spot every 5 s.
@@ -5218,7 +5241,7 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
 
         // cave-nodes-1: roof-classify each original once (persisted) — under-a-roof originals are the
         // proven-reachable seeds the cavern flood-fill grows from.
-        ClassifyOriginalUnderground(Node, Rec.VanillaNodePath);
+        if (GetMapMode() == ENodeShuffleMapMode::Vanilla) { ClassifyOriginalUnderground(Node, Rec.VanillaNodePath); } // RWG P2b: no cave seeds off vanilla
 
         // Hide the original node actor whole (this removes its rock, INCLUDING an instanced one). Never
         // touch an occupied node (a built miner). Occupancy checked on the Base + the Node-only portable check.
@@ -6720,7 +6743,7 @@ bool ANodeShuffleSubsystem::RaycastGroundAt(const FVector& ProbeXY, float StartZ
     // constant. The volume containment test still applies (cave puddles/pools are real water).
     // Cold review #3: short traces also do NOT teach the surface water grid (a cave floor says
     // nothing about the surface column above it) — see the recording condition below.
-    const bool bBelowDepthFloor = !bShortTrace && OutLoc.Z < DeepWaterFloorZ;
+    const bool bBelowDepthFloor = !bShortTrace && OutLoc.Z < DeepWaterFloorZ && GetMapMode() == ENodeShuffleMapMode::Vanilla; // RWG P2b: vanilla-only floor
     bOutWater = bBelowDepthFloor || IsPointInWater(OutLoc);
     if (bBelowDepthFloor && FNodeShuffleModule::AreDiagnosticsEnabled())
     {
@@ -6840,6 +6863,12 @@ bool ANodeShuffleSubsystem::TryRedealWaterLockedEntry(FNodeShuffleEntry& Entry)
     // LAZILY via normal spawn-on-discovery (bRayCasted stays false). A grid-unknown spot may hit
     // water again — that settle teaches the grid one more cell and the entry hops once more; each
     // blind draw has the map's land share (~75%+) of succeeding, and the grid only improves.
+    // RWG P2b: on RWG the redeal draws through the API (outside/water/Z resolved, no cave branch); unusable -> below.
+    if (GetMapMode() == ENodeShuffleMapMode::Rwg)
+    {
+        bool bRwgMoved = false;
+        if (TryRedealRwgEntry(Entry, MinNodeSpacing, RedealTries, bRwgMoved)) { return bRwgMoved; }
+    }
     const FVector BoxMin = GetDealBoundsMin();
     const FVector BoxMax = GetDealBoundsMax();
     if (BoxMax.X <= BoxMin.X || BoxMax.Y <= BoxMin.Y)
@@ -6858,7 +6887,7 @@ bool ANodeShuffleSubsystem::TryRedealWaterLockedEntry(FNodeShuffleEntry& Entry)
     // additional random areas, never a quota (no priority, no fill target).
     const bool bWasUnderground = Entry.bUnderground;
     Entry.bUnderground = false;
-    if (!bWasUnderground && Entry.ResourceForm != 2 /* liquid */) // cave-nodes-4: always on (drain fix)
+    if (!bWasUnderground && Entry.ResourceForm != 2 /* liquid */ && GetMapMode() == ENodeShuffleMapMode::Vanilla) // cave-nodes-4: always on (drain fix); RWG P2b: vanilla only
     {
         EnsureCaveStoreLoaded();
         const float CaveChance = FMath::Min(CaveShareCap,
