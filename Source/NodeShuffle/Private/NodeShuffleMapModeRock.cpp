@@ -13,6 +13,9 @@
 #include "Components/PrimitiveComponent.h"
 #include "Buildables/FGBuildable.h"
 #include "Resources/FGResourceNode.h"
+#include "Resources/FGResourceNodeManager.h"
+#include "FGActorRepresentationManager.h"
+#include "Representation/FGResourceNodeRepresentation.h"
 
 int32 ANodeShuffleSubsystem::RwgRockOcclusionProbe(const FVector& At, const AActor* IgnoreActor, FString& OutMeshPath) const
 {
@@ -20,7 +23,7 @@ int32 ANodeShuffleSubsystem::RwgRockOcclusionProbe(const FVector& At, const AAct
     // node stands on is never part of the window). Canopy / water sheet / resource-node hits are ignored by component and the
     // segment is traced again (same cap as the terrain-only probe). Returns 1 on a SOLID hit (OutMeshPath = that hit's COMPONENT name; RWGHITCLASS has its mesh path),
     // 2 on a terrain-chunk or player-buildable hit (something above the node that is not rock: never redealt), 0 when the
-    // segment is clear or the cap is exhausted.
+    // segment is clear, 3 when the skip cap is exhausted.
     OutMeshPath.Reset();
     UWorld* World = GetWorld();
     if (!World) { return 0; }
@@ -45,7 +48,7 @@ int32 ANodeShuffleSubsystem::RwgRockOcclusionProbe(const FVector& At, const AAct
         }
         P.AddIgnoredComponent(H.GetComponent());
     }
-    return 0;
+    return 3; // skip cap exhausted: nothing measured below the last skipped hit
 }
 
 bool ANodeShuffleSubsystem::RwgRedealLiveEntry(FNodeShuffleEntry& E, const TCHAR* Why)
@@ -59,7 +62,21 @@ bool ANodeShuffleSubsystem::RwgRedealLiveEntry(FNodeShuffleEntry& E, const TCHAR
     if (Node)
     {
         MeshActorCache.Remove(TWeakObjectPtr<AFGResourceNodeBase>(Node));
-        if (IsValid(Node)) { Node->Destroy(); }
+        if (IsValid(Node))
+        {
+            // RWG P2d review MF1: the manager's Mk1 snap list holds a RAW pointer to every node we spawn (RegisterNodeWithManager) and
+            // DeregisterNodeFromManager refuses our own nodes, so drop it here, with the scan reveal and the map/compass representation,
+            // BEFORE Destroy -- the same registrations DestroyWellMemberIfUnused drops for a well member.
+            if (AFGResourceNodeManager* Mgr = GetNodeManager()) { Mgr->mResourceNodes.RemoveSingleSwap(Node); }
+            if (AFGActorRepresentationManager* RepMgr = AFGActorRepresentationManager::Get(GetWorld()))
+            {
+                RepMgr->RemoveRepresentationOfActor(Node);
+                if (UFGResourceNodeRepresentation* NodeRep = RepMgr->FindResourceNodeRepresentation(Node)) { RepMgr->RemoveRepresentation(NodeRep); }
+            }
+            Node->RemoveResourceNodeScan_Local();
+            Node->UpdateNodeRepresentation();
+            Node->Destroy();
+        }
         FNodeShuffleModule::UnregisterManagedNode(Node);
     }
     SpawnedNodes.Remove(E.EntryGuid);
@@ -100,6 +117,7 @@ void ANodeShuffleSubsystem::RwgRockOcclusionPass()
     const int32 N = FMath::Min(Cands.Num(), NodeShuffleMapMode::RwgResettlePerPass);
     const bool bDiag = FNodeShuffleModule::AreDiagnosticsEnabled();
     int32 Checked = 0, Occluded = 0, Redealt = 0, Clear = 0, NonRockAbove = 0, RefusedBuiltOn = 0;
+    int32 CapExhausted = 0;
     for (int32 K = 0; K < N; ++K)
     {
         FNodeShuffleEntry& E = Layout[Cands[K].Value];
@@ -107,6 +125,7 @@ void ANodeShuffleSubsystem::RwgRockOcclusionPass()
         ++Checked;
         FString Mesh;
         const int32 R = RwgRockOcclusionProbe(Node->GetActorLocation(), Node, Mesh);
+        if (R == 3) { ++CapExhausted; RwgRockRefused.Add(E.EntryGuid); continue; } // nothing measured: not flagged, re-probed next session
         if (R != 1)
         {
             E.bRwgRockChecked = true;
@@ -125,8 +144,8 @@ void ANodeShuffleSubsystem::RwgRockOcclusionPass()
     if (Occluded > 0 || (Checked > 0 && (RwgRockPasses % 12) == 1)) // bounded: a pass that found rock, else once a minute while checking
     {
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("RESETTLE-ROCK: pass=%d checked=%d occluded=%d redealt=%d clear=%d terrainOrBuildableAbove=%d refusedBuiltOn=%d candidates=%d windowCm=%.0f"),
-            RwgRockPasses, Checked, Occluded, Redealt, Clear, NonRockAbove, RefusedBuiltOn, Cands.Num(), NodeShuffleMapMode::RwgRockOcclusionHeightCm);
+            TEXT("RESETTLE-ROCK: pass=%d checked=%d occluded=%d redealt=%d clear=%d terrainOrBuildableAbove=%d refusedBuiltOn=%d candidates=%d windowCm=%.0f skipCapExhausted=%d"),
+            RwgRockPasses, Checked, Occluded, Redealt, Clear, NonRockAbove, RefusedBuiltOn, Cands.Num(), NodeShuffleMapMode::RwgRockOcclusionHeightCm, CapExhausted);
     }
 }
 
@@ -155,12 +174,12 @@ bool ANodeShuffleSubsystem::RwgRedealWellGroup(FNodeShuffleWellEntry& E, const T
     E.bRelocate = true;
     const NodeShuffleMapMode::FRwgGroundQuery Q(GetWorld(), RwgGenerator.Get());
     int32 Draws = 0;
+    const int32 Salt = ++RwgWellResettleSalt.FindOrAdd(E.CorePath);
     if (Q.IsUsable())
     {
         RwgBuildWaterVolumeCache();
         TArray<FVector> Offs;
         for (const FNodeShuffleWellSatellite& S : E.Satellites) { if (S.bCaptured) { Offs.Add(S.LocalOffset); } }
-        const int32 Salt = ++RwgWellResettleSalt.FindOrAdd(E.CorePath);
         // The Escalate redeal's seed shape (persisted state only), salted for the resettle so it never replays that stream.
         FRandomStream Rng(WellLayoutSeedFor(SavedSeed, E.CorePath, E.GroupRedeals, 0) ^ 0x52534C31 ^ (Salt * 7919));
         FVector Site(FVector::ZeroVector);
@@ -220,11 +239,12 @@ void ANodeShuffleSubsystem::RwgResettleWells(int32& Checked, int32& Redealt, int
             bool bWater = false, bSteep = false;
             if (!RaycastGroundAt(Cur, static_cast<float>(Cur.Z), M, nullptr, HitLoc, Rot, bWater, false, &bSteep,
                                  nullptr, nullptr, /*bTerrainOnly=*/true)) { bAllHit = false; break; }
+            const bool bSolidColumn = bRwgLastProbeSolid; // written by the RaycastGroundAt just above
             const double Dz = HitLoc.Z - Cur.Z;
             WorstDz = FMath::Max(WorstDz, static_cast<int32>(FMath::Abs(Dz)));
             if (!bWater && FMath::Abs(Dz) > NodeShuffleMapMode::RwgWellFloatCm) { ++FloatM; }
             FString Mesh;
-            if (RwgRockOcclusionProbe(Cur, M, Mesh) == 1) { ++OccM; }
+            if (bSolidColumn || RwgRockOcclusionProbe(Cur, M, Mesh) == 1) { ++OccM; } // P2d review S1: a member standing on a solid mesh is redealt, as a node is
         }
         if (!bAllHit)
         {
@@ -236,16 +256,17 @@ void ANodeShuffleSubsystem::RwgResettleWells(int32& Checked, int32& Redealt, int
         if (FloatM > 0) { ++Floating; }
         if (OccM > 0) { ++RockOccluded; }
         if (RedealsLeft <= 0) { ++WaitingBudget; continue; } // not given up: a later pass redeals it
+        if (RwgWellResettleSalt.FindRef(E.CorePath) >= 2) { RwgResettleWellGaveUp.Add(E.CorePath); UE_LOG(LogNodeShuffle, Display, TEXT("RESETTLE-WELL-GAVEUP: core='%s' resettleRedealsThisSession=%d membersDzOverLimit=%d membersSolid=%d; not redealt again this session"), *WellShort(E.CorePath), RwgWellResettleSalt.FindRef(E.CorePath), FloatM, OccM); continue; }
         --RedealsLeft;
         bool bDealt = false;
-        if (!RwgRedealWellGroup(E, TEXT("RWG resettle: floating or rock-occluded member"), bDealt)) { ++Occupied; RwgResettleWellGaveUp.Add(E.CorePath); continue; }
+        if (!RwgRedealWellGroup(E, TEXT("RWG resettle: member probe dZ over limit or solid mesh above"), bDealt)) { ++Occupied; RwgResettleWellGaveUp.Add(E.CorePath); continue; }
         ++Redealt;
         if (!bDealt) { ++DealFailed; }
     }
     if (Redealt > 0 || Kept > 0 || Occupied > 0 || Floating > 0 || RockOccluded > 0 || (Checked > 0 && (RwgRsPasses % 12) == 1))
     {
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("RESETTLE-WELL: pass=%d checked=%d redealt=%d kept=%d refusedBuiltOn=%d deferred=%d groupsFloating=%d groupsRockOccluded=%d waitingRedealBudget=%d newSiteNotDealt=%d maxDzCm=%d"),
+            TEXT("RESETTLE-WELL: pass=%d checked=%d redealt=%d kept=%d refusedBuiltOn=%d deferred=%d groupsMemberDzOverLimit=%d groupsRockOccluded=%d waitingRedealBudget=%d newSiteNotDealt=%d maxDzCm=%d"),
             RwgRsPasses, Checked, Redealt, Kept, Occupied, Deferred, Floating, RockOccluded, WaitingBudget, DealFailed, MaxDzCm);
     }
 }

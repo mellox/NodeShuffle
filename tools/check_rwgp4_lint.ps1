@@ -419,6 +419,7 @@ if (-not $rl) { $fails += 'D6: RwgRedealLiveEntry body not found' } else {
     $i2 = $rl.IndexOf('FNodeShuffleModule::Unregister' + 'ManagedNode(Node);'); $i3 = $rl.IndexOf('SpawnedNodes.Remove(E.' + 'EntryGuid);')
     if ($i0 -lt 0 -or $i1 -lt $i0 -or $i2 -lt $i1 -or $i3 -lt $i2) { $fails += 'D6: refuse built-on first, then Destroy, then unregister, then remove the slot (coexist-1 order)' }
     if (-not $rl.Contains('E.bRwgRockChecked = ' + 'false;') -or -not $rl.Contains('TryRedealWaterLocked' + 'Entry(E);')) { $fails += 'D6: a redeal must clear the rock flag and go through the spawn path redeal' }
+    if (-not $rl.Contains('Mgr->mResourceNodes.Remove' + 'SingleSwap(Node);')) { $fails += 'D6: the redeal must drop the manager entry before Destroy' }
 }
 # D7 well redeal order (re-enrolment template); the per-pass redeal bound.
 $wg = Get-Body $text.rock ('bool ' + $cls + 'RwgRedealWellGroup(FNodeShuffleWellEntry& E, const TCHAR* Why, bool& bOutDealt)')
@@ -430,6 +431,8 @@ if (-not $wg) { $fails += 'D7: RwgRedealWellGroup body not found' } else {
 if ($rwb -and ((Count $rwb ('int32 RedealsLeft = NodeShuffleMapMode::RwgResettleWell' + 'RedealsPerPass;')) -ne 1 -or -not $rwb.Contains('if (RedealsLeft <= 0) { ++WaitingBudget; ' + 'continue; }'))) { $fails += 'D7: well redeals must be bounded per pass' }
 if ($rwb -and -not $rwb.Contains('RwgRedealWell' + 'Group(E, ')) { $fails += 'D7: the well resettle must redeal through RwgRedealWellGroup' }
 if ((Count $text.maph ('constexpr int32 RwgResettleWellRedealsPerPass = ' + '2;')) -ne 1) { $fails += 'D7: RwgResettleWellRedealsPerPass must be 2' }
+if ($wg -and (Count $wg ('E.bRelocate = ' + 'true;')) -ne 1) { $fails += 'D7: a redealt group must be re-enrolled for the 1237 gate (bRelocate)' }
+$pb = Get-Body $text.rock ('int32 ' + $cls + 'RwgRockOcclusionProbe('); if (-not $pb -or (Count $pb ('if (Cls == ' + '4)')) -ne 1 -or -not $pb.Contains('IsA<AFG' + 'Buildable>()')) { $fails += 'D11: the occlusion probe must redeal only on SOLID and never on a buildable or terrain above' }
 # D8 the new SaveGame flag; D9 the water diagnostics gate nothing (the volume test stays the only water rejection); D10 marker.
 if ((Count $text.subsysh ('UPROPERTY(Save' + 'Game) bool bRwgRockChecked = false;')) -ne 1) { $fails += 'D8: bRwgRockChecked must be a single SaveGame property' }
 $d1x = Get-Body $text.place ('bool ' + $cls + 'RwgDealOneSpot(const NodeShuffleMapMode::FRwgGroundQuery& Q, FRandomStream& Rng, FVector& OutSpot,')
@@ -438,8 +441,8 @@ if (-not $d1x) { $fails += 'D9: RwgDealOneSpot body not found' } else {
 }
 if (-not $text.place.Contains('rejectedWater=%d rejectedWaterSurfaceZBelow0=%d rejectedWaterSurfaceZAtOrAbove0=%d dealt' + 'BelowZ0=%d ')) { $fails += 'D9: ROLLCENSUS must carry the surface-Z split and dealtBelowZ0' }
 if (-not $text.place.Contains('if (N >= ' + '8) { return; }')) { $fails += 'D9: the water samples must be capped at 8 per kind' }
-if ((Count $text.nsmod ('LOADED (2026-10-18-rwg-' + 'p2d-1)')) -ne 1) { $fails += 'D10: the P2d marker must be present' }
+if ((Count $text.nsmod ('LOADED (2026-10-18-rwg-' + 'p2d-2)')) -ne 1) { $fails += 'D10: the P2d marker must be present' }
 
 if ($fails.Count -gt 0) { $fails | ForEach-Object { Write-Host "FAIL $_" }; exit 1 }
-Write-Host "PASS: RWG P4/P2c/P2d lint -- W1..W17, C1..C14 and D1..D10 hold across $($files.Count) loaded files"
+Write-Host "PASS: RWG P4/P2c/P2d lint -- W1..W17, C1..C14 and D1..D11 hold across $($files.Count) loaded files"
 exit 0

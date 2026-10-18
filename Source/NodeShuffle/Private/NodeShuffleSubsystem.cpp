@@ -1726,8 +1726,8 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
             if (KeptGuids.Contains(It->Key)) { continue; } // keep the occupied node alive
             // redesign-5: the visual rock is a subobject OF the node now, so destroying the node destroys
             // its rock — no separate rock actor to clean up.
-            // coexist-1 INVARIANT: this is NodeShuffle's ONLY self-destroy of a spawned node, and it
-            // removes the SpawnedNodes slot in the same synchronous block — the external-destroy
+            // coexist-1 INVARIANT: every NodeShuffle self-destroy of a spawned node (this re-roll wipe, and RwgRedealLiveEntry
+            // in NodeShuffleMapModeRock.cpp since RWG P2d) removes the SpawnedNodes slot in the same synchronous block -- the external-destroy
             // detection in EnsureNewNodeSpawned relies on exactly that (a lingering invalid slot can
             // only mean an OUTSIDE destroyer). Keep destroy + RemoveCurrent together.
             // coexist-veto-1: unregister AFTER Destroy() — the OnActorDestroyed delegates fire inside

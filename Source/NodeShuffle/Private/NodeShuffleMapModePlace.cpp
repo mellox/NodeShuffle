@@ -139,7 +139,7 @@ void ANodeShuffleSubsystem::RwgNoteWaterSample(const NodeShuffleMapMode::FRwgGro
     }
     else
     {
-        UE_LOG(LogNodeShuffle, Display, TEXT("RWGSEASAMPLE: caller=%s sample=%d x=%.0f y=%.0f surfaceZ=%.0f waterLevelCmAt=%.0f volumeTest=%d volumeBoxContains=%d"),
+        UE_LOG(LogNodeShuffle, Display, TEXT("RWGDEALTBELOWZ0SAMPLE: caller=%s sample=%d x=%.0f y=%.0f surfaceZ=%.0f waterApiLevelSample=%.0f volumeTest=%d volumeBoxContains=%d"),
             Caller, N, P.X, P.Y, P.Z, Wl, RwgIsPointInWaterCached(P) ? 1 : 0, bAnyBox ? 1 : 0);
     }
 }

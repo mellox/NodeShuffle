@@ -82,7 +82,7 @@ int32 ANodeShuffleSubsystem::RwgHitClassOf(const FHitResult& Hit, const TCHAR** 
     {
         return Out(4, TEXT("pathSolid"));
     }
-    if (Path.Contains(TEXT("/Foliage/")) || Path.Contains(TEXT("/Tree/")) || Path.Contains(TEXT("/Plant/")) || Path.Contains(TEXT("/Bush/"))
+    if (Path.Contains(TEXT("/Foliage/")) || Path.Contains(TEXT("/Tree/")) || Path.Contains(TEXT("/Plant/")) || Path.Contains(TEXT("/Trees/")) || Path.Contains(TEXT("/Bush/"))
         || Path.Contains(TEXT("/Grass/")) || Path.Contains(TEXT("/Fern/")))
     {
         return Out(1, TEXT("pathCanopy"));

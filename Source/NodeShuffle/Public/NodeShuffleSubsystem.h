@@ -261,7 +261,7 @@ struct FNodeShuffleEntry
     UPROPERTY(SaveGame) bool bRwgSettledOnTerrain = false;
     // RWG P2c: settled Z minus RWG SurfaceHeightCm at the settled XY, measured when bRwgSettledOnTerrain was set. 0 = unset.
     UPROPERTY(SaveGame) float RwgApiToTerrainDzCm = 0.0f;
-    // RWG P2d (2026-10-18): true once the rock-occlusion pass (NodeShuffleMapModeRock.cpp) traced 2000 cm above this entry's live
+    // RWG P2d (2026-10-18): true once the rock-occlusion pass (NodeShuffleMapModeRock.cpp) traced RwgRockOcclusionHeightCm above this entry's live
     // actor down to its Z and met no SOLID mesh. Cleared when the entry is redealt. False on every vanilla entry (never read there).
     UPROPERTY(SaveGame) bool bRwgRockChecked = false;
 };

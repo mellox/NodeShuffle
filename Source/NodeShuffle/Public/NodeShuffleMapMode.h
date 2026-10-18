@@ -66,7 +66,7 @@ namespace NodeShuffleMapMode
     // RWG P2d (2026-10-18): rock-occlusion probe window (from this far above a placed node/member down to this far above its Z),
     // well resettle redeals per pass, and the member-to-probe-hit distance above which a well member reads as floating.
     // TODO(2026-10-18, RWG P2d -> R6): re-check against RESETTLE-ROCK / RESETTLE-WELL.
-    constexpr double RwgRockOcclusionHeightCm = 2000.0;
+    constexpr double RwgRockOcclusionHeightCm = 20000.0; // RWG P2d review MF2: = RaycastGroundAt's primary start (StartZ + 20000), so the resettle removes exactly what placement refuses and the segment never starts inside a tall rock
     constexpr double RwgRockOcclusionEndAboveCm = 50.0;
     constexpr int32 RwgResettleWellRedealsPerPass = 2;
     constexpr double RwgWellFloatCm = 300.0;
