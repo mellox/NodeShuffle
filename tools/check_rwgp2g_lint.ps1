@@ -16,6 +16,8 @@
 #   G8  Marker rwg-p2g-1 present once, rwg-p2f-2 absent.
 #   G9  RwgEnsureKillboxTop: both known -> FMath::Max; never Min.
 #   G10 No field repeated inside any new format string; no cause words in the new lines.
+#   G11 The two test files are pinned (census bracket, session-total reset, case floor, cap and periodic cases), not just loaded.
+#   (G7 also pins Suppress's REHIDE-UNHIDDEN counter: the same steady instance found with its hidden flag cleared.)
 # Mutants run in-file (Invoke-P2gChecks on mutated text). Exit 0 = all hold; 1 = at least one does not; 2 = a pinned FILE is missing.
 
 $ErrorActionPreference = 'Stop'
@@ -70,7 +72,7 @@ function Invoke-P2gChecks($T) {
     if (-not $m) { $f += '(G2) MaybeCaptureLateOriginalNodes body not found' } else {
         if (-not (Ordered $m @('if (NodeShuffleLateNodePolicy::GrowthCapReached(LateNodeTotalAddedSession, NodeShuffleLateNodePolicy::GrowthCapEntries))', 'if (!bLateNodeGrowthCapWarned)', 'bLateNodeGrowthCapWarned = true;', 'TEXT("LATE-NODES growth cap reached: ', 'NodeShuffleLateNodePolicy::ScanDue('))) { $f += '(G2) the once-only growth-cap Warning must precede ScanDue' }
         if (-not $m.Contains('ScanDue(LateNodeScansCompleted, Now, LastLateNodeScan' + 'Time,')) { $f += '(G2) ScanDue must be fed the LAST scan time' }
-        if (-not (Ordered $m @('CaptureLateOriginalNodes();', 'LastLateNodeScanTime = ' + 'Now;', '++LateNodeScansCompleted;', 'LateNodeTotalAddedSession += ' + 'AddedEntries;'))) { $f += '(G2) every completed scan must restart the period and add to the session total' }
+        if (-not (Ordered $m @('CaptureLateOriginalNodes();', ('LastLateNodeScanTime = ' + 'Now;'), '++LateNodeScansCompleted;', ('LateNodeTotalAddedSession += ' + 'AddedEntries;')))) { $f += '(G2) every completed scan must restart the period and add to the session total' }
         if (-not $m.Contains('TEXT("LATE-NODES scan=%d addedEntries=%d addedHideRecords=%d totalAddedSession=%d layoutTotal=%d hideRecordsTotal=%d durationMs=%.1f elapsedSinceFirstS=%.0f")')) { $f += '(G2) the LATE-NODES running census format changed' }
         if ($m.Contains('schedule' + 'Exhausted')) { $f += '(G2) the exhaustion field must be gone' }
     }
@@ -103,7 +105,8 @@ function Invoke-P2gChecks($T) {
         if (-not (Ordered $pre @('if (bHidden && !bCollision)', 'SteadyHiddenOriginals.Remove(Rec.VanillaNodePath);', 'RehidePendingNodes.Add(Orig);'))) { $f += '(G6) a visible-again original must lose its steady mark (re-hide through SuppressOriginalNodes)' }
         foreach ($b in @($pre, $post)) { if ($b.Contains('SetActorHidden' + 'InGame') -or $b.Contains('SetActorEnable' + 'Collision')) { $f += '(G6) the census must not hide anything itself' } }
         if (-not $pre.Contains('TEXT("REHIDE-VISIBLE: class=%s path=%s at=(%.0f,%.0f,%.0f) passesSinceHidden=%d actorHidden=%d collisionOn=%d")')) { $f += '(G6) REHIDE-VISIBLE format changed' }
-        if (-not $post.Contains('TEXT("REHIDE-CENSUS: pass=%d checked=%d visibleAgain=%d rehidden=%d unresolved=%d identityReject=%d occupied=%d notSteady=%d newInstance=%d hiddenOk=%d actorGone=%d records=%d")')) { $f += '(G6) REHIDE-CENSUS format changed' }
+        if (-not $post.Contains('TEXT("REHIDE-CENSUS: pass=%d checked=%d visibleAgain=%d rehidden=%d unresolved=%d identityReject=%d occupied=%d notSteady=%d newInstance=%d hiddenOk=%d actorGone=%d records=%d steadyUnhiddenSinceCensus=%d")')) { $f += '(G6) REHIDE-CENSUS format changed' }
+        if (-not (Ordered $post @('RehideSteadyUnhiddenSinceCensus);', ('RehideSteadyUnhiddenSinceCensus = ' + '0;')))) { $f += '(G6) the steady-unhidden count must be printed, then reset per census line' }
         if (-not $post.Contains('if (N->IsHidden() && !N->GetActorEnable' + 'Collision()) { ++Rehidden; }')) { $f += '(G6) rehidden must be measured after the hide pass' }
     }
     # G7
@@ -111,11 +114,20 @@ function Invoke-P2gChecks($T) {
     if (-not $ap -or -not (Ordered $ap @('RehideVisibleOriginalsPre();', 'SuppressOriginalNodes();', 'RehideVisibleOriginalsPost();')) -or (Count $ap 'RehideVisibleOriginalsPre();') -ne 1) { $f += '(G7) ApplyLayout must bracket SuppressOriginalNodes with census Pre/Post' }
     $su = Get-Body $T.subsys ('void ' + $cls + 'SuppressOriginalNodes()')
     if (-not $su -or -not $su.Contains('if (Steady->Get() == Node && Node->Is' + 'Hidden())')) { $f += '(G7) the steady skip must still require the hidden flag (it is what re-hides an un-hidden instance)' }
+    if (-not $su -or -not (Ordered $su @(('if (Steady->Get() == Node && Node->Is' + 'Hidden())'), ('if (Steady->Get() == ' + 'Node)' + "`n"), '++RehideSteadyUnhiddenSinceCensus;', ('if (++RehideSteadyUnhiddenLinesThisPass <= ' + '8)'), 'TEXT("REHIDE-UNHIDDEN: class=%s path=%s pass=%d")'))) { $f += '(G7) Suppress must count (and boundedly log) a same steady instance found un-hidden, after the skip test' }
     if (-not $su -or -not (Ordered $su @('SteadyHiddenOriginals.Add(Rec.VanillaNodePath, Node);', 'SteadyHiddenAtPass.Add(Rec.VanillaNodePath, RehideCensusPass);'))) { $f += '(G7) SteadyHiddenAtPass must be written beside the steady mark' }
     if (-not $T.subsys.Contains("SteadyHiddenOriginals.Empty();`n    SteadyHiddenAtPass.Empty();")) { $f += '(G7) SteadyHiddenAtPass must be emptied beside the steady marks' }
     $bp = Get-Body $T.subsys ('void ' + $cls + 'BeginPlay()')
     if (-not $bp -or -not $bp.Contains('LateNodeTotalAddedSession = ' + '0;') -or (Count $T.subsys ('LateNodeTotalAddedSession = ' + '0;')) -ne 1) { $f += '(G7) the session total resets only at BeginPlay' }
     if ($T.subsysh.Contains('UPROPERTY(SaveGame) int32 LateNodeTotal' + 'AddedSession')) { $f += '(G7) the session total must not be SaveGame' }
+    # G11 the test files are read, not merely loaded
+    $py = $T['tools\test_late_nodes.py']; $cpp = $T['tools\test_late_node_policy.cpp']
+    if (-not $py.Contains("assert apply.index('RehideVisibleOriginalsPre();') < apply.index('SuppressOriginalNodes();') < apply.index('RehideVisibleOriginalsPost();')")) { $f += '(G11) test_late_nodes.py must pin the census bracket order' }
+    if (-not $py.Contains("assert subsystem.count('LateNodeTotalAddedSession = " + "0;') == 1")) { $f += '(G11) test_late_nodes.py must pin the single session-total reset' }
+    if (-not $py.Contains('assert cases >= ' + '36')) { $f += '(G11) test_late_nodes.py must keep the case-count floor' }
+    if (-not $cpp.Contains('static_assert(!ScanDue(9, 999., 0., P, Cap, Cap), "reaching the cap stops ' + 'scanning");')) { $f += '(G11) the cap case must stay in the policy test' }
+    if (-not $cpp.Contains('static_assert(ScanDue(2, 420., 360., P, 0, Cap), "a third scan is due one period after the ' + 'second (no exhaustion)");')) { $f += '(G11) the periodic third-scan case must stay in the policy test' }
+    if (([regex]::Matches($cpp, '(?m)^static_assert\(')).Count -lt 36) { $f += '(G11) the policy test must keep at least 36 cases' }
     # G8
     if ((Count $T.nsmod ('LOADED (2026-10-18-rwg-' + 'p2g-1)')) -ne 1 -or (Count $T.nsmod ('2026-10-18-rwg-' + 'p2f-2')) -ne 0) { $f += '(G8) marker must be rwg-p2g-1 and rwg-p2f-2 absent' }
     # G9
@@ -146,6 +158,9 @@ $mutants = @(
     @{ Name = 'M9 census after the hide pass';     Key = 'subsys'; Expect = 'G7'; Find = "RehideVisibleOriginalsPre();`n    SuppressOriginalNodes();"; Repl = "SuppressOriginalNodes();`n    RehideVisibleOriginalsPre();" }
     @{ Name = 'M10 killbox min instead of max';    Key = 'void';   Expect = 'G9'; Find = 'FMath::Max(RwgKillboxTopActorZ, RwgKillboxTopApiZ)'; Repl = 'FMath::Min(RwgKillboxTopActorZ, RwgKillboxTopApiZ)' }
     @{ Name = 'M11 LATE-CAPTURE unbounded';        Key = 'late';   Expect = 'G4'; Find = 'if (LateCaptureLinesThisScan >= 32) { ++LateCaptureUnlistedThisScan; return; }'; Repl = '' }
+    @{ Name = 'M13 steady-unhidden count deleted';  Key = 'subsys'; Expect = 'G7'; Find = '++RehideSteadyUnhiddenSinceCensus;'; Repl = '' }
+    @{ Name = 'M14 policy cap case deleted';        Key = 'tools\test_late_node_policy.cpp'; Expect = 'G11'; Find = 'static_assert(!ScanDue(9, 999., 0., P, Cap, Cap), "reaching the cap stops scanning");'; Repl = '' }
+    @{ Name = 'M15 census bracket test deleted';    Key = 'tools\test_late_nodes.py'; Expect = 'G11'; Find = "assert apply.index('RehideVisibleOriginalsPre();')"; Repl = "pass  # apply.index('RehideVisibleOriginalsPre();')" }
     @{ Name = 'M12 deferred warning unlatched';    Key = 'late';   Expect = 'G5'; Find = 'if (!LateDeferredLocationWarnings.Contains(ResourcePath))'; Repl = 'if (true)' }
 )
 $mutantFails = @()
@@ -166,5 +181,5 @@ if ($all.Count -gt 0) {
     Write-Host "RWG P2g LINT: FAIL -- $($all.Count) problem(s). Mutants caught $caught/$($mutants.Count)."
     exit 1
 }
-Write-Host "PASS: RWG P2g lint -- G1..G10 hold across $($text.Count) loaded files; mutants caught $caught/$($mutants.Count)."
+Write-Host "PASS: RWG P2g lint -- G1..G11 hold across $($text.Count) loaded files; mutants caught $caught/$($mutants.Count)."
 exit 0

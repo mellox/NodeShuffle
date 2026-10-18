@@ -1011,6 +1011,8 @@ private:
     int32 RehideCensusCursor = 0;
     int32 RehideCensusChecked = 0, RehideCensusUnresolved = 0, RehideCensusIdentityReject = 0, RehideCensusOccupied = 0;
     int32 RehideCensusNotSteady = 0, RehideCensusNewInstance = 0, RehideCensusHiddenOk = 0;
+    int32 RehideSteadyUnhiddenSinceCensus = 0; // Suppress: same steady instance found with its hidden flag cleared
+    int32 RehideSteadyUnhiddenLinesThisPass = 0; // REHIDE-UNHIDDEN lines this pass (8 max)
     TArray<TWeakObjectPtr<AFGResourceNodeBase>> RehidePendingNodes; // visible-again originals this census pass
     TMap<FString, int32> SteadyHiddenAtPass; // RehideCensusPass at which SuppressOriginalNodes marked a record steady
     // Appends only; never rerolls existing entries or touches wells.

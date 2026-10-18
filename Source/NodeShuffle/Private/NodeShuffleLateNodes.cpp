@@ -355,6 +355,7 @@ void ANodeShuffleSubsystem::LogLateCapture(const AFGResourceNodeBase* Node)
 void ANodeShuffleSubsystem::RehideVisibleOriginalsPre()
 {
     ++RehideCensusPass;
+    RehideSteadyUnhiddenLinesThisPass = 0;
     RehidePendingNodes.Reset();
     if ((RehideCensusPass % 12) != 1) { return; }
     RehideCensusChecked = RehideCensusUnresolved = RehideCensusIdentityReject = RehideCensusOccupied = 0;
@@ -418,8 +419,10 @@ void ANodeShuffleSubsystem::RehideVisibleOriginalsPost()
         if (N->IsHidden() && !N->GetActorEnableCollision()) { ++Rehidden; }
     }
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("REHIDE-CENSUS: pass=%d checked=%d visibleAgain=%d rehidden=%d unresolved=%d identityReject=%d occupied=%d notSteady=%d newInstance=%d hiddenOk=%d actorGone=%d records=%d"),
+        TEXT("REHIDE-CENSUS: pass=%d checked=%d visibleAgain=%d rehidden=%d unresolved=%d identityReject=%d occupied=%d notSteady=%d newInstance=%d hiddenOk=%d actorGone=%d records=%d steadyUnhiddenSinceCensus=%d"),
         RehideCensusPass, RehideCensusChecked, RehidePendingNodes.Num(), Rehidden, RehideCensusUnresolved, RehideCensusIdentityReject,
-        RehideCensusOccupied, RehideCensusNotSteady, RehideCensusNewInstance, RehideCensusHiddenOk, Gone, OriginalNodeRecord.Num());
+        RehideCensusOccupied, RehideCensusNotSteady, RehideCensusNewInstance, RehideCensusHiddenOk, Gone, OriginalNodeRecord.Num(),
+        RehideSteadyUnhiddenSinceCensus);
+    RehideSteadyUnhiddenSinceCensus = 0; // the field covers the passes since the previous census line
     RehidePendingNodes.Reset();
 }

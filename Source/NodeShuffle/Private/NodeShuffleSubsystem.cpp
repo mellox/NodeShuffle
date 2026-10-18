@@ -5233,6 +5233,17 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
                 DbgNear++; DbgFoundPath++; DbgAlreadyHidden++;
                 continue;
             }
+            // RWG P2g: the SAME instance this funnel marked steady has its hidden flag cleared. Measured here because the
+            // funnel below re-hides it this pass, so a 12th-pass census would miss it; counted on REHIDE-CENSUS.
+            if (Steady->Get() == Node)
+            {
+                ++RehideSteadyUnhiddenSinceCensus;
+                if (++RehideSteadyUnhiddenLinesThisPass <= 8)
+                {
+                    UE_LOG(LogNodeShuffle, Display, TEXT("REHIDE-UNHIDDEN: class=%s path=%s pass=%d"),
+                        *Node->GetClass()->GetName(), *Rec.VanillaNodePath, RehideCensusPass);
+                }
+            }
         }
         // SCANNER FIX: hide EVERY loaded original, not just those within 300 m of a player. World partition
         // streams a region LARGER than the old 300 m hide gate, so a relocated original that was loaded but
