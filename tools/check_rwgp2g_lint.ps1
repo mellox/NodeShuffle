@@ -101,8 +101,8 @@ function Invoke-P2gChecks($T) {
         if (-not $pre.Contains('RehideCensusCursor = (RehideCensusCursor + 1) % ' + 'Records;')) { $f += '(G6) census must walk round-robin' }
         if (-not $pre.Contains('FVector::Dist(Orig->GetActorLocation(), Anchor) >= IdentityMatchCm) { ++RehideCensusIdentityReject; ' + 'continue; }')) { $f += '(G6) the identity mirror must reject before any re-hide' }
         if (-not $pre.Contains('if (Steady->Get() != Orig) { ++RehideCensusNewInstance; ' + 'continue; }')) { $f += '(G6) only the SAME steady instance may count as visible again' }
-        if (-not $pre.Contains('if (bHidden && !bCollision) { ++RehideCensusHiddenOk; ' + 'continue; }')) { $f += '(G6) visible-again = hidden flag cleared OR collision on' }
-        if (-not (Ordered $pre @('if (bHidden && !bCollision)', 'SteadyHiddenOriginals.Remove(Rec.VanillaNodePath);', 'RehidePendingNodes.Add(Orig);'))) { $f += '(G6) a visible-again original must lose its steady mark (re-hide through SuppressOriginalNodes)' }
+        if (-not $pre.Contains('if (bActorHidden && !bCollision) { ++RehideCensusHiddenOk; ' + 'continue; }')) { $f += '(G6) visible-again = hidden flag cleared OR collision on' }
+        if (-not (Ordered $pre @('if (bActorHidden && !bCollision)', 'SteadyHiddenOriginals.Remove(Rec.VanillaNodePath);', 'RehidePendingNodes.Add(Orig);'))) { $f += '(G6) a visible-again original must lose its steady mark (re-hide through SuppressOriginalNodes)' }
         foreach ($b in @($pre, $post)) { if ($b.Contains('SetActorHidden' + 'InGame') -or $b.Contains('SetActorEnable' + 'Collision')) { $f += '(G6) the census must not hide anything itself' } }
         if (-not $pre.Contains('TEXT("REHIDE-VISIBLE: class=%s path=%s at=(%.0f,%.0f,%.0f) passesSinceHidden=%d actorHidden=%d collisionOn=%d")')) { $f += '(G6) REHIDE-VISIBLE format changed' }
         if (-not $post.Contains('TEXT("REHIDE-CENSUS: pass=%d checked=%d visibleAgain=%d rehidden=%d unresolved=%d identityReject=%d occupied=%d notSteady=%d newInstance=%d hiddenOk=%d actorGone=%d records=%d steadyUnhiddenSinceCensus=%d")')) { $f += '(G6) REHIDE-CENSUS format changed' }

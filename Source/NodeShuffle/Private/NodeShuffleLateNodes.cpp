@@ -387,9 +387,9 @@ void ANodeShuffleSubsystem::RehideVisibleOriginalsPre()
         const TWeakObjectPtr<AFGResourceNodeBase>* Steady = SteadyHiddenOriginals.Find(Rec.VanillaNodePath);
         if (!Steady) { ++RehideCensusNotSteady; continue; }
         if (Steady->Get() != Orig) { ++RehideCensusNewInstance; continue; } // a re-streamed actor: the funnel treats it as new
-        const bool bHidden = Orig->IsHidden();
+        const bool bActorHidden = Orig->IsHidden();
         const bool bCollision = Orig->GetActorEnableCollision();
-        if (bHidden && !bCollision) { ++RehideCensusHiddenOk; continue; }
+        if (bActorHidden && !bCollision) { ++RehideCensusHiddenOk; continue; }
         SteadyHiddenOriginals.Remove(Rec.VanillaNodePath); // route it back through SuppressOriginalNodes' full hide funnel
         RehidePendingNodes.Add(Orig);
         if (Lines >= MaxLinesPerPass) { ++Unlisted; continue; }
