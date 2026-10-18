@@ -362,10 +362,12 @@ bool ANodeShuffleSubsystem::RwgDealWellSite(const NodeShuffleMapMode::FRwgGround
     const double Y = Rng.FRandRange(-H, H);
     if (Q.Outside(X, Y)) { ++RwgWrOutside; return false; }
     const double Zc = Q.SurfaceZ(X, Y);
-    if (RwgIsPointInWaterCached(FVector(X, Y, Zc)))
+    const int32 WetCore = RwgWetV2(Q, FVector(X, Y, Zc)); // RWG P2e: water predicate v2 (sea | lake/river volume | inland level)
+    if (WetCore != 0)
     {
+        if ((WetCore & 1) != 0) { ++RwgWrRejectedSea; }
         // Coordinator addendum (measured only, gates nothing): rejectedWater split by the sign of the API surface Z.
-        if (Zc < 0.0) { ++RwgWrWaterZBelow0; } else { ++RwgWrWaterZAtOrAbove0; RwgNoteWaterSample(Q, FVector(X, Y, Zc), true, TEXT("wellDeal")); }
+        if (Zc < 0.0) { ++RwgWrWaterZBelow0; } else { ++RwgWrWaterZAtOrAbove0; if ((WetCore & 2) != 0) { RwgNoteWaterSample(Q, FVector(X, Y, Zc), true, TEXT("wellDeal")); } }
         ++RwgWrWater;
         return false;
     }
@@ -377,7 +379,8 @@ bool ANodeShuffleSubsystem::RwgDealWellSite(const NodeShuffleMapMode::FRwgGround
         const double Sx = X + Off.X, Sy = Y + Off.Y;
         if (Q.Outside(Sx, Sy)) { ++RwgWrSatOutside; return false; }
         const double Sz = Q.SurfaceZ(Sx, Sy);
-        if (RwgIsPointInWaterCached(FVector(Sx, Sy, Sz))) { ++RwgWrSatWater; return false; }
+        const int32 WetSat = RwgWetV2(Q, FVector(Sx, Sy, Sz));
+        if (WetSat != 0) { if ((WetSat & 1) != 0) { ++RwgWrRejectedSea; } ++RwgWrSatWater; return false; }
         ZMin = FMath::Min(ZMin, Sz);
         ZMax = FMath::Max(ZMax, Sz);
     }
@@ -404,6 +407,7 @@ void ANodeShuffleSubsystem::RwgWellRollBegin()
     RwgWrSpacing = RwgWrResolvedZ = RwgWrZSpreadMaxCm = 0;
     RwgWrSlope = RwgWrCoresOurs = 0; // RWG P2c
     RwgWrWaterZBelow0 = RwgWrWaterZAtOrAbove0 = RwgWrDealtBelowZ0 = 0; // coordinator addendum
+    RwgWrRejectedSea = 0; // RWG P2e
     RwgWrT0 = FPlatformTime::Seconds();
 }
 
@@ -416,9 +420,9 @@ void ANodeShuffleSubsystem::RwgEmitWellRollCensus(bool bApiDeal, const FString& 
         if (E.bGroupPlaced) { ++Placed; }
     }
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("WELLROLL: map=rwg deal=%s apiStatus='%s' cores=%d coresOurs=%d entries=%d eligible=%d builtOn=%d dealt=%d dealFailed=%d drawn=%d rejectedOutside=%d rejectedWater=%d rejectedWaterSurfaceZBelow0=%d rejectedWaterSurfaceZAtOrAbove0=%d dealtBelowZ0=%d rejectedSlope=%d rejectedSatOutside=%d rejectedSatWater=%d rejectedNearOriginal=%d rejectedSpacing=%d resolvedZ=%d zSpreadMaxCm=%d noAuthoredResource=%d claimedNew=%d mintRefusedNearClaim=%d placedBefore=%d durationMs=%d"),
+        TEXT("WELLROLL: map=rwg deal=%s apiStatus='%s' cores=%d coresOurs=%d entries=%d eligible=%d builtOn=%d dealt=%d dealFailed=%d drawn=%d rejectedOutside=%d rejectedWater=%d rejectedWaterSurfaceZBelow0=%d rejectedWaterSurfaceZAtOrAbove0=%d dealtBelowZ0=%d rejectedSlope=%d rejectedSatOutside=%d rejectedSatWater=%d rejectedSea=%d rejectedNearOriginal=%d rejectedSpacing=%d resolvedZ=%d zSpreadMaxCm=%d noAuthoredResource=%d claimedNew=%d mintRefusedNearClaim=%d placedBefore=%d durationMs=%d"),
         bApiDeal ? TEXT("api") : TEXT("fallback"), *ApiStatus, RwgWrCores, RwgWrCoresOurs, WellLayout.Num(), Eligible, BuiltOn, Dealt, DealFailed,
-        RwgWrDrawn, RwgWrOutside, RwgWrWater, RwgWrWaterZBelow0, RwgWrWaterZAtOrAbove0, RwgWrDealtBelowZ0, RwgWrSlope, RwgWrSatOutside, RwgWrSatWater, RwgWrNearOriginal, RwgWrSpacing, RwgWrResolvedZ,
+        RwgWrDrawn, RwgWrOutside, RwgWrWater, RwgWrWaterZBelow0, RwgWrWaterZAtOrAbove0, RwgWrDealtBelowZ0, RwgWrSlope, RwgWrSatOutside, RwgWrSatWater, RwgWrRejectedSea, RwgWrNearOriginal, RwgWrSpacing, RwgWrResolvedZ,
         RwgWrZSpreadMaxCm, RwgWrNoAuthored, RwgWrClaimedNew, RwgWrMintRefused, Placed,
         static_cast<int32>((FPlatformTime::Seconds() - RwgWrT0) * 1000.0));
 }

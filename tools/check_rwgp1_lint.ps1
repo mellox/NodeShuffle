@@ -231,7 +231,8 @@ $syms = @(
     ('?GetSpliced@FPWDensity' + 'Field@@QEBAAEBVFPWSplicedWorld@@XZ'),
     ('?SurfaceHeightCm@FPWDensity' + 'Field@@QEBANNN@Z'),
     ('?IsOutsideWorld@FPWDensity' + 'Field@@QEBA_NNN@Z'),
-    ('?WaterLevelCmAt@FPWSpliced' + 'World@@QEBANNNH@Z')
+    ('?WaterLevelCmAt@FPWSpliced' + 'World@@QEBANNNH@Z'),
+    ('?InSeaVolume@FPWSpliced' + 'World@@QEBA_NNNN@Z')   # RWG P2e (optional export)
 )
 foreach ($sym in $syms) {
     $inH = ([regex]::Matches($text.hapi, [regex]::Escape('"' + $sym + '"'))).Count

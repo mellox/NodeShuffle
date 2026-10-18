@@ -264,6 +264,9 @@ struct FNodeShuffleEntry
     // RWG P2d (2026-10-18): true once the rock-occlusion pass (NodeShuffleMapModeRock.cpp) traced RwgRockOcclusionHeightCm above this entry's live
     // actor down to its Z and met no SOLID mesh. Cleared when the entry is redealt. False on every vanilla entry (never read there).
     UPROPERTY(SaveGame) bool bRwgRockChecked = false;
+    // RWG P2e (2026-10-18): true once the one-time sea re-deal (NodeShuffleMapModeSea.cpp) checked this entry's spot under the water
+    // predicate v2 (dry, placed, pinned, or re-dealt). False on every vanilla entry (never read there).
+    UPROPERTY(SaveGame) bool bRwgSeaChecked = false;
 };
 
 // One original vanilla node location to suppress on stream-in after a wipe-on-
@@ -628,6 +631,8 @@ struct FNodeShuffleWellEntry
     UPROPERTY(SaveGame) FRotator PlacedCoreRotation = FRotator::ZeroRotator;
     // RWG P2c: reserved; the P2c resettle is observe-only for wells (cold review MF2) and never sets it.
     UPROPERTY(SaveGame) bool bRwgSettledOnTerrain = false;
+    // RWG P2e (2026-10-18): true once the one-time sea re-deal checked this dealt core spot under the water predicate v2.
+    UPROPERTY(SaveGame) bool bRwgSeaChecked = false;
 
     // ns-t27-corefirst: BOTH FIELDS KEPT THEIR NAMES AND BOTH CHANGED MEANING. Renaming a
     // UPROPERTY(SaveGame) breaks every existing save, so the names are frozen and the meanings are
@@ -1065,6 +1070,19 @@ private:
     int32 RwgRcWaterZBelow0 = 0, RwgRcWaterZAtOrAbove0 = 0, RwgRcDealtBelowZ0 = 0; // per roll (GenerateRwgLocations)
     int32 RwgWrWaterZBelow0 = 0, RwgWrWaterZAtOrAbove0 = 0, RwgWrDealtBelowZ0 = 0; // per well roll (RwgWellRollBegin)
     int32 RwgWaterSamples = 0, RwgSeaSamples = 0; // session: RWGWATERSAMPLE / RWGSEASAMPLE lines printed (cap 8 each)
+    // ---- RWG P2e (2026-10-18): open-sea water predicate. NodeShuffleMapModeSea.cpp. Every caller is RWG-only. ----
+    int32 RwgWetV2(const NodeShuffleMapMode::FRwgGroundQuery& Q, const FVector& P); // P.Z = API surface; bits 1 sea, 2 volume, 4 inland level; 0 dry
+    bool RwgEnsureSeaCheck(const NodeShuffleMapMode::FRwgGroundQuery& Q);           // runs RWGSEACHECK once per session; true = sea term graded usable
+    bool RwgCountSeaEntries(int32& OutSea, int32& OutWet, int32& OutWellSea, int32& OutWellWet); // RWGLAYOUT on load; false = API unusable
+    void RwgSeaRedealPass();                                                        // RWGSEAREDEAL, from RwgSpawnPass
+    bool bRwgSeaCheckDone = false, bRwgSeaUsable = false, bRwgSeaCheckDeferLogged = false, bRwgSeaPassSkipLogged = false;
+    double RwgSeaCheckRetryAt = 0.0;
+    int32 RwgSeaPasses = 0;
+    int32 RwgRcRejectedSea = 0, RwgRcApiLevelOnly = 0; // ROLLCENSUS rejectedSea / rejectedApiLevelOnly (per roll)
+    int32 RwgWrRejectedSea = 0;                        // WELLROLL rejectedSea (per well roll; core or satellite)
+    TSet<FGuid> RwgSeaDealFailed;                      // session: sea entries whose re-deal found no spot (not retried this session)
+    TSet<FString> RwgSeaWellDealFailed;                // session: same, well cores by CorePath
+    TMap<FString, int32> RwgSeaWellSalt;               // session: sea re-deals per core path (salts the deal stream)
     // PLACECENSUS per-pass additions (zeroed by RwgEmitPlaceCensus).
     int32 RwgPcFarTerrain = 0, RwgPcFarCanopy = 0, RwgPcFarWater = 0, RwgPcFarOther = 0;
     int32 RwgPcSettledTerrain = 0, RwgPcNoTerrainDefer = 0, RwgPcSkippedToTerrain = 0;

@@ -77,6 +77,12 @@ namespace NodeShuffleMapMode
     constexpr double RwgResettleKeepCm = 50.0; // RWG P2c review: resettle keep tolerance (terrain-hit p95 37.5 cm). TODO(2026-10-18 -> R5)
     // Disagreement predicate for the water census: WaterLevelCmAt(x,y,0) > SurfaceHeightCm(x,y) + this.
     constexpr double RwgWaterApiMarginCm = 50.0;
+    // RWG P2e (2026-10-18): the one-time sea re-deal checks at most RwgSeaRedealPerPass entries per spawn pass; RWGSEACHECK samples
+    // RwgSeaCheckPerClass points per class out of at most RwgSeaCheckMaxDraws random draws.
+    // TODO(2026-10-18, RWG P2e -> R7): re-check against RWGSEACHECK durationMs and RWGSEAREDEAL remaining.
+    constexpr int32 RwgSeaRedealPerPass = 256;
+    constexpr int32 RwgSeaCheckPerClass = 32;
+    constexpr int32 RwgSeaCheckMaxDraws = 12000;
 
     // RWG P2b ground query over the runtime-bound RWG exports (NodeShuffleMapModeHeightApi.cpp). Construct once
     // per batch (it holds the density field's strong reference for its lifetime, never across frames).
@@ -93,6 +99,9 @@ namespace NodeShuffleMapMode
         bool Outside(double X, double Y) const;
         double SurfaceZ(double X, double Y) const;
         double WaterLevelZ(double X, double Y) const;
+        bool HasSea() const;                             // RWG P2e: InSeaVolume bound (optional export) and the spliced world found
+        bool InSea(double X, double Y, double Z) const;  // RWG P2e: raw InSeaVolume; false when !HasSea()
+        double GlobalMinZ() const;                       // RWG P2e: GlobalMinSurfaceCm, NaN when that optional export was dropped
     private:
         TSharedPtr<const FPWDensityField, ESPMode::ThreadSafe> Field;
         const void* F = nullptr;
@@ -124,5 +133,6 @@ namespace NodeShuffleMapMode
     // pawn or null. IsOursForRwg: the same "ours" test as the late-node capture scan (managed registry, our
     // component, legacy class) -- a node it returns true for is never counted as an original.
     APawn* FirstPlayerPawn(UWorld* World);
+    FString RwgSeaBindStatus(); // RWG P2e: InSeaVolume binding status (NodeShuffleMapModeHeightApi.cpp)
     bool IsOursForRwg(AFGResourceNodeBase* Node);
 }

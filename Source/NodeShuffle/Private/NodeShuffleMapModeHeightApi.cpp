@@ -17,6 +17,7 @@
 #if PLATFORM_WINDOWS
 #include "Windows/WindowsHWrapper.h"
 #endif
+#include <limits>
 
 class FPWDensityField; // RWG's type. Never completed here: only an opaque pointer and a TSharedPtr slot are used.
 
@@ -42,6 +43,7 @@ namespace
     using FnOutside = bool (*)(const void* This, double X, double Y);
     using FnWater = double (*)(const void* This, double X, double Y, int32 Arg3);
     using FnScalar = double (*)(const void* This);
+    using FnInSea = bool (*)(const void* This, double X, double Y, double Z); // RWG P2e: this RCX, X/Y/Z in XMM1..3 (disassembled, build 705)
 
     // Decorated names, copied from the dumpbin output of the build above (the research file lists the same).
     const char* const SymGet = "?Get@APWWorldGenerator@@SAPEAV1@PEAVUWorld@@@Z";
@@ -52,6 +54,7 @@ namespace
     const char* const SymWater = "?WaterLevelCmAt@FPWSplicedWorld@@QEBANNNH@Z";
     const char* const SymGMin = "?GlobalMinSurfaceCm@FPWDensityField@@QEBANXZ"; // optional: range + plausibility
     const char* const SymGMax = "?GlobalMaxSurfaceCm@FPWDensityField@@QEBANXZ"; // optional: range + plausibility
+    const char* const SymInSea = "?InSeaVolume@FPWSplicedWorld@@QEBA_NNNN@Z"; // RWG P2e: optional; its term counts only after RWGSEACHECK grades it
 
     struct FRwgHeightApi
     {
@@ -73,6 +76,8 @@ namespace
         FnWater Water = nullptr;
         FnScalar GMin = nullptr;
         FnScalar GMax = nullptr;
+        FnInSea InSea = nullptr;          // RWG P2e: null unless resolved AND its byte signature matched
+        FString SeaStatus = TEXT("notTried");
     };
     FRwgHeightApi& Api() { static FRwgHeightApi A; return A; } // per process: the RWG DLL never unloads
 
@@ -163,6 +168,16 @@ namespace
         if (A.GMax && !SigOk(A.GMax, SigGMax, UE_ARRAY_COUNT(SigGMax))) { A.GMax = nullptr; SigBad += TEXT(" GlobalMaxSurfaceCm(optional,dropped)"); }
         UE_LOG(LogNodeShuffle, Display, TEXT("RWGHEIGHTAPI: signature check mismatched='%s' (empty = all 8 match build 705)"), *SigBad);
         if (bRequiredSigBad) { A.Status = TEXT("signatureMismatch"); return; }
+        // RWG P2e (2026-10-18): InSeaVolume, OPTIONAL like GMin/GMax -- resolved only after the version, export and required-signature
+        // gates passed; a missing export or a byte mismatch leaves it null and the old water predicate stays in place. Build-705
+        // disassembly (dumpbin /DISASM, 2026-10-18): `this` RCX, X XMM1, Y XMM2, Z XMM3; Z >= 0 returns false before the grid lookup
+        // (comisd xmm3,0 / jae), so callers pass the surface Z. These leading bytes carry no RIP displacement (no wildcard).
+        static const int16 SigInSea[] = { 0x48,0x89,0x5C,0x24,0x08,0x57,0x48,0x83,0xEC,0x30,0x0F,0x57,0xC0,0x0F,0x28,0xEA,0x66,0x0F,0x2F,0xD8,0x48,0x8B,0xF9 };
+        A.InSea = reinterpret_cast<FnInSea>(::GetProcAddress(H, SymInSea));
+        if (!A.InSea) { A.SeaStatus = TEXT("exportMissing"); }
+        else if (!SigOk(reinterpret_cast<const void*>(A.InSea), SigInSea, UE_ARRAY_COUNT(SigInSea))) { A.InSea = nullptr; A.SeaStatus = TEXT("signatureMismatch"); }
+        else { A.SeaStatus = TEXT("bound"); }
+        UE_LOG(LogNodeShuffle, Display, TEXT("RWGSEABIND: status=%s export='%s' optional=1; its term counts only after RWGSEACHECK grades it"), *A.SeaStatus, ANSI_TO_TCHAR(SymInSea));
         A.bUsable = true;
         A.Status = TEXT("bound");
 #else
@@ -364,6 +379,29 @@ bool NodeShuffleMapMode::FRwgGroundQuery::Outside(double X, double Y) const
 double NodeShuffleMapMode::FRwgGroundQuery::SurfaceZ(double X, double Y) const
 {
     return F ? Api().Surface(F, X, Y) : 0.0;
+}
+
+bool NodeShuffleMapMode::FRwgGroundQuery::HasSea() const
+{
+    return F != nullptr && S != nullptr && Api().InSea != nullptr; // RWG P2e
+}
+
+bool NodeShuffleMapMode::FRwgGroundQuery::InSea(double X, double Y, double Z) const
+{
+    // RWG P2e: raw InSeaVolume(X, Y, Z) on the spliced world. Z must be the surface Z (the function answers false for Z >= 0).
+    return HasSea() ? Api().InSea(S, X, Y, Z) : false;
+}
+
+double NodeShuffleMapMode::FRwgGroundQuery::GlobalMinZ() const
+{
+    return (F && Api().GMin) ? Api().GMin(F) : std::numeric_limits<double>::quiet_NaN(); // RWG P2e census floor; NaN = optional export dropped
+}
+
+FString NodeShuffleMapMode::RwgSeaBindStatus()
+{
+    const FRwgHeightApi& A = Api();
+    if (!A.bTried) { return TEXT("notTried"); }
+    return A.bUsable ? A.SeaStatus : FString::Printf(TEXT("notBound:%s"), *A.Status);
 }
 
 double NodeShuffleMapMode::FRwgGroundQuery::WaterLevelZ(double X, double Y) const
