@@ -19,6 +19,7 @@ $files = [ordered]@{
     nc      = 'NodeShuffle\Private\NodeShuffleNearestCave.cpp'
     nsmod   = 'NodeShuffle\Private\NodeShuffle.cpp'
     subsysh = 'NodeShuffle\Public\NodeShuffleSubsystem.h'
+    subsys  = 'NodeShuffle\Private\NodeShuffleSubsystem.cpp'
 }
 $text = @{}
 foreach ($k in $files.Keys) {
@@ -67,6 +68,8 @@ function Invoke-NcChecks($T) {
     if ((Count $b $bearing) -ne 1 -or (Count $b 'const FVector D = Target - P;') -ne 1) { $f += '(N3) the bearing must be Here''s expression, once' }
     if ((Count $b 'TurnFromFacing(BestMouth)') -ne 1 -or (Count $b 'TurnFromFacing(Best->Location)') -ne 1 -or (Count $b 'turn %+.0f deg and go') -ne 2) { $f += '(N3) both nav lines must use TurnFromFacing and print the turn wording' }
     foreach ($bad in @(('Atan2(D.X' + ', D.Y)'), ('.Yaw - FMath::Radians' + 'ToDegrees'), ('D = P' + ' - Target'))) { if ($b.Contains($bad)) { $f += "(N3) inverted bearing form present" } }
+    if ((Count $b 'const double DistCm = FVector::Dist2D(M, P);') -ne 1 -or (Count $b 'const double DistCm = FVector::Dist2D(E.Location, P);') -ne 1) { $f += '(N3) both distances must be 2D (the lines say "in 2D")' }
+    if ((Count $T.subsys 'FMath::RadiansToDegrees(FMath::Atan2(D.Y, D.X)) - Pawn->GetActorRotation().Yaw);') -lt 1) { $f += '(N3) Here''s bearing expression, the reference this copy mirrors, is no longer in NodeShuffleSubsystem.cpp' }
     # N4
     if ((Count $b 'if (!E.bRwgCave) { continue; }') -ne 1 -or (Count $b 'AFGResourceNode* const* Spawned = SpawnedNodes.Find(E.EntryGuid);') -ne 1 -or
         -not (Ordered $b @('if (!E.bRwgCave) { continue; }', 'SpawnedNodes.Find(E.EntryGuid);', 'if (!E.bActive) { ++Inactive; continue; }', 'Best = &E;'))) { $f += '(N4) population: bRwgCave entries, live by SpawnedNodes, nearest over active only' }
@@ -96,6 +99,8 @@ $mutants = @(
     @{ Name = 'M5 live test nulled'; Key = 'nc'; Expect = 'N4'; Find = 'AFGResourceNode* const* Spawned = SpawnedNodes.Find(E.EntryGuid);'; Repl = 'AFGResourceNode* const* Spawned = nullptr;' }
     @{ Name = 'M6 header public: dropped'; Key = 'subsysh'; Expect = 'N7'; Find = ("`npublic:`n" + '    // RWG cave navigation'); Repl = ("`n" + '    // RWG cave navigation') }
     @{ Name = 'M7 map-mode test moved after the pawn'; Key = 'nc'; Expect = 'N2'; Find = 'if (Mode != ENodeShuffleMapMode::Rwg)'; Repl = 'if (false)' }
+    @{ Name = 'M8 mouth distance made 3D'; Key = 'nc'; Expect = 'N3'; Find = 'FVector::Dist2D(M, P)'; Repl = 'FVector::Dist(M, P)' }
+    @{ Name = 'M9 Here bearing changed'; Key = 'subsys'; Expect = 'N3'; Find = 'FMath::Atan2(D.Y, D.X)) - Pawn->GetActorRotation().Yaw);'; Repl = 'FMath::Atan2(D.X, D.Y)) - Pawn->GetActorRotation().Yaw);' }
 )
 $mutantFails = @()
 $caught = 0

@@ -45,7 +45,7 @@ namespace
             if (!N || N->IsFloatingPoint() || It->GetName() != TEXT("WorldSeed")) { continue; }
             OutSource = TEXT("WorldSeed");
             const int64 V = N->GetSignedIntPropertyValue(N->ContainerPtrToValuePtr<void>(Gen));
-            return (V < 0 && N->ElementSize == 4) ? V + 4294967296LL : V; // the dump file names print the seed unsigned
+            return (V < 0 && N->ElementSize == 4) ? V + 4294967296LL : V; // the dump file names print the seed unsigned (ASSUMED for seeds >= 2^31; none seen)
         }
         return -1;
     }
@@ -177,7 +177,7 @@ void ANodeShuffleSubsystem::LogNearestCave() const
     else
     {
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("NEARESTCAVE: nearest dealt cave node = res=%s %s at X=%.0f Y=%.0f Z=%.0f -- %.0f m away in 2D, dz=%+.0f m; from where you are standing and facing, turn %+.0f deg and go. LIVE means the mod holds a spawned actor for that entry now; RECORD-ONLY does not tell a node never placed from one not spawned yet at this distance"),
+            TEXT("NEARESTCAVE: nearest dealt cave node = res=%s state=%s at X=%.0f Y=%.0f Z=%.0f -- %.0f m away in 2D, dz=%+.0f m; from where you are standing and facing, turn %+.0f deg and go. The state word reports one lookup: whether the mod's spawned-node map holds a valid actor for this entry right now. The negative word does not tell a node never placed, or cleared later, apart from one not spawned yet because no player is near it"),
             *NearestCaveShortName(Best->AssignedResourceClassPath), bBestLive ? TEXT("LIVE") : TEXT("RECORD-ONLY"),
             Best->Location.X, Best->Location.Y, Best->Location.Z, BestEntryDistCm / 100.0, (Best->Location.Z - P.Z) / 100.0, TurnFromFacing(Best->Location));
     }
