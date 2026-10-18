@@ -34,8 +34,11 @@
 #   R14 The RWG deal rejects outside then resolves Z then water-rejects, all BEFORE the spacing scan; no cave spots
 #       off vanilla (GenerateNewLocations nulls the cave output first); the volume test decides water.
 #   R15 Spawn: on RWG the settle block asks RwgResolveAtSpawn first and RaycastSettle only when the API was not
-#       used; a trace miss spawns at the resolved Z (no defer); the ApplyLayout loop defers RWG actor creation to the
-#       capped, nearest-first RwgSpawnPass.
+#       used; the ApplyLayout loop defers RWG actor creation to the capped, nearest-first RwgSpawnPass.
+#       RWG P2c (2026-10-18) CHANGED THIS PIN DELIBERATELY: the P2b rule "a trace miss or a far hit spawns at the API Z" was
+#       measured wrong (63 % of spawns floated or sank). R15 now pins resolver v3: the terrain-only RaycastSettle runs, a
+#       failed settle returns false (the caller defers or redeals), and the ONLY `return true` follows the settled-on-terrain
+#       flag write -- so no path can hand the caller the API Z as a final position.
 #   R16 Cave learning, the vanilla depth floor and the redeal cave branch are gated to vanilla at their sites.
 # RWG P2b-2 (2026-10-17 cold review fixes): R9 clause B also needs t >= RwgApplyFallbackSeconds and the saved-records
 #   floor (MF1), and its counter resets on any change (M16); R15 pins the API agreement test BEFORE RaycastSettle (MF2);
@@ -49,6 +52,7 @@
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $src  = Join-Path $root 'Source'
+if ($args.Count -gt 0) { $src = $args[0] } # RWG P2c: mutant runs point this at a scratch copy
 
 $files = [ordered]@{
     mapcpp  = 'NodeShuffle\Private\NodeShuffleMapMode.cpp'
@@ -292,7 +296,16 @@ if (-not $gn -or $gn -notmatch ('if \(' + [regex]::Escape($notVanilla) + '\)\s*\
 # R15
 if ($text.subsys -notmatch ('bool bSettled = \(GetMapMode\(\) == ENodeShuffleMapMode::Rwg\) \? RwgResolveAtSpawn\(Entry, bRwgApiUsed, bWaterNoLand\) : false;\s*if \(!bRwgApiUsed\) \{ bSettled = Raycast' + 'Settle\(Entry, nullptr, nullptr, &bWaterNoLand\); \}')) { $fails += 'R15: the settle block must ask RwgResolveAtSpawn on RWG and RaycastSettle only when the API was not used' }
 $ra = Get-Body $text.place ('bool ' + $cls + 'RwgResolveAtSpawn(FNodeShuffleEntry& Entry, bool& bOutApiUsed, bool& bOutWaterNoLand)')
-if (-not $ra -or $ra -notmatch ('if \(bHit\) \{ \+\+RwgPcTraceFar; return true; \}\s*\+\+RwgPcTrace' + 'Miss;\s*return true;') -or $ra.IndexOf('FMath::Abs(HitLoc.Z - Api' + 'Z0)') -lt 0 -or $ra.IndexOf('FMath::Abs(HitLoc.Z - Api' + 'Z0)') -gt $ra.IndexOf('Raycast' + 'Settle(')) { $fails += 'R15: the API agreement test must precede RaycastSettle and a miss must spawn at the API Z' }
+if (-not $ra) { $fails += 'R15: RwgResolveAtSpawn body not found' } else {
+    $rs = $ra.IndexOf('const bool bSettled = Raycast' + 'Settle(Entry, nullptr, nullptr, &bOutWaterNoLand, /*bTerrainOnly=*/' + 'true);')
+    $nf = $ra.IndexOf('if (!bSettled)'); $fw = $ra.IndexOf('Entry.bRwgSettledOn' + 'Terrain = true;')
+    $rt = [regex]::Matches($ra, 'return ' + 'true;')
+    if ($rs -lt 0) { $fails += 'R15: resolver v3 must settle through the terrain-only RaycastSettle' }
+    elseif ($nf -lt $rs -or $fw -lt $nf) { $fails += 'R15: the failed-settle return must follow the settle and precede the terrain flag write' }
+    elseif ($ra.Substring($nf, 160) -notmatch ('\{\s*if \(!bOutWaterNoLand\) \{ \+\+RwgPcNoTerrainDefer; \}\s*return ' + 'false;\s*\}')) { $fails += 'R15: a failed terrain settle must return false (defer / redeal), never spawn at the API Z' }
+    elseif ($rt.Count -ne 1 -or $rt[0].Index -lt $fw) { $fails += 'R15: the only return-true in the resolver must follow the settled-on-terrain flag write' }
+    if ($ra.Contains('FMath::Abs(HitLoc.Z - Api' + 'Z0)')) { $fails += 'R15: the P2b agreement-then-API-Z rule is back' }
+}
 $sp = Get-Body $text.place ('void ' + $cls + 'RwgSpawnPass(float SpawnRadiusCm, bool& bChangedWorld)')
 if (-not $sp -or $sp.IndexOf('Cands.' + 'Sort(') -lt 0 -or $sp -notmatch ('FMath::Min\(Cands\.Num\(\), NodeShuffleMapMode::RwgMaxSpawn' + 'AttemptsPerPass\)')) { $fails += 'R15: RwgSpawnPass must sort nearest-first and cap attempts at RwgMaxSpawnAttemptsPerPass' }
 if ($text.subsys -notmatch ('if \(' + [regex]::Escape($notVanilla) + '\) \{ continue; \}\s*if \(Entry\.bActive && IsLocationNearAnyPlayer\(Entry\.Location, SpawnRadiusCm\)\)')) { $fails += 'R15: the ApplyLayout loop must hand RWG actor creation to RwgSpawnPass before its inline spawn' }

@@ -251,6 +251,7 @@ void ANodeShuffleSubsystem::RollWellLayout(int32 Seed, bool bIsReroll)
         RwgWrCores = Census.Wells.Num();
         for (const FNodeShuffleWellRecord& W : Census.Wells)
         {
+            if (IsValid(W.Core) && FNodeShuffleModule::IsManagedSpawnedNode(W.Core)) { ++RwgWrCoresOurs; } // RWG P2c: P4 review F6
             if (!IsValid(W.Core) || FNodeShuffleModule::IsManagedSpawnedNode(W.Core)) { continue; }
             if (const int32* StampIdx = IndexByCore.Find(WellPathOf(W.Core))) { RwgStampWellClaim(Merged[*StampIdx], W.Core, W.Members); }
         }

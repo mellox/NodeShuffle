@@ -27,6 +27,19 @@
 #       RwgIsClaimedOriginal really tests the set; F1 ApplyWellRelocation skips a sentinel-path group off vanilla
 #       BEFORE the search; F2 the unbound Warning; F3 legacy entries get the legacy sentinel; F4 the roll merge
 #       re-binds a sentinel satellite record before appending.
+# RWG P2c (2026-10-18, floating nodes; spec _team/nodeshuffle-rwg-p2-spec.md "R4 finding"), pins C1..C11:
+#   C1  RaycastGroundAt / RaycastSettle take bTerrainOnly defaulted FALSE (every vanilla caller keeps the plain trace).
+#   C2  The trace helper: off -> the plain single trace; on -> non-terrain hits ignored by component, re-traced, the cap
+#       reads as no hit; the primary and the ring traces both go through it.
+#   C3  RaycastSettle forwards bTerrainOnly to BOTH surface probes (primary + spiral).
+#   C4  Every other RWG settle/normal site passes the RWG test (nudge, legacy settle, adopt refit, rock probe, well probe).
+#   C5  RwgIsTerrainHit = owner class has TerrainChunk AND component name has Terrain (HeightApi F1 mirror).
+#   C6  Resettle: the moved and kept branches write the flag; the void, occupied and wet branches do not; occupied never moves.
+#   C7  RwgSpawnPass runs the resettle; the resettle only re-queues actor-less entries (bRayCasted = false), never spawns.
+#   C8  Slope reject in RwgDealOneSpot and RwgDealWellSite; the mirror constant equals CliffSlopeDeg; census fields present.
+#   C9  RESETTLE / RWGTERRAINSKIP / apiToTerrainDz lines at line-initial position; no repeated field in their formats.
+#   C10 bRwgSettledOnTerrain (entry + well) and RwgApiToTerrainDzCm are single SaveGame properties.
+#   C11 The flag is set true only in RwgResolveAtSpawn (1) and the resettle file (3).
 # Exit 0 = all hold. Exit 1 = at least one does not. Exit 2 = a pinned FILE is missing.
 
 $ErrorActionPreference = 'Stop'
@@ -46,6 +59,9 @@ $files = [ordered]@{
     wbk     = 'NodeShuffle\Private\NodeShuffleWellBackstop.cpp'
     place   = 'NodeShuffle\Private\NodeShuffleMapModePlace.cpp'
     mod     = 'NodeShuffle\Private\NodeShuffle.cpp'
+    rsettle = 'NodeShuffle\Private\NodeShuffleMapModeResettle.cpp'   # RWG P2c
+    wfoot   = 'NodeShuffle\Private\NodeShuffleWellFootprint.cpp'     # RWG P2c
+    maph    = 'NodeShuffle\Public\NodeShuffleMapMode.h'              # RWG P2c
 }
 $text = @{}
 foreach ($k in $files.Keys) {
@@ -206,6 +222,81 @@ foreach ($m in [regex]::Matches($text.wrwg, 'TEXT\("(WELL[A-Z]+: [^"]*)"\)')) {
 # W14
 if (([regex]::Matches($text.mod, 'TEXT\("===== NodeShuffle 1\.4\.0 LOADED \(\d{4}-\d\d-\d\d-[a-z0-9-]+\)====="\)')).Count -ne 1) { $fails += 'W14: the LOADED marker line must be present once with a dated tag' }
 
+# ---------------- RWG P2c (C1..C11) ----------------
+$isRwg = 'GetMapMode() == ENodeShuffleMapMode::' + 'Rwg'
+# C1
+if ((Count $text.subsysh ('struct FHitResult* OutGroundHit = nullptr,' + "`n" + '                         bool bTerrainOnly = ' + 'false) const;')) -ne 1) { $fails += 'C1: RaycastGroundAt must take bTerrainOnly defaulted false' }
+if ((Count $text.subsysh ('bool* bOutWaterNoLand = nullptr, bool bTerrainOnly = ' + 'false) const;')) -ne 1) { $fails += 'C1: RaycastSettle must take bTerrainOnly defaulted false' }
+# C2
+$rg = Get-Body $text.subsys ('bool ' + $cls + 'RaycastGroundAt(const FVector& ProbeXY, float StartZ, const AActor* IgnoreNode,')
+if (-not $rg) { $fails += 'C2: RaycastGroundAt body not found' } else {
+    $off = $rg.IndexOf('if (!bTerrainOnly) { return GetWorld()->LineTrace' + 'SingleByChannel(H, S, En, ECC_WorldStatic, P); }')
+    $acc = $rg.IndexOf('if (Cls == 0) { return ' + 'true; }'); $ign = $rg.IndexOf('P.AddIgnored' + 'Component(H.GetComponent());')
+    if ($off -lt 0 -or $acc -lt $off -or $ign -lt $acc) { $fails += 'C2: the trace helper must keep the plain trace when off and skip non-terrain hits by component when on' }
+    if ($rg -notmatch ('\+\+RwgProbeCapHits;\s*H = FHitResult\(\);\s*return ' + 'false;')) { $fails += 'C2: exhausting the skip cap must read as no hit' }
+    if ((Count $rg ('if (!TraceDown(Hit, Start, End, ' + 'Params))')) -ne 1 -or (Count $rg ('if (TraceDown(RingHit, ')) -ne 1) { $fails += 'C2: the primary and ring traces must both go through the helper' }
+    if ((Count $rg ('LineTrace' + 'SingleByChannel(')) -ne 2) { $fails += 'C2: a raw trace bypasses the helper in RaycastGroundAt' }
+}
+# C3
+$rsb = Get-Body $text.subsys ('bool ' + $cls + 'RaycastSettle(FNodeShuffleEntry& Entry, const AActor* IgnoreNode, const AActor* IgnoreMesh,')
+if (-not $rsb -or (Count $rsb ('nullptr, nullptr, bTerrain' + 'Only)')) -ne 2) { $fails += 'C3: RaycastSettle must forward bTerrainOnly to the primary probe and the spiral' }
+# C4
+$sites = @(
+    @($text.subsys, ('Entry.bUnderground, &bTrySteep, nullptr, nullptr, ' + $isRwg + ')'), 'overlap nudge'),
+    @($text.subsys, ('RaycastSettle(Entry, *Node, nullptr, &bWaterNoLand, ' + $isRwg + ');'), 'legacy settle near players'),
+    @($text.subsys, ('bRefitWater, false, nullptr, nullptr, nullptr,' + "`n" + '                                ' + $isRwg + '))'), 'adopt rotation refit'),
+    @($text.subsys, ('nullptr, ' + $isRwg + ')) // RWG P2c: terrain-mesh normal on RWG'), 'rock-dress slope probe'),
+    @($text.wfoot, ('&bSteep, nullptr, nullptr, /*bTerrainOnly=*/' + $isRwg + '))'), 'well member probe'))
+foreach ($st in $sites) { if ((Count $st[0] $st[1]) -ne 1) { $fails += "C4: the $($st[2]) must pass the RWG terrain-only test" } }
+# C5
+$th = Get-Body $text.rsettle ('bool ' + $cls + 'RwgIsTerrainHit(const FHitResult& Hit)')
+if (-not $th -or -not $th.Contains('A->GetClass()->GetName().Contains(TEXT("Terrain' + 'Chunk")) && C->GetName().Contains(TEXT("Ter' + 'rain"))')) { $fails += 'C5: RwgIsTerrainHit must test TerrainChunk owner AND Terrain component' }
+# C6 / C7
+$rp = Get-Body $text.rsettle ('void ' + $cls + 'RwgResettlePass()')
+$flag = 'E.bRwgSettledOn' + 'Terrain = true;'
+if (-not $rp) { $fails += 'C6: RwgResettlePass body not found' } else {
+    $mv = $rp.IndexOf('E.Location = ' + 'HitLoc;'); $mm = $rp.IndexOf('++Moved;')
+    if ($mv -lt 0 -or $mm -lt $mv -or -not $rp.Substring($mv, $mm - $mv).Contains($flag)) { $fails += 'C6: the moved branch must write the settled-on-terrain flag' }
+    $kp = $rp.IndexOf('<= NodeShuffleMapMode::RwgTrace' + 'AgreeCm)'); $kk = $rp.IndexOf('++Kept;')
+    if ($kp -lt 0 -or $kk -lt $kp -or -not $rp.Substring($kp, $kk - $kp).Contains($flag)) { $fails += 'C6: the kept branch must write the flag' }
+    $vd = $rp.IndexOf('/*bTerrainOnly=*/' + 'true))'); $ve = $rp.IndexOf('const double DzMove')
+    if ($vd -lt 0 -or $ve -lt $vd -or $rp.Substring($vd, $ve - $vd).Contains($flag)) { $fails += 'C6: the void branch must not write the flag' }
+    if ($rp -notmatch ('if \(E\.bPinned \|\| IsNodeOccupiedAnyway\(Node\)\) \{ \+\+Occupied; RwgResettleGaveUp\.Add\(E\.EntryGuid\); ' + 'continue; \}')) { $fails += 'C6: an occupied or pinned node must be skipped without a move or a flag' }
+    if ($rp -notmatch ('if \(bWater\) \{ \+\+Wet; RwgResettleGaveUp\.Add\(E\.EntryGuid\); ' + 'continue; \}')) { $fails += 'C6: wet terrain must not move the node' }
+    if (-not $rp.Contains('if (E.bRayCasted) { E.bRayCasted = ' + 'false; ++Requeued; }')) { $fails += 'C7: actor-less unflagged entries must be re-queued for resolver v3' }
+    if ($rp.Contains('EnsureNewNode' + 'Spawned(')) { $fails += 'C7: the resettle must not spawn' }
+}
+$spb = Get-Body $text.place ('void ' + $cls + 'RwgSpawnPass(float SpawnRadiusCm, bool& bChangedWorld)')
+if (-not $spb -or (Count $spb ('RwgResettle' + 'Pass();')) -ne 1) { $fails += 'C7: RwgSpawnPass must run the resettle once per pass' }
+$rwb = Get-Body $text.rsettle ('void ' + $cls + 'RwgResettleWells(')
+if (-not $rwb -or -not $rwb.Contains('if (bInUse) { ++Occupied; RwgResettleWellGaveUp.Add(E.CorePath); ' + 'continue; }') -or -not $rwb.Contains('E.bRwgSettledOn' + 'Terrain = true;')) { $fails += 'C6: the well resettle must skip in-use groups and flag probed groups' }
+# C8
+$do = Get-Body $text.place ('bool ' + $cls + 'RwgDealOneSpot(')
+if (-not $do -or $do -notmatch ('if \(RwgApiSlope' + 'TooSteep\(Q, X, Y, RiseRun\)\) \{ \+\+Slope; return false; \}\s*(//[^\n]*)?\s*return true;')) { $fails += 'C8: RwgDealOneSpot must reject on the API slope before accepting' }
+if (-not $dw -or -not $dw.Contains('if (RwgApiSlope' + 'TooSteep(Q, X, Y, CoreRiseRun)) { ++RwgWrSlope; return false; }')) { $fails += 'C8: RwgDealWellSite must reject on the core-site API slope' }
+$m1 = [regex]::Match($text.place, 'constexpr double RwgCliffSlopeDegMirror = ([0-9.]+);'); $m2 = [regex]::Match($text.subsys, 'constexpr float CliffSlopeDeg = ([0-9.]+)f;')
+if (-not $m1.Success -or -not $m2.Success -or [double]$m1.Groups[1].Value -ne [double]$m2.Groups[1].Value) { $fails += 'C8: the slope mirror constant must equal CliffSlopeDeg' }
+if (-not $text.place.Contains('waterApiDisagree=%d rejected' + 'Slope=%d rejectedSpacing=%d resolvedZ=%d')) { $fails += 'C8: ROLLCENSUS must carry rejectedSlope' }
+if (-not $text.wrwg.Contains('cores=%d cores' + 'Ours=%d entries=%d') -or -not $text.wrwg.Contains('rejectedWater=%d rejected' + 'Slope=%d rejectedSatOutside=%d')) { $fails += 'C8: WELLROLL must carry coresOurs and rejectedSlope' }
+# C9
+if ($text.rsettle -notmatch ('TEXT\("' + 'RESETTLE: pass=%d checked=%d moved=%d kept=%d deferred=%d maxDzCm=%d ')) { $fails += 'C9: the RESETTLE census line is missing or reordered' }
+if ($text.rsettle -notmatch ('TEXT\("' + 'RWGTERRAINSKIP: ')) { $fails += 'C9: the RWGTERRAINSKIP line is missing' }
+if ($text.rsettle -notmatch ('TEXT\("' + 'PLACECENSUS: apiToTerrainDz ')) { $fails += 'C9: the apiToTerrainDz census line is missing' }
+foreach ($src2 in @($text.rsettle, $text.place)) {
+    foreach ($m in [regex]::Matches($src2, 'TEXT\("((?:RESETTLE|PLACECENSUS|ROLLCENSUS)[A-Z-]*: [^"]*)"\)')) {
+        $names = [regex]::Matches($m.Groups[1].Value, '(\w+)=') | ForEach-Object { $_.Groups[1].Value }
+        $dup = $names | Group-Object | Where-Object { $_.Count -gt 1 }
+        if ($dup) { $fails += "C9: field name repeated in a census format: $($dup.Name -join ',')" }
+    }
+}
+# C10
+if ((Count $text.subsysh ('UPROPERTY(Save' + 'Game) bool bRwgSettledOnTerrain = false;')) -ne 2) { $fails += 'C10: bRwgSettledOnTerrain must be a SaveGame property on the entry and the well entry' }
+if ((Count $text.subsysh ('UPROPERTY(Save' + 'Game) float RwgApiToTerrainDzCm = 0.0f;')) -ne 1) { $fails += 'C10: RwgApiToTerrainDzCm must be a single SaveGame property' }
+# C11
+$fp = ([regex]::Matches($text.place, 'bRwgSettledOn' + 'Terrain = true;')).Count; $fr = ([regex]::Matches($text.rsettle, 'bRwgSettledOn' + 'Terrain = true;')).Count
+$fo = 0; foreach ($k in $files.Keys) { if ($k -ne 'place' -and $k -ne 'rsettle') { $fo += ([regex]::Matches($text[$k], 'bRwgSettledOn' + 'Terrain = true;')).Count } }
+if ($fp -ne 1 -or $fr -ne 3 -or $fo -ne 0) { $fails += "C11: the flag must be set only by the resolver (1) and the resettle (3); found place=$fp resettle=$fr other=$fo" }
+
 if ($fails.Count -gt 0) { $fails | ForEach-Object { Write-Host "FAIL $_" }; exit 1 }
-Write-Host "PASS: RWG P4 lint -- W1..W15 hold across $($files.Count) loaded files"
+Write-Host "PASS: RWG P4/P2c lint -- W1..W15 and C1..C11 hold across $($files.Count) loaded files"
 exit 0

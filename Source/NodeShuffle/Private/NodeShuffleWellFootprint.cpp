@@ -353,8 +353,11 @@ bool ANodeShuffleSubsystem::ValidateWellMemberSpot(const FVector& ProbeXY, float
     // Long top-down trace. Wells are surface features; there is no cave path for them, so the short
     // trace (and its whole cave-floor ruleset) deliberately does not apply.
     Reach(FNodeShuffleWellProbeCensus::Gate_Void);
+    // RWG P2c (2026-10-18): on RWG the probe takes terrain-MESH hits only (canopy / water sheet / node components are
+    // skipped by component), so a well member never settles on a tree top; no terrain hit = the void defer below.
+    // Vanilla passes false, the default, so its probe is the plain single trace.
     if (!RaycastGroundAt(ProbeXY, StartZ, nullptr, nullptr, OutLoc, OutRot, bWater, /*bShortTrace=*/false,
-                         &bSteep))
+                         &bSteep, nullptr, nullptr, /*bTerrainOnly=*/GetMapMode() == ENodeShuffleMapMode::Rwg))
     {
         // TRUE VOID -- no terrain under the probe. This is NOT a rejection of the spot: it means the
         // region has not streamed in. The caller must DEFER the whole group rather than counting a

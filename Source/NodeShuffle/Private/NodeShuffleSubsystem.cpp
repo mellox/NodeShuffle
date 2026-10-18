@@ -3228,7 +3228,8 @@ void ANodeShuffleSubsystem::SpawnVisualRockForNode(AFGResourceNode* Node, UClass
         FVector GroundN = FVector::UpVector;
         const FVector NodeLoc = Node->GetActorLocation();
         if (RaycastGroundAt(NodeLoc, NodeLoc.Z, Node, nullptr, ProbeLoc, ProbeRot, bProbeWater,
-                            /*bShortTrace=*/false, /*bOutTooSteep=*/nullptr, &GroundN))
+                            /*bShortTrace=*/false, /*bOutTooSteep=*/nullptr, &GroundN,
+                            nullptr, GetMapMode() == ENodeShuffleMapMode::Rwg)) // RWG P2c: terrain-mesh normal on RWG
         {
             SlopeDeg = FMath::RadiansToDegrees(FMath::Acos(FMath::Clamp(static_cast<float>(GroundN.Z), -1.0f, 1.0f)));
             // Cold review (BLOCKER fix): the desired WORLD rotation must keep the actor's random YAW —
@@ -4262,7 +4263,8 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
             FRotator RefitRot = (*Existing)->GetActorRotation(); // yaw preserved through the align math
             bool bRefitWater = false;
             if (RaycastGroundAt(Entry.Location, Entry.Location.Z, *Existing, nullptr, RefitLoc, RefitRot,
-                                bRefitWater))
+                                bRefitWater, false, nullptr, nullptr, nullptr,
+                                GetMapMode() == ENodeShuffleMapMode::Rwg)) // RWG P2c: terrain-mesh normal on RWG
             {
                 if (!(*Existing)->GetActorRotation().Equals(RefitRot, 1.0f))
                 {
@@ -4575,8 +4577,9 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
                 // cave-nodes-1: underground entries nudge with the SHORT trace so the probe stays on
                 // the cavern floor instead of relocating the node onto the roof/surface above.
                 // steepfix-1: nudge targets must also be flat enough to take a Miner.
+                // RWG P2c: the overlap nudge probes terrain-mesh hits only on RWG (false, the default, on vanilla).
                 if (RaycastGroundAt(Probe, Entry.Location.Z, nullptr, nullptr, TryLoc, TryRot, bTryWater,
-                                    Entry.bUnderground, &bTrySteep)
+                                    Entry.bUnderground, &bTrySteep, nullptr, nullptr, GetMapMode() == ENodeShuffleMapMode::Rwg)
                     && !bTryWater && !bTrySteep && !OverlapsAt(TryLoc) && !IsEnclosed(TryLoc))
                 {
                     Entry.Location = TryLoc;
@@ -4936,7 +4939,8 @@ void ANodeShuffleSubsystem::SettleNewNodesNearPlayers()
         }
         AFGResourceNode* const* Node = SpawnedNodes.Find(Entry.EntryGuid);
         bool bWaterNoLand = false;
-        bool bSettled = Node && IsValid(*Node) && RaycastSettle(Entry, *Node, nullptr, &bWaterNoLand);
+        // RWG P2c: terrain-mesh hits only on RWG (false, the default, on vanilla).
+        bool bSettled = Node && IsValid(*Node) && RaycastSettle(Entry, *Node, nullptr, &bWaterNoLand, GetMapMode() == ENodeShuffleMapMode::Rwg);
         if (!bSettled && bWaterNoLand)
         {
             // fixes-3: same unanchored redeal on the legacy settle-near-players path — the moved
@@ -6671,7 +6675,8 @@ bool ANodeShuffleSubsystem::IsPointInWater(const FVector& Point) const
 bool ANodeShuffleSubsystem::RaycastGroundAt(const FVector& ProbeXY, float StartZ, const AActor* IgnoreNode,
                                             const AActor* IgnoreMesh, FVector& OutLoc, FRotator& OutRot,
                                             bool& bOutWater, bool bShortTrace, bool* bOutTooSteep,
-                                            FVector* OutGroundNormal, FHitResult* OutGroundHit) const
+                                            FVector* OutGroundNormal, FHitResult* OutGroundHit,
+                                            bool bTerrainOnly) const
 {
     bOutWater = false;
     if (bOutTooSteep) { *bOutTooSteep = false; }
@@ -6688,8 +6693,29 @@ bool ANodeShuffleSubsystem::RaycastGroundAt(const FVector& ProbeXY, float StartZ
     // node on the surface above the cavern.
     const FVector Start(ProbeXY.X, ProbeXY.Y, bShortTrace ? StartZ + 400.f : StartZ + 20000.f);
     const FVector End(ProbeXY.X, ProbeXY.Y, bShortTrace ? StartZ - 800.f : StartZ - 40000.f);
+    // RWG P2c (2026-10-18): bTerrainOnly is passed true by RWG callers only (every vanilla caller takes the default, so
+    // this lambda is the plain single trace there). On RWG a blocking hit whose component fails RwgIsTerrainHit (canopy,
+    // water sheet, another node) is ignored BY COMPONENT -- the terrain chunk actor owns those components too -- and the
+    // same segment is traced again, at most RwgTerrainSkipMax times; exhausting the cap reads as no hit (the caller defers).
+    const auto TraceDown = [this, bTerrainOnly](FHitResult& H, const FVector& S, const FVector& En, FCollisionQueryParams& P) -> bool
+    {
+        if (!bTerrainOnly) { return GetWorld()->LineTraceSingleByChannel(H, S, En, ECC_WorldStatic, P); }
+        for (int32 K = 0; K <= NodeShuffleMapMode::RwgTerrainSkipMax; ++K)
+        {
+            if (!GetWorld()->LineTraceSingleByChannel(H, S, En, ECC_WorldStatic, P)) { return false; }
+            const int32 Cls = RwgHitClassOf(H);
+            if (K == 0 && bRwgProbeArmed && RwgProbeFirstClass < 0) { RwgProbeFirstClass = Cls; RwgProbeFirstZ = H.ImpactPoint.Z; }
+            if (Cls == 0) { return true; }
+            ++RwgProbeSkipped;
+            RwgNoteSkippedHit(H, Cls);
+            P.AddIgnoredComponent(H.GetComponent());
+        }
+        ++RwgProbeCapHits;
+        H = FHitResult();
+        return false;
+    };
     FHitResult Hit;
-    if (!GetWorld()->LineTraceSingleByChannel(Hit, Start, End, ECC_WorldStatic, Params))
+    if (!TraceDown(Hit, Start, End, Params))
     {
         return false; // no terrain / out of range (true void)
     }
@@ -6709,9 +6735,7 @@ bool ANodeShuffleSubsystem::RaycastGroundAt(const FVector& ProbeXY, float StartZ
             const float PX = OutLoc.X + SmoothNormalRingCm * FMath::Cos(Ang);
             const float PY = OutLoc.Y + SmoothNormalRingCm * FMath::Sin(Ang);
             FHitResult RingHit;
-            if (GetWorld()->LineTraceSingleByChannel(RingHit,
-                    FVector(PX, PY, OutLoc.Z + 400.0f), FVector(PX, PY, OutLoc.Z - 600.0f),
-                    ECC_WorldStatic, Params))
+            if (TraceDown(RingHit, FVector(PX, PY, OutLoc.Z + 400.0f), FVector(PX, PY, OutLoc.Z - 600.0f), Params))
             {
                 Acc += RingHit.ImpactNormal;
             }
@@ -6768,7 +6792,7 @@ bool ANodeShuffleSubsystem::RaycastGroundAt(const FVector& ProbeXY, float StartZ
 }
 
 bool ANodeShuffleSubsystem::RaycastSettle(FNodeShuffleEntry& Entry, const AActor* IgnoreNode, const AActor* IgnoreMesh,
-                                          bool* bOutWaterNoLand) const
+                                          bool* bOutWaterNoLand, bool bTerrainOnly) const
 {
     if (bOutWaterNoLand) { *bOutWaterNoLand = false; }
     FVector Loc;
@@ -6796,7 +6820,8 @@ bool ANodeShuffleSubsystem::RaycastSettle(FNodeShuffleEntry& Entry, const AActor
 
     // 1. Primary probe at the entry's own XY. steepfix-1: a placeable spot is a hit that is neither
     //    water NOR steeper than the Miner hologram tolerates.
-    if (RaycastGroundAt(Entry.Location, Entry.Location.Z, IgnoreNode, IgnoreMesh, Loc, Rot, bWater, false, &bSteep)
+    if (RaycastGroundAt(Entry.Location, Entry.Location.Z, IgnoreNode, IgnoreMesh, Loc, Rot, bWater, false, &bSteep,
+                        nullptr, nullptr, bTerrainOnly) // RWG P2c: bTerrainOnly forwarded (false on every vanilla call)
         && !bWater && !bSteep)
     {
         Entry.Location = Loc;
@@ -6830,7 +6855,8 @@ bool ANodeShuffleSubsystem::RaycastSettle(FNodeShuffleEntry& Entry, const AActor
             FVector TryLoc;
             bool bTryWater = false;
             bool bTrySteep = false;
-            if (RaycastGroundAt(Probe, OriginXY.Z, IgnoreNode, IgnoreMesh, TryLoc, TryRot, bTryWater, false, &bTrySteep)
+            if (RaycastGroundAt(Probe, OriginXY.Z, IgnoreNode, IgnoreMesh, TryLoc, TryRot, bTryWater, false, &bTrySteep,
+                                nullptr, nullptr, bTerrainOnly) // RWG P2c: bTerrainOnly forwarded (false on every vanilla call)
                 && !bTryWater && !bTrySteep)
             {
                 UE_LOG(LogNodeShuffle, Verbose, TEXT("Land-check: relocated %s off %s to %s"),

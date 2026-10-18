@@ -254,6 +254,13 @@ struct FNodeShuffleEntry
     // foreign twin can be re-matched by location once its record's VanillaNodePath goes stale (spawner
     // mods re-create their nodes with a fresh auto-numbered id every process boot).
     UPROPERTY(SaveGame) FVector OriginalTrueLocation = FVector::ZeroVector;
+
+    // RWG P2c (2026-10-18): true once this RWG entry's Location came from a terrain-MESH trace hit (RwgIsTerrainHit) --
+    // at spawn (RwgResolveAtSpawn) or by the resettle pass (NodeShuffleMapModeResettle.cpp). False on every vanilla entry
+    // and on every RWG entry rolled or placed by a build <= rwg-p4-2 (those sat at the API Z), which the resettle reads.
+    UPROPERTY(SaveGame) bool bRwgSettledOnTerrain = false;
+    // RWG P2c: settled Z minus RWG SurfaceHeightCm at the settled XY, measured when bRwgSettledOnTerrain was set. 0 = unset.
+    UPROPERTY(SaveGame) float RwgApiToTerrainDzCm = 0.0f;
 };
 
 // One original vanilla node location to suppress on stream-in after a wipe-on-
@@ -616,6 +623,9 @@ struct FNodeShuffleWellEntry
     // The committed placement. PlacedCoreLocation carries the settled Z.
     UPROPERTY(SaveGame) FVector PlacedCoreLocation = FVector::ZeroVector;
     UPROPERTY(SaveGame) FRotator PlacedCoreRotation = FRotator::ZeroRotator;
+    // RWG P2c (2026-10-18): true once the resettle pass probed every placed member of this RWG group against a terrain-MESH
+    // hit (groups placed by this build through the terrain-only probe are probed once too and read as kept). False on vanilla.
+    UPROPERTY(SaveGame) bool bRwgSettledOnTerrain = false;
 
     // ns-t27-corefirst: BOTH FIELDS KEPT THEIR NAMES AND BOTH CHANGED MEANING. Renaming a
     // UPROPERTY(SaveGame) breaks every existing save, so the names are frozen and the meanings are
@@ -1005,7 +1015,7 @@ private:
     bool GenerateRwgLocations(FRandomStream& Rng, const TArray<FVector>& AvoidLocations, int32 Count, float SpacingCm,
                               TArray<FVector>& OutLocations);          // false = API unusable, caller deals the fallback
     bool RwgDealOneSpot(const NodeShuffleMapMode::FRwgGroundQuery& Q, FRandomStream& Rng, FVector& OutSpot,
-                        int32& Outside, int32& Water, int32& WaterApiDisagree);
+                        int32& Outside, int32& Water, int32& WaterApiDisagree, int32& Slope);
     bool TryRedealRwgEntry(FNodeShuffleEntry& Entry, float SpacingCm, int32 Tries, bool& bOutMoved); // false = API unusable, caller keeps its path
     bool RwgResolveAtSpawn(FNodeShuffleEntry& Entry, bool& bOutApiUsed, bool& bOutWaterNoLand); // !bOutApiUsed = caller keeps its path
     void RwgSpawnPass(float SpawnRadiusCm, bool& bChangedWorld);
@@ -1013,6 +1023,38 @@ private:
     void RwgBuildWaterVolumeCache();
     bool RwgIsPointInWaterCached(const FVector& P) const;
     void RwgLogSkipOnce(int32 Bit, const TCHAR* What);
+    // ---- RWG P2c (2026-10-18): terrain-only settle, resettle pass, roll-time slope reject, dZ census. ----
+    // Predicates/classifier in NodeShuffleMapModePlace.cpp; the resettle pass in NodeShuffleMapModeResettle.cpp.
+    static bool RwgIsTerrainHit(const struct FHitResult& Hit);   // owner class has "TerrainChunk" AND component name has "Terrain" (HeightApi F1)
+    static int32 RwgHitClassOf(const struct FHitResult& Hit);    // 0 terrain, 1 canopy (instanced mesh), 2 water (name has "Water"), 3 other
+    void RwgNoteSkippedHit(const struct FHitResult& Hit, int32 Class) const; // RWGTERRAINSKIP once per (owner class, component class, name)
+    bool RwgApiSlopeTooSteep(const NodeShuffleMapMode::FRwgGroundQuery& Q, double X, double Y, double& OutRiseRun) const;
+    double RwgNearestPawnDist2D(const FVector& At) const;        // MAX when no pawn
+    void RwgRecordDz(const FVector& At, double DzCm);            // session |dZ| samples by nearest-pawn band
+    void RwgEmitDzCensus();
+    void RwgResettlePass();
+    void RwgResettleWells(int32& Checked, int32& Moved, int32& Kept, int32& Deferred, int32& Occupied, int32& MaxDzCm);
+    TMap<FString, int32> RwgResettleWellVoids; // session: void probes per well group (CorePath)
+    // Terrain-only probe capture: armed by a caller around one settle; the FIRST blocking hit of the first trace is kept.
+    mutable bool bRwgProbeArmed = false;
+    mutable int32 RwgProbeFirstClass = -1;
+    mutable double RwgProbeFirstZ = 0.0;
+    mutable int32 RwgProbeSkipped = 0;
+    mutable int32 RwgProbeCapHits = 0;            // session: traces that exhausted RwgTerrainSkipMax (read as no hit)
+    mutable TSet<FString> RwgSkippedHitKinds;     // session: RWGTERRAINSKIP already printed for these kinds
+    // PLACECENSUS per-pass additions (zeroed by RwgEmitPlaceCensus).
+    int32 RwgPcFarTerrain = 0, RwgPcFarCanopy = 0, RwgPcFarWater = 0, RwgPcFarOther = 0;
+    int32 RwgPcSettledTerrain = 0, RwgPcNoTerrainDefer = 0, RwgPcSkippedToTerrain = 0;
+    // Session |dZ| samples (cm), bands 0-250 m / 250-500 m / 500-1000 m from the nearest pawn; beyond counted only.
+    TArray<float> RwgDzBand0, RwgDzBand1, RwgDzBand2;
+    int32 RwgDzBeyond = 0;
+    // Resettle (session): passes, per-entry void counts, entries/groups given up on this session.
+    int32 RwgRsPasses = 0;
+    TMap<FGuid, int32> RwgResettleVoids;
+    TSet<FGuid> RwgResettleGaveUp;
+    TSet<FString> RwgResettleWellGaveUp;
+    int32 RwgWrSlope = 0;      // WELLROLL rejectedSlope (reset by RwgWellRollBegin)
+    int32 RwgWrCoresOurs = 0;  // WELLROLL coresOurs (P4 review F6)
     // ---- RWG P4 (2026-10-18): resource wells on RWG. Defined in NodeShuffleWellRwg.cpp; every caller is behind a
     // map-mode test, so none of these runs on vanilla (RwgIsClaimedOriginal reads an empty set there).
     void RwgRebindWellClaimsOnce(const TCHAR* Caller);
@@ -1643,8 +1685,10 @@ private:
     // true void). Unplaceable triggers an immediate redeal; void keeps defer-and-retry.
     // cave-nodes-1: underground entries settle via a SHORT local trace (RaycastSettle reads
     // Entry.bUnderground) so the probe stays inside the cavern instead of hitting the roof.
+    // RWG P2c (2026-10-18): bTerrainOnly (default false; only RWG callers pass true) is forwarded to every surface
+    // RaycastGroundAt call below, so the spiral, cliff and water rules run unchanged against terrain-mesh hits only.
     bool RaycastSettle(FNodeShuffleEntry& Entry, const AActor* IgnoreNode, const AActor* IgnoreMesh,
-                       bool* bOutWaterNoLand = nullptr) const;
+                       bool* bOutWaterNoLand = nullptr, bool bTerrainOnly = false) const;
 
     // ---- cave-nodes-1..4: cavern discovery + placement (both always-on; placement = drain fix) ----
     // The shuffle DRAINED caves: originals inside caverns are hidden and the 200 m top-down settle ray
@@ -1826,7 +1870,8 @@ private:
                          const AActor* IgnoreMesh, FVector& OutLoc, FRotator& OutRot,
                          bool& bOutWater, bool bShortTrace = false, bool* bOutTooSteep = nullptr,
                          FVector* OutGroundNormal = nullptr,
-                         struct FHitResult* OutGroundHit = nullptr) const;
+                         struct FHitResult* OutGroundHit = nullptr,
+                         bool bTerrainOnly = false) const; // RWG P2c: true = skip non-terrain hits by component (RWG callers only)
     // ns-t45-verticaldiag: LOOKUP-ONLY reader of the mod's own cave store at one point. It calls the
     // same EnsureCaveStoreLoaded() that NodeShuffle.Here already calls before reading the store, then
     // copies out what is held. It traces nothing, decides nothing, and no caller of it gates on it.

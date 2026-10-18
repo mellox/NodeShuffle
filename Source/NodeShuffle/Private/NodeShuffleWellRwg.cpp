@@ -204,6 +204,8 @@ bool ANodeShuffleSubsystem::RwgDealWellSite(const NodeShuffleMapMode::FRwgGround
     if (Q.Outside(X, Y)) { ++RwgWrOutside; return false; }
     const double Zc = Q.SurfaceZ(X, Y);
     if (RwgIsPointInWaterCached(FVector(X, Y, Zc))) { ++RwgWrWater; return false; }
+    double CoreRiseRun = 0.0; // RWG P2c: core-site API gradient above the settle cliff angle (satellites are redrawn at placement)
+    if (RwgApiSlopeTooSteep(Q, X, Y, CoreRiseRun)) { ++RwgWrSlope; return false; }
     double ZMin = Zc, ZMax = Zc;
     for (const FVector& Off : SatOffsets)
     {
@@ -234,6 +236,7 @@ void ANodeShuffleSubsystem::RwgWellRollBegin()
     RwgWrCores = RwgWrNoAuthored = RwgWrClaimedNew = RwgWrMintRefused = RwgWrDrawn = 0;
     RwgWrOutside = RwgWrWater = RwgWrSatOutside = RwgWrSatWater = RwgWrNearOriginal = 0;
     RwgWrSpacing = RwgWrResolvedZ = RwgWrZSpreadMaxCm = 0;
+    RwgWrSlope = RwgWrCoresOurs = 0; // RWG P2c
     RwgWrT0 = FPlatformTime::Seconds();
 }
 
@@ -246,9 +249,9 @@ void ANodeShuffleSubsystem::RwgEmitWellRollCensus(bool bApiDeal, const FString& 
         if (E.bGroupPlaced) { ++Placed; }
     }
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("WELLROLL: map=rwg deal=%s apiStatus='%s' cores=%d entries=%d eligible=%d builtOn=%d dealt=%d dealFailed=%d drawn=%d rejectedOutside=%d rejectedWater=%d rejectedSatOutside=%d rejectedSatWater=%d rejectedNearOriginal=%d rejectedSpacing=%d resolvedZ=%d zSpreadMaxCm=%d noAuthoredResource=%d claimedNew=%d mintRefusedNearClaim=%d placedBefore=%d durationMs=%d"),
-        bApiDeal ? TEXT("api") : TEXT("fallback"), *ApiStatus, RwgWrCores, WellLayout.Num(), Eligible, BuiltOn, Dealt, DealFailed,
-        RwgWrDrawn, RwgWrOutside, RwgWrWater, RwgWrSatOutside, RwgWrSatWater, RwgWrNearOriginal, RwgWrSpacing, RwgWrResolvedZ,
+        TEXT("WELLROLL: map=rwg deal=%s apiStatus='%s' cores=%d coresOurs=%d entries=%d eligible=%d builtOn=%d dealt=%d dealFailed=%d drawn=%d rejectedOutside=%d rejectedWater=%d rejectedSlope=%d rejectedSatOutside=%d rejectedSatWater=%d rejectedNearOriginal=%d rejectedSpacing=%d resolvedZ=%d zSpreadMaxCm=%d noAuthoredResource=%d claimedNew=%d mintRefusedNearClaim=%d placedBefore=%d durationMs=%d"),
+        bApiDeal ? TEXT("api") : TEXT("fallback"), *ApiStatus, RwgWrCores, RwgWrCoresOurs, WellLayout.Num(), Eligible, BuiltOn, Dealt, DealFailed,
+        RwgWrDrawn, RwgWrOutside, RwgWrWater, RwgWrSlope, RwgWrSatOutside, RwgWrSatWater, RwgWrNearOriginal, RwgWrSpacing, RwgWrResolvedZ,
         RwgWrZSpreadMaxCm, RwgWrNoAuthored, RwgWrClaimedNew, RwgWrMintRefused, Placed,
         static_cast<int32>((FPlatformTime::Seconds() - RwgWrT0) * 1000.0));
 }

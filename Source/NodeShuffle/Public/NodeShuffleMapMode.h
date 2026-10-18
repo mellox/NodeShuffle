@@ -52,6 +52,17 @@ namespace NodeShuffleMapMode
     // A spawn-time trace hit counts as the ground only within this distance of the API surface Z; otherwise the
     // node spawns at the API Z (R2: terrain-mesh hits p95 |dZ| 37.5 cm; foliage/water hits differ by metres).
     constexpr double RwgTraceAgreeCm = 300.0;
+    // RWG P2c (2026-10-18): RwgTraceAgreeCm no longer selects the API Z anywhere. It is the census split of the primary
+    // probe's FIRST hit (spawnTraceHit vs spawnTraceFar) and the resettle's keep-vs-move tolerance.
+    // A terrain-only trace (RaycastGroundAt bTerrainOnly) ignores at most this many non-terrain blocking components
+    // (canopy instanced meshes, water sheets, other nodes) before it reads as no hit. TODO(2026-10-18, RWG P2c -> R5):
+    // re-check against RWGTERRAINSKIP lines and PLACECENSUS probeCapHits.
+    constexpr int32 RwgTerrainSkipMax = 8;
+    // RWG P2c resettle: node entries probed per pass (nearest the pawn first), well groups per pass, and the number of
+    // void probes (no terrain-mesh hit) one entry may take in a session before the pass stops re-probing it.
+    constexpr int32 RwgResettlePerPass = 32;
+    constexpr int32 RwgResettleWellsPerPass = 4;
+    constexpr int32 RwgResettleVoidGiveUp = 12;
     // Disagreement predicate for the water census: WaterLevelCmAt(x,y,0) > SurfaceHeightCm(x,y) + this.
     constexpr double RwgWaterApiMarginCm = 50.0;
 
