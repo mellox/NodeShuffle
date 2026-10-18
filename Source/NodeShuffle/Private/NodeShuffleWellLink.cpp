@@ -179,7 +179,7 @@ AFGResourceNodeFrackingCore* ANodeShuffleSubsystem::FindExistingRuntimeWellCoreA
     for (TActorIterator<AFGResourceNodeFrackingCore> It(World); It; ++It)
     {
         AFGResourceNodeFrackingCore* Core = *It;
-        if (!IsValid(Core) || Core->IsNetStartupActor()) { continue; }
+        if (!IsValid(Core) || Core->IsNetStartupActor() || RwgIsClaimedOriginal(Core)) { continue; } // RWG P4: a claimed RWG original is never ours
         if (FVector::DistSquared(Core->GetActorLocation(), At) >= MatchSq) { continue; }
         bool bClaimed = false;
         for (const TPair<FString, AFGResourceNodeFrackingCore*>& P : SpawnedWellCores)
@@ -200,7 +200,7 @@ AFGResourceNodeFrackingSatellite* ANodeShuffleSubsystem::FindExistingRuntimeWell
     for (TActorIterator<AFGResourceNodeFrackingSatellite> It(World); It; ++It)
     {
         AFGResourceNodeFrackingSatellite* Sat = *It;
-        if (!IsValid(Sat) || Sat->IsNetStartupActor()) { continue; }
+        if (!IsValid(Sat) || Sat->IsNetStartupActor() || RwgIsClaimedOriginal(Sat)) { continue; } // RWG P4
         if (FVector::DistSquared(Sat->GetActorLocation(), At) >= MatchSq) { continue; }
         bool bClaimed = false;
         for (const TPair<FString, AFGResourceNodeFrackingSatellite*>& P : SpawnedWellSatellites)
@@ -273,6 +273,7 @@ void ANodeShuffleSubsystem::AdoptRestoredWellGroups()
         AFGResourceNodeFrackingCore* Core = *It;
         if (!IsValid(Core)) { continue; }
         if (Core->IsNetStartupActor()) { continue; } // level-placed vanilla core -- never ours
+        if (RwgIsClaimedOriginal(Core)) { continue; } // RWG P4: an RWG original bound to a claim -- never ours
         ++RuntimeCoresSeen;
         const FVector Loc = Core->GetActorLocation();
         for (FNodeShuffleWellEntry& E : WellLayout)
@@ -293,6 +294,7 @@ void ANodeShuffleSubsystem::AdoptRestoredWellGroups()
         AFGResourceNodeFrackingSatellite* Sat = *It;
         if (!IsValid(Sat)) { continue; }
         if (Sat->IsNetStartupActor()) { continue; }
+        if (RwgIsClaimedOriginal(Sat)) { continue; } // RWG P4: an RWG original bound to a claim -- never ours
         ++RuntimeSatsSeen;
         const FVector Loc = Sat->GetActorLocation();
         bool bMatched = false;

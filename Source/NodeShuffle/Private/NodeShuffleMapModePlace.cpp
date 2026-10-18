@@ -83,6 +83,7 @@ void ANodeShuffleSubsystem::RwgBuildWaterVolumeCache()
     {
         if (IsValid(*It)) { RwgWaterVolumes.Emplace(It->GetComponentsBoundingBox(true), TWeakObjectPtr<AFGWaterVolume>(*It)); }
     }
+    if (RwgWaterVolumes.Num() > 0) { UE_LOG(LogNodeShuffle, Display, TEXT("RWGWATERCACHE: built volumes=%d"), RwgWaterVolumes.Num()); }
 }
 
 bool ANodeShuffleSubsystem::RwgIsPointInWaterCached(const FVector& P) const
@@ -279,22 +280,35 @@ void ANodeShuffleSubsystem::RwgSpawnPass(float SpawnRadiusCm, bool& bChangedWorl
     ++RwgPcPasses;
     if ((RwgPcPasses % 12) == 1)
     {
-        // RWG P2b review SF4 (spec P2b section 3): hide-stickiness sample. Up to 50 hide records at stride Num/50;
-        // each is resolved by path and its hidden flag read. hidden < resolvedByPath is legitimate for originals
-        // occupied after the roll; the line reports counts only.
+        // RWG P2b review SF4 (spec P2b section 3): hide-stickiness sample. Up to 50 hide records at stride Num/50.
+        // RWG P4 (2026-10-18): P2b re-review S1 applied verbatim -- read BEFORE this pass's SuppressOriginalNodes;
+        // identityOk mirrors its class/resource/300 cm test (AdoptMatchRadiusCm, Subsystem.cpp:191); hidden counts
+        // non-occupied identityOk only. The line reports counts only.
         const int32 Records = OriginalNodeRecord.Num();
         const int32 Stride = FMath::Max(1, Records / 50);
-        int32 Sampled = 0, Resolved = 0, Hidden = 0;
+        constexpr float HideCheckMatchCm = 300.0f; // mirrors AdoptMatchRadiusCm (Subsystem.cpp:191)
+        int32 Sampled = 0, Resolved = 0, IdentityOk = 0, Occupied = 0, Hidden = 0;
         for (int32 Ri = 0; Ri < Records && Sampled < 50; Ri += Stride)
         {
             ++Sampled;
-            const AFGResourceNodeBase* Orig = FindOriginalBaseByPath(OriginalNodeRecord[Ri].VanillaNodePath);
+            const FNodeShuffleSuppressedOriginal& Rec = OriginalNodeRecord[Ri];
+            const AFGResourceNodeBase* Orig = FindOriginalBaseByPath(Rec.VanillaNodePath);
             if (!Orig) { continue; }
             ++Resolved;
+            if (!Rec.OriginalNodeClassPath.IsEmpty())
+            {
+                const UClass* Res = Orig->GetResourceClass();
+                const FVector Anchor = Rec.TrueLocation.IsNearlyZero() ? Rec.Location : Rec.TrueLocation;
+                if (Orig->GetClass()->GetPathName() != Rec.OriginalNodeClassPath || !Res || Res->GetPathName() != Rec.OriginalResourceClassPath
+                    || FVector::Dist(Orig->GetActorLocation(), Anchor) >= HideCheckMatchCm) { continue; }
+            }
+            ++IdentityOk;
+            const AFGResourceNode* AsNode = Cast<AFGResourceNode>(Orig);
+            if (Orig->IsOccupied() || (AsNode && IsNodeOccupiedAnyway(AsNode))) { ++Occupied; continue; }
             if (Orig->IsHidden()) { ++Hidden; }
         }
-        UE_LOG(LogNodeShuffle, Display, TEXT("RWGHIDECHECK: pass=%d sampled=%d resolvedByPath=%d hidden=%d records=%d"),
-            RwgPcPasses, Sampled, Resolved, Hidden, Records);
+        UE_LOG(LogNodeShuffle, Display, TEXT("RWGHIDECHECK: pass=%d sampled=%d resolvedByPath=%d identityOk=%d occupied=%d hidden=%d records=%d"),
+            RwgPcPasses, Sampled, Resolved, IdentityOk, Occupied, Hidden, Records);
     }
     if (RwgPcSpawned > 0 || (RwgPcPasses % 12) == 1) // bounded: a pass that spawned, else once a minute
     {

@@ -83,6 +83,8 @@
 #include "NodeShuffleWellCensus.h"   // H0's grouping -- CollectWellCensus + the well record/member types
 #include "NodeShuffleWellRetype.h"   // WellPathOf / WellClassPathOf / WellShort
 #include "NodeShuffleWellRelocate.h" // the H2 pure helpers (incl. IsWellMemberInUse)
+#include "NodeShuffleMapMode.h"      // RWG P4: FRwgGroundQuery (the API well dealer)
+#include "Misc/Optional.h"           // RWG P4: TOptional<FRwgGroundQuery> (constructed off vanilla only)
 
 namespace
 {
@@ -573,6 +575,13 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll)
     const FVector BoxMax = GetDealBoundsMax();
     const bool bBoxUsable = (BoxMax.X > BoxMin.X && BoxMax.Y > BoxMin.Y);
     const float ProbeZ = (DealMeanZ != 0.0f) ? DealMeanZ : 0.0f;
+    // RWG P4 (2026-10-18): off vanilla the destination is drawn through the bound RWG height/water/extent API with the
+    // well's whole footprint checked (RwgDealWellSite, NodeShuffleWellRwg.cpp), on this SAME 'WLR2' stream; the
+    // spacing loops below are unchanged. API unusable -> the vanilla box deal runs (WELLROLL deal=fallback).
+    const bool bRwgDeal = GetMapMode() != ENodeShuffleMapMode::Vanilla;
+    TOptional<NodeShuffleMapMode::FRwgGroundQuery> RwgQ;
+    if (bRwgDeal) { RwgQ.Emplace(GetWorld(), RwgGenerator.Get()); RwgBuildWaterVolumeCache(); }
+    const bool bRwgApiDeal = bRwgDeal && RwgQ->IsUsable();
 
     // Deterministic deal order. Actor-iteration order (and therefore WellLayout's own order after a
     // merge) is streaming-dependent, so dealing in it would make the same seed produce different
@@ -625,7 +634,7 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll)
     for (FNodeShuffleWellPendingCapture& P : Pending)
     {
         FNodeShuffleWellEntry& E = WellLayout[P.EntryIndex];
-        if (!bBoxUsable)
+        if (!bBoxUsable && !bRwgApiDeal)
         {
             UE_LOG(LogNodeShuffle, Warning,
                 TEXT("WELLH2-ROLL core='%s': no usable deal box (degenerate layout) -- no destination can ")
@@ -640,10 +649,20 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll)
             const float Inset = WellSatMaxRadiusCm;
             const float MinX = BoxMin.X + Inset, MaxX = BoxMax.X - Inset;
             const float MinY = BoxMin.Y + Inset, MaxY = BoxMax.Y - Inset;
+            TArray<FVector> RwgSatOffsets; // RWG P4: the footprint the API dealer checks (capture-frame offsets)
+            if (bRwgApiDeal) { for (const TPair<FString, TPair<FVector, float>>& Off : P.OffsetByPath) { RwgSatOffsets.Add(Off.Value.Key); } }
             for (int32 Try = 0; Try < WellRedealTries && !P.bDealt; ++Try)
             {
-                const FVector Cand(DealRng.FRandRange(MinX, MaxX), DealRng.FRandRange(MinY, MaxY), ProbeZ);
-                if (IsKnownWaterCell(Cand)) { continue; }
+                FVector Cand(FVector::ZeroVector);
+                if (bRwgApiDeal)
+                {
+                    if (!RwgDealWellSite(*RwgQ, DealRng, RwgSatOffsets, Cand)) { continue; }
+                }
+                else
+                {
+                    Cand = FVector(DealRng.FRandRange(MinX, MaxX), DealRng.FRandRange(MinY, MaxY), ProbeZ);
+                    if (IsKnownWaterCell(Cand)) { continue; }
+                }
                 bool bTooClose = false;
                 for (int32 d = 0; d < WellDestinations.Num(); ++d)
                 {
@@ -653,7 +672,7 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll)
                         bTooClose = true; break;
                     }
                 }
-                if (bTooClose) { continue; }
+                if (bTooClose) { if (bRwgDeal) { ++RwgWrSpacing; } continue; }
                 for (const FNodeShuffleEntry& Node : Layout)
                 {
                     if (!Node.bActive) { continue; }
@@ -663,7 +682,7 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll)
                         bTooClose = true; break;
                     }
                 }
-                if (bTooClose) { continue; }
+                if (bTooClose) { if (bRwgDeal) { ++RwgWrSpacing; } continue; }
 
                 const int32 OtherSites = WellDestinations.Num() - (P.SelfSiteIndex != INDEX_NONE ? 1 : 0);
                 P.Dest = Cand;
@@ -685,6 +704,7 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll)
         }
     }
 
+    if (bRwgDeal) { RwgEmitWellRollCensus(bRwgApiDeal, RwgQ->Status(), Pending.Num(), Dealt, DealFailed); } // RWG P4: WELLROLL
     if (DealFailed > 0 && Captured > 5)
     {
         // ns-t7b F3: WellRedealTries is OUR number, not the game's. It was sized when a roll enrolled

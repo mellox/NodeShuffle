@@ -1242,6 +1242,13 @@ void ANodeShuffleSubsystem::ApplyWellRelocation(float SpawnRadiusCm)
             // because that is where the terrain is streamed. Validation at roll time would trace into
             // unloaded regions and get void everywhere.
             if (!IsLocationNearAnyPlayer(E.DestCoreLocation, SpawnRadiusCm)) { ++Deferred; continue; }
+            // RWG P4 (2026-10-18): RWG terrain is resident only near the pawn (R2: 0.5-1 km 11/16, 1-2 km 2/16), so off
+            // vanilla a group is searched only within min(SpawnRadius, RwgAttemptRadiusCm), as P2b does for nodes.
+            if (GetMapMode() != ENodeShuffleMapMode::Vanilla
+                && !IsLocationNearAnyPlayer(E.DestCoreLocation, FMath::Min(SpawnRadiusCm, NodeShuffleMapMode::RwgAttemptRadiusCm)))
+            {
+                ++Deferred; ++RwgWpFar; continue;
+            }
             ++Searching;
 
             UClass* ResourceClass = LoadClassByPath(E.AssignedResourceClassPath);
@@ -1491,6 +1498,7 @@ void ANodeShuffleSubsystem::ApplyWellRelocation(float SpawnRadiusCm)
     // ns-t23-stage0 INSTRUMENT 2 (K3). LAST, so it reports the state this pass ended in rather than the
     // state it started in -- a group placed on this pass must appear in the placed population of this
     // pass's line, not in the next one's. Log only; see NodeShuffleWellStage0.cpp.
+    if (GetMapMode() != ENodeShuffleMapMode::Vanilla) { RwgEmitWellPlace(Searching, PlacedNow, Deferred); } // RWG P4: WELLPLACE
     EmitWellDeferralCensus();
 
     // ns-t23-rollhide: the stranding detector, LAST, because it must describe the state this pass ended

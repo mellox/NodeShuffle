@@ -108,6 +108,14 @@ void ANodeShuffleSubsystem::RunWellLocationBackstop(const TCHAR* Phase, int32& O
 {
     OutExamined = 0;
     OutUnaccounted = 0;
+    // RWG P4 (2026-10-18): pass B classifies a fracking actor as "ours or vanilla" by IsNetStartupActor, which is false
+    // for EVERY RWG actor (all are spawned at runtime), so off vanilla it would report every RWG well. Silenced off
+    // vanilla (spec §H P4), logged once; pass A (handle-driven) is unaffected.
+    if (GetMapMode() != ENodeShuffleMapMode::Vanilla)
+    {
+        RwgLogSkipOnce(2, TEXT("well location backstop pass B (RunWellLocationBackstop)"));
+        return;
+    }
 
     UWorld* World = GetWorld();
     if (!World)

@@ -90,6 +90,9 @@ void ANodeShuffleSubsystem::RollWellLayout(int32 Seed, bool bIsReroll)
     // re-fire after a MID-SESSION re-roll -- and a mid-session re-roll is exactly how a user adopts this
     // feature, i.e. the census was guaranteed to be missing for the very roll it was written to measure.
     WellApplyPasses = 0;
+    // RWG P4 (2026-10-18): off vanilla, saved claims are re-bound to this session's actor paths BEFORE the merge
+    // below keys on CorePath (once per session; NodeShuffleWellRwg.cpp), and the WELLROLL counters start here.
+    if (GetMapMode() != ENodeShuffleMapMode::Vanilla) { RwgRebindWellClaimsOnce(TEXT("roll")); RwgWellRollBegin(); }
 
     // 1. DISCOVER. H0's census, unmodified -- both views of every core<->satellite link, adopted cores
     //    included. This file does not walk wells itself.
@@ -147,12 +150,16 @@ void ANodeShuffleSubsystem::RollWellLayout(int32 Seed, bool bIsReroll)
 
         int32 Idx;
         if (const int32* Found = IndexByCore.Find(CorePath)) { Idx = *Found; }
+        // RWG P4: a live core within WellAdoptMatchRadiusCm of an existing claim that did NOT re-bind is never enrolled
+        // a second time (no double claim); it is counted in WELLROLL mintRefusedNearClaim.
+        else if (GetMapMode() != ENodeShuffleMapMode::Vanilla && RwgWellCoreNearExistingClaim(Core->GetActorLocation(), Merged)) { ++RwgWrMintRefused; continue; }
         else { Idx = Merged.AddDefaulted(); Merged[Idx].CorePath = CorePath; IndexByCore.Add(CorePath, Idx); ++NewlyDiscovered; }
         FNodeShuffleWellEntry& E = Merged[Idx];
 
         E.CoreNodeClassPath = WellClassPathOf(Core);
         const FString Authored = WellAuthoredResourcePath(Core);
         if (!Authored.IsEmpty()) { E.OriginalResourceClassPath = Authored; }
+        else if (GetMapMode() != ENodeShuffleMapMode::Vanilla) { ++RwgWrNoAuthored; } // RWG P4: WELLROLL noAuthoredResource
 
         // PIN. Live state decides whenever the well's actors are loaded -- the same rule RollLayout uses
         // for a carried spawned node ("with a live actor, LIVE occupancy decides"), so a well whose
@@ -217,6 +224,18 @@ void ANodeShuffleSubsystem::RollWellLayout(int32 Seed, bool bIsReroll)
         PinByCore.Add(CorePath, Pin);
         if (Pin.IsPinned())        { E.bPinned = true; }
         else if (Pin.IsDecisive()) { E.bPinned = false; }
+    }
+
+    // RWG P4 (2026-10-18): stamp the claim on every enrolled RWG core (mint once; satellites' claim locations filled
+    // when first seen) and remember the bound originals for this session. Off vanilla only.
+    if (GetMapMode() != ENodeShuffleMapMode::Vanilla)
+    {
+        RwgWrCores = Census.Wells.Num();
+        for (const FNodeShuffleWellRecord& W : Census.Wells)
+        {
+            if (!IsValid(W.Core) || FNodeShuffleModule::IsManagedSpawnedNode(W.Core)) { continue; }
+            if (const int32* StampIdx = IndexByCore.Find(WellPathOf(W.Core))) { RwgStampWellClaim(Merged[*StampIdx], W.Core, W.Members); }
+        }
     }
 
     if (SkippedOurSpawned > 0)

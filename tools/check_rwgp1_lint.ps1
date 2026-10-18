@@ -201,6 +201,8 @@ if (-not $ot) { $fails += 'R9: RwgObserveTick body not found' } else {
     if ($ot -notmatch ('const bool bClauseB = bLayout' + 'Generated && T >= NodeShuffleMapMode::RwgApplyFallbackSeconds\s*&& RwgStableAnyStage >= NodeShuffleMapMode::RwgApplyStableTicks && Nodes >= Saved' + 'Floor;')) { $fails += 'R9: clause B must require a saved layout, the world-time floor, the any-stage stable count and the saved-records floor' }
     if ($ot -notmatch ('const int32 SavedFloor = FMath::Max\(NodeShuffleMapMode::RwgMinNodes, OriginalNode' + 'Record\.Num\(\) / 2\);')) { $fails += 'R9: the saved-layout floor must be max(RwgMinNodes, half the hide records)' }
     if ($ot -notmatch ('const bool bReadyNow = bClauseA \|\| ' + 'bClauseB;')) { $fails += 'R9: the latch must be clause A or clause B, nothing else' }
+    # RWG P4 (2026-10-18): P2b re-review S2, verbatim.
+    if ($ot -notmatch ('const bool bFloor = bLayoutGenerated \? \(RwgAnyLoadedNodesAtFloor\(\) && Nodes >= Saved' + 'Floor\) : IsWorldReadyForRoll\(\);')) { $fails += 'R9: on a saved layout the clause-A floor must also require the saved-records floor' }
     if ($ot -notmatch ('RwgStableAnyStage = bLayout' + 'Generated \? \(\(Delta == 0\) \? RwgStableAnyStage \+ 1 : 0\) : 0;')) { $fails += 'R9: the clause-B counter must count only on a save holding a layout and reset on any count change' }
     if ($ot -notmatch ('else if \(bStageReady\)\s*\{\s*RwgStableSinceReady = \(Delta == 0\) \? RwgStable' + 'SinceReady \+ 1 : 0;')) { $fails += 'R9: the stable counter must advance only in the stage-Ready branch' }
     if ($ot -notmatch ('RwgFirstReadyT = T;\s*RwgStable' + 'SinceReady = 0;')) { $fails += 'R9: the first Ready tick must zero the stable counter' }
@@ -318,7 +320,7 @@ if ($gq -lt 0) { $fails += 'R17: FRwgGroundQuery constructor not found' } else {
     $gg = $gqb.IndexOf('if (!A.bUsable || !World)'); $gc = $gqb.IndexOf('A.Get(' + 'World)')
     if ($gg -lt 0 -or $gc -lt 0 -or $gc -lt $gg) { $fails += 'R17: the ground query calls RWG before checking the binding is usable' }
 }
-foreach ($tag in @('ROLLCENSUS','PLACECENSUS','RWGLAYOUT')) {
+foreach ($tag in @('ROLLCENSUS','PLACECENSUS','RWGLAYOUT','RWGHIDECHECK')) { # RWG P4: P2b re-review S3, verbatim list
     if ($text.place -notmatch ('TEXT\("' + $tag + '[: ]')) { $fails += "R6: '$tag' line missing from NodeShuffleMapModePlace.cpp" }
 }
 

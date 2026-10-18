@@ -1777,10 +1777,10 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     // taking draws from Rng would shift every later draw and change the NODE layout for a given seed,
     // i.e. merely enabling well shuffling would silently re-shuffle the player's ordinary nodes too.
     // Self-gated: a no-op that leaves any existing well data untouched when the config toggle is off.
-    // RWG P2b: wells are skipped off vanilla until P4 (spec decision 1); the layout-version stamp is RWG-only.
-    if (GetMapMode() != ENodeShuffleMapMode::Vanilla) { RwgLogSkipOnce(0, TEXT("well roll (RollWellLayout + RollWellRelocation)")); }
+    // RWG P2b: the layout-version stamp is RWG-only. RWG P4 (2026-10-18): wells roll on every map mode (off vanilla
+    // RollWellLayout re-binds saved claims first and RollWellRelocation deals through the API; NodeShuffleWellRwg.cpp).
     if (GetMapMode() == ENodeShuffleMapMode::Rwg) { RwgLayoutVersion = NodeShuffleMapMode::RwgLayoutVersionP2b; }
-    if (GetMapMode() == ENodeShuffleMapMode::Vanilla) {
+    {
     RollWellLayout(Seed, bIsReroll);
 
     // Packet H2 (ns-wells-h2): RIGID RELOCATION of whole well groups, dealt immediately after the
@@ -2304,7 +2304,10 @@ void ANodeShuffleSubsystem::ApplyLayout()
     // NOTHING ELSE IN THIS PASS TOUCHES WELLS: they are excluded from the regular node population by
     // IsFrackingActor, so this call is the mod's entire well surface.
     if (GetMapMode() != ENodeShuffleMapMode::Vanilla) { RwgSpawnPass(SpawnRadiusCm, bChangedWorld); }
-    if (GetMapMode() == ENodeShuffleMapMode::Vanilla) { // RWG P2b: wells skipped off vanilla (logged once at the roll)
+    // RWG P4 (2026-10-18): wells run on every map mode. Off vanilla, saved claims are re-bound to this session's actor
+    // paths first (once per session), BEFORE ApplyWellRetype / AdoptRestoredWellGroups read any path.
+    if (GetMapMode() != ENodeShuffleMapMode::Vanilla) { RwgRebindWellClaimsOnce(TEXT("apply")); }
+    {
     ApplyWellRetype();
 
     // Packet H2 (ns-wells-h2): the relocation pass -- spawn-on-discovery placement of relocated well

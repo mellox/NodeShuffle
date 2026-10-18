@@ -216,9 +216,34 @@ void ANodeShuffleSubsystem::EscalateWellPlacement(FNodeShuffleWellEntry& E, cons
             // value, the arguments and the XOR salt are untouched, so a save's redeal coordinates are
             // bit-identical across this change -- only the placement search downstream of them differs.
             FRandomStream Rng(WellLayoutSeedFor(SavedSeed, E.CorePath, E.GroupRedeals, 0) ^ 0x52444C31);
+            // RWG P4 (2026-10-18): off vanilla, the API footprint dealer (NodeShuffleWellRwg.cpp) draws first on this
+            // same stream, up to WellRedealTries draws; only when it finds nothing, or the API is unusable, does the
+            // vanilla box draw below run. Vanilla never enters the branch.
+            bool bRwgRedealt = false;
+            if (GetMapMode() != ENodeShuffleMapMode::Vanilla)
+            {
+                const NodeShuffleMapMode::FRwgGroundQuery RwgQ(GetWorld(), RwgGenerator.Get());
+                int32 Draws = 0;
+                if (RwgQ.IsUsable())
+                {
+                    RwgBuildWaterVolumeCache();
+                    TArray<FVector> Offs;
+                    for (const FNodeShuffleWellSatellite& S : E.Satellites) { if (S.bCaptured) { Offs.Add(S.LocalOffset); } }
+                    FVector Site(FVector::ZeroVector);
+                    for (; Draws < WellRedealTries && !bRwgRedealt; ++Draws)
+                    {
+                        if (RwgDealWellSite(RwgQ, Rng, Offs, Site)) { E.DestCoreLocation = Site; bRwgRedealt = true; }
+                    }
+                }
+                UE_LOG(LogNodeShuffle, Display, TEXT("WELLRWG-REDEAL: core='%s' apiUsable=%d draws=%d viaApi=%d"),
+                    *CoreLabel, RwgQ.IsUsable() ? 1 : 0, Draws, bRwgRedealt ? 1 : 0);
+            }
+            if (!bRwgRedealt)
+            {
             E.DestCoreLocation = FVector(Rng.FRandRange(BoxMin.X, BoxMax.X),
                                          Rng.FRandRange(BoxMin.Y, BoxMax.Y),
                                          (DealMeanZ != 0.0f) ? DealMeanZ : E.DestCoreLocation.Z);
+            }
             UE_LOG(LogNodeShuffle, Display,
                 TEXT("WELLH2-SEARCH core='%s': %s and the nudge budget is exhausted -- RE-DEALT to %s ")
                 TEXT("(redeal %d/%d)."),

@@ -6,6 +6,7 @@
 #include "Resources/FGResourceNode.h"
 #include "NodeShuffle.h" // ns-h1b-notice: FNodeShufflePendingEntry, held by value in a member below
 #include "NodeShuffleMapMode.h" // RWG P1: ENodeShuffleMapMode, held by value in a member below
+#include "UObject/ObjectKey.h"  // RWG P4: FObjectKey, RwgClaimedOriginals
 class AFGWaterVolume; // RWG P2b: RwgWaterVolumes cache (weak pointers only)
 #include "NodeShuffleSubsystem.generated.h"
 
@@ -17,6 +18,7 @@ class AFGResourceScanner;
 // as H1's files do, so a change to the fracking headers does not rebuild the world.
 class AFGResourceNodeFrackingCore;
 class AFGResourceNodeFrackingSatellite;
+struct FNodeShuffleWellMember; // RWG P4: NodeShuffleWellCensus.h (Private); used by reference only below
 class UFGResourceDescriptor; // scanregen-1: TSubclassOf<> member below only needs the forward decl
 
 // T4 (docs/TECH-DEBT.md) -- ONE WATCHED ORIGINAL: a record whose AFGNodeMeshActor was NOT resolvable
@@ -447,6 +449,12 @@ struct FNodeShuffleWellSatellite
     // for a vanilla original.
     UPROPERTY(SaveGame) FString SatellitePath;
 
+    // RWG P4 (2026-10-18): this satellite's world location when its well was CLAIMED on RWG. Zero = never claimed,
+    // which is every vanilla satellite (never written on vanilla). RWG re-spawns its fracking actors under new names
+    // on every load, so the reload re-bind (NodeShuffleWellRwg.cpp) matches a live satellite of the re-bound core to
+    // this record by location and rewrites SatellitePath to this session's path.
+    UPROPERTY(SaveGame) FVector RwgClaimLocation = FVector::ZeroVector;
+
     // RECORD ONLY under H1 -- read at roll time, never written back to a LEVEL satellite.
     //
     // Packet H2 (ns-wells-h2) CHANGES WHAT THIS IS FOR, and the distinction matters. H2 relocates a
@@ -524,6 +532,14 @@ struct FNodeShuffleWellEntry
     // produce different worlds depending on what had streamed in, which is the exact class of bug
     // design §Q3a's "deterministic" rule exists to prevent.
     UPROPERTY(SaveGame) FString CorePath;
+
+    // RWG P4 (2026-10-18): the well CLAIM. An invalid (all-zero) guid = unclaimed, which is every vanilla entry
+    // (never written on vanilla). Minted once, when RollWellLayout first enrols the core on RWG; RwgClaimCoreLocation is
+    // the core's world location at that moment. On a reload the re-bind matches a live core to this location
+    // (one-to-one, WellAdoptMatchRadiusCm) and rewrites CorePath to this session's path; an unmatched claim gets an
+    // unresolvable sentinel path so no stale name can alias a different live actor.
+    UPROPERTY(SaveGame) FGuid RwgClaimGuid;
+    UPROPERTY(SaveGame) FVector RwgClaimCoreLocation = FVector::ZeroVector;
 
     // Captured from the LIVE actors at roll time -- never hardcoded /Game/FactoryGame/... well paths
     // (design §2.2). Consumed by BuildManagedNodeGroupsFromLayout for the SF+ auto-allow extension.
@@ -997,6 +1013,24 @@ private:
     void RwgBuildWaterVolumeCache();
     bool RwgIsPointInWaterCached(const FVector& P) const;
     void RwgLogSkipOnce(int32 Bit, const TCHAR* What);
+    // ---- RWG P4 (2026-10-18): resource wells on RWG. Defined in NodeShuffleWellRwg.cpp; every caller is behind a
+    // map-mode test, so none of these runs on vanilla (RwgIsClaimedOriginal reads an empty set there).
+    void RwgRebindWellClaimsOnce(const TCHAR* Caller);
+    void RwgStampWellClaim(FNodeShuffleWellEntry& E, const AFGResourceNodeFrackingCore* Core, const TArray<FNodeShuffleWellMember>& Members);
+    bool RwgWellCoreNearExistingClaim(const FVector& CoreLoc, const TArray<FNodeShuffleWellEntry>& Entries) const;
+    bool RwgIsClaimedOriginal(const AActor* A) const;
+    bool RwgDealWellSite(const NodeShuffleMapMode::FRwgGroundQuery& Q, FRandomStream& Rng, const TArray<FVector>& SatOffsets, FVector& OutCore);
+    void RwgWellRollBegin();
+    void RwgEmitWellRollCensus(bool bApiDeal, const FString& ApiStatus, int32 Eligible, int32 Dealt, int32 DealFailed);
+    void RwgEmitWellPlace(int32 Searching, int32 PlacedNow, int32 Deferred);
+    bool bRwgWellRebindDone = false;      // per session: the claim re-bind ran once (roll or first apply, whichever first)
+    TSet<FObjectKey> RwgClaimedOriginals; // per session: RWG original well actors bound to a claim (never adoptable as ours)
+    // WELLROLL counters (reset by RwgWellRollBegin at each well roll); WELLPLACE counters (per pass).
+    int32 RwgWrCores = 0, RwgWrNoAuthored = 0, RwgWrClaimedNew = 0, RwgWrMintRefused = 0, RwgWrDrawn = 0;
+    int32 RwgWrOutside = 0, RwgWrWater = 0, RwgWrSatOutside = 0, RwgWrSatWater = 0, RwgWrNearOriginal = 0;
+    int32 RwgWrSpacing = 0, RwgWrResolvedZ = 0, RwgWrZSpreadMaxCm = 0;
+    double RwgWrT0 = 0.0;
+    int32 RwgWpFar = 0, RwgWpPasses = 0;
     TArray<TPair<FBox, TWeakObjectPtr<AFGWaterVolume>>> RwgWaterVolumes; // session cache, built per roll/redeal batch
     bool bRwgLegacyChecked = false;     // per session: the RwgLayoutVersion check ran once
     int32 RwgStableAnyStage = 0;        // clause B: consecutive delta==0 ticks at ANY stage (only counted with a saved layout)
