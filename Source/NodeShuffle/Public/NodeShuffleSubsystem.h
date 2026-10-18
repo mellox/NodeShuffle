@@ -1128,14 +1128,22 @@ private:
     TSet<FGuid> RwgKillboxRefused;                     // session: below the killbox but pinned/occupied (re-checked next session)
     // ---- RWG P5 (2026-10-18): cave spots via the bound FPWCarvedCaves group. NodeShuffleMapModeCave.cpp. Every caller is RWG-only. ----
     bool RwgEnsureCaveCheck(const NodeShuffleMapMode::FRwgGroundQuery& Q);   // RWGCAVECHECK once per session; true = cave queries graded usable
-    float RwgCaveShare(int32 Denominator) const;                            // vanilla rule: min(0.25, RwgCaveSeedCount / Denominator); 0 unless graded usable
+    float RwgCaveShare(int32 Denominator) const;                            // P5-2 capacity rule: min(0.25, RwgCaveCapacity / (Denominator + RwgCaveCapacity)); 0 unless graded usable
     bool RwgDrawCaveSpot(const NodeShuffleMapMode::FRwgGroundQuery& Q, FRandomStream& Rng, int32 AnyNearBudget, FVector& OutSpot, int32& OutAnyNearCalls);
+    // RWG P5-2 (NodeShuffleMapModeCaveJson.cpp): candidates from the per-world cave file, and the verify chain shared with the random draw.
+    bool RwgDrawCaveSpotJson(const NodeShuffleMapMode::FRwgGroundQuery& Q, FRandomStream& Rng, FVector& OutSpot);
+    bool RwgVerifyCaveCandidate(const NodeShuffleMapMode::FRwgGroundQuery& Q, double X, double Y, const double* ZHintOrSurface, const TCHAR* Source, int32 Index, int32 AnyNearCalls, FVector& OutSpot);
+    TArray<NodeShuffleMapMode::FRwgCaveCandidateGen> RwgCaveGens; // latched at RWGCAVECHECK; used only while bRwgCaveJsonCandidates
+    double RwgCaveGenWeight = 0.0;
+    bool bRwgCaveJsonCandidates = false, bRwgCaveCapacityFromJson = false;
+    int32 RwgCaveCapacity = 0;                          // RWGCAVECHECK: sum of JSON rooms, or Num() * RwgCaveDefaultRoomsPerCave without the file
+    int32 RwgRcCaveCandidatesTried = 0;                 // ROLLCENSUS (per roll): JSON candidates verified
     bool RwgTryCaveRedeal(const NodeShuffleMapMode::FRwgGroundQuery& Q, FNodeShuffleEntry& Entry, FRandomStream& Rng, float SpacingCm); // true = moved to a cave floor
     bool RwgResolveCaveAtSpawn(const NodeShuffleMapMode::FRwgGroundQuery& Q, FNodeShuffleEntry& Entry, bool& bOutWaterNoLand); // RwgResolveAtSpawn's bRwgCave branch
     void RwgNoteSettledInsideCave(const NodeShuffleMapMode::FRwgGroundQuery& Q, const FNodeShuffleEntry& Entry); // settledInsideCave census, every RWG settle
     bool bRwgCaveCheckDone = false, bRwgCaveUsable = false, bRwgCaveCheckDeferLogged = false;
     double RwgCaveCheckRetryAt = 0.0;
-    int32 RwgCaveSeedCount = 0, RwgCaveSeedDen = 0;    // RWGCAVECHECK: RWG originals inside a carved cave / originals tested (latched once)
+    int32 RwgCaveSeedCount = 0, RwgCaveSeedDen = 0;    // RWGCAVECHECK: pool-eligible RWG originals inside a carved cave / tested (latched once); P5-2: comparison only, the share uses RwgCaveCapacity
     int32 RwgCaveNumAtCheck = -1;
     // ROLLCENSUS (per roll, zeroed by GenerateRwgLocations).
     int32 RwgRcCaveSpots = 0, RwgRcCaveDrawsTried = 0, RwgRcCaveDealFailed = 0, RwgRcCaveAnyNearCalls = 0, RwgRcCaveNearHits = 0, RwgRcCaveFloorHits = 0;

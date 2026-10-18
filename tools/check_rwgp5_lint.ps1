@@ -17,6 +17,12 @@
 #   P11 Marker rwg-p5-1 present once, rwg-p2g-1 absent.
 #   P12 No field repeated inside any new/changed format string.
 #   P13 Redeal: TryRedealRwgEntry asks RwgTryCaveRedeal first; it mirrors vanilla (liquids excluded, share > 0 before FRand).
+#   --- P5-2 (2026-10-18): review fixes F1-F8 (verbatim) + the user's two decisions. P3/P4/P5/P6 re-pinned for the changed lines. ---
+#   P14 JSON candidates (user decision 2): RwgDrawCaveSpot dispatches to the file's generators BEFORE any AnyNear call; the JSON draw verifies
+#       every candidate through RwgVerifyCaveCandidate with the generator's hint; generators latch only when the file matches Num(); census
+#       fields caveCandidateSource / caveCandidatesTried; 64 candidates per spot; the parser reads rooms_geom first.
+#   P15 Review F4 (Here / WhereCaveNodes / Audit see bRwgCave), F7 (defer a cave entry while the API is unusable), M16 (cave redeal clears the
+#       flag at entry), M17 (the cave settle refuses a hit below the killbox top).
 # Mutants run in-file. Exit 0 = all hold; 1 = at least one does not; 2 = a pinned FILE is missing.
 
 $ErrorActionPreference = 'Stop'
@@ -33,6 +39,9 @@ $files = [ordered]@{
     late     = 'NodeShuffle\Private\NodeShuffleLateNodes.cpp'
     nsmod    = 'NodeShuffle\Private\NodeShuffle.cpp'
     r1       = 'NodeShuffle\Private\NodeShuffleMapModeR1.cpp'
+    cavejson = 'NodeShuffle\Private\NodeShuffleMapModeCaveJson.cpp'
+    where    = 'NodeShuffle\Private\NodeShuffleWhereCaveNodes.cpp'
+    audit    = 'NodeShuffle\Private\NodeShuffleAuditPlacements.cpp'
     mmh      = 'NodeShuffle\Public\NodeShuffleMapMode.h'
     subsysh  = 'NodeShuffle\Public\NodeShuffleSubsystem.h'
 }
@@ -79,13 +88,21 @@ function Invoke-P5Checks($T) {
         if (-not $ck.Contains('const bool bNumOk = Num >= 0 && (JsonStatus != TEXT("read") || JsonCaves == Num);')) { $f += '(P3) numOk must compare the JSON count when read' }
         if (-not $ck.Contains('RWGCAVECHECK: num=%d seed=%lld')) { $f += '(P3) RWGCAVECHECK census line missing' }
         if (-not $ck.Contains('if (FVector::DistSquared(O, L) < FMath::Square(300.0)) { bOurs = true; break; }') -or -not $ck.Contains('if (bOurs) { ++ExcludedOurs; continue; }')) { $f += '(P3) seeds must exclude nodes on our active entries (F2 mirror)' }
-        foreach ($bad in @(('num=' + '0 '), ('originalsInsideCave=' + '0 '))) { if ($ck.Contains('TEXT("RWGCAVECHECK: ' + $bad)) { $f += "(P3) a prose line carries the census token $bad" } }
+        foreach ($bad in @(('num=' + '0 '), ('originalsInsideCave=' + '0 '), ('caveCapacity=' + '0 '), ('caveCandidateSource=' + 'json '))) { if ($ck.Contains('TEXT("RWGCAVECHECK: ' + $bad)) { $f += "(P3) a prose line carries the census token $bad" } }
+        if (-not $ck.Contains(': !(Cfg.IncludeModdedNodes && It->GetResourceClass() && It->GetResourceNodeType() == EResourceNodeType::Node)) { ++ExcludedNotPool; continue; }') -or -not $ck.Contains('if (AsNode ? !IsEligibleVanillaNode(AsNode, Cfg.IncludeModdedNodes, /*bIncludeLiquid=*/true)')) { $f += '(P3) F1: the seed scan must use the pool admission predicate' }
+        if (-not $ck.Contains('seedsExcludedOurs=%d seedsExcludedNotPool=%d')) { $f += '(P3) F1: RWGCAVECHECK must print seedsExcludedNotPool' }
+        if (-not $ck.Contains('bWithin = bFound && FMath::Abs(Fz - S.Z) <= RwgCaveFloorMatchCm;') -or -not $ck.Contains('floorWithin300=%d') -or (Count $T.mmh 'constexpr double RwgCaveFloorMatchCm = 300.0;') -ne 1) { $f += '(P3) F5: the stand floor tolerance must be RwgCaveFloorMatchCm (= 300, the field name floorWithin300)' }
     }
+    $f8 = '|| A->Num() < 3 || !(*A)[0].IsValid() || !(*A)[1].IsValid() || !(*A)[2].IsValid()) { return false; }'
+    if ((Count $c $f8) -ne 1 -or (Count $T.cavejson $f8) -ne 1) { $f += '(P3) F8: both JSON vector readers must reject null elements' }
     $rp = Get-Body $T.r1 ($cls + 'RwgLogReprobes(')
     if (-not $rp -or -not $rp.Contains('if (bFull) { const NodeShuffleMapMode::FRwgGroundQuery Q(GetWorld(), RwgGenerator.Get()); RwgEnsureCaveCheck(Q); }')) { $f += '(P3) RWGCAVECHECK must run at readiness (the latch reprobe)' }
     # P4
     $sh = Get-Body $c ($cls + 'RwgCaveShare(')
-    if (-not $sh -or -not $sh.Contains('if (!bRwgCaveCheckDone || !bRwgCaveUsable || RwgCaveNumAtCheck <= 0) { return 0.0f; }') -or -not $sh.Contains('static_cast<float>(RwgCaveSeedCount) / FMath::Max(1, Denominator)')) { $f += '(P4) the share must be 0 unless graded usable, else min(cap, seeds / denominator)' }
+    if (-not $sh -or -not $sh.Contains('if (!bRwgCaveCheckDone || !bRwgCaveUsable || RwgCaveNumAtCheck <= 0 || RwgCaveCapacity <= 0) { return 0.0f; }') -or -not $sh.Contains('static_cast<float>(RwgCaveCapacity) / FMath::Max(1, Denominator + RwgCaveCapacity)') -or $sh.Contains('static_cast<float>(RwgCaveSeed' + 'Count)')) { $f += '(P4) P5-2: the share must be 0 unless graded usable, else min(cap, capacity / (denominator + capacity)) -- never the seed count' }
+    if (-not $ck -or -not $ck.Contains('RwgCaveCapacity = bJsonMatches ? JsonRooms : FMath::Max(0, Num) * RwgCaveDefaultRoomsPerCave;') -or -not $ck.Contains('if (O.IsValid() && O->TryGetNumberField(TEXT("rooms"), Rooms) && Rooms >= 0) { JsonRooms += Rooms; }') -or -not $ck.Contains('const bool bJsonMatches = JsonStatus == TEXT("read") && JsonCaves == Num;')) { $f += '(P4) P5-2: capacity must be the JSON rooms sum when the file matches, else Num() x the default' }
+    if ((Count $T.mmh 'constexpr int32 RwgCaveDefaultRoomsPerCave = 2;') -ne 1 -or -not $T.mmh.Contains('TODO(2026-10-18, RWG P5-2 -> R10)')) { $f += '(P4) P5-2: the default rooms-per-cave constant must carry its dated TODO' }
+    if ((Count $T.place 'caveShare=%.4f caveCapacity=%d poolSize=%d originalsInsideCave=%d') -ne 1) { $f += '(P4) P5-2: ROLLCENSUS must print caveCapacity, poolSize and originalsInsideCave beside caveShare' }
     foreach ($pair in @(@('RwgCaveHeadroomCmMirror = 350.0;', 'CaveHeadroomCm = 350.0f;'), @('RwgCaveMinCeilingCmMirror = 1200.0;', 'CaveMinPlaceCeilingCm = 1200.0f;'), @('RwgCaveShareCapMirror = 0.25;', 'CaveShareCap = 0.25f;'))) {
         if ((Count $T.mmh $pair[0]) -ne 1 -or (Count $T.subsys $pair[1]) -ne 1) { $f += "(P4) mirror drifted: $($pair[0]) vs $($pair[1])" }
     }
@@ -93,7 +110,9 @@ function Invoke-P5Checks($T) {
     $gl = Get-Body $T.place ($cls + 'GenerateRwgLocations(')
     if (-not $gl) { $f += '(P5) GenerateRwgLocations body not found' } else {
         if (-not $gl.Contains('const float CaveChance = (OutCaveIndices && RwgEnsureCaveCheck(Q)) ? RwgCaveShare(PoolSize) : 0.0f;')) { $f += '(P5) the RWG roll must take the vanilla-rule share' }
-        if (-not $gl.Contains('if (CaveChance > 0.0f && !bRwgRcCaveBudgetSpent && Rng.FRand() < CaveChance)')) { $f += '(P5) the cave designation must roll the share' }
+        if (-not $gl.Contains('if (CaveSlot != OutLocations.Num()) { CaveSlot = OutLocations.Num(); bSlotIsCave = CaveChance > 0.0f && Rng.FRand() < CaveChance; }') -or -not $gl.Contains('if (bSlotIsCave && !bRwgRcCaveBudgetSpent)') -or -not $gl.Contains('int32 CaveSlot = -1; bool bSlotIsCave = false;')) { $f += '(P5) F2: the cave share must be rolled once per OUTPUT slot' }
+        if (-not $gl.Contains('if (!bCavePick) { ++RwgRcCaveDealFailed; bSlotIsCave = false; bRwgRcCaveBudgetSpent = RwgRcCaveAnyNearCalls >= CaveRollBudget; }') -or -not $gl.Contains('if (bTooClose) { ++Spacing; if (bCavePick) { ++RwgRcCaveRejSpacing; bSlotIsCave = false; } continue; }')) { $f += '(P5) F2: a failed or spaced-out cave pick must turn its slot into a surface slot' }
+        if (-not $gl.Contains('const int32 CaveRollBudget = FMath::Max(NodeShuffleMapMode::RwgCaveAnyNearPerRoll, FMath::CeilToInt(Count * CaveChance) * NodeShuffleMapMode::RwgCaveAnyNearPerSpot);') -or -not $gl.Contains('CaveRollBudget - RwgRcCaveAnyNearCalls')) { $f += '(P5) F3: the per-roll AnyNear budget must derive from ceil(Count x share) x perSpot' }
         if (-not $gl.Contains('if (!bCavePick && !RwgDealOneSpot(Q, Rng, C, Outside, Water, Disagree, Slope)) { continue; }')) { $f += '(P5) a failed cave draw must fall through to a surface draw' }
         if (-not $gl.Contains('return bCavePick ? FVector::DistSquared(E, C) < SpacingSq : FVector::DistSquared2D(E, C) < SpacingSq;')) { $f += '(P5) cave picks must space in 3D, surface in 2D' }
         if (-not $gl.Contains('if (bCavePick) { OutCaveIndices->Add(OutLocations.Num()); ++RwgRcCaveSpots; }')) { $f += '(P5) cave picks must be reported by index' }
@@ -101,10 +120,14 @@ function Invoke-P5Checks($T) {
     if (-not $T.subsys.Contains('GenerateRwgLocations(Rng, AvoidLocations, Count, MinNodeSpacing, OutLocations, VanillaLocations.Num() + Count, RwgCaveIndices)')) { $f += '(P5) GenerateNewLocations must route the pool size and cave indices on RWG' }
     # P6
     $dr = Get-Body $c ($cls + 'RwgDrawCaveSpot(')
-    if (-not $dr -or -not (Ordered $dr @('Q.CaveAnyNear(X0, Y0, RwgCaveNearRadiusCm)', 'Q.CaveFloorAt(X, Y, SurfZ, Floor)',
-        'if (!Q.CaveInsideAt(FVector(X, Y, Floor + RwgCaveInsideProbeCm))) { ++RwgRcCaveRejInside; continue; }',
-        'Floor + RwgCaveHeadroomCmMirror', 'Floor + RwgCaveMinCeilingCmMirror - RwgCaveInsideProbeCm', 'RwgRejectV3(Q, FVector(X, Y, SurfZ))',
-        'if (bRwgKillboxKnown && Floor < RwgKillboxTopZ + RwgKillboxMarginCm) { ++RwgRcCaveRejKillbox; continue; }', 'OutSpot = FVector(X, Y, Floor);'))) { $f += '(P6) the cave draw predicates are missing or reordered' }
+    if (-not $dr -or -not (Ordered $dr @('Q.CaveAnyNear(X0, Y0, RwgCaveNearRadiusCm)', 'if (RwgVerifyCaveCandidate(Q, X, Y, /*ZHintOrSurface=*/nullptr, TEXT("random"), K, OutAnyNearCalls, OutSpot)) { return true; }'))) { $f += '(P6) the random ring must hand every point to the shared verify chain' }
+    $vf = Get-Body $T.cavejson ($cls + 'RwgVerifyCaveCandidate(')
+    if (-not $vf -or -not (Ordered $vf @('const double Hint = ZHintOrSurface ? *ZHintOrSurface : SurfZ;', 'if (!Q.CaveFloorAt(X, Y, Hint, Floor)) { return false; }',
+        'if (!Q.CaveInsideAt(FVector(X, Y, Floor + RwgCaveInsideProbeCm))) { ++RwgRcCaveRejInside; return false; }',
+        'if (!Q.CaveInsideAt(FVector(X, Y, Floor + RwgCaveHeadroomCmMirror))) { ++RwgRcCaveRejHeadroom; return false; }',
+        'if (!Q.CaveInsideAt(FVector(X, Y, Floor + RwgCaveMinCeilingCmMirror))) { ++RwgRcCaveRejCeiling; return false; }', 'RwgRejectV3(Q, FVector(X, Y, SurfZ))',
+        'if (bRwgKillboxKnown && Floor < RwgKillboxTopZ + RwgKillboxMarginCm) { ++RwgRcCaveRejKillbox; return false; }', 'OutSpot = FVector(X, Y, Floor);'))) { $f += '(P6) the cave verify predicates are missing or reordered (F6: the ceiling probe sits at floor + 1200)' }
+    if ($vf -and $vf.Contains('RwgCaveMinCeilingCmMirror - ')) { $f += '(P6) F6: the ceiling probe must not sit below floor + RwgCaveMinCeilingCmMirror' }
     # P7
     $rs = Get-Body $T.place ($cls + 'RwgResolveAtSpawn(')
     if (-not $rs -or $rs.IndexOf('if (Entry.bRwgCave) { return RwgResolveCaveAtSpawn(Q, Entry, bOutWaterNoLand); }') -lt 0 -or $rs.IndexOf('if (Entry.bRwgCave) { return RwgResolveCaveAtSpawn(') -gt $rs.IndexOf('RwgRejectV3(')) { $f += '(P7) the cave branch must precede the surface predicates' }
@@ -129,7 +152,7 @@ function Invoke-P5Checks($T) {
     # P11
     if ((Count $T.nsmod ('LOADED (2026-10-18-rwg-' + 'p5-2)')) -ne 1 -or (Count $T.nsmod ('2026-10-18-rwg-' + 'p5-1')) -ne 0 -or (Count $T.nsmod ('2026-10-18-rwg-' + 'p2g-1')) -ne 0) { $f += '(P11) marker must be rwg-p5-2 with rwg-p5-1 and rwg-p2g-1 absent' }
     # P12
-    foreach ($fmt in @([regex]::Matches(($T.cave + $T.place), 'TEXT\("((?:RWGCAVE|ROLLCENSUS: map=rwg deal=api|PLACECENSUS: pass)[^"]*)"\)') | ForEach-Object { $_.Groups[1].Value })) {
+    foreach ($fmt in @([regex]::Matches(($T.cave + $T.cavejson + $T.place), 'TEXT\("((?:RWGCAVE|ROLLCENSUS: map=rwg deal=api|PLACECENSUS: pass)[^"]*)"\)') | ForEach-Object { $_.Groups[1].Value })) {
         $fl = Fmt-Fields $fmt
         $dup = $fl | Group-Object | Where-Object { $_.Count -gt 1 }
         if ($dup) { $f += "(P12) repeated field(s) $(($dup | ForEach-Object { $_.Name }) -join ',') in '$($fmt.Substring(0, [Math]::Min(40, $fmt.Length)))'" }
@@ -139,19 +162,34 @@ function Invoke-P5Checks($T) {
     if (-not $rd -or -not $rd.Contains('if (RwgTryCaveRedeal(Q, Entry, Rng, SpacingCm)) { bOutMoved = true; ++RwgPcRedealApi; return true; }') -or $rd.IndexOf('RwgTryCaveRedeal(') -gt $rd.IndexOf('for (int32 I = 0;')) { $f += '(P13) the RWG redeal must ask the cave rule first' }
     $tc = Get-Body $c ($cls + 'RwgTryCaveRedeal(')
     if (-not $tc -or -not $tc.Contains('if (!bWasCave && (Entry.ResourceForm == 2 || !(Share > 0.0f && Rng.FRand() < Share))) { return false; }')) { $f += '(P13) the cave redeal must mirror the vanilla redeal rule' }
+    # P14 (P5-2 user decision 2)
+    $cj = $T.cavejson
+    if (-not $dr -or -not (Ordered $dr @('if (bRwgCaveJsonCandidates) { return RwgDrawCaveSpotJson(Q, Rng, OutSpot); }', 'Q.CaveAnyNear(X0, Y0, RwgCaveNearRadiusCm)'))) { $f += '(P14) the cave draw must take the JSON candidates before any AnyNear call' }
+    $dj = Get-Body $cj ($cls + 'RwgDrawCaveSpotJson(')
+    if (-not $dj -or -not $dj.Contains('for (int32 I = 0; I < RwgCaveJsonCandidatesPerSpot; ++I)') -or -not $dj.Contains('if (RwgVerifyCaveCandidate(Q, X, Y, &Hint, TEXT("json"), I, 0, OutSpot)) { return true; }') -or -not $dj.Contains('const double Hint = G.Kind == 0 ? G.FloorHintZ : Base.Z;') -or $dj.Contains('OutSpot = ')) { $f += '(P14) every JSON candidate must pass RwgVerifyCaveCandidate (FloorCmAt + IsInsideAt) with its generator hint' }
+    if (-not $ck -or -not $ck.Contains('bRwgCaveJsonCandidates = bRwgCaveUsable && RwgCaveGens.Num() > 0 && RwgCaveGenWeight > 0.0;') -or -not $ck.Contains('RwgCaveGens = bJsonMatches ? Gens : TArray<FRwgCaveCandidateGen>();') -or -not $ck.Contains('RwgCaveGensFromJson(O, Gens);')) { $f += '(P14) the JSON generators must latch only from a matching file on a usable grade' }
+    if ((Count $T.mmh 'constexpr int32 RwgCaveJsonCandidatesPerSpot = 64;') -ne 1) { $f += '(P14) 64 JSON candidates per cave spot' }
+    if ((Count $T.place 'caveCandidateSource=%s caveCandidatesTried=%d') -ne 1 -or -not $ck.Contains('caveCandidateSource=%s caveCandidateGens=%d') -or -not $T.place.Contains('RwgRcCaveCandidatesTried = 0; // RWG P5: this roll only')) { $f += '(P14) the censuses must print the candidate source and the candidates tried (zeroed per roll)' }
+    $gj = Get-Body $cj 'int32 NodeShuffleMapMode::RwgCaveGensFromJson('
+    if (-not $gj -or -not (Ordered $gj @('TEXT("rooms_geom")', 'G.Weight = PI * Rad.X * Rad.Y;', 'if (Out.Num() > Before) { return Out.Num() - Before; }', 'TEXT("stand"), TEXT("mouth")', 'TEXT("c0_from"), TEXT("c0_to")'))) { $f += '(P14) the parser must read rooms_geom first (area weight), then the stand / mouth / c0 / c1 fallback' }
+    # P15 (review F4, F7, M16, M17)
+    if (-not $T.subsys.Contains('if (E.bRwgCave) { Flags += TEXT("RWG-CAVE-DEALT|"); }') -or -not $T.where.Contains('if (!E.bUnderground && !E.bRwgCave) { continue; }') -or -not $T.audit.Contains('/*bShortTrace=*/E.bUnderground || E.bRwgCave, &bTooSteep);')) { $f += '(P15) F4: Here / WhereCaveNodes / Audit must see RWG cave entries' }
+    if (-not $rs -or -not $rs.Contains('if (!Q.IsUsable()) { ++RwgPcFallback; if (Entry.bRwgCave) { bOutApiUsed = true; ++RwgPcCaveDeferred; } return false; }')) { $f += '(P15) F7: a cave entry must defer while the API is unusable' }
+    if (-not $tc -or -not (Ordered $tc @('const bool bWasCave = Entry.bRwgCave;', 'Entry.bRwgCave = false;', 'if (!RwgEnsureCaveCheck(Q))'))) { $f += '(P15) M16: the cave redeal must clear bRwgCave at entry' }
+    if (-not $cs -or -not $cs.Contains('else if (bRwgKillboxKnown && Hit.ImpactPoint.Z < RwgKillboxTopZ) { ++RwgKbSettleRefused; bOutWaterNoLand = true; Outcome = TEXT("belowKillboxRedeal"); }')) { $f += '(P15) M17: the cave settle must refuse a floor below the killbox top' }
     return $f
 }
 
 $fails = Invoke-P5Checks $text
 $mutants = @(
     @{ Name = 'M1 cave share ignored on RWG';        Key = 'place'; Expect = 'P5'; Find = '? RwgCaveShare(PoolSize) : 0.0f;'; Repl = '? 0.0f : 0.0f;' }
-    @{ Name = 'M2 IsInsideAt verify skipped';         Key = 'cave';  Expect = 'P6'; Find = 'if (!Q.CaveInsideAt(FVector(X, Y, Floor + RwgCaveInsideProbeCm))) { ++RwgRcCaveRejInside; continue; }'; Repl = '' }
+    @{ Name = 'M2 IsInsideAt verify skipped';         Key = 'cavejson'; Expect = 'P6'; Find = 'if (!Q.CaveInsideAt(FVector(X, Y, Floor + RwgCaveInsideProbeCm))) { ++RwgRcCaveRejInside; return false; }'; Repl = '' }
     @{ Name = 'M3 cave settle traces from the surface'; Key = 'cave'; Expect = 'P7'; Find = 'const FVector S(Entry.Location.X, Entry.Location.Y, FloorZ + RwgCaveHeadroomCmMirror);'; Repl = 'const FVector S(Entry.Location.X, Entry.Location.Y, Q.SurfaceZ(Entry.Location.X, Entry.Location.Y) + 20000.0);' }
     @{ Name = 'M4 share fill never falls back to surface'; Key = 'place'; Expect = 'P5'; Find = 'if (!bCavePick && !RwgDealOneSpot(Q, Rng, C, Outside, Water, Disagree, Slope)) { continue; }'; Repl = 'if (!bCavePick) { continue; }' }
     @{ Name = 'M5 cave branch removed from the spawn resolver'; Key = 'place'; Expect = 'P7'; Find = 'if (Entry.bRwgCave) { return RwgResolveCaveAtSpawn(Q, Entry, bOutWaterNoLand); }'; Repl = '' }
     @{ Name = 'M6 late capture keeps bUnderground on RWG'; Key = 'late'; Expect = 'P8'; Find = '{ E.bRwgCave = E.bUnderground; E.bUnderground = false; }'; Repl = '{ }' }
     @{ Name = 'M7 rock pass probes cave entries';      Key = 'rock';  Expect = 'P9'; Find = 'E.bUnderground || E.bRwgCave) { continue; }'; Repl = 'E.bUnderground) { continue; }' }
-    @{ Name = 'M8 killbox at the floor skipped';       Key = 'cave';  Expect = 'P6'; Find = 'if (bRwgKillboxKnown && Floor < RwgKillboxTopZ + RwgKillboxMarginCm) { ++RwgRcCaveRejKillbox; continue; }'; Repl = '' }
+    @{ Name = 'M8 killbox at the floor skipped';       Key = 'cavejson'; Expect = 'P6'; Find = 'if (bRwgKillboxKnown && Floor < RwgKillboxTopZ + RwgKillboxMarginCm) { ++RwgRcCaveRejKillbox; return false; }'; Repl = '' }
     @{ Name = 'M9 cave bind not all-or-nothing';       Key = 'cave';  Expect = 'P1'; Find = 'if (!A.Bound()) { A.Caves = nullptr; A.Num = nullptr; A.AnyNear = nullptr; A.Floor = nullptr; A.Inside = nullptr; }'; Repl = '' }
     @{ Name = 'M10 census grade drops the JSON count'; Key = 'cave';  Expect = 'P3'; Find = 'bRwgCaveUsable = bNumOk && bStandOk'; Repl = 'bRwgCaveUsable = bStandOk' }
     @{ Name = 'M11 cave redeal rolls FRand at share 0'; Key = 'cave'; Expect = 'P13'; Find = '!(Share > 0.0f && Rng.FRand() < Share)'; Repl = '!(Rng.FRand() < Share)' }
@@ -159,6 +197,20 @@ $mutants = @(
     @{ Name = 'M14 inside gate not exempting caves';   Key = 'subsys'; Expect = 'P9'; Find = '/*bCaveFlagged=*/Entry.bUnderground || Entry.bRwgCave);'; Repl = '/*bCaveFlagged=*/Entry.bUnderground);' }
     @{ Name = 'M15 seed count feeds on our spawns';     Key = 'cave';  Expect = 'P3'; Find = 'if (bOurs) { ++ExcludedOurs; continue; }'; Repl = '' }
     @{ Name = 'M12 surface settle census dropped';     Key = 'place'; Expect = 'P10'; Find = 'RwgNoteSettledInsideCave(Q, Entry);'; Repl = '' }
+    @{ Name = 'M16 cave redeal keeps the flag at entry'; Key = 'cave'; Expect = 'P15'; Find = "    Entry.bRwgCave = false;`n    if (!RwgEnsureCaveCheck(Q))"; Repl = "    if (!RwgEnsureCaveCheck(Q))" }
+    @{ Name = 'M17 cave settle killbox refusal dropped'; Key = 'cave'; Expect = 'P15'; Find = 'else if (bRwgKillboxKnown && Hit.ImpactPoint.Z < RwgKillboxTopZ) { ++RwgKbSettleRefused; bOutWaterNoLand = true; Outcome = TEXT("belowKillboxRedeal"); }'; Repl = '' }
+    @{ Name = 'M18 F2 reverted to a per-draw roll';    Key = 'place'; Expect = 'P5'; Find = "if (CaveSlot != OutLocations.Num()) { CaveSlot = OutLocations.Num(); bSlotIsCave = CaveChance > 0.0f && Rng.FRand() < CaveChance; }`n        if (bSlotIsCave && !bRwgRcCaveBudgetSpent)"; Repl = 'if (CaveChance > 0.0f && !bRwgRcCaveBudgetSpent && Rng.FRand() < CaveChance)' }
+    @{ Name = 'M19 B: capacity numerator -> seed count'; Key = 'cave'; Expect = 'P4'; Find = 'static_cast<float>(RwgCaveCapacity) / FMath::Max(1, Denominator + RwgCaveCapacity)'; Repl = 'static_cast<float>(RwgCaveSeedCount) / FMath::Max(1, Denominator)' }
+    @{ Name = 'M20 B: capacity latched from the seeds'; Key = 'cave'; Expect = 'P4'; Find = 'RwgCaveCapacity = bJsonMatches ? JsonRooms : FMath::Max(0, Num) * RwgCaveDefaultRoomsPerCave;'; Repl = 'RwgCaveCapacity = Seeds;' }
+    @{ Name = 'M21 B: JSON candidates skipped when present'; Key = 'cave'; Expect = 'P14'; Find = 'if (bRwgCaveJsonCandidates) { return RwgDrawCaveSpotJson(Q, Rng, OutSpot); }'; Repl = '' }
+    @{ Name = 'M22 B: JSON candidate dealt unverified'; Key = 'cavejson'; Expect = 'P14'; Find = 'if (RwgVerifyCaveCandidate(Q, X, Y, &Hint, TEXT("json"), I, 0, OutSpot)) { return true; }'; Repl = 'OutSpot = FVector(X, Y, Hint); return true;' }
+    @{ Name = 'M23 B: FloorCmAt verify dropped';       Key = 'cavejson'; Expect = 'P6'; Find = 'if (!Q.CaveFloorAt(X, Y, Hint, Floor)) { return false; }'; Repl = 'Floor = Hint;' }
+    @{ Name = 'M24 F1 pool filter dropped';            Key = 'cave';  Expect = 'P3'; Find = '{ ++ExcludedNotPool; continue; }'; Repl = '{ }' }
+    @{ Name = 'M25 F6 ceiling probe back at +1100';    Key = 'cavejson'; Expect = 'P6'; Find = 'Floor + RwgCaveMinCeilingCmMirror)))'; Repl = 'Floor + RwgCaveMinCeilingCmMirror - RwgCaveInsideProbeCm)))' }
+    @{ Name = 'M26 F7 cave entry surface-settles off-API'; Key = 'place'; Expect = 'P15'; Find = 'if (Entry.bRwgCave) { bOutApiUsed = true; ++RwgPcCaveDeferred; } '; Repl = '' }
+    @{ Name = 'M27 F4 Here flag dropped';              Key = 'subsys'; Expect = 'P15'; Find = 'if (E.bRwgCave) { Flags += TEXT("RWG-CAVE-DEALT|"); }'; Repl = '' }
+    @{ Name = 'M28 B: generators latched from a mismatched file'; Key = 'cave'; Expect = 'P14'; Find = 'RwgCaveGens = bJsonMatches ? Gens : TArray<FRwgCaveCandidateGen>();'; Repl = 'RwgCaveGens = Gens;' }
+    @{ Name = 'M29 F3 budget back to the flat constant'; Key = 'place'; Expect = 'P5'; Find = 'CaveRollBudget - RwgRcCaveAnyNearCalls'; Repl = 'NodeShuffleMapMode::RwgCaveAnyNearPerRoll - RwgRcCaveAnyNearCalls' }
 )
 $mutantFails = @()
 $caught = 0
@@ -177,5 +229,5 @@ if ($all.Count -gt 0) {
     Write-Host "RWG P5 LINT: FAIL -- $($all.Count) problem(s). Mutants caught $caught/$($mutants.Count)."
     exit 1
 }
-Write-Host "PASS: RWG P5 lint -- P1..P13 hold across $($text.Count) loaded files; mutants caught $caught/$($mutants.Count)."
+Write-Host "PASS: RWG P5 lint -- P1..P15 hold across $($text.Count) loaded files; mutants caught $caught/$($mutants.Count)."
 exit 0

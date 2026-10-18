@@ -106,7 +106,7 @@ void ANodeShuffleSubsystem::LogWhereCaveNodesCensus() const
     int32 ActiveCount = 0, InactiveCount = 0, NewNodeCount = 0, NotNewCount = 0;
     for (const FNodeShuffleEntry& E : Layout)
     {
-        if (!E.bUnderground) { continue; }
+        if (!E.bUnderground && !E.bRwgCave) { continue; }
         Flagged++;
 
         AFGResourceNode* const* Live = SpawnedNodes.Find(E.EntryGuid);

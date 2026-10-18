@@ -1,11 +1,14 @@
 // RWG P5 (2026-10-18) -- cave spots on RWG through RWG's own carved-cave queries (FPWCarvedCaves).
 // User decision (binding): caves on RWG follow the VANILLA rule -- natural share capped at 25 %, random locations, vanilla untouched.
+// P5-2 user decisions (2026-10-18, binding): the share's numerator is cave CAPACITY (JSON rooms), and cave candidates come from the
+// per-world cave FILE (NodeShuffleMapModeCaveJson.cpp); random XY + AnyNear is the fallback when the file is absent or does not match.
 // Every function here is reached only from RWG call sites (GenerateRwgLocations, TryRedealRwgEntry, RwgResolveAtSpawn in
 // NodeShuffleMapModePlace.cpp), so the vanilla path never enters this file. Log lines report measured counts and the predicate
 // that branched, never a cause. Catalogue: _team/rwg-export-catalog.md section B4.
 #include "NodeShuffleSubsystem.h"
 #include "NodeShuffleMapMode.h"
 #include "NodeShuffle.h"
+#include "NodeShuffleConfig.h"
 #include "EngineUtils.h"
 #include "Engine/World.h"
 #include "Misc/FileHelper.h"
@@ -111,7 +114,7 @@ namespace
     bool JsonVec(const TSharedPtr<FJsonObject>& O, const TCHAR* Key, FVector& Out)
     {
         const TArray<TSharedPtr<FJsonValue>>* A = nullptr;
-        if (!O.IsValid() || !O->TryGetArrayField(Key, A) || !A || A->Num() < 3) { return false; }
+        if (!O.IsValid() || !O->TryGetArrayField(Key, A) || !A || A->Num() < 3 || !(*A)[0].IsValid() || !(*A)[1].IsValid() || !(*A)[2].IsValid()) { return false; }
         Out = FVector((*A)[0]->AsNumber(), (*A)[1]->AsNumber(), (*A)[2]->AsNumber());
         return true;
     }
@@ -155,9 +158,13 @@ bool ANodeShuffleSubsystem::RwgEnsureCaveCheck(const NodeShuffleMapMode::FRwgGro
     for (const FNodeShuffleEntry& E : Layout) { if (E.bIsNewNode && E.bActive) { OurSpots.Add(E.Location); } }
     TArray<FVector> Nodes;
     int32 ExcludedOurs = 0;
+    const FNodeShuffleConfigStruct Cfg = FNodeShuffleConfigStruct::GetActiveConfig(this); int32 ExcludedNotPool = 0;
     for (TActorIterator<AFGResourceNodeBase> It(World); It; ++It)
     {
         if (!IsValid(*It) || IsOursForRwg(*It)) { continue; }
+        const AFGResourceNode* AsNode = Cast<AFGResourceNode>(*It); // RWG P5 review F1: the numerator uses the POOL's admission predicate (RollLayout eligibility)
+        if (AsNode ? !IsEligibleVanillaNode(AsNode, Cfg.IncludeModdedNodes, /*bIncludeLiquid=*/true)
+                   : !(Cfg.IncludeModdedNodes && It->GetResourceClass() && It->GetResourceNodeType() == EResourceNodeType::Node)) { ++ExcludedNotPool; continue; }
         const FVector L = It->GetActorLocation();
         bool bOurs = false;
         for (const FVector& O : OurSpots) { if (FVector::DistSquared(O, L) < FMath::Square(300.0)) { bOurs = true; break; } }
@@ -180,6 +187,8 @@ bool ANodeShuffleSubsystem::RwgEnsureCaveCheck(const NodeShuffleMapMode::FRwgGro
     TArray<FVector> Stands;
     TArray<double> HeadroomCm;
     int32 JsonCaves = -1;
+    int32 JsonRooms = 0, JsonRoomsDefaulted = 0; // P5-2 capacity: sum of each cave's `rooms` (a cave without the field counts RwgCaveDefaultRoomsPerCave)
+    TArray<FRwgCaveCandidateGen> Gens;
     FString Text;
     if (Seed >= 0 && FFileHelper::LoadFileToString(Text, *JsonPath))
     {
@@ -195,6 +204,9 @@ bool ANodeShuffleSubsystem::RwgEnsureCaveCheck(const NodeShuffleMapMode::FRwgGro
                 const TSharedPtr<FJsonObject> O = V.IsValid() ? V->AsObject() : nullptr;
                 FVector S;
                 if (O.IsValid() && JsonVec(O, TEXT("stand"), S) && Stands.Num() < 64) { Stands.Add(S); double Hm = 0.0; O->TryGetNumberField(TEXT("headroom_m"), Hm); HeadroomCm.Add(Hm * 100.0); }
+                int32 Rooms = 0;
+                if (O.IsValid() && O->TryGetNumberField(TEXT("rooms"), Rooms) && Rooms >= 0) { JsonRooms += Rooms; } else { JsonRooms += RwgCaveDefaultRoomsPerCave; ++JsonRoomsDefaulted; }
+                RwgCaveGensFromJson(O, Gens);
             }
         }
     }
@@ -213,7 +225,7 @@ bool ANodeShuffleSubsystem::RwgEnsureCaveCheck(const NodeShuffleMapMode::FRwgGro
         {
             ++FloorN;
             bFound = Q.CaveFloorAt(S.X, S.Y, S.Z, Fz);
-            bWithin = bFound && FMath::Abs(Fz - S.Z) <= FMath::Max(HeadroomCm[I], RwgCaveFloorMatchCm);
+            bWithin = bFound && FMath::Abs(Fz - S.Z) <= RwgCaveFloorMatchCm;
             FloorFound += bFound ? 1 : 0;
             FloorWithin += bWithin ? 1 : 0;
         }
@@ -248,22 +260,37 @@ bool ANodeShuffleSubsystem::RwgEnsureCaveCheck(const NodeShuffleMapMode::FRwgGro
     const bool bFloorOk = FloorN == 0 || FloorWithin == FloorN;
     const bool bNotAllInside = SampleN == 0 || SampleInside < SampleN;
     bRwgCaveUsable = bNumOk && bStandOk && bFloorOk && bNotAllInside;
+    // P5-2 user decision 1: capacity = sum of the JSON `rooms` when the file was read and matches Num(); otherwise Num() x the documented default.
+    const bool bJsonMatches = JsonStatus == TEXT("read") && JsonCaves == Num;
+    bRwgCaveCapacityFromJson = bJsonMatches;
+    RwgCaveCapacity = bJsonMatches ? JsonRooms : FMath::Max(0, Num) * RwgCaveDefaultRoomsPerCave;
+    // P5-2 user decision 2: candidates from the file when it matches (numMatchesJson=1) and yielded generators; else random XY + AnyNear.
+    RwgCaveGens = bJsonMatches ? Gens : TArray<FRwgCaveCandidateGen>();
+    RwgCaveGenWeight = 0.0;
+    for (const FRwgCaveCandidateGen& G : RwgCaveGens) { RwgCaveGenWeight += G.Weight; }
+    bRwgCaveJsonCandidates = bRwgCaveUsable && RwgCaveGens.Num() > 0 && RwgCaveGenWeight > 0.0;
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("RWGCAVECHECK: num=%d seed=%lld seedSource=%s json='%s' jsonStatus=%s jsonCaves=%d numMatchesJson=%d standPoints=%d insideAtStandOrProbe=%d insideAtStandRaw=%d floorChecked=%d floorFound=%d floorWithinHeadroom=%d nodeSample=%d nodeSampleInside=%d nodeSampleFloorFound=%d originalsTested=%d originalsInsideCave=%d seedsExcludedOurs=%d naturalShareCap=%.2f usable=%d"),
+        TEXT("RWGCAVECHECK: num=%d seed=%lld seedSource=%s json='%s' jsonStatus=%s jsonCaves=%d numMatchesJson=%d standPoints=%d insideAtStandOrProbe=%d insideAtStandRaw=%d floorChecked=%d floorFound=%d floorWithin300=%d nodeSample=%d nodeSampleInside=%d nodeSampleFloorFound=%d originalsTested=%d originalsInsideCave=%d seedsExcludedOurs=%d seedsExcludedNotPool=%d caveCapacity=%d caveCapacitySource=%s jsonRooms=%d jsonRoomsDefaulted=%d caveCandidateSource=%s caveCandidateGens=%d naturalShareCap=%.2f usable=%d"),
         Num, Seed, *SeedSrc, *JsonPath, *JsonStatus, JsonCaves, (JsonStatus == TEXT("read") && JsonCaves == Num) ? 1 : 0, Stands.Num(), StandInside, StandInsideRaw,
-        FloorN, FloorFound, FloorWithin, SampleN, SampleInside, SampleFloor, RwgCaveSeedDen, RwgCaveSeedCount, ExcludedOurs, RwgCaveShareCapMirror, bRwgCaveUsable ? 1 : 0);
+        FloorN, FloorFound, FloorWithin, SampleN, SampleInside, SampleFloor, RwgCaveSeedDen, RwgCaveSeedCount, ExcludedOurs, ExcludedNotPool, RwgCaveCapacity,
+        bRwgCaveCapacityFromJson ? TEXT("json") : TEXT("default"), JsonRooms, JsonRoomsDefaulted, bRwgCaveJsonCandidates ? TEXT("json") : TEXT("random"), RwgCaveGens.Num(),
+        RwgCaveShareCapMirror, bRwgCaveUsable ? 1 : 0);
     if (!bRwgCaveUsable) { UE_LOG(LogNodeShuffle, Warning, TEXT("RWGCAVECHECK-OFF: numOk=%d standOk=%d floorOk=%d nodeSampleNotAllInside=%d; the cave share is 0 this session"), bNumOk ? 1 : 0, bStandOk ? 1 : 0, bFloorOk ? 1 : 0, bNotAllInside ? 1 : 0); }
     else if (Num == 0) { UE_LOG(LogNodeShuffle, Display, TEXT("RWGCAVECHECK: this world holds no carved cave; usable, cave share 0 (every spot is a surface spot)")); }
-    else if (Seeds == 0) { UE_LOG(LogNodeShuffle, Display, TEXT("RWGCAVECHECK: no RWG original lies inside a cave (%d tested); the vanilla-rule share (seeds / pool) is 0 in this world although it holds %d caves"), RwgCaveSeedDen, Num); }
+    else if (Seeds == 0) { UE_LOG(LogNodeShuffle, Display, TEXT("RWGCAVECHECK: no tested pool node lies inside a cave (%d tested, %d caves); comparison only, the cave share uses the capacity"), RwgCaveSeedDen, Num); }
     return bRwgCaveUsable;
 }
 
 float ANodeShuffleSubsystem::RwgCaveShare(int32 Denominator) const
 {
-    // The vanilla rule (GenerateNewLocations / TryRedealWaterLockedEntry): min(CaveShareCap, seeds / pool). On RWG the seeds are RWG's own
-    // original nodes inside a carved cave (RWGCAVECHECK, latched once per session; our spawned nodes never count, so the share cannot feed on itself).
-    if (!bRwgCaveCheckDone || !bRwgCaveUsable || RwgCaveNumAtCheck <= 0) { return 0.0f; }
-    return FMath::Min(static_cast<float>(NodeShuffleMapMode::RwgCaveShareCapMirror), static_cast<float>(RwgCaveSeedCount) / FMath::Max(1, Denominator));
+    // P5-2 user decision 1 (2026-10-18): the numerator is cave CAPACITY. Vanilla (NodeShuffleSubsystem.cpp:2043-2044 roll, :6983-6984 redeal):
+    //     CaveChance = min(CaveShareCap, CaveSeedCount / max(1, pool + Count))      [the vanilla redeal divides by Layout.Num()]
+    // RWG, the same shape with the seed count replaced by capacity, and capacity added to the denominator as the user wrote it:
+    //     share = min(CaveShareCap = 0.25, RwgCaveCapacity / max(1, Denominator + RwgCaveCapacity))
+    // Denominator = the caller's pool term (roll: VanillaLocations.Num() + Count; redeal: Layout.Num()). Capacity is latched at RWGCAVECHECK from
+    // RWG's file (or Num() x RwgCaveDefaultRoomsPerCave), so it never counts our own spawns and the share cannot feed on itself.
+    if (!bRwgCaveCheckDone || !bRwgCaveUsable || RwgCaveNumAtCheck <= 0 || RwgCaveCapacity <= 0) { return 0.0f; }
+    return FMath::Min(static_cast<float>(NodeShuffleMapMode::RwgCaveShareCapMirror), static_cast<float>(RwgCaveCapacity) / FMath::Max(1, Denominator + RwgCaveCapacity));
 }
 
 bool ANodeShuffleSubsystem::RwgDrawCaveSpot(const NodeShuffleMapMode::FRwgGroundQuery& Q, FRandomStream& Rng, int32 AnyNearBudget, FVector& OutSpot, int32& OutAnyNearCalls)
@@ -274,6 +301,7 @@ bool ANodeShuffleSubsystem::RwgDrawCaveSpot(const NodeShuffleMapMode::FRwgGround
     // (an AnyNear hit says "a cave within R", not "a cave under this XY"). Surface prefilters (sea / void / killbox / slope, as today) at the
     // spot's XY, then vanilla's headroom (350 cm) and Miner ceiling (1200 cm) by IsInsideAt, then the killbox at the FLOOR.
     OutAnyNearCalls = 0;
+    if (bRwgCaveJsonCandidates) { return RwgDrawCaveSpotJson(Q, Rng, OutSpot); } // P5-2 user decision 2: the file's rooms first; AnyNear is the fallback
     const double H = Q.HalfExtent();
     for (int32 I = 0; I < AnyNearBudget; ++I)
     {
@@ -286,25 +314,7 @@ bool ANodeShuffleSubsystem::RwgDrawCaveSpot(const NodeShuffleMapMode::FRwgGround
             const double Rr = K == 0 ? 0.0 : RwgCaveNearRadiusCm * ((K - 1) / 8 + 1) / 3.0;
             const double Ang = (K % 8) * (PI / 4.0);
             const double X = X0 + FMath::Cos(Ang) * Rr, Y = Y0 + FMath::Sin(Ang) * Rr;
-            if (Q.Outside(X, Y)) { continue; }
-            const double SurfZ = Q.SurfaceZ(X, Y);
-            double Floor = 0.0;
-            if (!Q.CaveFloorAt(X, Y, SurfZ, Floor)) { continue; }
-            ++RwgRcCaveFloorHits;
-            if (!Q.CaveInsideAt(FVector(X, Y, Floor + RwgCaveInsideProbeCm))) { ++RwgRcCaveRejInside; continue; }
-            if (!Q.CaveInsideAt(FVector(X, Y, Floor + RwgCaveHeadroomCmMirror))) { ++RwgRcCaveRejHeadroom; continue; }
-            if (!Q.CaveInsideAt(FVector(X, Y, Floor + RwgCaveMinCeilingCmMirror - RwgCaveInsideProbeCm))) { ++RwgRcCaveRejCeiling; continue; }
-            double RiseRun = 0.0;
-            if (RwgRejectV3(Q, FVector(X, Y, SurfZ)) != 0 || RwgApiSlopeTooSteep(Q, X, Y, RiseRun)) { ++RwgRcCaveRejSurface; continue; }
-            if (bRwgKillboxKnown && Floor < RwgKillboxTopZ + RwgKillboxMarginCm) { ++RwgRcCaveRejKillbox; continue; }
-            OutSpot = FVector(X, Y, Floor);
-            if (RwgCaveDealSamples < 8)
-            {
-                ++RwgCaveDealSamples;
-                UE_LOG(LogNodeShuffle, Display, TEXT("RWGCAVEDEAL: sample=%d spot=(%.0f,%.0f) floorHintZ=%.0f floorZ=%.0f surfaceMinusFloorCm=%.0f anyNearCallsThisSpot=%d ringIndex=%d"),
-                    RwgCaveDealSamples, X, Y, SurfZ, Floor, SurfZ - Floor, OutAnyNearCalls, K);
-            }
-            return true;
+            if (RwgVerifyCaveCandidate(Q, X, Y, /*ZHintOrSurface=*/nullptr, TEXT("random"), K, OutAnyNearCalls, OutSpot)) { return true; } // hint = API surface Z
         }
     }
     return false;

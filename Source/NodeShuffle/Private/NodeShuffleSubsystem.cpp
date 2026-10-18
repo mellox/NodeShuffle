@@ -7682,6 +7682,7 @@ void ANodeShuffleSubsystem::LogHereCensus() const
         // ns-t45-verticaldiag: the layout's own cave-deal flag, surfaced per entry so a reader standing
         // in a cavern can see WHICH nearby entry the deal put there. Reports the stored flag only.
         if (E.bUnderground) { Flags += TEXT("CAVEDEALT|"); }
+        if (E.bRwgCave) { Flags += TEXT("RWG-CAVE-DEALT|"); } // RWG P5 review F4 (false on vanilla)
         Flags += E.bRayCasted ? TEXT("settled|") : TEXT("unsettled|");
         Flags += bLive ? TEXT("LIVE") : TEXT("no-actor");
         if (WaterLockedThisSession.Contains(E.EntryGuid)) { Flags += TEXT("|WATER-LOCKED"); }

@@ -236,7 +236,7 @@ void ANodeShuffleSubsystem::PlacementAuditTick()
         bool bWater = false, bTooSteep = false;
         const bool bGroundHit = RaycastGroundAt(E.Location, static_cast<float>(E.Location.Z), LiveActor,
                                                 nullptr, GroundLoc, GroundRot, bWater,
-                                                /*bShortTrace=*/E.bUnderground, &bTooSteep);
+                                                /*bShortTrace=*/E.bUnderground || E.bRwgCave, &bTooSteep);
         if (bWater)
         {
             ++PlacementAuditCounts[AB_Water];

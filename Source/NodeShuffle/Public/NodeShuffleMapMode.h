@@ -7,6 +7,7 @@ class APawn;
 class UWorld;
 class AFGResourceNodeBase;
 class FPWDensityField; // RWG's type (P2b ground query); never completed in NodeShuffle
+class FJsonObject;     // RWG P5-2: the per-world cave file's cave object (NodeShuffleMapModeCaveJson.cpp)
 
 // RWG P1 (2026-10-14, spec `_team/nodeshuffle-rwg-fullshuffle-spec.md` §A1/§B/§H): which map this world is.
 // Latched once per world by ANodeShuffleSubsystem::GetMapMode() from the persistent level's package name --
@@ -111,6 +112,17 @@ namespace NodeShuffleMapMode
     constexpr int32 RwgCaveAnyNearPerRoll = 400000;   // per roll; once spent, the cave share is 0 for the rest of that roll (counted)
     constexpr int32 RwgCaveSettleMissEscape = 8;      // mirror of the vanilla 8-miss cave escape (Subsystem.cpp EnsureNewNodeSpawned)
     constexpr int32 RwgCaveSettleSkipMax = 8;         // non-terrain, non-solid, non-water hits skipped by one cave settle trace
+    // RWG P5-2 (2026-10-18, user decisions): cave share numerator = cave CAPACITY (sum of the JSON `rooms`); candidates from the JSON file.
+    // TODO(2026-10-18, RWG P5-2 -> R10): 2 = floor of the measured mean rooms per cave (12 PWMaps files, 31 caves, 74 rooms, read 2026-10-18).
+    // Used ONLY when the per-world file is absent / unreadable (capacity = Num() * this); re-check against the next files RWG writes.
+    constexpr int32 RwgCaveDefaultRoomsPerCave = 2;
+    constexpr int32 RwgCaveJsonCandidatesPerSpot = 64; // JSON candidates one cave-designated spot verifies before it falls back to a surface draw
+    // One candidate generator from the per-world cave file (NodeShuffleMapModeCaveJson.cpp). Kind 0 = a rooms_geom room (axis-aligned XY
+    // ellipse Rx x Ry around A, hint = the room floor); 1 = a disc of radius Rx around A (stand / mouth, file without rooms_geom); 2 = the
+    // segment A->B widened by Rx (c0 / c1, file without rooms_geom). Weight = the XY area the generator samples.
+    struct FRwgCaveCandidateGen { FVector A = FVector::ZeroVector; FVector B = FVector::ZeroVector; double Rx = 0.0, Ry = 0.0, FloorHintZ = 0.0, Weight = 0.0; uint8 Kind = 0; };
+    // Appends one cave object's generators (rooms_geom rooms; without rooms_geom: stand + mouth discs and c0 / c1 segments). Returns the count added.
+    int32 RwgCaveGensFromJson(const TSharedPtr<FJsonObject>& Cave, TArray<FRwgCaveCandidateGen>& Out);
 
     // RWG P2b ground query over the runtime-bound RWG exports (NodeShuffleMapModeHeightApi.cpp). Construct once
     // per batch (it holds the density field's strong reference for its lifetime, never across frames).
