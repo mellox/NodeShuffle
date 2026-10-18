@@ -120,6 +120,30 @@ bool ANodeShuffleSubsystem::RwgIsPointInWaterCached(const FVector& P) const
     return false;
 }
 
+void ANodeShuffleSubsystem::RwgNoteWaterSample(const NodeShuffleMapMode::FRwgGroundQuery& Q, const FVector& P, bool bVolumeWet, const TCHAR* Caller)
+{
+    // Coordinator addendum (2026-10-18, measured only, gates nothing). Two bounded samples, 8 lines each per session:
+    // RWGWATERSAMPLE = a draw the volume test rejected while its API surface Z was >= 0; RWGSEASAMPLE = a spot that PASSED the
+    // deal predicates with API surface Z < 0. Each prints the raw WaterLevelCmAt reading and whether any cached volume BOX
+    // contains the point (the cheap prefilter the volume test runs before EncompassesPoint).
+    int32& N = bVolumeWet ? RwgWaterSamples : RwgSeaSamples;
+    if (N >= 8) { return; }
+    ++N;
+    bool bAnyBox = false;
+    for (const TPair<FBox, TWeakObjectPtr<AFGWaterVolume>>& V : RwgWaterVolumes) { if (V.Key.IsInsideOrOn(P)) { bAnyBox = true; break; } }
+    const double Wl = Q.WaterLevelZ(P.X, P.Y);
+    if (bVolumeWet)
+    {
+        UE_LOG(LogNodeShuffle, Display, TEXT("RWGWATERSAMPLE: caller=%s sample=%d x=%.0f y=%.0f surfaceZ=%.0f waterApiLevelSample=%.0f volumeTest=1 volumeBoxContains=%d"),
+            Caller, N, P.X, P.Y, P.Z, Wl, bAnyBox ? 1 : 0);
+    }
+    else
+    {
+        UE_LOG(LogNodeShuffle, Display, TEXT("RWGSEASAMPLE: caller=%s sample=%d x=%.0f y=%.0f surfaceZ=%.0f waterLevelCmAt=%.0f volumeTest=%d volumeBoxContains=%d"),
+            Caller, N, P.X, P.Y, P.Z, Wl, RwgIsPointInWaterCached(P) ? 1 : 0, bAnyBox ? 1 : 0);
+    }
+}
+
 bool ANodeShuffleSubsystem::RwgDealOneSpot(const NodeShuffleMapMode::FRwgGroundQuery& Q, FRandomStream& Rng, FVector& OutSpot,
                                            int32& Outside, int32& Water, int32& WaterApiDisagree, int32& Slope)
 {
@@ -132,7 +156,13 @@ bool ANodeShuffleSubsystem::RwgDealOneSpot(const NodeShuffleMapMode::FRwgGroundQ
     const bool bVolume = RwgIsPointInWaterCached(OutSpot);
     const bool bApiWet = Q.WaterLevelZ(X, Y) > Z + NodeShuffleMapMode::RwgWaterApiMarginCm;
     if (bVolume != bApiWet) { ++WaterApiDisagree; }
-    if (bVolume) { ++Water; return false; } // the volume test decides until R3 shows the two agree
+    if (bVolume)
+    {
+        // Coordinator addendum (measured only, gates nothing): rejectedWater split by the sign of the API surface Z.
+        if (Z < 0.0) { ++RwgRcWaterZBelow0; } else { ++RwgRcWaterZAtOrAbove0; RwgNoteWaterSample(Q, OutSpot, true, TEXT("nodeDeal")); }
+        ++Water;
+        return false; // the volume test decides until R3 shows the two agree
+    }
     double RiseRun = 0.0;
     if (RwgApiSlopeTooSteep(Q, X, Y, RiseRun)) { ++Slope; return false; } // RWG P2c: API gradient above the cliff angle
     return true;
@@ -151,6 +181,7 @@ bool ANodeShuffleSubsystem::GenerateRwgLocations(FRandomStream& Rng, const TArra
     }
     RwgBuildWaterVolumeCache();
     const double H = Q.HalfExtent();
+    RwgRcWaterZBelow0 = RwgRcWaterZAtOrAbove0 = RwgRcDealtBelowZ0 = 0; // coordinator addendum: this roll only
     int32 Outside = 0, Water = 0, Disagree = 0, Spacing = 0, Drawn = 0, Slope = 0;
     double ZSum = 0.0, ZMin = TNumericLimits<double>::Max(), ZMax = TNumericLimits<double>::Lowest();
     const float SpacingSq = FMath::Square(SpacingCm);
@@ -166,6 +197,7 @@ bool ANodeShuffleSubsystem::GenerateRwgLocations(FRandomStream& Rng, const TArra
         if (!bTooClose) { for (const FVector& E : OutLocations) { if (FVector::DistSquared2D(E, C) < SpacingSq) { bTooClose = true; break; } } }
         if (bTooClose) { ++Spacing; continue; }
         OutLocations.Add(C);
+        if (C.Z < 0.0) { ++RwgRcDealtBelowZ0; RwgNoteWaterSample(Q, C, false, TEXT("nodeDeal")); } // coordinator addendum, measured only
         ZSum += C.Z;
         ZMin = FMath::Min(ZMin, C.Z);
         ZMax = FMath::Max(ZMax, C.Z);
@@ -176,8 +208,8 @@ bool ANodeShuffleSubsystem::GenerateRwgLocations(FRandomStream& Rng, const TArra
     DealMeanZ = OutLocations.Num() > 0 ? static_cast<float>(ZSum / OutLocations.Num()) : RwgMeanZ;
     if (OutLocations.Num() == 0) { ZMin = ZMax = 0.0; }
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("ROLLCENSUS: map=rwg deal=api extentHalfCm=%.0f requested=%d dealt=%d drawn=%d rejectedOutside=%d rejectedWater=%d waterApiDisagree=%d rejectedSlope=%d rejectedSpacing=%d resolvedZ=%d resolvedZMin=%.0f resolvedZMax=%.0f waterVolumes=%d caveSpots=0 rollDurationMs=%.0f"),
-        H, Count, OutLocations.Num(), Drawn, Outside, Water, Disagree, Slope, Spacing, OutLocations.Num(), ZMin, ZMax,
+        TEXT("ROLLCENSUS: map=rwg deal=api extentHalfCm=%.0f requested=%d dealt=%d drawn=%d rejectedOutside=%d rejectedWater=%d rejectedWaterSurfaceZBelow0=%d rejectedWaterSurfaceZAtOrAbove0=%d dealtBelowZ0=%d waterApiDisagree=%d rejectedSlope=%d rejectedSpacing=%d resolvedZ=%d resolvedZMin=%.0f resolvedZMax=%.0f waterVolumes=%d caveSpots=0 rollDurationMs=%.0f"),
+        H, Count, OutLocations.Num(), Drawn, Outside, Water, RwgRcWaterZBelow0, RwgRcWaterZAtOrAbove0, RwgRcDealtBelowZ0, Disagree, Slope, Spacing, OutLocations.Num(), ZMin, ZMax,
         RwgWaterVolumes.Num(), (FPlatformTime::Seconds() - T0) * 1000.0);
     return true;
 }
@@ -241,8 +273,10 @@ bool ANodeShuffleSubsystem::RwgResolveAtSpawn(FNodeShuffleEntry& Entry, bool& bO
     RwgProbeFirstClass = -1;
     RwgProbeFirstZ = 0.0;
     RwgProbeSkipped = 0;
+    RwgProbeSolidHits = 0; // RWG P2d: solid-mesh stops during this one settle (primary or spiral probe)
     const bool bSettled = RaycastSettle(Entry, nullptr, nullptr, &bOutWaterNoLand, /*bTerrainOnly=*/true);
     bRwgProbeArmed = false;
+    if (RwgProbeSolidHits > 0) { ++RwgPcRejectedRock; } // a probe of this settle met a SOLID mesh: that spot was BLOCKED (spiral / redeal follow)
     // Census of the primary probe's FIRST blocking hit, any component (the P2b hit/far/miss meaning), far split by class.
     if (RwgProbeFirstClass < 0) { ++RwgPcTraceMiss; }
     else if (FMath::Abs(RwgProbeFirstZ - ApiZ0) <= NodeShuffleMapMode::RwgTraceAgreeCm) { ++RwgPcTraceHit; }
@@ -250,7 +284,7 @@ bool ANodeShuffleSubsystem::RwgResolveAtSpawn(FNodeShuffleEntry& Entry, bool& bO
     {
         ++RwgPcTraceFar;
         if (RwgProbeFirstClass == 0) { ++RwgPcFarTerrain; } else if (RwgProbeFirstClass == 1) { ++RwgPcFarCanopy; }
-        else if (RwgProbeFirstClass == 2) { ++RwgPcFarWater; } else { ++RwgPcFarOther; }
+        else if (RwgProbeFirstClass == 2) { ++RwgPcFarWater; } else if (RwgProbeFirstClass == 4) { ++RwgPcFarSolid; } else { ++RwgPcFarOther; }
     }
     if (!bSettled)
     {
@@ -315,6 +349,7 @@ void ANodeShuffleSubsystem::RwgSpawnPass(float SpawnRadiusCm, bool& bChangedWorl
     RwgPcBudgetSkipped += Cands.Num() - N;
     ++RwgPcPasses;
     RwgResettlePass(); // RWG P2c: entries placed at the API Z by builds <= rwg-p4-2 (NodeShuffleMapModeResettle.cpp)
+    RwgRockOcclusionPass(); // RWG P2d: placed entries under a SOLID mesh are redealt (NodeShuffleMapModeRock.cpp)
     if ((RwgPcPasses % 12) == 1)
     {
         // RWG P2b review SF4 (spec P2b section 3): hide-stickiness sample. Up to 50 hide records at stride Num/50.
@@ -350,10 +385,10 @@ void ANodeShuffleSubsystem::RwgSpawnPass(float SpawnRadiusCm, bool& bChangedWorl
     if (RwgPcSpawned > 0 || (RwgPcPasses % 12) == 1) // bounded: a pass that spawned, else once a minute
     {
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("PLACECENSUS: pass=%d attempted=%d spawned=%d notSpawned=%d deferredSettle=%d waterLockedNew=%d apiRedealCalls=%d budgetSkipped=%d farNoAttempt=%d liveReasserted=%d spawnTraceHit=%d spawnTraceMiss=%d spawnTraceFar=%d farTerrain=%d farCanopy=%d farWater=%d farOther=%d settledOnTerrain=%d noTerrainDefer=%d spawnSettlesWithAnySkip=%d terrainOnlyCapHitsAllCallers=%d fallbackNoApi=%d attemptRadiusM=%.0f spawnRadiusM=%.0f layoutEntries=%d"),
+            TEXT("PLACECENSUS: pass=%d attempted=%d spawned=%d notSpawned=%d deferredSettle=%d waterLockedNew=%d apiRedealCalls=%d budgetSkipped=%d farNoAttempt=%d liveReasserted=%d spawnTraceHit=%d spawnTraceMiss=%d spawnTraceFar=%d farTerrain=%d farCanopy=%d farWater=%d farOther=%d farSolid=%d rejectedRock=%d settledOnTerrain=%d noTerrainDefer=%d spawnSettlesWithAnySkip=%d terrainOnlyCapHitsAllCallers=%d fallbackNoApi=%d attemptRadiusM=%.0f spawnRadiusM=%.0f layoutEntries=%d"),
             RwgPcPasses, RwgPcAttempted, RwgPcSpawned, RwgPcAttempted - RwgPcSpawned, DeferredThisPass - DeferredBefore,
             WaterLockedThisSession.Num() - WaterLockedBefore, RwgPcRedealApi, RwgPcBudgetSkipped, RwgPcFarNoAttempt, RwgPcLive,
-            RwgPcTraceHit, RwgPcTraceMiss, RwgPcTraceFar, RwgPcFarTerrain, RwgPcFarCanopy, RwgPcFarWater, RwgPcFarOther,
+            RwgPcTraceHit, RwgPcTraceMiss, RwgPcTraceFar, RwgPcFarTerrain, RwgPcFarCanopy, RwgPcFarWater, RwgPcFarOther, RwgPcFarSolid, RwgPcRejectedRock,
             RwgPcSettledTerrain, RwgPcNoTerrainDefer, RwgPcSkippedToTerrain, RwgProbeCapHits,
             RwgPcFallback, AttemptRadiusCm / 100.f, SpawnRadiusCm / 100.f, Layout.Num());
         RwgEmitDzCensus(); // RWG P2c: session apiToTerrainDz distribution by band, emitted with PLACECENSUS
@@ -392,6 +427,7 @@ void ANodeShuffleSubsystem::RwgEmitPlaceCensus()
     RwgPcAttempted = RwgPcSpawned = RwgPcBudgetSkipped = RwgPcFarNoAttempt = RwgPcLive = 0;
     RwgPcTraceHit = RwgPcTraceMiss = RwgPcTraceFar = RwgPcFallback = RwgPcRedealApi = 0;
     RwgPcFarTerrain = RwgPcFarCanopy = RwgPcFarWater = RwgPcFarOther = 0;
+    RwgPcFarSolid = RwgPcRejectedRock = 0; // RWG P2d
     RwgPcSettledTerrain = RwgPcNoTerrainDefer = RwgPcSkippedToTerrain = 0;
     RwgProbeCapHits = 0;
 }

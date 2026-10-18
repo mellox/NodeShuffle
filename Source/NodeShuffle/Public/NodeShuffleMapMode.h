@@ -63,6 +63,13 @@ namespace NodeShuffleMapMode
     constexpr int32 RwgResettlePerPass = 32;
     constexpr int32 RwgResettleWellsPerPass = 4;
     constexpr int32 RwgResettleVoidGiveUp = 12;
+    // RWG P2d (2026-10-18): rock-occlusion probe window (from this far above a placed node/member down to this far above its Z),
+    // well resettle redeals per pass, and the member-to-probe-hit distance above which a well member reads as floating.
+    // TODO(2026-10-18, RWG P2d -> R6): re-check against RESETTLE-ROCK / RESETTLE-WELL.
+    constexpr double RwgRockOcclusionHeightCm = 2000.0;
+    constexpr double RwgRockOcclusionEndAboveCm = 50.0;
+    constexpr int32 RwgResettleWellRedealsPerPass = 2;
+    constexpr double RwgWellFloatCm = 300.0;
     // RWG P4b (2026-10-18): satellite re-bind retry -- claims tried per pass (nearest the pawn first), and the attempts after
     // which a still-unbound claim drops one priority tier. TODO(2026-10-18, P4b -> R5): re-check against WELLCLAIM-RETRY.
     constexpr int32 RwgWellRetryClaimsPerPass = 32;

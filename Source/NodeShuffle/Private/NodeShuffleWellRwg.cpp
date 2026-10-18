@@ -278,6 +278,7 @@ void ANodeShuffleSubsystem::RwgRetryUnboundWellSatellites()
                 for (AFGResourceNodeFrackingSatellite* Sat : Pool)
                 {
                     if (RwgIsClaimedOriginal(Sat)) { continue; } // bound earlier in this pass
+                    if (IsValid(Core)) { const AFGResourceNodeFrackingCore* SC = Sat->GetCore().Get(); if (SC && SC != Core) { continue; } } // linked to another core: never this claim's (RWG P2d, p2c2 rereview F-B2)
                     const float D = FVector::DistSquared(Sat->GetActorLocation(), S.RwgClaimLocation);
                     if (D < BestSq) { BestSq = D; Best = Sat; }
                 }
@@ -289,15 +290,24 @@ void ANodeShuffleSubsystem::RwgRetryUnboundWellSatellites()
             if (!Hit) { ++LeftHere; continue; }
             const FString OldPath = S.SatellitePath;
             const FString NewPath = WellPathOf(Hit);
-            // OUR relocated copy of this satellite is keyed by the record's path (SpawnedWellSatellites, key: SatellitePath),
-            // adopted under the sentinel at load. Re-key it with the record, or the maintenance pass would read the copy as
-            // missing and spawn a second one.
-            AFGResourceNodeFrackingSatellite* OurCopy = nullptr;
-            if (SpawnedWellSatellites.RemoveAndCopyValue(OldPath, OurCopy))
+            // A spawned copy already keyed by the live path means another record holds that key. Test BEFORE touching the map:
+            // on a collision the sentinel, our copy's key and the used set stay as they are, and the bind is skipped.
+            if (SpawnedWellSatellites.Contains(NewPath))
             {
-                if (SpawnedWellSatellites.Contains(NewPath)) { ++RekeyCollision; }
-                else { SpawnedWellSatellites.Add(NewPath, OurCopy); ++RekeyMoved; }
+                ++RekeyCollision;
+                ++LeftHere;
+                if (!WellSuppressLogged.Contains(OldPath + TEXT("|retry-collision")))
+                {
+                    WellSuppressLogged.Add(OldPath + TEXT("|retry-collision"));
+                    UE_LOG(LogNodeShuffle, Display,
+                        TEXT("WELLCLAIM-RETRY-COLLISION: core='%s' sentinel='%s' livePath='%s'; a spawned copy is already keyed by the live path, bind skipped (said once per satellite)"),
+                        *E.CorePath, *OldPath, *NewPath);
+                }
+                continue;
             }
+            // OUR relocated copy is keyed by the record's path (adopted under the sentinel at load); re-key it with the record.
+            AFGResourceNodeFrackingSatellite* OurCopy = nullptr;
+            if (SpawnedWellSatellites.RemoveAndCopyValue(OldPath, OurCopy)) { SpawnedWellSatellites.Add(NewPath, OurCopy); ++RekeyMoved; }
             S.SatellitePath = NewPath;
             RwgClaimedOriginals.Add(FObjectKey(Hit));
             ++BoundHere;
@@ -331,7 +341,7 @@ void ANodeShuffleSubsystem::RwgRetryUnboundWellSatellites()
     if (BoundNow > 0 || (Pending > 0 && (RwgWellRetryPasses % 12) == 1) || (bQuietNow && !bRwgWellRetryQuiet))
     {
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("WELLCLAIM-RETRY: pass=%d groupsPending=%d satsBoundNow=%d satsStillUnbound=%d groupsNowComplete=%d suppressedNow=%d claimsTriedThisPass=%d viaCoreList=%d viaLocation=%d looseCandidates=%d ourCopyRekeyed=%d rekeyCollision=%d"),
+            TEXT("WELLCLAIM-RETRY: pass=%d groupsPending=%d satsBoundNow=%d satsStillUnbound=%d groupsNowComplete=%d suppressCallsNow=%d claimsTriedThisPass=%d viaCoreList=%d viaLocation=%d looseCandidates=%d ourCopyRekeyed=%d rekeyCollision=%d"),
             RwgWellRetryPasses, Pending, BoundNow, StillUnbound, NowComplete, SuppressedNow, N, ViaList, ViaLocation, Loose.Num(),
             RekeyMoved, RekeyCollision);
     }
@@ -352,7 +362,13 @@ bool ANodeShuffleSubsystem::RwgDealWellSite(const NodeShuffleMapMode::FRwgGround
     const double Y = Rng.FRandRange(-H, H);
     if (Q.Outside(X, Y)) { ++RwgWrOutside; return false; }
     const double Zc = Q.SurfaceZ(X, Y);
-    if (RwgIsPointInWaterCached(FVector(X, Y, Zc))) { ++RwgWrWater; return false; }
+    if (RwgIsPointInWaterCached(FVector(X, Y, Zc)))
+    {
+        // Coordinator addendum (measured only, gates nothing): rejectedWater split by the sign of the API surface Z.
+        if (Zc < 0.0) { ++RwgWrWaterZBelow0; } else { ++RwgWrWaterZAtOrAbove0; RwgNoteWaterSample(Q, FVector(X, Y, Zc), true, TEXT("wellDeal")); }
+        ++RwgWrWater;
+        return false;
+    }
     double CoreRiseRun = 0.0; // RWG P2c: core-site API gradient above the settle cliff angle (satellites are redrawn at placement)
     if (RwgApiSlopeTooSteep(Q, X, Y, CoreRiseRun)) { ++RwgWrSlope; return false; }
     double ZMin = Zc, ZMax = Zc;
@@ -377,6 +393,7 @@ bool ANodeShuffleSubsystem::RwgDealWellSite(const NodeShuffleMapMode::FRwgGround
     RwgWrZSpreadMaxCm = FMath::Max(RwgWrZSpreadMaxCm, static_cast<int32>(ZMax - ZMin));
     ++RwgWrResolvedZ;
     OutCore = FVector(X, Y, Zc);
+    if (Zc < 0.0) { ++RwgWrDealtBelowZ0; RwgNoteWaterSample(Q, OutCore, false, TEXT("wellDeal")); } // coordinator addendum, measured only
     return true;
 }
 
@@ -386,6 +403,7 @@ void ANodeShuffleSubsystem::RwgWellRollBegin()
     RwgWrOutside = RwgWrWater = RwgWrSatOutside = RwgWrSatWater = RwgWrNearOriginal = 0;
     RwgWrSpacing = RwgWrResolvedZ = RwgWrZSpreadMaxCm = 0;
     RwgWrSlope = RwgWrCoresOurs = 0; // RWG P2c
+    RwgWrWaterZBelow0 = RwgWrWaterZAtOrAbove0 = RwgWrDealtBelowZ0 = 0; // coordinator addendum
     RwgWrT0 = FPlatformTime::Seconds();
 }
 
@@ -398,9 +416,9 @@ void ANodeShuffleSubsystem::RwgEmitWellRollCensus(bool bApiDeal, const FString& 
         if (E.bGroupPlaced) { ++Placed; }
     }
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("WELLROLL: map=rwg deal=%s apiStatus='%s' cores=%d coresOurs=%d entries=%d eligible=%d builtOn=%d dealt=%d dealFailed=%d drawn=%d rejectedOutside=%d rejectedWater=%d rejectedSlope=%d rejectedSatOutside=%d rejectedSatWater=%d rejectedNearOriginal=%d rejectedSpacing=%d resolvedZ=%d zSpreadMaxCm=%d noAuthoredResource=%d claimedNew=%d mintRefusedNearClaim=%d placedBefore=%d durationMs=%d"),
+        TEXT("WELLROLL: map=rwg deal=%s apiStatus='%s' cores=%d coresOurs=%d entries=%d eligible=%d builtOn=%d dealt=%d dealFailed=%d drawn=%d rejectedOutside=%d rejectedWater=%d rejectedWaterSurfaceZBelow0=%d rejectedWaterSurfaceZAtOrAbove0=%d dealtBelowZ0=%d rejectedSlope=%d rejectedSatOutside=%d rejectedSatWater=%d rejectedNearOriginal=%d rejectedSpacing=%d resolvedZ=%d zSpreadMaxCm=%d noAuthoredResource=%d claimedNew=%d mintRefusedNearClaim=%d placedBefore=%d durationMs=%d"),
         bApiDeal ? TEXT("api") : TEXT("fallback"), *ApiStatus, RwgWrCores, RwgWrCoresOurs, WellLayout.Num(), Eligible, BuiltOn, Dealt, DealFailed,
-        RwgWrDrawn, RwgWrOutside, RwgWrWater, RwgWrSlope, RwgWrSatOutside, RwgWrSatWater, RwgWrNearOriginal, RwgWrSpacing, RwgWrResolvedZ,
+        RwgWrDrawn, RwgWrOutside, RwgWrWater, RwgWrWaterZBelow0, RwgWrWaterZAtOrAbove0, RwgWrDealtBelowZ0, RwgWrSlope, RwgWrSatOutside, RwgWrSatWater, RwgWrNearOriginal, RwgWrSpacing, RwgWrResolvedZ,
         RwgWrZSpreadMaxCm, RwgWrNoAuthored, RwgWrClaimedNew, RwgWrMintRefused, Placed,
         static_cast<int32>((FPlatformTime::Seconds() - RwgWrT0) * 1000.0));
 }
@@ -418,9 +436,10 @@ void ANodeShuffleSubsystem::RwgEmitWellPlace(int32 Searching, int32 PlacedNow, i
             if (E.bRelocationFailed) { ++Failed; }
         }
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("WELLPLACE: pass=%d searching=%d placedNow=%d deferred=%d farNoAttempt=%d dealtUnplaced=%d placedTotal=%d relocationFailed=%d attemptRadiusM=%.0f claimedOriginals=%d"),
-            RwgWpPasses, Searching, PlacedNow, Deferred, RwgWpFar, Dealt, Placed, Failed,
+            TEXT("WELLPLACE: pass=%d searching=%d placedNow=%d deferred=%d farNoAttempt=%d dealtUnplaced=%d placedTotal=%d relocationFailed=%d rejectedRock=%d attemptRadiusM=%.0f claimedOriginals=%d"),
+            RwgWpPasses, Searching, PlacedNow, Deferred, RwgWpFar, Dealt, Placed, Failed, RwgWpRejectedRock,
             NodeShuffleMapMode::RwgAttemptRadiusCm / 100.f, RwgClaimedOriginals.Num());
     }
     RwgWpFar = 0;
+    RwgWpRejectedRock = 0; // RWG P2d: per pass
 }

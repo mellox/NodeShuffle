@@ -370,7 +370,9 @@ bool ANodeShuffleSubsystem::ValidateWellMemberSpot(const FVector& ProbeXY, float
     Reach(FNodeShuffleWellProbeCensus::Gate_Water);
     if (bWater) { OutReason = TEXT("water"); return false; }
     Reach(FNodeShuffleWellProbeCensus::Gate_Cliff);
-    if (bSteep) { OutReason = TEXT("cliff"); return false; }
+    // RWG P2d: a SOLID-mesh stop (rock/cliff) arrives through the steep channel; the reason stays "cliff" for every existing
+    // consumer of OutReason, and WELLPLACE counts it as rejectedRock.
+    if (bSteep) { if (bRwgLastProbeSolid) { ++RwgWpRejectedRock; } OutReason = TEXT("cliff"); return false; }
 
     // Resource-node overlap. Deposits are excluded for the same reason the node path excludes them
     // (tiny one-off rocks, not blocking nodes). Our OWN already-spawned group members are excluded so

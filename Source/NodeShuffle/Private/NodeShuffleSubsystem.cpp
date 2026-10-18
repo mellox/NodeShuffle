@@ -6701,13 +6701,20 @@ bool ANodeShuffleSubsystem::RaycastGroundAt(const FVector& ProbeXY, float StartZ
     // water sheet, another node) is ignored BY COMPONENT -- the terrain chunk actor owns those components too -- and the
     // same segment is traced again, at most RwgTerrainSkipMax times; exhausting the cap reads as no hit (the caller defers).
     bool bSkippedWaterSheet = false; // RWG P2c review S2: a skipped water-class hit marks the primary settle wet
-    const auto TraceDown = [this, bTerrainOnly, &bSkippedWaterSheet](FHitResult& H, const FVector& S, const FVector& En, FCollisionQueryParams& P) -> bool
+    // RWG P2d (2026-10-18): a SOLID mesh (class 4: rock/cliff by mesh path) stops the PRIMARY trace of a PLACEMENT caller (one that
+    // passes bOutTooSteep) as a surface the node may not take; ring traces and normal-only callers keep P2c's skip-and-retrace.
+    bRwgLastProbeSolid = false;
+    bool bPrimarySolid = false;
+    const bool bSolidBlocks = bTerrainOnly && bOutTooSteep != nullptr;
+    const auto TraceDown = [this, bTerrainOnly, &bSkippedWaterSheet, &bPrimarySolid](FHitResult& H, const FVector& S, const FVector& En, FCollisionQueryParams& P, bool bSolidStops) -> bool
     {
         if (!bTerrainOnly) { return GetWorld()->LineTraceSingleByChannel(H, S, En, ECC_WorldStatic, P); }
         for (int32 K = 0; K <= NodeShuffleMapMode::RwgTerrainSkipMax; ++K)
         {
             if (!GetWorld()->LineTraceSingleByChannel(H, S, En, ECC_WorldStatic, P)) { return false; }
-            const int32 Cls = RwgHitClassOf(H);
+            const TCHAR* Rule = TEXT("");
+            const int32 Cls = RwgHitClassOf(H, &Rule);
+            if (Cls != 0) { RwgNoteHitClass(H, Cls, Rule); }
             if (K == 0 && bRwgProbeArmed && RwgProbeFirstClass < 0) { RwgProbeFirstClass = Cls; RwgProbeFirstZ = H.ImpactPoint.Z; }
             // A player buildable is accepted like terrain: vanilla settles nodes on foundations by design. Lightweight buildables
             // (foundations, walls, ramps) collide through abstract-instance components owned by AAbstractInstanceManager, not by
@@ -6715,6 +6722,7 @@ bool ANodeShuffleSubsystem::RaycastGroundAt(const FVector& ProbeXY, float StartZ
             const AActor* HitOwner = H.GetActor();
             if (Cls == 0 || (HitOwner && (HitOwner->IsA<AFGBuildable>()
                                           || HitOwner->GetClass()->GetName().Contains(TEXT("AbstractInstanceManager"))))) { return true; }
+            if (Cls == 4 && bSolidStops) { bPrimarySolid = true; return true; } // RWG P2d: solid mesh = the spot is BLOCKED
             ++RwgProbeSkipped;
             if (Cls == 2) { bSkippedWaterSheet = true; }
             RwgNoteSkippedHit(H, Cls);
@@ -6725,9 +6733,21 @@ bool ANodeShuffleSubsystem::RaycastGroundAt(const FVector& ProbeXY, float StartZ
         return false;
     };
     FHitResult Hit;
-    if (!TraceDown(Hit, Start, End, Params))
+    if (!TraceDown(Hit, Start, End, Params, bSolidBlocks))
     {
         return false; // no terrain / out of range (true void)
+    }
+    if (bPrimarySolid)
+    {
+        // RWG P2d: the primary trace stopped on a SOLID mesh above any terrain hit -> reported UNPLACEABLE through the steep
+        // channel (bSolidBlocks guarantees bOutTooSteep is non-null), so RaycastSettle's spiral -> water-no-land -> API redeal
+        // chain and the well probe's cliff reject run unchanged. No normal smoothing, no water-grid sample (not terrain).
+        bRwgLastProbeSolid = true;
+        ++RwgProbeSolidHits;
+        if (OutGroundHit) { *OutGroundHit = Hit; }
+        OutLoc = Hit.ImpactPoint;
+        *bOutTooSteep = true;
+        return true;
     }
     const bool bPrimarySkippedWater = bSkippedWaterSheet;
     // ns-t45-verticaldiag: the diagnostic tap, taken from the SAME hit OutLoc is read from on the next
@@ -6746,7 +6766,7 @@ bool ANodeShuffleSubsystem::RaycastGroundAt(const FVector& ProbeXY, float StartZ
             const float PX = OutLoc.X + SmoothNormalRingCm * FMath::Cos(Ang);
             const float PY = OutLoc.Y + SmoothNormalRingCm * FMath::Sin(Ang);
             FHitResult RingHit;
-            if (TraceDown(RingHit, FVector(PX, PY, OutLoc.Z + 400.0f), FVector(PX, PY, OutLoc.Z - 600.0f), Params))
+            if (TraceDown(RingHit, FVector(PX, PY, OutLoc.Z + 400.0f), FVector(PX, PY, OutLoc.Z - 600.0f), Params, false))
             {
                 Acc += RingHit.ImpactNormal;
             }

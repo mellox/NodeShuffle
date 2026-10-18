@@ -261,6 +261,9 @@ struct FNodeShuffleEntry
     UPROPERTY(SaveGame) bool bRwgSettledOnTerrain = false;
     // RWG P2c: settled Z minus RWG SurfaceHeightCm at the settled XY, measured when bRwgSettledOnTerrain was set. 0 = unset.
     UPROPERTY(SaveGame) float RwgApiToTerrainDzCm = 0.0f;
+    // RWG P2d (2026-10-18): true once the rock-occlusion pass (NodeShuffleMapModeRock.cpp) traced 2000 cm above this entry's live
+    // actor down to its Z and met no SOLID mesh. Cleared when the entry is redealt. False on every vanilla entry (never read there).
+    UPROPERTY(SaveGame) bool bRwgRockChecked = false;
 };
 
 // One original vanilla node location to suppress on stream-in after a wipe-on-
@@ -1025,14 +1028,17 @@ private:
     // ---- RWG P2c (2026-10-18): terrain-only settle, resettle pass, roll-time slope reject, dZ census. ----
     // Predicates/classifier and the resettle pass in NodeShuffleMapModeResettle.cpp; RwgApiSlopeTooSteep in NodeShuffleMapModePlace.cpp.
     static bool RwgIsTerrainHit(const struct FHitResult& Hit);   // owner class has "TerrainChunk" AND component name has "Terrain" (HeightApi F1)
-    static int32 RwgHitClassOf(const struct FHitResult& Hit);    // 0 terrain, 1 canopy (instanced mesh), 2 water (name has "Water"), 3 other
+    // RWG P2d (2026-10-18): 0 terrain, 1 canopy (skip), 2 water (skip, marks wet), 3 other (skip: resource nodes / ours / non-mesh),
+    // 4 SOLID (rock/cliff by mesh path, or an unknown large flat non-instanced mesh): the spot is BLOCKED for placement callers.
+    static int32 RwgHitClassOf(const struct FHitResult& Hit, const TCHAR** OutRule = nullptr);
+    void RwgNoteHitClass(const struct FHitResult& Hit, int32 Class, const TCHAR* Rule) const; // RWGHITCLASS once per mesh path (<= 64)
     void RwgNoteSkippedHit(const struct FHitResult& Hit, int32 Class) const; // RWGTERRAINSKIP once per (owner class, component class, name)
     bool RwgApiSlopeTooSteep(const NodeShuffleMapMode::FRwgGroundQuery& Q, double X, double Y, double& OutRiseRun) const;
     double RwgNearestPawnDist2D(const FVector& At) const;        // MAX when no pawn
     void RwgRecordDz(const FVector& At, double DzCm);            // session |dZ| samples by nearest-pawn band
     void RwgEmitDzCensus();
     void RwgResettlePass();
-    void RwgResettleWells(int32& Checked, int32& Moved, int32& Kept, int32& Deferred, int32& Occupied, int32& MaxDzCm);
+    void RwgResettleWells(int32& Checked, int32& Redealt, int32& Kept, int32& Deferred, int32& Occupied, int32& MaxDzCm); // RWG P2d: NodeShuffleMapModeRock.cpp
     TMap<FString, int32> RwgResettleWellVoids; // session: void probes per well group (CorePath)
     // Terrain-only probe capture: armed by a caller around one settle; the FIRST blocking hit of the first trace is kept.
     mutable bool bRwgProbeArmed = false;
@@ -1041,6 +1047,24 @@ private:
     mutable int32 RwgProbeSkipped = 0;
     mutable int32 RwgProbeCapHits = 0;            // per PLACECENSUS pass (zeroed there): terrain-only traces from ANY caller that exhausted RwgTerrainSkipMax (read as no hit)
     mutable TSet<FString> RwgSkippedHitKinds;     // session: RWGTERRAINSKIP already printed for these kinds
+    // ---- RWG P2d (2026-10-18): rock-aware probe, rock-occlusion resettle, well resettle via the despawn path. ----
+    mutable bool bRwgLastProbeSolid = false;      // written by every RaycastGroundAt: its primary terrain-only trace stopped on a SOLID mesh
+    mutable int32 RwgProbeSolidHits = 0;          // solid primary stops (zeroed by RwgResolveAtSpawn around one settle)
+    mutable TSet<FString> RwgHitClassPaths;       // session: RWGHITCLASS already printed for these mesh paths
+    mutable int32 RwgWpRejectedRock = 0;          // WELLPLACE rejectedRock (per pass): member probes that stopped on a solid mesh
+    int32 RwgPcRejectedRock = 0, RwgPcFarSolid = 0; // PLACECENSUS per pass
+    int32 RwgRockOcclusionProbe(const FVector& At, const AActor* IgnoreActor, FString& OutMeshPath) const; // 0 clear, 1 solid above, 2 terrain/buildable above
+    bool RwgRedealLiveEntry(FNodeShuffleEntry& E, const TCHAR* Why);   // false = refused (pinned/occupied); despawn + API redeal
+    void RwgRockOcclusionPass();
+    bool RwgRedealWellGroup(FNodeShuffleWellEntry& E, const TCHAR* Why, bool& bOutDealt); // false = DespawnWellGroup refused a member
+    int32 RwgRockPasses = 0;
+    TSet<FGuid> RwgRockRefused;                   // session: occluded but pinned/occupied (re-checked next session)
+    TMap<FString, int32> RwgWellResettleSalt;     // session: resettle redeals per core path (salts the deal stream)
+    // Coordinator addendum (water diagnostics, measured only, gates nothing): ROLLCENSUS / WELLROLL splits + bounded samples.
+    void RwgNoteWaterSample(const NodeShuffleMapMode::FRwgGroundQuery& Q, const FVector& P, bool bVolumeWet, const TCHAR* Caller);
+    int32 RwgRcWaterZBelow0 = 0, RwgRcWaterZAtOrAbove0 = 0, RwgRcDealtBelowZ0 = 0; // per roll (GenerateRwgLocations)
+    int32 RwgWrWaterZBelow0 = 0, RwgWrWaterZAtOrAbove0 = 0, RwgWrDealtBelowZ0 = 0; // per well roll (RwgWellRollBegin)
+    int32 RwgWaterSamples = 0, RwgSeaSamples = 0; // session: RWGWATERSAMPLE / RWGSEASAMPLE lines printed (cap 8 each)
     // PLACECENSUS per-pass additions (zeroed by RwgEmitPlaceCensus).
     int32 RwgPcFarTerrain = 0, RwgPcFarCanopy = 0, RwgPcFarWater = 0, RwgPcFarOther = 0;
     int32 RwgPcSettledTerrain = 0, RwgPcNoTerrainDefer = 0, RwgPcSkippedToTerrain = 0;
