@@ -163,7 +163,7 @@ if ($wl -and -not $wl.Contains('if (Reb != INDEX_NONE) { SatIdx = Reb; E.Satelli
 $dw = Get-Body $text.wrwg ('bool ' + $cls + 'RwgDealWellSite(')
 if (-not $dw) { $fails += 'W5: RwgDealWellSite body not found' } else {
     $order = @('if (Q.Outside(X, Y)) { ++RwgWrOutside; return false; }',
-               'const int32 WetCore = RwgWetV2(Q, FVector(X, Y, Zc));',
+               'const int32 WetCore = RwgRejectV3(Q, FVector(X, Y, Zc));',
                'if (Q.Outside(Sx, Sy)) { ++RwgWrSatOutside; return false; }',
                'if (WetSat != 0) { if ((WetSat & 1) != 0) { ++RwgWrRejectedSea; } ++RwgWrSatWater; return false; }',
                '++RwgWrNearOriginal;', ('++RwgWr' + 'ResolvedZ;'))
@@ -441,7 +441,7 @@ if (-not $d1x) { $fails += 'D9: RwgDealOneSpot body not found' } else {
 }
 if (-not $text.place.Contains('rejectedWater=%d rejectedWaterSurfaceZBelow0=%d rejectedWaterSurfaceZAtOrAbove0=%d dealt' + 'BelowZ0=%d ')) { $fails += 'D9: ROLLCENSUS must carry the surface-Z split and dealtBelowZ0' }
 if (-not $text.place.Contains('if (N >= ' + '8) { return; }')) { $fails += 'D9: the water samples must be capped at 8 per kind' }
-if ((Count $text.nsmod ('LOADED (2026-10-18-rwg-' + 'p2e-2)')) -ne 1) { $fails += 'D10: the current marker (P2e-2, rwg-p2e-2) must be present' }
+if ((Count $text.nsmod ('LOADED (2026-10-18-rwg-' + 'p2f-1)')) -ne 1) { $fails += 'D10: the current marker (P2f, rwg-p2f-1) must be present' }
 
 if ($fails.Count -gt 0) { $fails | ForEach-Object { Write-Host "FAIL $_" }; exit 1 }
 Write-Host "PASS: RWG P4/P2c/P2d lint -- W1..W17, C1..C14 and D1..D11 hold across $($files.Count) loaded files"

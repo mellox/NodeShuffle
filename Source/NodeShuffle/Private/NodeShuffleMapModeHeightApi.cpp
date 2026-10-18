@@ -44,6 +44,8 @@ namespace
     using FnWater = double (*)(const void* This, double X, double Y, int32 Arg3);
     using FnScalar = double (*)(const void* This);
     using FnInSea = bool (*)(const void* This, double X, double Y, double Z); // RWG P2e: this RCX, X/Y/Z in XMM1..3 (disassembled, build 705)
+    using FnVoidAt = bool (*)(const void* This, double X, double Y);          // RWG P2f: this RCX (spliced world), X XMM1, Y XMM2 (disassembled, build 705)
+    using FnKillboxTop = bool (*)(const void* This, double* OutZ);            // RWG P2f: this RCX (generator), OutZ RDX (double&) (disassembled, build 705)
 
     // Decorated names, copied from the dumpbin output of the build above (the research file lists the same).
     const char* const SymGet = "?Get@APWWorldGenerator@@SAPEAV1@PEAVUWorld@@@Z";
@@ -55,6 +57,9 @@ namespace
     const char* const SymGMin = "?GlobalMinSurfaceCm@FPWDensityField@@QEBANXZ"; // optional: range + plausibility
     const char* const SymGMax = "?GlobalMaxSurfaceCm@FPWDensityField@@QEBANXZ"; // optional: range + plausibility
     const char* const SymInSea = "?InSeaVolume@FPWSplicedWorld@@QEBA_NNNN@Z"; // RWG P2e: optional; its term counts only after RWGSEACHECK grades it
+    const char* const SymVoidAt = "?VoidAt@FPWSplicedWorld@@QEBA_NNN@Z";       // RWG P2f: optional; its term counts only after RWGVOIDCHECK grades it
+    const char* const SymKillboxTop = "?GetKillboxTop@APWWorldGenerator@@QEBA_NAEAN@Z"; // RWG P2f: optional; compared with the measured volume top
+    // RWG P2f: RWG's integer-index classifiers (per-sample iy,ix) are NEVER bound -- they `int 3` on an out-of-range index in Shipping.
 
     struct FRwgHeightApi
     {
@@ -78,6 +83,10 @@ namespace
         FnScalar GMax = nullptr;
         FnInSea InSea = nullptr;          // RWG P2e: null unless resolved AND its byte signature matched
         FString SeaStatus = TEXT("notTried");
+        FnVoidAt VoidAt = nullptr;            // RWG P2f: null unless resolved AND its byte signature matched
+        FnKillboxTop KillboxTop = nullptr;    // RWG P2f: same
+        FString VoidStatus = TEXT("notTried");
+        FString KillboxStatus = TEXT("notTried");
     };
     FRwgHeightApi& Api() { static FRwgHeightApi A; return A; } // per process: the RWG DLL never unloads
 
@@ -179,6 +188,24 @@ namespace
         else { A.SeaStatus = TEXT("bound"); }
         UE_LOG(LogNodeShuffle, Display, TEXT("RWGSEABIND: status=%s export='%s' optional=1; its term counts only after RWGSEACHECK grades it"), *A.SeaStatus, ANSI_TO_TCHAR(SymInSea));
         if (!A.InSea) { UE_LOG(LogNodeShuffle, Warning, TEXT("RWGSEABIND-OFF: status=%s; the sea term is off this session"), *A.SeaStatus); }
+        // RWG P2f (2026-10-18): VoidAt + GetKillboxTop, OPTIONAL like InSeaVolume -- same position (after the version, export and required-
+        // signature gates, before A.bUsable = true); missing or byte-mismatched = null, its term stays off. Build-705 disassembly (dumpbin
+        // /DISASM, 2026-10-18): VoidAt = this RCX, X XMM1, Y XMM2, returns false when the void count [+0x2E8] is 0 and on a negative or
+        // >= N sample index (its own bounds check); GetKillboxTop = mov rax,[rcx+0C58h] / mov [rdx],rax / cmp dword [rcx+0C48h],0 / setg al.
+        // Both signatures are pinned in full (the displacements included: the version gate is exact, a moved field must fail closed).
+        static const int16 SigVoidAt[] = { 0x40,0x53,0x48,0x83,0xEC,0x30,0x48,0x83,0xB9,0xE8,0x02,0x00,0x00,0x00,0x0F,0x28,0xE2,0x0F,0x28,0xC1,0x48,0x8B,0xD9,0x0F,0x84 };
+        static const int16 SigKillboxTop[] = { 0x48,0x8B,0x81,0x58,0x0C,0x00,0x00,0x48,0x89,0x02,0x83,0xB9,0x48,0x0C,0x00,0x00,0x00,0x0F,0x9F,0xC0,0xC3 };
+        A.VoidAt = reinterpret_cast<FnVoidAt>(::GetProcAddress(H, SymVoidAt));
+        if (!A.VoidAt) { A.VoidStatus = TEXT("exportMissing"); }
+        else if (!SigOk(reinterpret_cast<const void*>(A.VoidAt), SigVoidAt, UE_ARRAY_COUNT(SigVoidAt))) { A.VoidAt = nullptr; A.VoidStatus = TEXT("signatureMismatch"); }
+        else { A.VoidStatus = TEXT("bound"); }
+        A.KillboxTop = reinterpret_cast<FnKillboxTop>(::GetProcAddress(H, SymKillboxTop));
+        if (!A.KillboxTop) { A.KillboxStatus = TEXT("exportMissing"); }
+        else if (!SigOk(reinterpret_cast<const void*>(A.KillboxTop), SigKillboxTop, UE_ARRAY_COUNT(SigKillboxTop))) { A.KillboxTop = nullptr; A.KillboxStatus = TEXT("signatureMismatch"); }
+        else { A.KillboxStatus = TEXT("bound"); }
+        UE_LOG(LogNodeShuffle, Display, TEXT("RWGVOIDBIND: voidAtStatus=%s killboxTopStatus=%s optional=1; the void term counts only after RWGVOIDCHECK grades it, the killbox floor reads the damage volumes first"),
+            *A.VoidStatus, *A.KillboxStatus);
+        if (!A.VoidAt) { UE_LOG(LogNodeShuffle, Warning, TEXT("RWGVOIDBIND-OFF: voidAtStatus=%s; the void term is off this session (the killbox floor still applies when measured)"), *A.VoidStatus); }
         A.bUsable = true;
         A.Status = TEXT("bound");
 #else
@@ -367,6 +394,7 @@ NodeShuffleMapMode::FRwgGroundQuery::FRwgGroundQuery(UWorld* World, UObject* Gen
     }
     HalfExtentCm = WorldM * 50.0; // WorldSizeMeters is the full side; half of it, in cm (R2: 1,500,000)
     F = Fp;
+    G = Gen; // RWG P2f: GetKillboxTop's this
     StatusText = TEXT("usable");
 }
 
@@ -396,6 +424,41 @@ bool NodeShuffleMapMode::FRwgGroundQuery::InSea(double X, double Y, double Z) co
 double NodeShuffleMapMode::FRwgGroundQuery::GlobalMinZ() const
 {
     return (F && Api().GMin) ? Api().GMin(F) : std::numeric_limits<double>::quiet_NaN(); // RWG P2e census floor; NaN = optional export dropped
+}
+
+bool NodeShuffleMapMode::FRwgGroundQuery::HasVoid() const
+{
+    return F != nullptr && S != nullptr && Api().VoidAt != nullptr; // RWG P2f
+}
+
+bool NodeShuffleMapMode::FRwgGroundQuery::VoidAt(double X, double Y) const
+{
+    // RWG P2f: our IsOutsideWorld test first (VoidAt also bounds-checks itself), then raw VoidAt(X, Y) on the spliced world.
+    if (!HasVoid() || Outside(X, Y)) { return false; }
+    return Api().VoidAt(S, X, Y);
+}
+
+bool NodeShuffleMapMode::FRwgGroundQuery::KillboxTopApi(double& OutZ) const
+{
+    // RWG P2f: GetKillboxTop(double&) on the generator; OutZ is written by RWG only when this returns true here.
+    double Z = 0.0;
+    if (!F || !G || !Api().KillboxTop || !Api().KillboxTop(G, &Z)) { return false; }
+    OutZ = Z;
+    return true;
+}
+
+FString NodeShuffleMapMode::RwgVoidBindStatus()
+{
+    const FRwgHeightApi& A = Api();
+    if (!A.bTried) { return TEXT("notTried"); }
+    return A.bUsable ? A.VoidStatus : FString::Printf(TEXT("notBound:%s"), *A.Status);
+}
+
+FString NodeShuffleMapMode::RwgKillboxBindStatus()
+{
+    const FRwgHeightApi& A = Api();
+    if (!A.bTried) { return TEXT("notTried"); }
+    return A.bUsable ? A.KillboxStatus : FString::Printf(TEXT("notBound:%s"), *A.Status);
 }
 
 FString NodeShuffleMapMode::RwgSeaBindStatus()

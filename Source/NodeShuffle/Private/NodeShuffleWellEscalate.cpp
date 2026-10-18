@@ -241,6 +241,7 @@ void ANodeShuffleSubsystem::EscalateWellPlacement(FNodeShuffleWellEntry& E, cons
             if (!bRwgRedealt)
             {
             E.bRwgSeaChecked = false; // RWG P2e review: the vanilla-box point is not water-tested; let the sea pass re-check it
+            E.bRwgVoidChecked = false; // RWG P2f: nor void/killbox-tested; let the re-deal pass re-check it under v3
             E.DestCoreLocation = FVector(Rng.FRandRange(BoxMin.X, BoxMax.X),
                                          Rng.FRandRange(BoxMin.Y, BoxMax.Y),
                                          (DealMeanZ != 0.0f) ? DealMeanZ : E.DestCoreLocation.Z);

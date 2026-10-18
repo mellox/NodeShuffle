@@ -362,7 +362,8 @@ bool ANodeShuffleSubsystem::RwgDealWellSite(const NodeShuffleMapMode::FRwgGround
     const double Y = Rng.FRandRange(-H, H);
     if (Q.Outside(X, Y)) { ++RwgWrOutside; return false; }
     const double Zc = Q.SurfaceZ(X, Y);
-    const int32 WetCore = RwgWetV2(Q, FVector(X, Y, Zc)); // RWG P2e: water predicate v2 (sea | lake/river volume | inland level)
+    const int32 WetCore = RwgRejectV3(Q, FVector(X, Y, Zc)); // RWG P2f: predicate v3 (v2 sea | volume | inland level, | void | below killbox)
+    if (WetCore != 0 && (WetCore & 7) == 0) { if ((WetCore & 8) != 0) { ++RwgWrRejectedVoid; } else { ++RwgWrRejectedKillbox; } return false; } // RWG P2f: not water
     if (WetCore != 0)
     {
         if ((WetCore & 1) != 0) { ++RwgWrRejectedSea; }
@@ -379,7 +380,8 @@ bool ANodeShuffleSubsystem::RwgDealWellSite(const NodeShuffleMapMode::FRwgGround
         const double Sx = X + Off.X, Sy = Y + Off.Y;
         if (Q.Outside(Sx, Sy)) { ++RwgWrSatOutside; return false; }
         const double Sz = Q.SurfaceZ(Sx, Sy);
-        const int32 WetSat = RwgWetV2(Q, FVector(Sx, Sy, Sz));
+        const int32 WetSat = RwgRejectV3(Q, FVector(Sx, Sy, Sz));
+        if (WetSat != 0 && (WetSat & 7) == 0) { if ((WetSat & 8) != 0) { ++RwgWrRejectedVoid; } else { ++RwgWrRejectedKillbox; } return false; } // RWG P2f: not water
         if (WetSat != 0) { if ((WetSat & 1) != 0) { ++RwgWrRejectedSea; } ++RwgWrSatWater; return false; }
         ZMin = FMath::Min(ZMin, Sz);
         ZMax = FMath::Max(ZMax, Sz);
@@ -397,6 +399,7 @@ bool ANodeShuffleSubsystem::RwgDealWellSite(const NodeShuffleMapMode::FRwgGround
     ++RwgWrResolvedZ;
     OutCore = FVector(X, Y, Zc);
     if (Zc < 0.0) { ++RwgWrDealtBelowZ0; RwgNoteWaterSample(Q, OutCore, false, TEXT("wellDeal")); } // coordinator addendum, measured only
+    if (bRwgKillboxKnown && Zc < RwgKillboxTopZ) { ++RwgWrDealtBelowKillbox; } // RWG P2f: measured control (v3 rejects these; expect 0)
     return true;
 }
 
@@ -408,6 +411,7 @@ void ANodeShuffleSubsystem::RwgWellRollBegin()
     RwgWrSlope = RwgWrCoresOurs = 0; // RWG P2c
     RwgWrWaterZBelow0 = RwgWrWaterZAtOrAbove0 = RwgWrDealtBelowZ0 = 0; // coordinator addendum
     RwgWrRejectedSea = 0; // RWG P2e
+    RwgWrRejectedVoid = RwgWrRejectedKillbox = RwgWrDealtBelowKillbox = 0; // RWG P2f
     RwgWrT0 = FPlatformTime::Seconds();
 }
 
@@ -420,11 +424,13 @@ void ANodeShuffleSubsystem::RwgEmitWellRollCensus(bool bApiDeal, const FString& 
         if (E.bGroupPlaced) { ++Placed; }
     }
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("WELLROLL: map=rwg deal=%s apiStatus='%s' cores=%d coresOurs=%d entries=%d eligible=%d builtOn=%d dealt=%d dealFailed=%d drawn=%d rejectedOutside=%d rejectedWater=%d rejectedWaterSurfaceZBelow0=%d rejectedWaterSurfaceZAtOrAbove0=%d dealtBelowZ0=%d rejectedSlope=%d rejectedSatOutside=%d rejectedSatWater=%d rejectedSea=%d rejectedNearOriginal=%d rejectedSpacing=%d resolvedZ=%d zSpreadMaxCm=%d noAuthoredResource=%d claimedNew=%d mintRefusedNearClaim=%d placedBefore=%d durationMs=%d"),
+        TEXT("WELLROLL: map=rwg deal=%s apiStatus='%s' cores=%d coresOurs=%d entries=%d eligible=%d builtOn=%d dealt=%d dealFailed=%d drawn=%d rejectedOutside=%d rejectedWater=%d rejectedWaterSurfaceZBelow0=%d rejectedWaterSurfaceZAtOrAbove0=%d dealtBelowZ0=%d rejectedSlope=%d rejectedSatOutside=%d rejectedSatWater=%d rejectedSea=%d rejectedNearOriginal=%d rejectedSpacing=%d resolvedZ=%d zSpreadMaxCm=%d noAuthoredResource=%d claimedNew=%d mintRefusedNearClaim=%d placedBefore=%d durationMs=%d rejectedVoid=%d rejectedKillbox=%d dealtBelowKillbox=%d killboxTopZ=%.0f killboxTopActorZ=%.0f killboxTopApiZ=%.0f voidUsable=%d"),
         bApiDeal ? TEXT("api") : TEXT("fallback"), *ApiStatus, RwgWrCores, RwgWrCoresOurs, WellLayout.Num(), Eligible, BuiltOn, Dealt, DealFailed,
         RwgWrDrawn, RwgWrOutside, RwgWrWater, RwgWrWaterZBelow0, RwgWrWaterZAtOrAbove0, RwgWrDealtBelowZ0, RwgWrSlope, RwgWrSatOutside, RwgWrSatWater, RwgWrRejectedSea, RwgWrNearOriginal, RwgWrSpacing, RwgWrResolvedZ,
         RwgWrZSpreadMaxCm, RwgWrNoAuthored, RwgWrClaimedNew, RwgWrMintRefused, Placed,
-        static_cast<int32>((FPlatformTime::Seconds() - RwgWrT0) * 1000.0));
+        static_cast<int32>((FPlatformTime::Seconds() - RwgWrT0) * 1000.0), RwgWrRejectedVoid, RwgWrRejectedKillbox, RwgWrDealtBelowKillbox,
+        bRwgKillboxKnown ? RwgKillboxTopZ : NodeShuffleMapMode::RwgNaN(), bRwgKillboxActorKnown ? RwgKillboxTopActorZ : NodeShuffleMapMode::RwgNaN(),
+        bRwgKillboxApiKnown ? RwgKillboxTopApiZ : NodeShuffleMapMode::RwgNaN(), bRwgVoidUsable ? 1 : 0);
 }
 
 void ANodeShuffleSubsystem::RwgEmitWellPlace(int32 Searching, int32 PlacedNow, int32 Deferred)

@@ -267,6 +267,9 @@ struct FNodeShuffleEntry
     // RWG P2e (2026-10-18): true once the one-time sea re-deal (NodeShuffleMapModeSea.cpp) checked this entry's spot under the water
     // predicate v2 (dry, placed, pinned, or re-dealt). False on every vanilla entry (never read there).
     UPROPERTY(SaveGame) bool bRwgSeaChecked = false;
+    // RWG P2f (2026-10-18): true once the re-deal pass checked this entry's spot under the void + killbox terms (predicate v3) in a session
+    // where BOTH were on (VoidAt graded usable AND the killbox top measured). False on every vanilla entry (never read there).
+    UPROPERTY(SaveGame) bool bRwgVoidChecked = false;
 };
 
 // One original vanilla node location to suppress on stream-in after a wipe-on-
@@ -633,6 +636,8 @@ struct FNodeShuffleWellEntry
     UPROPERTY(SaveGame) bool bRwgSettledOnTerrain = false;
     // RWG P2e (2026-10-18): true once the one-time sea re-deal checked this dealt core spot under the water predicate v2.
     UPROPERTY(SaveGame) bool bRwgSeaChecked = false;
+    // RWG P2f (2026-10-18): true once the re-deal pass checked this dealt core spot under predicate v3 with both void + killbox terms on.
+    UPROPERTY(SaveGame) bool bRwgVoidChecked = false;
 
     // ns-t27-corefirst: BOTH FIELDS KEPT THEIR NAMES AND BOTH CHANGED MEANING. Renaming a
     // UPROPERTY(SaveGame) breaks every existing save, so the names are frozen and the meanings are
@@ -1083,6 +1088,21 @@ private:
     TSet<FGuid> RwgSeaDealFailed;                      // session: sea entries whose re-deal found no spot (not retried this session)
     TSet<FString> RwgSeaWellDealFailed;                // session: same, well cores by CorePath
     TMap<FString, int32> RwgSeaWellSalt;               // session: sea re-deals per core path (salts the deal stream)
+    // ---- RWG P2f (2026-10-18): void + killbox predicate. NodeShuffleMapModeVoid.cpp. Every caller is RWG-only. ----
+    int32 RwgRejectV3(const NodeShuffleMapMode::FRwgGroundQuery& Q, const FVector& P); // P.Z = API surface; v2 bits | 8 void | 16 below killbox; 0 = dealable
+    bool RwgEnsureVoidCheck(const NodeShuffleMapMode::FRwgGroundQuery& Q);           // runs RWGVOIDCHECK once per session; true = void term graded usable
+    void RwgEnsureKillboxTop(const NodeShuffleMapMode::FRwgGroundQuery* Q);          // RWGKILLBOX: measures the killbox top once per session (retried while unknown)
+    bool RwgVoidPassTermsOn() const { return bRwgVoidCheckDone && bRwgVoidUsable && bRwgKillboxKnown; } // both P2f terms on: bRwgVoidChecked may be written
+    void RwgKillboxResettlePass();                                                  // RESETTLE-KILLBOX, from RwgSpawnPass
+    bool bRwgVoidCheckDone = false, bRwgVoidUsable = false, bRwgVoidCheckDeferLogged = false;
+    bool bRwgKillboxDone = false, bRwgKillboxKnown = false, bRwgKillboxActorKnown = false, bRwgKillboxApiKnown = false;
+    double RwgVoidCheckRetryAt = 0.0, RwgKillboxRetryAt = 0.0;
+    double RwgKillboxTopZ = 0.0, RwgKillboxTopActorZ = 0.0, RwgKillboxTopApiZ = 0.0; // valid only when the matching Known flag is set
+    int32 RwgKillboxTries = 0;
+    int32 RwgRcRejectedVoid = 0, RwgRcRejectedKillbox = 0, RwgRcDealtBelowKillbox = 0; // ROLLCENSUS (per roll)
+    int32 RwgWrRejectedVoid = 0, RwgWrRejectedKillbox = 0, RwgWrDealtBelowKillbox = 0; // WELLROLL (per well roll)
+    int32 RwgKbPasses = 0, RwgKbSettleRefused = 0, RwgKbSettleSamples = 0;
+    TSet<FGuid> RwgKillboxRefused;                     // session: below the killbox but pinned/occupied (re-checked next session)
     // PLACECENSUS per-pass additions (zeroed by RwgEmitPlaceCensus).
     int32 RwgPcFarTerrain = 0, RwgPcFarCanopy = 0, RwgPcFarWater = 0, RwgPcFarOther = 0;
     int32 RwgPcSettledTerrain = 0, RwgPcNoTerrainDefer = 0, RwgPcSkippedToTerrain = 0;

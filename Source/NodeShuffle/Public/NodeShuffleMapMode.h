@@ -1,4 +1,5 @@
 #pragma once
+#include <limits>
 
 #include "CoreMinimal.h"
 
@@ -85,6 +86,15 @@ namespace NodeShuffleMapMode
     constexpr int32 RwgSeaCheckMaxDraws = 12000;
     constexpr int32 RwgRedealTries = 80; // RWG P2e review: API redeal draws per call; P(no spot) ~0.6 % at the R6 ~6 % dealable share. TODO(2026-10-18 -> R7): re-size from RWGSEAREDEAL dealFailed/durationMs
     constexpr int32 RwgSeaWellDealDraws = 128; // RWG P2e review: ~0.8 % fail at the R6 ~3.7 % well-site share. TODO(2026-10-18 -> R7)
+    // RWG P2f (2026-10-18): void + killbox predicate (NodeShuffleMapModeVoid.cpp). RwgVoidPlateauCm is the SurfaceHeightCm RWG reports over
+    // its void (FPWBaseMap::SeabedM = -30 m; MEASURED on ONE world, seed 1687464) -- used ONLY to select RWGVOIDCHECK class (a), never as a
+    // rule (the census also prints the top two Z modes so another world reads out). RwgKillboxMarginCm: a dealt spot whose API surface is
+    // below killbox top + this is rejected (research suggestion). TODO(2026-10-18, RWG P2f -> R8): re-check against RWGVOIDCHECK / RWGKILLBOX
+    // / ROLLCENSUS rejectedKillbox and RESETTLE-KILLBOX.
+    constexpr double RwgVoidPlateauCm = -3000.0;
+    constexpr int32 RwgVoidCheckPerClass = 32;
+    constexpr double RwgKillboxMarginCm = 1000.0;
+    constexpr int32 RwgKillboxResettlePerPass = 16;
 
     // RWG P2b ground query over the runtime-bound RWG exports (NodeShuffleMapModeHeightApi.cpp). Construct once
     // per batch (it holds the density field's strong reference for its lifetime, never across frames).
@@ -104,10 +114,14 @@ namespace NodeShuffleMapMode
         bool HasSea() const;                             // RWG P2e: InSeaVolume bound (optional export) and the spliced world found
         bool InSea(double X, double Y, double Z) const;  // RWG P2e: raw InSeaVolume; false when !HasSea()
         double GlobalMinZ() const;                       // RWG P2e: GlobalMinSurfaceCm, NaN when that optional export was dropped
+        bool HasVoid() const;                            // RWG P2f: VoidAt bound (optional export) and the spliced world found
+        bool VoidAt(double X, double Y) const;           // RWG P2f: raw VoidAt; false when !HasVoid() or outside the world (our check first)
+        bool KillboxTopApi(double& OutZ) const;          // RWG P2f: GetKillboxTop on the generator; false when unbound or it returned false
     private:
         TSharedPtr<const FPWDensityField, ESPMode::ThreadSafe> Field;
         const void* F = nullptr;
         const void* S = nullptr;
+        const void* G = nullptr; // RWG P2f: the generator (GetKillboxTop's this); set only when usable
         double HalfExtentCm = -1.0;
         FString StatusText;
     };
@@ -136,5 +150,8 @@ namespace NodeShuffleMapMode
     // component, legacy class) -- a node it returns true for is never counted as an original.
     APawn* FirstPlayerPawn(UWorld* World);
     FString RwgSeaBindStatus(); // RWG P2e: InSeaVolume binding status (NodeShuffleMapModeHeightApi.cpp)
+    FString RwgVoidBindStatus();    // RWG P2f: VoidAt binding status (NodeShuffleMapModeHeightApi.cpp)
+    inline double RwgNaN() { return std::numeric_limits<double>::quiet_NaN(); } // RWG P2f: census value printed for an unmeasured field
+    FString RwgKillboxBindStatus(); // RWG P2f: GetKillboxTop binding status (NodeShuffleMapModeHeightApi.cpp)
     bool IsOursForRwg(AFGResourceNodeBase* Node);
 }

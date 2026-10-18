@@ -7,7 +7,8 @@
 #   E2  RwgWetV2 (Sea.cpp) = graded sea term OR the volume test OR the finite inland level above the surface, and its body holds NO
 #       comparison against zero at all (user rule: water only where a water surface exists above the point; never a Z-sign rule).
 #   E3  Consumers go through v2: RwgDealOneSpot, both RwgResolveAtSpawn checks, RwgDealWellSite core + satellites; none of those bodies
-#       calls the bare volume test any more.
+#       calls the bare volume test any more. RWG P2f (2026-10-18): retargeted to predicate v3 (RwgRejectV3 = v2 | void | below killbox),
+#       whose body calls RwgWetV2 first (pinned by check_rwgp2f_lint.ps1 F2).
 #   E4  Z-SIGN DETECTOR: in Place/WellRwg/Sea every comparison of an identifier containing Z against a numeric literal (<, <=, >, >=,
 #       either operand order; P2e review R3) must be one of the seven whitelisted statements (by exact line start); anything else fails.
 #   E5  RwgSeaRedealPass: refuses before any flag write unless the query is usable AND the sea grade is usable; candidate filters skip
@@ -81,13 +82,13 @@ if (-not $v2) { $fails += 'E2: RwgWetV2 body not found' } else {
 # E3
 $d1 = Get-Body $text.place ('bool ' + $cls + 'RwgDealOneSpot(')
 if (-not $d1) { $fails += 'E3: RwgDealOneSpot body not found' } else {
-    if (-not $d1.Contains('const int32 Wet = RwgWetV2(Q, ' + 'OutSpot);') -or $d1 -notmatch ('\n    if \(Wet != 0\)\n    \{[\s\S]*?\+\+Water;\s*return ' + 'false;')) { $fails += 'E3: RwgDealOneSpot must reject on v2 (if (Wet != 0) ... ++Water; return false)' }
+    if (-not $d1.Contains('const int32 Wet = RwgRejectV3(Q, ' + 'OutSpot);') -or $d1 -notmatch ('\n    if \(Wet != 0\)\n    \{[\s\S]*?\+\+Water;[\s\S]*?\n        return ' + 'false;\n    \}')) { $fails += 'E3: RwgDealOneSpot must reject on v3 (if (Wet != 0) ... ++Water ... return false)' }
     if ($d1.Contains('RwgIsPointInWater' + 'Cached(')) { $fails += 'E3: RwgDealOneSpot must not call the bare volume test' }
 }
 $ra = Get-Body $text.place ('bool ' + $cls + 'RwgResolveAtSpawn(')
-if (-not $ra -or (Count $ra ('if (RwgWetV2(Q, FVector(X0, Y0, ApiZ0)) != 0) { bOutWaterNoLand = true; return ' + 'false; }')) -ne 1 -or (Count $ra ('if (RwgWetV2(Q, FVector(X1, Y1, ApiZ1)) != 0) { bOutWaterNoLand = true; return ' + 'false; }')) -ne 1 -or $ra.Contains('RwgIsPointInWater' + 'Cached(')) { $fails += 'E3: both RwgResolveAtSpawn water checks must go through v2' }
+if (-not $ra -or (Count $ra ('if (RwgRejectV3(Q, FVector(X0, Y0, ApiZ0)) != 0) { bOutWaterNoLand = true; return ' + 'false; }')) -ne 1 -or (Count $ra ('if (RwgRejectV3(Q, FVector(X1, Y1, ApiZ1)) != 0) { bOutWaterNoLand = true; return ' + 'false; }')) -ne 1 -or $ra.Contains('RwgIsPointInWater' + 'Cached(')) { $fails += 'E3: both RwgResolveAtSpawn water checks must go through v2' }
 $ws = Get-Body $text.wrwg ('bool ' + $cls + 'RwgDealWellSite(')
-if (-not $ws -or -not $ws.Contains('const int32 WetCore = RwgWetV2(Q, FVector(X, Y, ' + 'Zc));') -or -not $ws.Contains('const int32 WetSat = RwgWetV2(Q, FVector(Sx, Sy, ' + 'Sz));') -or $ws.Contains('RwgIsPointInWater' + 'Cached(')) { $fails += 'E3: RwgDealWellSite core and satellites must go through v2' }
+if (-not $ws -or -not $ws.Contains('const int32 WetCore = RwgRejectV3(Q, FVector(X, Y, ' + 'Zc));') -or -not $ws.Contains('const int32 WetSat = RwgRejectV3(Q, FVector(Sx, Sy, ' + 'Sz));') -or $ws.Contains('RwgIsPointInWater' + 'Cached(')) { $fails += 'E3: RwgDealWellSite core and satellites must go through v2' }
 
 # E4
 $allowed = @(('if (Z < 0.0) { ++RwgRc' + 'WaterZBelow0; }'), ('if (C.Z < 0.0) { ++RwgRc' + 'DealtBelowZ0;'), ('if (Zc < 0.0) { ++RwgWr' + 'WaterZBelow0; }'), ('if (Zc < 0.0) { ++RwgWr' + 'DealtBelowZ0;'),
@@ -109,11 +110,12 @@ $sp = Get-Body $text.sea ('void ' + $cls + 'RwgSeaRedealPass()')
 if (-not $sp) { $fails += 'E5: RwgSeaRedealPass body not found' } else {
     $iG = $sp.IndexOf('if (!Q.IsUsable() || !RwgEnsureSeaCheck(Q))'); $iF = $sp.IndexOf('bRwgSeaChecked = ' + 'true')
     if ($iG -lt 0 -or $iF -lt $iG) { $fails += 'E5: the pass must refuse (usable query AND graded sea) before any flag write' }
-    if (-not $sp.Contains('if (!E.bIsNewNode || !E.bActive || E.bRwgSeaChecked || RwgSeaDealFailed.Contains(E.EntryGuid)) { ' + 'continue; }')) { $fails += 'E5: node candidates must skip flagged entries (idempotent)' }
-    if (-not $sp.Contains('if (!W.bDestDealt || W.bRwgSeaChecked || RwgSeaWellDealFailed.Contains(W.CorePath)) { ' + 'continue; }')) { $fails += 'E5: well candidates must skip flagged entries (idempotent)' }
+    # RWG P2f: the skip also re-opens entries whose void flag is unset while both P2f terms are on (pinned again by check_rwgp2f_lint.ps1 F5).
+    if (-not $sp.Contains('if (!E.bIsNewNode || !E.bActive || (E.bRwgSeaChecked && (E.bRwgVoidChecked || !bVoidOn)) || RwgSeaDealFailed.Contains(E.EntryGuid)) { ' + 'continue; }')) { $fails += 'E5: node candidates must skip flagged entries (idempotent)' }
+    if (-not $sp.Contains('if (!W.bDestDealt || (W.bRwgSeaChecked && (W.bRwgVoidChecked || !bVoidOn)) || RwgSeaWellDealFailed.Contains(W.CorePath)) { ' + 'continue; }')) { $fails += 'E5: well candidates must skip flagged entries (idempotent)' }
     $iP = $sp.IndexOf('E.bRayCasted || E.bRwgSettledOnTerrain) { ++Skip' + 'Placed;'); $iPin = $sp.IndexOf('if (E.bPinned || E.bUnderground) { ++Skip' + 'Pinned;'); $iR = $sp.IndexOf('TryRedealWaterLocked' + 'Entry(E);')
     if ($iP -lt 0 -or $iPin -lt $iP -or $iR -lt $iPin) { $fails += 'E5: placed then pinned skips must precede the node re-deal' }
-    if (-not $sp.Contains('if (bMoved) { ++Redealt; E.bRwgSeaChecked = ' + 'true; }')) { $fails += 'E5: a node is flagged after a re-deal only when it moved' }
+    if (-not $sp.Contains('if (bMoved) { ++Redealt; E.bRwgSeaChecked = ' + 'true; E.bRwgVoidChecked |= bVoidOn; }')) { $fails += 'E5: a node is flagged after a re-deal only when it moved' }
     $iWp = $sp.IndexOf('if (W.bGroupPlaced) { ++Skip' + 'Placed;'); $iWf = $sp.IndexOf('if (W.bRelocationFailed) { ++Skip' + 'FailedWell;'); $iWd = $sp.IndexOf('RwgDealWell' + 'Site(Q, Rng, Offs, Site)')
     if ($iWp -lt 0 -or $iWf -lt $iWp -or $iWd -lt $iWf) { $fails += 'E5: placed and failed wells must be skipped before the well re-deal' }
     if ((Count $sp ('int32 Left = NodeShuffleMapMode::RwgSeaRedeal' + 'PerPass;')) -ne 1 -or (Count $sp ('&& Left > ' + '0; ++I)')) -ne 2) { $fails += 'E5: both loops must be bounded by RwgSeaRedealPerPass' }
@@ -147,7 +149,7 @@ if ((Count $text.subsysh ('UPROPERTY(Save' + 'Game) bool bRwgSeaChecked = false;
 
 # E9
 if ((Count $text.maph ('constexpr int32 RwgSeaRedealPerPass = ' + '64;')) -ne 1 -or (Count $text.maph ('constexpr int32 RwgSeaCheckPerClass = ' + '32;')) -ne 1 -or (Count $text.maph ('constexpr int32 RwgRedealTries = ' + '80;')) -ne 1 -or (Count $text.maph ('constexpr int32 RwgSeaWellDealDraws = ' + '128;')) -ne 1) { $fails += 'E9: RwgSeaRedealPerPass 64 / RwgSeaCheckPerClass 32 / RwgRedealTries 80 / RwgSeaWellDealDraws 128 must be pinned' }
-if ((Count $text.nsmod ('LOADED (2026-10-18-rwg-' + 'p2e-2)')) -ne 1 -or (Count $text.nsmod ('2026-10-18-rwg-' + 'p2e-1')) -ne 0) { $fails += 'E9: the marker must be rwg-p2e-2 and the previous marker absent' }
+if ((Count $text.nsmod ('LOADED (2026-10-18-rwg-' + 'p2f-1)')) -ne 1 -or (Count $text.nsmod ('2026-10-18-rwg-' + 'p2e-2')) -ne 0) { $fails += 'E9: the marker must be rwg-p2f-1 (RWG P2f) and the previous marker absent' }
 
 if ($fails.Count -gt 0) { $fails | ForEach-Object { Write-Host "FAIL $_" }; exit 1 }
 Write-Host "PASS: RWG P2e lint -- E1..E9 hold across $($files.Count) loaded files"

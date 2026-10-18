@@ -289,7 +289,7 @@ if (-not $rl -or ([regex]::Matches($rl, [regex]::Escape($stamp))).Count -ne 1 -o
 # R14
 $d1 = Get-Body $text.place ('bool ' + $cls + 'RwgDealOneSpot(const NodeShuffleMapMode::FRwgGroundQuery& Q, FRandomStream& Rng, FVector& OutSpot,')
 if (-not $d1) { $fails += 'R14: RwgDealOneSpot body not found' } else {
-    $o = $d1.IndexOf('if (Q.Outside(X, Y)) { ++Outside; return false; }'); $z = $d1.IndexOf('const double Z = Q.Surface' + 'Z(X, Y);'); $wm = [regex]::Match($d1, ('if \(bVolume\)\s*\{[\s\S]{0,400}?\+\+Water;\s*return ' + 'false;')); $w = $(if ($wm.Success) { $wm.Index } else { -1 }) # RWG P2d: the block also splits the count by surface-Z sign (measured only)
+    $o = $d1.IndexOf('if (Q.Outside(X, Y)) { ++Outside; return false; }'); $z = $d1.IndexOf('const double Z = Q.Surface' + 'Z(X, Y);'); $wm = [regex]::Match($d1, ('if \(bVolume\)\s*\{[\s\S]{0,400}?\+\+Water;[\s\S]{0,200}?return ' + 'false;')); $w = $(if ($wm.Success) { $wm.Index } else { -1 }) # RWG P2d: the block also splits the count by surface-Z sign (measured only)
     if ($o -lt 0 -or $z -lt 0 -or $w -lt 0 -or -not ($o -lt $z -and $z -lt $w)) { $fails += 'R14: RwgDealOneSpot must reject outside, then resolve Z, then reject volume water' }
 }
 $gl = Get-Body $text.place ('bool ' + $cls + 'GenerateRwgLocations(FRandomStream& Rng, const TArray<FVector>& AvoidLocations, int32 Count,')

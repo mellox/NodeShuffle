@@ -180,9 +180,13 @@ void ANodeShuffleSubsystem::RwgSeaRedealPass()
     // (live actor / bGroupPlaced), pinned, cave or failed-well entry is flagged and never moved. A dry spot is flagged. A wet spot
     // (v2) gets a fresh deal: nodes through TryRedealWaterLockedEntry (the API dealer, salted per entry), well cores through
     // RwgDealWellSite on a salted stream, keeping bDestDealt (the Escalate precedent); ApplyWellRelocation places it later.
+    // RWG P2f (2026-10-18): the verdict is predicate v3 (v2 | void | below killbox), and a SECOND SaveGame flag, bRwgVoidChecked, re-opens every
+    // entry the P2e pass already flagged: it is written only in a session where BOTH P2f terms are on (RwgVoidPassTermsOn), so a session whose
+    // void grade fails or whose killbox top is unknown leaves the void re-check for a later one. The sea refusal below is unchanged.
+    const bool bVoidMaybe = !(bRwgVoidCheckDone && bRwgKillboxDone) || RwgVoidPassTermsOn(); // P2f: the void flag may still be written this session
     bool bAny = false;
-    for (const FNodeShuffleEntry& E : Layout) { if (E.bIsNewNode && E.bActive && !E.bRwgSeaChecked && !RwgSeaDealFailed.Contains(E.EntryGuid)) { bAny = true; break; } }
-    if (!bAny) { for (const FNodeShuffleWellEntry& W : WellLayout) { if (W.bDestDealt && !W.bRwgSeaChecked && !RwgSeaWellDealFailed.Contains(W.CorePath)) { bAny = true; break; } } }
+    for (const FNodeShuffleEntry& E : Layout) { if (E.bIsNewNode && E.bActive && !(E.bRwgSeaChecked && (E.bRwgVoidChecked || !bVoidMaybe)) && !RwgSeaDealFailed.Contains(E.EntryGuid)) { bAny = true; break; } }
+    if (!bAny) { for (const FNodeShuffleWellEntry& W : WellLayout) { if (W.bDestDealt && !(W.bRwgSeaChecked && (W.bRwgVoidChecked || !bVoidMaybe)) && !RwgSeaWellDealFailed.Contains(W.CorePath)) { bAny = true; break; } } }
     if (!bAny) { return; }
     const NodeShuffleMapMode::FRwgGroundQuery Q(GetWorld(), RwgGenerator.Get());
     if (!Q.IsUsable() || !RwgEnsureSeaCheck(Q))
@@ -196,32 +200,40 @@ void ANodeShuffleSubsystem::RwgSeaRedealPass()
         return;
     }
     if (RwgWaterVolumes.Num() == 0) { RwgBuildWaterVolumeCache(); }
+    RwgEnsureKillboxTop(&Q);
+    RwgEnsureVoidCheck(Q);
+    const bool bVoidOn = RwgVoidPassTermsOn(); // P2f: VoidAt graded usable AND killbox top measured -> bRwgVoidChecked may be written
+    bAny = false;
+    for (const FNodeShuffleEntry& E : Layout) { if (E.bIsNewNode && E.bActive && !(E.bRwgSeaChecked && (E.bRwgVoidChecked || !bVoidOn)) && !RwgSeaDealFailed.Contains(E.EntryGuid)) { bAny = true; break; } }
+    if (!bAny) { for (const FNodeShuffleWellEntry& W : WellLayout) { if (W.bDestDealt && !(W.bRwgSeaChecked && (W.bRwgVoidChecked || !bVoidOn)) && !RwgSeaWellDealFailed.Contains(W.CorePath)) { bAny = true; break; } } }
+    if (!bAny) { return; } // P2f: only void-unchecked entries remain and the void terms are not both on (no census line)
     ++RwgSeaPasses;
     const double T0 = FPlatformTime::Seconds();
     int32 Left = NodeShuffleMapMode::RwgSeaRedealPerPass;
     int32 Checked = 0, Sea = 0, Redealt = 0, Kept = 0, DealFailed = 0, InSea = 0, SkipPlaced = 0, SkipPinned = 0, SkipFailedWell = 0, Outside = 0;
     int32 WellsChecked = 0, WellsRedealt = 0;
     int32 PlacedWet = 0;
+    int32 VoidN = 0, KillboxN = 0; // P2f: spots rejected by the void term / the killbox floor (raw bits; may overlap the water count)
     const bool bDiag = FNodeShuffleModule::AreDiagnosticsEnabled();
     for (int32 I = 0; I < Layout.Num() && Left > 0; ++I)
     {
         FNodeShuffleEntry& E = Layout[I];
-        if (!E.bIsNewNode || !E.bActive || E.bRwgSeaChecked || RwgSeaDealFailed.Contains(E.EntryGuid)) { continue; }
+        if (!E.bIsNewNode || !E.bActive || (E.bRwgSeaChecked && (E.bRwgVoidChecked || !bVoidOn)) || RwgSeaDealFailed.Contains(E.EntryGuid)) { continue; }
         --Left; ++Checked;
         // Placed = a live actor, OR settled at any time (bRayCasted / bRwgSettledOnTerrain are SaveGame; SpawnedNodes may not have
         // re-adopted a far actor yet this session, and an unadopted actor could carry a miner). A sea spot never settles (no terrain).
-        if (IsValid(SpawnedNodes.FindRef(E.EntryGuid)) || E.bRayCasted || E.bRwgSettledOnTerrain) { ++SkipPlaced; PlacedWet += (!Q.Outside(E.Location.X, E.Location.Y) && RwgWetV2(Q, FVector(E.Location.X, E.Location.Y, Q.SurfaceZ(E.Location.X, E.Location.Y))) != 0) ? 1 : 0; E.bRwgSeaChecked = true; continue; }
-        if (E.bPinned || E.bUnderground) { ++SkipPinned; E.bRwgSeaChecked = true; continue; }
-        if (Q.Outside(E.Location.X, E.Location.Y)) { ++Outside; E.bRwgSeaChecked = true; continue; }
+        if (IsValid(SpawnedNodes.FindRef(E.EntryGuid)) || E.bRayCasted || E.bRwgSettledOnTerrain) { ++SkipPlaced; PlacedWet += (!Q.Outside(E.Location.X, E.Location.Y) && RwgWetV2(Q, FVector(E.Location.X, E.Location.Y, Q.SurfaceZ(E.Location.X, E.Location.Y))) != 0) ? 1 : 0; E.bRwgSeaChecked = true; E.bRwgVoidChecked |= bVoidOn; continue; }
+        if (E.bPinned || E.bUnderground) { ++SkipPinned; E.bRwgSeaChecked = true; E.bRwgVoidChecked |= bVoidOn; continue; }
+        if (Q.Outside(E.Location.X, E.Location.Y)) { ++Outside; E.bRwgSeaChecked = true; E.bRwgVoidChecked |= bVoidOn; continue; }
         const FVector At(E.Location.X, E.Location.Y, Q.SurfaceZ(E.Location.X, E.Location.Y));
-        const int32 Wet = RwgWetV2(Q, At);
-        if (Wet == 0) { ++Kept; E.bRwgSeaChecked = true; continue; }
-        ++Sea; InSea += (Wet & 1) != 0 ? 1 : 0;
+        const int32 Wet = RwgRejectV3(Q, At); // P2f: predicate v3
+        if (Wet == 0) { ++Kept; E.bRwgSeaChecked = true; E.bRwgVoidChecked |= bVoidOn; continue; }
+        Sea += (Wet & 7) != 0 ? 1 : 0; InSea += (Wet & 1) != 0 ? 1 : 0; VoidN += (Wet & 8) != 0 ? 1 : 0; KillboxN += (Wet & 16) != 0 ? 1 : 0;
         const FVector From = E.Location;
         E.bRwgSettledOnTerrain = false;
         E.bRwgRockChecked = false;
         const bool bMoved = TryRedealWaterLockedEntry(E);
-        if (bMoved) { ++Redealt; E.bRwgSeaChecked = true; } else { ++DealFailed; RwgSeaDealFailed.Add(E.EntryGuid); }
+        if (bMoved) { ++Redealt; E.bRwgSeaChecked = true; E.bRwgVoidChecked |= bVoidOn; } else { ++DealFailed; RwgSeaDealFailed.Add(E.EntryGuid); }
         if (bDiag)
         {
             UE_LOG(LogNodeShuffle, Display, TEXT("RWGSEAREDEAL-ENTRY: entry=%s from=%s to=%s wetBits=%d moved=%d"),
@@ -231,16 +243,16 @@ void ANodeShuffleSubsystem::RwgSeaRedealPass()
     for (int32 I = 0; I < WellLayout.Num() && Left > 0; ++I)
     {
         FNodeShuffleWellEntry& W = WellLayout[I];
-        if (!W.bDestDealt || W.bRwgSeaChecked || RwgSeaWellDealFailed.Contains(W.CorePath)) { continue; }
+        if (!W.bDestDealt || (W.bRwgSeaChecked && (W.bRwgVoidChecked || !bVoidOn)) || RwgSeaWellDealFailed.Contains(W.CorePath)) { continue; }
         --Left; ++Checked; ++WellsChecked;
-        if (W.bGroupPlaced) { ++SkipPlaced; W.bRwgSeaChecked = true; continue; }
-        if (W.bPinned) { ++SkipPinned; W.bRwgSeaChecked = true; continue; }
-        if (W.bRelocationFailed) { ++SkipFailedWell; W.bRwgSeaChecked = true; continue; } // terminal: left at its vanilla site (open decision)
+        if (W.bGroupPlaced) { ++SkipPlaced; W.bRwgSeaChecked = true; W.bRwgVoidChecked |= bVoidOn; continue; }
+        if (W.bPinned) { ++SkipPinned; W.bRwgSeaChecked = true; W.bRwgVoidChecked |= bVoidOn; continue; }
+        if (W.bRelocationFailed) { ++SkipFailedWell; W.bRwgSeaChecked = true; W.bRwgVoidChecked |= bVoidOn; continue; } // terminal: left at its vanilla site (open decision)
         const double X = W.DestCoreLocation.X, Y = W.DestCoreLocation.Y;
-        if (Q.Outside(X, Y)) { ++Outside; W.bRwgSeaChecked = true; continue; }
-        const int32 Wet = RwgWetV2(Q, FVector(X, Y, Q.SurfaceZ(X, Y)));
-        if (Wet == 0) { ++Kept; W.bRwgSeaChecked = true; continue; }
-        ++Sea; InSea += (Wet & 1) != 0 ? 1 : 0;
+        if (Q.Outside(X, Y)) { ++Outside; W.bRwgSeaChecked = true; W.bRwgVoidChecked |= bVoidOn; continue; }
+        const int32 Wet = RwgRejectV3(Q, FVector(X, Y, Q.SurfaceZ(X, Y))); // P2f: predicate v3
+        if (Wet == 0) { ++Kept; W.bRwgSeaChecked = true; W.bRwgVoidChecked |= bVoidOn; continue; }
+        Sea += (Wet & 7) != 0 ? 1 : 0; InSea += (Wet & 1) != 0 ? 1 : 0; VoidN += (Wet & 8) != 0 ? 1 : 0; KillboxN += (Wet & 16) != 0 ? 1 : 0;
         TArray<FVector> Offs;
         for (const FNodeShuffleWellSatellite& S : W.Satellites) { if (S.bCaptured) { Offs.Add(S.LocalOffset); } }
         const int32 Salt = ++RwgSeaWellSalt.FindOrAdd(W.CorePath);
@@ -255,6 +267,7 @@ void ANodeShuffleSubsystem::RwgSeaRedealPass()
             W.YawCursor = 0;
             W.GroupNudges = 0;
             W.bRwgSeaChecked = true;
+            W.bRwgVoidChecked |= bVoidOn;
             ++Redealt; ++WellsRedealt;
         }
         else { ++DealFailed; RwgSeaWellDealFailed.Add(W.CorePath); }
@@ -262,10 +275,11 @@ void ANodeShuffleSubsystem::RwgSeaRedealPass()
             *WellShort(W.CorePath), *From.ToCompactString(), *W.DestCoreLocation.ToCompactString(), Wet, bDealt ? 1 : 0);
     }
     int32 Remaining = 0;
-    for (const FNodeShuffleEntry& E : Layout) { Remaining += (E.bIsNewNode && E.bActive && !E.bRwgSeaChecked && !RwgSeaDealFailed.Contains(E.EntryGuid)) ? 1 : 0; }
-    for (const FNodeShuffleWellEntry& W : WellLayout) { Remaining += (W.bDestDealt && !W.bRwgSeaChecked && !RwgSeaWellDealFailed.Contains(W.CorePath)) ? 1 : 0; }
+    for (const FNodeShuffleEntry& E : Layout) { Remaining += (E.bIsNewNode && E.bActive && !(E.bRwgSeaChecked && (E.bRwgVoidChecked || !bVoidOn)) && !RwgSeaDealFailed.Contains(E.EntryGuid)) ? 1 : 0; }
+    for (const FNodeShuffleWellEntry& W : WellLayout) { Remaining += (W.bDestDealt && !(W.bRwgSeaChecked && (W.bRwgVoidChecked || !bVoidOn)) && !RwgSeaWellDealFailed.Contains(W.CorePath)) ? 1 : 0; }
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("RWGSEAREDEAL: pass=%d checked=%d sea=%d redealt=%d kept=%d dealFailed=%d inSeaVolume=%d skippedPlaced=%d skippedPinnedOrCave=%d skippedFailedWell=%d outsideWorld=%d wellsChecked=%d wellsRedealt=%d remaining=%d failedThisSession=%d placedWet=%d perPassCap=%d durationMs=%.0f"),
+        TEXT("RWGSEAREDEAL: pass=%d checked=%d sea=%d redealt=%d kept=%d dealFailed=%d inSeaVolume=%d skippedPlaced=%d skippedPinnedOrCave=%d skippedFailedWell=%d outsideWorld=%d wellsChecked=%d wellsRedealt=%d remaining=%d failedThisSession=%d placedWet=%d perPassCap=%d durationMs=%.0f voidN=%d killboxN=%d voidTermsOn=%d"),
         RwgSeaPasses, Checked, Sea, Redealt, Kept, DealFailed, InSea, SkipPlaced, SkipPinned, SkipFailedWell, Outside, WellsChecked, WellsRedealt,
-        Remaining, RwgSeaDealFailed.Num() + RwgSeaWellDealFailed.Num(), PlacedWet, NodeShuffleMapMode::RwgSeaRedealPerPass, (FPlatformTime::Seconds() - T0) * 1000.0);
+        Remaining, RwgSeaDealFailed.Num() + RwgSeaWellDealFailed.Num(), PlacedWet, NodeShuffleMapMode::RwgSeaRedealPerPass, (FPlatformTime::Seconds() - T0) * 1000.0,
+        VoidN, KillboxN, bVoidOn ? 1 : 0);
 }

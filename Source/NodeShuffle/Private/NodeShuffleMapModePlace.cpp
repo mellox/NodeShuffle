@@ -155,18 +155,24 @@ bool ANodeShuffleSubsystem::RwgDealOneSpot(const NodeShuffleMapMode::FRwgGroundQ
     if (Q.Outside(X, Y)) { ++Outside; return false; }
     const double Z = Q.SurfaceZ(X, Y);
     OutSpot = FVector(X, Y, Z);
-    // RWG P2e (2026-10-18): water predicate v2 (NodeShuffleMapModeSea.cpp) -- sea (graded InSeaVolume) OR the volume test OR the inland
-    // level above the surface. waterApiDisagree keeps its P2b meaning: the volume test and the inland level disagree (measured).
-    const int32 Wet = RwgWetV2(Q, OutSpot);
+    // RWG P2f (2026-10-18): predicate v3 (NodeShuffleMapModeVoid.cpp) = water predicate v2 (P2e: sea OR the volume test OR the inland level
+    // above the surface) OR the graded VoidAt term OR bBelowKillbox. waterApiDisagree keeps its P2b meaning (volume vs inland level, measured).
+    // Counted once each, in this order: water (bits 1|2|4) -> rejectedWater; else void (8) -> rejectedVoid; else below killbox (16) -> rejectedKillbox.
+    const int32 Wet = RwgRejectV3(Q, OutSpot);
     const bool bVolume = (Wet & 2) != 0;
     const bool bApiWet = (Wet & 4) != 0;
     if (bVolume != bApiWet) { ++WaterApiDisagree; }
     if (Wet != 0)
     {
-        // Coordinator addendum (measured only, gates nothing): rejectedWater split by the sign of the API surface Z.
-        if (Z < 0.0) { ++RwgRcWaterZBelow0; } else { ++RwgRcWaterZAtOrAbove0; if (bVolume) { RwgNoteWaterSample(Q, OutSpot, true, TEXT("nodeDeal")); } }
-        if ((Wet & 1) != 0) { ++RwgRcRejectedSea; } else if (Wet == 4) { ++RwgRcApiLevelOnly; }
-        ++Water;
+        if ((Wet & 7) != 0)
+        {
+            // Coordinator addendum (measured only, gates nothing): rejectedWater split by the sign of the API surface Z.
+            if (Z < 0.0) { ++RwgRcWaterZBelow0; } else { ++RwgRcWaterZAtOrAbove0; if (bVolume) { RwgNoteWaterSample(Q, OutSpot, true, TEXT("nodeDeal")); } }
+            if ((Wet & 1) != 0) { ++RwgRcRejectedSea; } else if ((Wet & 7) == 4) { ++RwgRcApiLevelOnly; }
+            ++Water;
+        }
+        else if ((Wet & 8) != 0) { ++RwgRcRejectedVoid; }
+        else { ++RwgRcRejectedKillbox; }
         return false;
     }
     double RiseRun = 0.0;
@@ -189,6 +195,7 @@ bool ANodeShuffleSubsystem::GenerateRwgLocations(FRandomStream& Rng, const TArra
     const double H = Q.HalfExtent();
     RwgRcWaterZBelow0 = RwgRcWaterZAtOrAbove0 = RwgRcDealtBelowZ0 = 0; // coordinator addendum: this roll only
     RwgRcRejectedSea = RwgRcApiLevelOnly = 0; // RWG P2e: this roll only
+    RwgRcRejectedVoid = RwgRcRejectedKillbox = RwgRcDealtBelowKillbox = 0; // RWG P2f: this roll only
     int32 Outside = 0, Water = 0, Disagree = 0, Spacing = 0, Drawn = 0, Slope = 0;
     double ZSum = 0.0, ZMin = TNumericLimits<double>::Max(), ZMax = TNumericLimits<double>::Lowest();
     const float SpacingSq = FMath::Square(SpacingCm);
@@ -205,6 +212,7 @@ bool ANodeShuffleSubsystem::GenerateRwgLocations(FRandomStream& Rng, const TArra
         if (bTooClose) { ++Spacing; continue; }
         OutLocations.Add(C);
         if (C.Z < 0.0) { ++RwgRcDealtBelowZ0; RwgNoteWaterSample(Q, C, false, TEXT("nodeDeal")); } // coordinator addendum, measured only
+        if (bRwgKillboxKnown && C.Z < RwgKillboxTopZ) { ++RwgRcDealtBelowKillbox; } // RWG P2f: measured control (v3 rejects these; expect 0)
         ZSum += C.Z;
         ZMin = FMath::Min(ZMin, C.Z);
         ZMax = FMath::Max(ZMax, C.Z);
@@ -215,9 +223,11 @@ bool ANodeShuffleSubsystem::GenerateRwgLocations(FRandomStream& Rng, const TArra
     DealMeanZ = OutLocations.Num() > 0 ? static_cast<float>(ZSum / OutLocations.Num()) : RwgMeanZ;
     if (OutLocations.Num() == 0) { ZMin = ZMax = 0.0; }
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("ROLLCENSUS: map=rwg deal=api extentHalfCm=%.0f requested=%d dealt=%d drawn=%d rejectedOutside=%d rejectedWater=%d rejectedWaterSurfaceZBelow0=%d rejectedWaterSurfaceZAtOrAbove0=%d dealtBelowZ0=%d rejectedSea=%d rejectedApiLevelOnly=%d waterApiDisagree=%d rejectedSlope=%d rejectedSpacing=%d resolvedZ=%d resolvedZMin=%.0f resolvedZMax=%.0f waterVolumes=%d caveSpots=0 rollDurationMs=%.0f"),
+        TEXT("ROLLCENSUS: map=rwg deal=api extentHalfCm=%.0f requested=%d dealt=%d drawn=%d rejectedOutside=%d rejectedWater=%d rejectedWaterSurfaceZBelow0=%d rejectedWaterSurfaceZAtOrAbove0=%d dealtBelowZ0=%d rejectedSea=%d rejectedApiLevelOnly=%d waterApiDisagree=%d rejectedSlope=%d rejectedSpacing=%d resolvedZ=%d resolvedZMin=%.0f resolvedZMax=%.0f waterVolumes=%d caveSpots=0 rollDurationMs=%.0f rejectedVoid=%d rejectedKillbox=%d dealtBelowKillbox=%d killboxTopZ=%.0f killboxTopActorZ=%.0f killboxTopApiZ=%.0f voidUsable=%d"),
         H, Count, OutLocations.Num(), Drawn, Outside, Water, RwgRcWaterZBelow0, RwgRcWaterZAtOrAbove0, RwgRcDealtBelowZ0, RwgRcRejectedSea, RwgRcApiLevelOnly, Disagree, Slope, Spacing, OutLocations.Num(), ZMin, ZMax,
-        RwgWaterVolumes.Num(), (FPlatformTime::Seconds() - T0) * 1000.0);
+        RwgWaterVolumes.Num(), (FPlatformTime::Seconds() - T0) * 1000.0, RwgRcRejectedVoid, RwgRcRejectedKillbox, RwgRcDealtBelowKillbox,
+        bRwgKillboxKnown ? RwgKillboxTopZ : NodeShuffleMapMode::RwgNaN(), bRwgKillboxActorKnown ? RwgKillboxTopActorZ : NodeShuffleMapMode::RwgNaN(),
+        bRwgKillboxApiKnown ? RwgKillboxTopApiZ : NodeShuffleMapMode::RwgNaN(), bRwgVoidUsable ? 1 : 0);
     return true;
 }
 
@@ -268,7 +278,7 @@ bool ANodeShuffleSubsystem::RwgResolveAtSpawn(FNodeShuffleEntry& Entry, bool& bO
     const double X0 = Entry.Location.X, Y0 = Entry.Location.Y;
     if (Q.Outside(X0, Y0)) { bOutWaterNoLand = true; return false; }
     const double ApiZ0 = Q.SurfaceZ(X0, Y0);
-    if (RwgWetV2(Q, FVector(X0, Y0, ApiZ0)) != 0) { bOutWaterNoLand = true; return false; } // RWG P2e: water predicate v2
+    if (RwgRejectV3(Q, FVector(X0, Y0, ApiZ0)) != 0) { bOutWaterNoLand = true; return false; } // RWG P2f: predicate v3 (v2 | void | below killbox)
     // RWG P2c (2026-10-18), spawn resolver v3 (spec "R4 finding"): the API Z is the trace WINDOW origin only
     // (RaycastGroundAt traces from +200 m to -400 m around it), never the final Z. The settle is the vanilla RaycastSettle
     // (primary probe, cliff/water spiral) against terrain-MESH hits only; every non-terrain blocking hit is skipped by
@@ -303,7 +313,21 @@ bool ANodeShuffleSubsystem::RwgResolveAtSpawn(FNodeShuffleEntry& Entry, bool& bO
     const double X1 = Entry.Location.X, Y1 = Entry.Location.Y;
     if (Q.Outside(X1, Y1)) { bOutWaterNoLand = true; return false; }
     const double ApiZ1 = Q.SurfaceZ(X1, Y1);
-    if (RwgWetV2(Q, FVector(X1, Y1, ApiZ1)) != 0) { bOutWaterNoLand = true; return false; } // RWG P2e: water predicate v2
+    if (RwgRejectV3(Q, FVector(X1, Y1, ApiZ1)) != 0) { bOutWaterNoLand = true; return false; } // RWG P2f: predicate v3 (v2 | void | below killbox)
+    if (bRwgKillboxKnown && Entry.Location.Z < RwgKillboxTopZ)
+    {
+        // RWG P2f: the SETTLED Z lies below the killbox top (inside RWG's damage volume): unplaceable -> the caller's redeal. Measured: v3 at the
+        // API surface does not catch a void spot when VoidAt is unbound/ungraded (the API reports the plateau, far above the killbox).
+        ++RwgKbSettleRefused;
+        if (RwgKbSettleSamples < 8)
+        {
+            ++RwgKbSettleSamples;
+            UE_LOG(LogNodeShuffle, Display, TEXT("RWGKILLBOXSETTLE: sample=%d entry=%s settledAt=%s apiSurfaceZ=%.0f killboxTopZ=%.0f; refused, redealt by the caller"),
+                RwgKbSettleSamples, *Entry.EntryGuid.ToString(), *Entry.Location.ToCompactString(), ApiZ1, RwgKillboxTopZ);
+        }
+        bOutWaterNoLand = true;
+        return false;
+    }
     Entry.bRwgSettledOnTerrain = true;
     Entry.RwgApiToTerrainDzCm = static_cast<float>(Entry.Location.Z - ApiZ1);
     ++RwgPcSettledTerrain;
@@ -314,7 +338,7 @@ bool ANodeShuffleSubsystem::RwgResolveAtSpawn(FNodeShuffleEntry& Entry, bool& bO
 void ANodeShuffleSubsystem::RwgSpawnPass(float SpawnRadiusCm, bool& bChangedWorld)
 {
     if (RwgWaterVolumes.Num() == 0) { RwgBuildWaterVolumeCache(); }
-    RwgSeaRedealPass(); // RWG P2e: one-time sea re-deal of unplaced entries, before this pass picks spawn candidates (NodeShuffleMapModeSea.cpp)
+    RwgSeaRedealPass(); // RWG P2e (+P2f void/killbox): one-time re-deal of unplaced entries, before this pass picks spawn candidates (NodeShuffleMapModeSea.cpp)
     TArray<FVector> Pawns;
     for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
     {
@@ -358,6 +382,7 @@ void ANodeShuffleSubsystem::RwgSpawnPass(float SpawnRadiusCm, bool& bChangedWorl
     ++RwgPcPasses;
     RwgResettlePass(); // RWG P2c: entries placed at the API Z by builds <= rwg-p4-2 (NodeShuffleMapModeResettle.cpp)
     RwgRockOcclusionPass(); // RWG P2d: placed entries under a SOLID mesh are redealt (NodeShuffleMapModeRock.cpp)
+    RwgKillboxResettlePass(); // RWG P2f: placed entries whose actor stands below the killbox top are torn down + redealt (NodeShuffleMapModeVoid.cpp)
     if ((RwgPcPasses % 12) == 1)
     {
         // RWG P2b review SF4 (spec P2b section 3): hide-stickiness sample. Up to 50 hide records at stride Num/50.
