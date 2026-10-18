@@ -78,10 +78,12 @@ if (-not $text.hapi.Contains('return F != nullptr && S != nullptr && Api().VoidA
 # F2
 $v3 = Get-Body $text.void ('int32 ' + $cls + 'RwgRejectV3(const NodeShuffleMapMode::FRwgGroundQuery& Q, const FVector& P)')
 if (-not $v3) { $fails += 'F2: RwgRejectV3 body not found' } else {
-    $iW = $v3.IndexOf('int32 Bits = RwgWetV2(Q, ' + 'P);'); $iVd = $v3.IndexOf('if (RwgEnsureVoidCheck(Q) && Q.VoidAt(P.X, P.Y)) { Bits |= ' + '8; }')
+    $iW = $v3.IndexOf('int32 Bits = RwgWetV2(Q, ' + 'P);'); $iVd = $v3.IndexOf('if (RwgEnsureVoidCheck(Q) && RwgVoidCross(Q, P.X, P.Y)) { Bits |= ' + '8; }')
     $iKb = $v3.IndexOf('const bool bBelowKillbox = bRwgKillboxKnown && FMath::IsFinite(P.Z) && P.Z < RwgKillboxTopZ + NodeShuffleMapMode::RwgKillbox' + 'MarginCm;')
     $iKs = $v3.IndexOf('if (bBelowKillbox) { Bits |= ' + '16; }')
     if ($iW -lt 0 -or $iVd -lt $iW -or $iKb -lt $iVd -or $iKs -lt $iKb) { $fails += 'F2: v3 must be v2, then the graded VoidAt term (8), then bBelowKillbox (16) on the killbox top + margin' }
+    $vc = Get-Body $text.void 'bool RwgVoidCross(const NodeShuffleMapMode::FRwgGroundQuery& Q, double X, double Y)'
+    if (-not $vc -or -not $vc.Contains('return Q.VoidAt(X, Y) || Q.VoidAt(X + R, Y) || Q.VoidAt(X - R, Y) || Q.VoidAt(X, Y + R) || Q.VoidAt(X, Y - ' + 'R);') -or -not $vc.Contains('const double R = NodeShuffleMapMode::RwgVoid' + 'RingCm;')) { $fails += 'F2: the dealer void term must be the 5-point cross (P and +-RwgVoidRingCm on X / Y; RWG NearVoid parity)' }
     $code = (($v3 -split "`n") | ForEach-Object { $_ -replace '//.*$', '' }) -join "`n"
     if ($code -match ('(<|<=|>|>=|==)\s*-?0(\.0*)?f?\b')) { $fails += 'F2: v3 compares something against zero -- the killbox floor is a measured top, never a Z sign' }
 }
@@ -109,7 +111,7 @@ elseif ((Count $ws ('{ ++RwgWr' + 'RejectedVoid; } else { ++RwgWrRejectedKillbox
 if ((Count $text.place ('RwgWet' + 'V2(')) -ne 0 -or (Count $text.wrwg ('RwgWet' + 'V2(')) -ne 0) { $fails += 'F3: Place / WellRwg must not call v2 directly any more (v3 only)' }
 
 # F4 -- structural anchor: a C string literal that OPENS with the decorated prefix of an integer-index classifier.
-$forbidden = @(('"?Is' + 'Void@'), ('"?Is' + 'SeaWater@'), ('"?Is' + 'OpenSea@'), ('"?FamilyAt' + 'Sample@'))
+$forbidden = @(('"?Is' + 'Void@'), ('"?Is' + 'SeaWater@'), ('"?Is' + 'OpenSea@'), ('"?FamilyAt' + 'Sample@'), ('"?Paint' + 'At@FPWBaseMap@'), ('"?Paint' + 'LayersAt@'))
 foreach ($f in (Get-ChildItem -Path $src -Recurse -Include *.cpp, *.h)) {
     $body = Get-Content -Raw -Path $f.FullName
     foreach ($n in $forbidden) { if ($body.Contains($n)) { $fails += "F4: an integer-index RWG export is named in $($f.Name) ($n...) -- those int 3 on a bad index; bind the XY export instead" } }
@@ -166,7 +168,7 @@ if ($eb -lt 0 -or $ev -lt $eb -or ($ev - $eb) -gt 200) { $fails += 'F8: the vani
 
 # F9
 if ((Count $text.subsysh ('UPROPERTY(Save' + 'Game) bool bRwgVoidChecked = false;')) -ne 2) { $fails += 'F9: bRwgVoidChecked must be a SaveGame property on exactly the two entry structs' }
-if ((Count $text.maph ('constexpr double RwgVoidPlateauCm = -3000.' + '0;')) -ne 1 -or (Count $text.maph ('constexpr int32 RwgVoidCheckPerClass = ' + '32;')) -ne 1 -or (Count $text.maph ('constexpr double RwgKillboxMarginCm = 1000.' + '0;')) -ne 1 -or (Count $text.maph ('constexpr int32 RwgKillboxResettlePerPass = ' + '16;')) -ne 1) { $fails += 'F9: RwgVoidPlateauCm -3000 / RwgVoidCheckPerClass 32 / RwgKillboxMarginCm 1000 / RwgKillboxResettlePerPass 16 must be pinned' }
+if ((Count $text.maph ('constexpr double RwgVoidPlateauCm = -3000.' + '0;')) -ne 1 -or (Count $text.maph ('constexpr int32 RwgVoidCheckPerClass = ' + '32;')) -ne 1 -or (Count $text.maph ('constexpr double RwgKillboxMarginCm = 1000.' + '0;')) -ne 1 -or (Count $text.maph ('constexpr int32 RwgKillboxResettlePerPass = ' + '16;')) -ne 1 -or (Count $text.maph ('constexpr double RwgVoidRingCm = 1500.' + '0;')) -ne 1) { $fails += 'F9: RwgVoidPlateauCm -3000 / RwgVoidCheckPerClass 32 / RwgKillboxMarginCm 1000 / RwgKillboxResettlePerPass 16 / RwgVoidRingCm 1500 must be pinned' }
 if ((Count $text.nsmod ('LOADED (2026-10-18-rwg-' + 'p2f-1)')) -ne 1 -or (Count $text.nsmod ('2026-10-18-rwg-' + 'p2e-2')) -ne 0) { $fails += 'F9: the marker must be rwg-p2f-1 and the previous marker absent' }
 
 # F10

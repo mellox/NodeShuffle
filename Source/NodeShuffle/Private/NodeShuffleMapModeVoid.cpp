@@ -1,7 +1,9 @@
 // RWG P2f (2026-10-18) -- void + killbox predicate. Brief: the P2f packet; research _team/test-logs/2026-10-18-rwg-two-seas-research.md §3-§5.
 // MEASURED (R7 new game on p2e-2): 24 % of uniform draws land in RWG's VOID -- a flat plateau where SurfaceHeightCm reports -3000
 // (FPWBaseMap::SeabedM) and InSeaVolume answers false away from the sea; entries dealt there settle at killbox top - 5000, inside RWG's
-// killbox (two AFGDamageOverTimeVolume actors, top Z -22463 in that world). This file holds (1) predicate v3 = v2 OR the graded VoidAt
+// killbox (two AFGDamageOverTimeVolume actors, top Z -22463 in that world -- per rwg-export-catalog.md that value is a hard CEILING inside
+// FPWDensityField::KillboxTopAboveSeaCm, min(derived, -22463): another seed can report a deeper top, never a higher one, so it is never
+// used here as a constant; the measured damage-volume top is the runtime value). This file holds (1) predicate v3 = v2 OR the graded VoidAt
 // term OR the killbox floor (bBelowKillbox: a playability rule, not a water rule), (2) RWGKILLBOX, the once-per-session killbox top read
 // from the damage volumes AND from GetKillboxTop (both printed; the volume value wins when they disagree), (3) the RWGVOIDCHECK census
 // that GRADES VoidAt before its term may count, and (4) RESETTLE-KILLBOX, which tears down placed entries whose actor stands below the
@@ -18,14 +20,24 @@
 #include "Resources/FGResourceNode.h"
 #include <limits>
 
+namespace
+{
+    // RWG P2f: the dealer's void term -- VoidAt at P and at +-RwgVoidRingCm on X and on Y (RWG NearVoid's 5-point cross, catalogue-measured).
+    bool RwgVoidCross(const NodeShuffleMapMode::FRwgGroundQuery& Q, double X, double Y)
+    {
+        const double R = NodeShuffleMapMode::RwgVoidRingCm;
+        return Q.VoidAt(X, Y) || Q.VoidAt(X + R, Y) || Q.VoidAt(X - R, Y) || Q.VoidAt(X, Y + R) || Q.VoidAt(X, Y - R);
+    }
+}
+
 int32 ANodeShuffleSubsystem::RwgRejectV3(const NodeShuffleMapMode::FRwgGroundQuery& Q, const FVector& P)
 {
-    // P.Z is RWG's SurfaceHeightCm at P's XY (every caller passes the API surface). Bits 1/2/4 = water predicate v2, unchanged; 8 = VoidAt(X, Y),
-    // counted only while this session's RWGVOIDCHECK grade is usable; 16 = bBelowKillbox: the API surface lies below the measured killbox top
+    // P.Z is RWG's SurfaceHeightCm at P's XY (every caller passes the API surface). Bits 1/2/4 = water predicate v2, unchanged; 8 = VoidAt on the
+    // 5-point cross (P and +-RwgVoidRingCm on X / Y), counted only while this session's RWGVOIDCHECK grade is usable; 16 = bBelowKillbox: the API surface lies below the measured killbox top
     // plus RwgKillboxMarginCm (only while the top is known). 0 = dealable.
     int32 Bits = RwgWetV2(Q, P);
     RwgEnsureKillboxTop(&Q);
-    if (RwgEnsureVoidCheck(Q) && Q.VoidAt(P.X, P.Y)) { Bits |= 8; }
+    if (RwgEnsureVoidCheck(Q) && RwgVoidCross(Q, P.X, P.Y)) { Bits |= 8; }
     const bool bBelowKillbox = bRwgKillboxKnown && FMath::IsFinite(P.Z) && P.Z < RwgKillboxTopZ + NodeShuffleMapMode::RwgKillboxMarginCm;
     if (bBelowKillbox) { Bits |= 16; }
     return Bits;

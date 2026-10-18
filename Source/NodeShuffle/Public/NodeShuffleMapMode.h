@@ -95,6 +95,10 @@ namespace NodeShuffleMapMode
     constexpr int32 RwgVoidCheckPerClass = 32;
     constexpr double RwgKillboxMarginCm = 1000.0;
     constexpr int32 RwgKillboxResettlePerPass = 16;
+    // RWG P2f (coordinator, rwg-export-catalog.md): the dealer's void term tests VoidAt at the point AND at +-RwgVoidRingCm on X and on Y -- the
+    // same 5-point cross RWG's own node keep-out APWWorldGenerator::NearVoid uses (catalogue: disassembled, 1500 cm). Kept on the public VoidAt
+    // instead of binding NearVoid (private export: a refactor can drop or rename it). RWGVOIDCHECK still grades the raw single-point VoidAt.
+    constexpr double RwgVoidRingCm = 1500.0;
 
     // RWG P2b ground query over the runtime-bound RWG exports (NodeShuffleMapModeHeightApi.cpp). Construct once
     // per batch (it holds the density field's strong reference for its lifetime, never across frames).
