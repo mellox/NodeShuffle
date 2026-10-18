@@ -148,10 +148,21 @@ bool ANodeShuffleSubsystem::RwgEnsureCaveCheck(const NodeShuffleMapMode::FRwgGro
     RwgCaveCheckRetryAt = Now + 5.0;
     UWorld* World = GetWorld();
     if (!World) { return false; }
-    TArray<FVector> Nodes; // RWG's own nodes (non-ours, hidden originals included): the natural-share numerator's population
+    // RWG's own nodes (non-ours, hidden originals included): the natural-share numerator's population. An unadopted restored spawn of ours
+    // is not caught by IsOursForRwg (P2g F2), so any node within 300 cm of an active new-node entry is excluded (mirror of the F2 guard):
+    // otherwise a session that placed cave nodes would raise the next session's seed count (an output-derived input).
+    TArray<FVector> OurSpots;
+    for (const FNodeShuffleEntry& E : Layout) { if (E.bIsNewNode && E.bActive) { OurSpots.Add(E.Location); } }
+    TArray<FVector> Nodes;
+    int32 ExcludedOurs = 0;
     for (TActorIterator<AFGResourceNodeBase> It(World); It; ++It)
     {
-        if (IsValid(*It) && !IsOursForRwg(*It)) { Nodes.Add(It->GetActorLocation()); }
+        if (!IsValid(*It) || IsOursForRwg(*It)) { continue; }
+        const FVector L = It->GetActorLocation();
+        bool bOurs = false;
+        for (const FVector& O : OurSpots) { if (FVector::DistSquared(O, L) < FMath::Square(300.0)) { bOurs = true; break; } }
+        if (bOurs) { ++ExcludedOurs; continue; }
+        Nodes.Add(L);
     }
     if (Nodes.Num() < 8)
     {
@@ -238,12 +249,12 @@ bool ANodeShuffleSubsystem::RwgEnsureCaveCheck(const NodeShuffleMapMode::FRwgGro
     const bool bNotAllInside = SampleN == 0 || SampleInside < SampleN;
     bRwgCaveUsable = bNumOk && bStandOk && bFloorOk && bNotAllInside;
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("RWGCAVECHECK: num=%d seed=%lld seedSource=%s json='%s' jsonStatus=%s jsonCaves=%d numMatchesJson=%d standPoints=%d insideAtStandOrProbe=%d insideAtStandRaw=%d floorChecked=%d floorFound=%d floorWithinHeadroom=%d nodeSample=%d nodeSampleInside=%d nodeSampleFloorFound=%d originalsTested=%d originalsInsideCave=%d naturalShareCap=%.2f usable=%d"),
+        TEXT("RWGCAVECHECK: num=%d seed=%lld seedSource=%s json='%s' jsonStatus=%s jsonCaves=%d numMatchesJson=%d standPoints=%d insideAtStandOrProbe=%d insideAtStandRaw=%d floorChecked=%d floorFound=%d floorWithinHeadroom=%d nodeSample=%d nodeSampleInside=%d nodeSampleFloorFound=%d originalsTested=%d originalsInsideCave=%d seedsExcludedOurs=%d naturalShareCap=%.2f usable=%d"),
         Num, Seed, *SeedSrc, *JsonPath, *JsonStatus, JsonCaves, (JsonStatus == TEXT("read") && JsonCaves == Num) ? 1 : 0, Stands.Num(), StandInside, StandInsideRaw,
-        FloorN, FloorFound, FloorWithin, SampleN, SampleInside, SampleFloor, RwgCaveSeedDen, RwgCaveSeedCount, RwgCaveShareCapMirror, bRwgCaveUsable ? 1 : 0);
+        FloorN, FloorFound, FloorWithin, SampleN, SampleInside, SampleFloor, RwgCaveSeedDen, RwgCaveSeedCount, ExcludedOurs, RwgCaveShareCapMirror, bRwgCaveUsable ? 1 : 0);
     if (!bRwgCaveUsable) { UE_LOG(LogNodeShuffle, Warning, TEXT("RWGCAVECHECK-OFF: numOk=%d standOk=%d floorOk=%d nodeSampleNotAllInside=%d; the cave share is 0 this session"), bNumOk ? 1 : 0, bStandOk ? 1 : 0, bFloorOk ? 1 : 0, bNotAllInside ? 1 : 0); }
-    else if (Num == 0) { UE_LOG(LogNodeShuffle, Display, TEXT("RWGCAVECHECK: num=0 in this world; usable, cave share 0 (every spot is a surface spot)")); }
-    else if (Seeds == 0) { UE_LOG(LogNodeShuffle, Display, TEXT("RWGCAVECHECK: originalsInsideCave=0 of %d; the vanilla-rule share (seeds / pool) is 0 in this world although num=%d"), RwgCaveSeedDen, Num); }
+    else if (Num == 0) { UE_LOG(LogNodeShuffle, Display, TEXT("RWGCAVECHECK: this world holds no carved cave; usable, cave share 0 (every spot is a surface spot)")); }
+    else if (Seeds == 0) { UE_LOG(LogNodeShuffle, Display, TEXT("RWGCAVECHECK: no RWG original lies inside a cave (%d tested); the vanilla-rule share (seeds / pool) is 0 in this world although it holds %d caves"), RwgCaveSeedDen, Num); }
     return bRwgCaveUsable;
 }
 

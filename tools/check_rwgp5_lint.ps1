@@ -78,6 +78,8 @@ function Invoke-P5Checks($T) {
         if (-not $ck.Contains('bRwgCaveUsable = bNumOk && bStandOk && bFloorOk && bNotAllInside;')) { $f += '(P3) the census grade must AND all four controls' }
         if (-not $ck.Contains('const bool bNumOk = Num >= 0 && (JsonStatus != TEXT("read") || JsonCaves == Num);')) { $f += '(P3) numOk must compare the JSON count when read' }
         if (-not $ck.Contains('RWGCAVECHECK: num=%d seed=%lld')) { $f += '(P3) RWGCAVECHECK census line missing' }
+        if (-not $ck.Contains('if (FVector::DistSquared(O, L) < FMath::Square(300.0)) { bOurs = true; break; }') -or -not $ck.Contains('if (bOurs) { ++ExcludedOurs; continue; }')) { $f += '(P3) seeds must exclude nodes on our active entries (F2 mirror)' }
+        foreach ($bad in @(('num=' + '0 '), ('originalsInsideCave=' + '0 '))) { if ($ck.Contains('TEXT("RWGCAVECHECK: ' + $bad)) { $f += "(P3) a prose line carries the census token $bad" } }
     }
     $rp = Get-Body $T.r1 ($cls + 'RwgLogReprobes(')
     if (-not $rp -or -not $rp.Contains('if (bFull) { const NodeShuffleMapMode::FRwgGroundQuery Q(GetWorld(), RwgGenerator.Get()); RwgEnsureCaveCheck(Q); }')) { $f += '(P3) RWGCAVECHECK must run at readiness (the latch reprobe)' }
@@ -117,6 +119,7 @@ function Invoke-P5Checks($T) {
     if (-not $T.resettle.Contains('E.bRwgSettledOnTerrain || E.bUnderground || E.bRwgCave) { continue; }')) { $f += '(P9) the resettle pass must skip cave entries' }
     if (-not $T.rock.Contains('E.bRwgRockChecked || E.bUnderground || E.bRwgCave) { continue; }')) { $f += '(P9) the rock pass must skip cave entries' }
     if (-not $T.sea.Contains('if (E.bPinned || E.bUnderground || E.bRwgCave) { ++SkipPinned;')) { $f += '(P9) the sea pass must skip cave entries' }
+    if (-not $T.subsys.Contains('/*bCaveFlagged=*/Entry.bUnderground || Entry.bRwgCave);') -or -not $T.subsys.Contains('Reuse->bRwgCave = false;')) { $f += '(P9) the inside gate must exempt RWG cave entries and the starter re-home must clear bRwgCave' }
     if (-not $T.subsys.Contains('Entry.bUnderground || Entry.bRwgCave, &bTrySteep,') -or -not $T.subsys.Contains('bUndergroundEntry = E.bUnderground || E.bRwgCave;')) { $f += '(P9) the overlap nudge and rock dress must treat bRwgCave as cave' }
     # P10
     if ((Count $T.place ('caveSpots=' + '0 ')) -ne 0 -or (Count $T.place 'caveSpots=%d caveDrawsTried=%d caveDealFailed=%d') -ne 1) { $f += '(P10) ROLLCENSUS must print caveSpots as a measured field' }
@@ -124,7 +127,7 @@ function Invoke-P5Checks($T) {
     if ((Count $T.place 'RwgNoteSettledInsideCave(Q, Entry);') -ne 1 -or (Count $c 'RwgNoteSettledInsideCave(Q, Entry);') -ne 1) { $f += '(P10) settledInsideCave must be noted on both settle paths' }
     if (-not $T.place.Contains('RwgPcCaveRedealCave = RwgPcCaveRedealSurface = RwgPcInsideCaveChecked = RwgPcSettledInsideCave = RwgPcSettledInsideCaveSurfaceEntry = 0;')) { $f += '(P10) the per-pass cave counters must be zeroed' }
     # P11
-    if ((Count $T.nsmod ('LOADED (2026-10-18-rwg-' + 'p5-1)')) -ne 1 -or (Count $T.nsmod ('2026-10-18-rwg-' + 'p2g-1')) -ne 0) { $f += '(P11) marker must be rwg-p5-1 and rwg-p2g-1 absent' }
+    if ((Count $T.nsmod ('LOADED (2026-10-18-rwg-' + 'p5-2)')) -ne 1 -or (Count $T.nsmod ('2026-10-18-rwg-' + 'p5-1')) -ne 0 -or (Count $T.nsmod ('2026-10-18-rwg-' + 'p2g-1')) -ne 0) { $f += '(P11) marker must be rwg-p5-2 with rwg-p5-1 and rwg-p2g-1 absent' }
     # P12
     foreach ($fmt in @([regex]::Matches(($T.cave + $T.place), 'TEXT\("((?:RWGCAVE|ROLLCENSUS: map=rwg deal=api|PLACECENSUS: pass)[^"]*)"\)') | ForEach-Object { $_.Groups[1].Value })) {
         $fl = Fmt-Fields $fmt
@@ -153,6 +156,8 @@ $mutants = @(
     @{ Name = 'M10 census grade drops the JSON count'; Key = 'cave';  Expect = 'P3'; Find = 'bRwgCaveUsable = bNumOk && bStandOk'; Repl = 'bRwgCaveUsable = bStandOk' }
     @{ Name = 'M11 cave redeal rolls FRand at share 0'; Key = 'cave'; Expect = 'P13'; Find = '!(Share > 0.0f && Rng.FRand() < Share)'; Repl = '!(Rng.FRand() < Share)' }
     @{ Name = 'M13 census not run at readiness';       Key = 'r1';    Expect = 'P3'; Find = 'RwgEnsureCaveCheck(Q); }'; Repl = '}' }
+    @{ Name = 'M14 inside gate not exempting caves';   Key = 'subsys'; Expect = 'P9'; Find = '/*bCaveFlagged=*/Entry.bUnderground || Entry.bRwgCave);'; Repl = '/*bCaveFlagged=*/Entry.bUnderground);' }
+    @{ Name = 'M15 seed count feeds on our spawns';     Key = 'cave';  Expect = 'P3'; Find = 'if (bOurs) { ++ExcludedOurs; continue; }'; Repl = '' }
     @{ Name = 'M12 surface settle census dropped';     Key = 'place'; Expect = 'P10'; Find = 'RwgNoteSettledInsideCave(Q, Entry);'; Repl = '' }
 )
 $mutantFails = @()
