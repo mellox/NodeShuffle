@@ -393,6 +393,7 @@ void ANodeShuffleSubsystem::RwgEmitPlaceCensus()
     RwgPcTraceHit = RwgPcTraceMiss = RwgPcTraceFar = RwgPcFallback = RwgPcRedealApi = 0;
     RwgPcFarTerrain = RwgPcFarCanopy = RwgPcFarWater = RwgPcFarOther = 0;
     RwgPcSettledTerrain = RwgPcNoTerrainDefer = RwgPcSkippedToTerrain = 0;
+    RwgProbeCapHits = 0;
 }
 
 void ANodeShuffleSubsystem::RwgLogSkipOnce(int32 Bit, const TCHAR* What)

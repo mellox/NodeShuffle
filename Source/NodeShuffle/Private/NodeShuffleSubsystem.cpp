@@ -6705,7 +6705,8 @@ bool ANodeShuffleSubsystem::RaycastGroundAt(const FVector& ProbeXY, float StartZ
             if (!GetWorld()->LineTraceSingleByChannel(H, S, En, ECC_WorldStatic, P)) { return false; }
             const int32 Cls = RwgHitClassOf(H);
             if (K == 0 && bRwgProbeArmed && RwgProbeFirstClass < 0) { RwgProbeFirstClass = Cls; RwgProbeFirstZ = H.ImpactPoint.Z; }
-            if (Cls == 0) { return true; }
+            // A player buildable is accepted like terrain: vanilla settles nodes on foundations by design (see the grid note below).
+            if (Cls == 0 || (H.GetActor() && H.GetActor()->IsA<AFGBuildable>())) { return true; }
             ++RwgProbeSkipped;
             RwgNoteSkippedHit(H, Cls);
             P.AddIgnoredComponent(H.GetComponent());

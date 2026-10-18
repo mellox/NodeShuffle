@@ -1040,7 +1040,7 @@ private:
     mutable int32 RwgProbeFirstClass = -1;
     mutable double RwgProbeFirstZ = 0.0;
     mutable int32 RwgProbeSkipped = 0;
-    mutable int32 RwgProbeCapHits = 0;            // session: traces that exhausted RwgTerrainSkipMax (read as no hit)
+    mutable int32 RwgProbeCapHits = 0;            // per PLACECENSUS pass (zeroed there): traces that exhausted RwgTerrainSkipMax (read as no hit)
     mutable TSet<FString> RwgSkippedHitKinds;     // session: RWGTERRAINSKIP already printed for these kinds
     // PLACECENSUS per-pass additions (zeroed by RwgEmitPlaceCensus).
     int32 RwgPcFarTerrain = 0, RwgPcFarCanopy = 0, RwgPcFarWater = 0, RwgPcFarOther = 0;

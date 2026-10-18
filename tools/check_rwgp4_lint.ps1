@@ -29,7 +29,7 @@
 #       re-binds a sentinel satellite record before appending.
 # RWG P2c (2026-10-18, floating nodes; spec _team/nodeshuffle-rwg-p2-spec.md "R4 finding"), pins C1..C11:
 #   C1  RaycastGroundAt / RaycastSettle take bTerrainOnly defaulted FALSE (every vanilla caller keeps the plain trace).
-#   C2  The trace helper: off -> the plain single trace; on -> non-terrain hits ignored by component, re-traced, the cap
+#   C2  The trace helper: off -> the plain single trace; on -> terrain or player-buildable hits accepted, others ignored by component, re-traced, the cap
 #       reads as no hit; the primary and the ring traces both go through it.
 #   C3  RaycastSettle forwards bTerrainOnly to BOTH surface probes (primary + spiral).
 #   C4  Every other RWG settle/normal site passes the RWG test (nudge, legacy settle, adopt refit, rock probe, well probe).
@@ -231,7 +231,7 @@ if ((Count $text.subsysh ('bool* bOutWaterNoLand = nullptr, bool bTerrainOnly = 
 $rg = Get-Body $text.subsys ('bool ' + $cls + 'RaycastGroundAt(const FVector& ProbeXY, float StartZ, const AActor* IgnoreNode,')
 if (-not $rg) { $fails += 'C2: RaycastGroundAt body not found' } else {
     $off = $rg.IndexOf('if (!bTerrainOnly) { return GetWorld()->LineTrace' + 'SingleByChannel(H, S, En, ECC_WorldStatic, P); }')
-    $acc = $rg.IndexOf('if (Cls == 0) { return ' + 'true; }'); $ign = $rg.IndexOf('P.AddIgnored' + 'Component(H.GetComponent());')
+    $acc = $rg.IndexOf('if (Cls == 0 || (H.GetActor() && H.GetActor()->IsA<AFGBuildable>())) { return ' + 'true; }'); $ign = $rg.IndexOf('P.AddIgnored' + 'Component(H.GetComponent());')
     if ($off -lt 0 -or $acc -lt $off -or $ign -lt $acc) { $fails += 'C2: the trace helper must keep the plain trace when off and skip non-terrain hits by component when on' }
     if ($rg -notmatch ('\+\+RwgProbeCapHits;\s*H = FHitResult\(\);\s*return ' + 'false;')) { $fails += 'C2: exhausting the skip cap must read as no hit' }
     if ((Count $rg ('if (!TraceDown(Hit, Start, End, ' + 'Params))')) -ne 1 -or (Count $rg ('if (TraceDown(RingHit, ')) -ne 1) { $fails += 'C2: the primary and ring traces must both go through the helper' }
