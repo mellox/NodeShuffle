@@ -35,8 +35,8 @@ int32 ANodeShuffleSubsystem::RwgRockOcclusionProbe(const FVector& At, const AAct
         const TCHAR* Rule = TEXT("");
         const int32 Cls = RwgHitClassOf(H, &Rule);
         if (Cls != 0) { RwgNoteHitClass(H, Cls, Rule); }
-        const AActor* Owner = H.GetActor();
-        if (Cls == 0 || (Owner && (Owner->IsA<AFGBuildable>() || Owner->GetClass()->GetName().Contains(TEXT("AbstractInstanceManager"))))) { return 2; }
+        const AActor* HitOwner = H.GetActor();
+        if (Cls == 0 || (HitOwner && (HitOwner->IsA<AFGBuildable>() || HitOwner->GetClass()->GetName().Contains(TEXT("AbstractInstanceManager"))))) { return 2; }
         if (Cls == 4)
         {
             const UPrimitiveComponent* C = H.GetComponent();
