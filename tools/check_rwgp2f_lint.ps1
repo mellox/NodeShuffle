@@ -12,10 +12,12 @@
 #   F5  Re-deal pass: candidates re-open on the void flag only while both P2f terms are on; the void flag is written only as `|= bVoidOn`;
 #       the verdict is v3; the sea refusal still precedes every flag write; the census carries voidN / killboxN.
 #   F6  RWGVOIDCHECK grade expression + class (a) predicate; no repeated field in any P2f format string.
-#   F7  RWGKILLBOX: the volume value wins over GetKillboxTop; bottom before perimeter; plausibility below the lowest API surface.
+#   F7  RWGKILLBOX: the volume value wins over GetKillboxTop; bottom before perimeter; plausibility = finite, below 0, above -200000
+#       (review MF1: GlobalMinSurfaceCm is RWG's clamp floor, never the top's ceiling).
 #   F8  ROLLCENSUS / WELLROLL carry the killbox fields; RwgSpawnPass runs RESETTLE-KILLBOX once, after the rock pass; the un-settle uses
-#       RwgRedealLiveEntry and clears the void flag on success; the vanilla-box well fallback clears it too.
-#   F9  bRwgVoidChecked is SaveGame on exactly the two entry structs; constants pinned by value; marker rwg-p2f-1, previous absent.
+#       RwgRedealLiveEntry and clears the void flag on success; the vanilla-box well fallback clears it too; RwgRedealLiveEntry
+#       (Rock.cpp) clears the void flag right after the rock flag (review L4).
+#   F9  bRwgVoidChecked is SaveGame on exactly the two entry structs; constants pinned by value; marker rwg-p2f-2, previous absent.
 #   F10 Z-sign detector over the new file (Void.cpp): only the whitelisted measured-only / plausibility statements.
 # Mutants: scratchpad mutants_p2f.py. Exit 0 = all hold; 1 = at least one does not; 2 = a pinned FILE is missing.
 
@@ -34,6 +36,7 @@ $files = [ordered]@{
     maph    = 'NodeShuffle\Public\NodeShuffleMapMode.h'
     subsysh = 'NodeShuffle\Public\NodeShuffleSubsystem.h'
     nsmod   = 'NodeShuffle\Private\NodeShuffle.cpp'
+    rock    = 'NodeShuffle\Private\NodeShuffleMapModeRock.cpp'
 }
 $text = @{}
 foreach ($k in $files.Keys) {
@@ -151,7 +154,8 @@ if (-not $kb) { $fails += 'F7: RwgEnsureKillboxTop body not found' } else {
     if ($iA -lt 0 -or $iP -lt $iA) { $fails += 'F7: the measured volume top must win over GetKillboxTop' }
     $iB = $kb.IndexOf('if (BottomN > 0 && Plausible(Bottom' + 'Top))'); $iPe = $kb.IndexOf('else if (PerimN > 0 && Plausible(Perim' + 'Top))')
     if ($iB -lt 0 -or $iPe -lt $iB) { $fails += 'F7: the bottom volume must be read before the perimeter (a perimeter wall may reach above the terrain)' }
-    if (-not $kb.Contains('return FMath::IsFinite(Z) && Z < CeilZ && Z > -2000000.' + '0;')) { $fails += 'F7: the killbox top must lie below the lowest API surface to count' }
+    if (-not $kb.Contains('const auto Plausible = [](double Z) { return FMath::IsFinite(Z) && Z < 0.' + '0 && Z > -200000.0; };')) { $fails += 'F7: the killbox top must be finite, below 0 and above -200000 (GlobalMinSurfaceCm is a clamp floor, never its ceiling)' }
+    if ($kb.Contains('Z < Ceil' + 'Z')) { $fails += 'F7: GlobalMinSurfaceCm must never bound the killbox top from above (-60000 on R7: every real top failed)' }
 }
 
 # F8
@@ -165,14 +169,16 @@ if (-not $kp -or -not $kp.Contains('if (RwgRedealLiveEntry(E, TEXT("actor below 
 elseif ($kp.IndexOf('if (From.Z >= Top) { ' + 'continue; }') -lt 0 -or $kp.IndexOf('if (!IsValid(Node))') -gt $kp.IndexOf('if (From.Z >= Top)')) { $fails += 'F8: only a LIVE actor whose Z is below the top may be un-settled' }
 $eb = $text.esc.IndexOf('E.bRwgSeaChecked = false; // RWG P2e review'); $ev = $text.esc.IndexOf('E.bRwgVoidChecked = ' + 'false; // RWG P2f')
 if ($eb -lt 0 -or $ev -lt $eb -or ($ev - $eb) -gt 200) { $fails += 'F8: the vanilla-box well fallback must clear the void flag next to the sea flag' }
+$rl = Get-Body $text.rock ('bool ' + $cls + 'RwgRedealLiveEntry(FNodeShuffleEntry& E, const TCHAR* Why)')
+if (-not $rl -or -not $rl.Contains("    E.bRwgRockChecked = false;`n    E.bRwgVoidChecked = " + 'false; // RWG P2f: the new spot is re-checked by the re-deal pass')) { $fails += 'F8: RwgRedealLiveEntry must clear the void flag right after the rock flag (review L4)' }
 
 # F9
 if ((Count $text.subsysh ('UPROPERTY(Save' + 'Game) bool bRwgVoidChecked = false;')) -ne 2) { $fails += 'F9: bRwgVoidChecked must be a SaveGame property on exactly the two entry structs' }
 if ((Count $text.maph ('constexpr double RwgVoidPlateauCm = -3000.' + '0;')) -ne 1 -or (Count $text.maph ('constexpr int32 RwgVoidCheckPerClass = ' + '32;')) -ne 1 -or (Count $text.maph ('constexpr double RwgKillboxMarginCm = 1000.' + '0;')) -ne 1 -or (Count $text.maph ('constexpr int32 RwgKillboxResettlePerPass = ' + '16;')) -ne 1 -or (Count $text.maph ('constexpr double RwgVoidRingCm = 1500.' + '0;')) -ne 1) { $fails += 'F9: RwgVoidPlateauCm -3000 / RwgVoidCheckPerClass 32 / RwgKillboxMarginCm 1000 / RwgKillboxResettlePerPass 16 / RwgVoidRingCm 1500 must be pinned' }
-if ((Count $text.nsmod ('LOADED (2026-10-18-rwg-' + 'p2f-1)')) -ne 1 -or (Count $text.nsmod ('2026-10-18-rwg-' + 'p2e-2')) -ne 0) { $fails += 'F9: the marker must be rwg-p2f-1 and the previous marker absent' }
+if ((Count $text.nsmod ('LOADED (2026-10-18-rwg-' + 'p2f-2)')) -ne 1 -or (Count $text.nsmod ('2026-10-18-rwg-' + 'p2f-1')) -ne 0) { $fails += 'F9: the marker must be rwg-p2f-2 and the previous marker absent' }
 
 # F10
-$allowed = @(('else if (Z > 0.0 && CN < ' + 'PerClass)'), ('const auto Plausible = [CeilZ](double Z) { return FMath::IsFinite(Z) && Z < CeilZ && Z > -2000000.' + '0; };'))
+$allowed = @(('else if (Z > 0.0 && CN < ' + 'PerClass)'), ('const auto Plausible = [](double Z) { return FMath::IsFinite(Z) && Z < 0.' + '0 && Z > -200000.0; };'))
 $zNeedle = '\b[A-Za-z_.]*[Zz][A-Za-z0-9_]*\s*(<|<=|>|>=)\s*-?' + '[0-9]+(\.[0-9]*)?f?\b|\b-?[0-9]+(\.[0-9]*)?f?\s*(<|<=|>|>=)\s*[A-Za-z_.]*' + '[Zz]'
 foreach ($line in ($text.void -split "`n")) {
     $c = ($line -replace '//.*$', '')

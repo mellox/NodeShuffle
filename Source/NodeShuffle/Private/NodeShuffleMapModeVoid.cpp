@@ -56,11 +56,11 @@ void ANodeShuffleSubsystem::RwgEnsureKillboxTop(const NodeShuffleMapMode::FRwgGr
     // ": public AVolume") and repositions two of them under the void. Each one's damage comes from UFGDotComponent mDotComponent (same header,
     // :42-43), whose TSubclassOf<UFGDamageOverTime> mDotClass (FGDotComponent.h:45-46) names it (BP_DoTWorldBottom_C / BP_DoTWorldPerimeter_C in
     // the R7 log). Matched by class NAME and read by reflection, so nothing here adds an import. The top is the BOTTOM volume's bounds max Z; a
-    // perimeter volume is printed and used only when no bottom volume exists. Plausibility: the top must lie below the lowest API surface
-    // (GlobalMinSurfaceCm; 0 when that optional export was dropped) -- a top at or above it would reject real terrain.
-    const double GMin = Q ? Q->GlobalMinZ() : std::numeric_limits<double>::quiet_NaN();
-    const double CeilZ = FMath::IsFinite(GMin) ? GMin : 0.0;
-    const auto Plausible = [CeilZ](double Z) { return FMath::IsFinite(Z) && Z < CeilZ && Z > -2000000.0; };
+    // perimeter volume is printed and used only when no bottom volume exists. Plausibility: finite, below sea level (0 cm) and above
+    // -200000 cm (the RWGHEIGHTAPI range bound). NOT bounded by GlobalMinSurfaceCm: that export is RWG's surface CLAMP floor (-60000 in the
+    // R7 log), not the lowest terrain, and R7 dealt an API surface of -25423 below the -22463 top, so it can never be the top's ceiling.
+    const double GMin = Q ? Q->GlobalMinZ() : std::numeric_limits<double>::quiet_NaN(); // printed only
+    const auto Plausible = [](double Z) { return FMath::IsFinite(Z) && Z < 0.0 && Z > -200000.0; };
     static const FName DotVolumeClass(TEXT("FGDamageOverTimeVolume"));
     int32 DotN = 0, BottomN = 0, PerimN = 0;
     double BottomTop = TNumericLimits<double>::Max(), PerimTop = TNumericLimits<double>::Max();
@@ -122,11 +122,11 @@ void ANodeShuffleSubsystem::RwgEnsureKillboxTop(const NodeShuffleMapMode::FRwgGr
     }
     bRwgKillboxDone = true;
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("RWGKILLBOX: known=%d killboxTopZ=%.0f source=%s killboxTopActorZ=%.0f actorKnown=%d killboxTopApiZ=%.0f apiKnown=%d apiReturned=%d apiBind=%s agree=%d plausibleBelowZ=%.0f dotVolumes=%d bottomVolumes=%d perimeterVolumes=%d tries=%d [%s]"),
+        TEXT("RWGKILLBOX: known=%d killboxTopZ=%.0f source=%s killboxTopActorZ=%.0f actorKnown=%d killboxTopApiZ=%.0f apiKnown=%d apiReturned=%d apiBind=%s agree=%d globalMinSurfaceZ=%.0f dotVolumes=%d bottomVolumes=%d perimeterVolumes=%d tries=%d [%s]"),
         bRwgKillboxKnown ? 1 : 0, bRwgKillboxKnown ? RwgKillboxTopZ : std::numeric_limits<double>::quiet_NaN(), Source,
         bRwgKillboxActorKnown ? RwgKillboxTopActorZ : (BottomN > 0 ? BottomTop : std::numeric_limits<double>::quiet_NaN()),
         bRwgKillboxActorKnown ? 1 : 0, ApiZ, bRwgKillboxApiKnown ? 1 : 0, bApiReturned ? 1 : 0, *NodeShuffleMapMode::RwgKillboxBindStatus(),
-        bAgree ? 1 : 0, CeilZ, DotN, BottomN, PerimN, RwgKillboxTries, *List);
+        bAgree ? 1 : 0, GMin, DotN, BottomN, PerimN, RwgKillboxTries, *List);
     if (bRwgKillboxActorKnown && bRwgKillboxApiKnown && !bAgree)
     {
         UE_LOG(LogNodeShuffle, Warning, TEXT("RWGKILLBOX-DISAGREE: the volume top and GetKillboxTop differ by more than 100 cm; the volume top is used"));

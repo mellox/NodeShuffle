@@ -84,6 +84,7 @@ bool ANodeShuffleSubsystem::RwgRedealLiveEntry(FNodeShuffleEntry& E, const TCHAR
     AdoptRotRefit.Remove(E.EntryGuid);
     E.bRwgSettledOnTerrain = false;
     E.bRwgRockChecked = false;
+    E.bRwgVoidChecked = false; // RWG P2f: the new spot is re-checked by the re-deal pass
     E.bRayCasted = false;
     // The spawn path's own redeal (API dealer on RWG, RedealTries per call); a spot it cannot move is settled again by the spawn
     // pass, whose terrain-only probe now reports a solid stop as unplaceable -> spiral -> the same redeal.
