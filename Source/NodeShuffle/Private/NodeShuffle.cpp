@@ -45,6 +45,23 @@ static FAutoConsoleCommandWithWorldAndArgs GNodeShuffleHereCmd(
         UE_LOG(LogNodeShuffle, Display, TEXT("HERE: NodeShuffle subsystem not found in this world (main menu / no session loaded?)"));
     }));
 
+// RWG cave navigation (2026-10-18; user decision: a SEPARATE command, not part of Here): `NodeShuffle.NearestCave` logs the nearest
+// carved-cave mouth (RWG cave file) and the nearest dealt cave node with distance / dZ / turn bearing. Log-only, same precedent as
+// NodeShuffle.Here (not gated behind EnableDiagnostics); off RWG it prints one line and returns. Body: NodeShuffleNearestCave.cpp.
+static FAutoConsoleCommandWithWorldAndArgs GNodeShuffleNearestCaveCmd(
+    TEXT("NodeShuffle.NearestCave"),
+    TEXT("Log the nearest RWG cave mouth + nearest dealt cave node: distance, dZ, turn bearing (log-only; RWG maps)."),
+    FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+    {
+        if (!World) { return; }
+        for (TActorIterator<ANodeShuffleSubsystem> It(World); It; ++It)
+        {
+            It->LogNearestCave();
+            return;
+        }
+        UE_LOG(LogNodeShuffle, Display, TEXT("NEARESTCAVE: NodeShuffle subsystem not found in this world (main menu / no session loaded?)"));
+    }));
+
 // cave-nodes-1: manual cave seed at the player's position (roofed spots without a vanilla node —
 // rock bridges, shelves, side tunnels). The flood-fill then maps the space from that seed.
 static FAutoConsoleCommandWithWorldAndArgs GNodeShuffleSeedHereCmd(

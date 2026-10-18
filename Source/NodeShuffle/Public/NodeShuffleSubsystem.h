@@ -3276,4 +3276,10 @@ private:
     // on, and the backstop's vanilla-site reconstruction, which does still use LocalOffset. Refusing is
     // the conservative call, not a statement that the group could not be placed.
     static constexpr float WellSelfOverlapFloorCm = 800.0f;
+
+public:
+    // RWG cave navigation (2026-10-18, NodeShuffleNearestCave.cpp): `NodeShuffle.NearestCave` -- nearest carved-cave mouth from the
+    // per-world cave file + nearest dealt bRwgCave entry, with distance / dZ / turn bearing. Log-only; one line and return off RWG.
+    // Appended after the private tail with its own access specifier because the console lambda in NodeShuffle.cpp calls it.
+    void LogNearestCave() const;
 };
