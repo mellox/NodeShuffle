@@ -227,7 +227,9 @@ void ANodeShuffleSubsystem::RollWellLayout(int32 Seed, bool bIsReroll)
             // SILENTLY PERMUTE A WELL'S PURITIES depending on where the player was standing when the
             // roll ran. If H2 needs an ordered vector, sort by SatellitePath first (as the deal already
             // sorts wells by CorePath) or key it by path -- do not consume this by index.
-            E.Satellites[SatIdx].OriginalPurity = Sat->GetResourcePurity(); // RECORDED ONLY -- never written back
+            // RWG P4c review F1: off vanilla a recorded purity is never replaced by a live read -- mPurity is EditInstanceOnly, not
+            // SaveGame (FGResourceNode.h:164), the storage class of the mResourceClass measured empty on 78 reloaded RWG cores.
+            if (GetMapMode() == ENodeShuffleMapMode::Vanilla || E.Satellites[SatIdx].OriginalPurity == RP_MAX) { E.Satellites[SatIdx].OriginalPurity = Sat->GetResourcePurity(); } // RECORDED ONLY -- never written back
             // T16: candidate only. Whether this satellite is the one the pin question is put to depends
             // on whether this well has been relocated -- EvaluateWellPin decides, once, for the group.
             OriginalSats.Add(Sat);

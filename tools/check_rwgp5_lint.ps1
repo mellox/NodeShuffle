@@ -150,7 +150,7 @@ function Invoke-P5Checks($T) {
     if ((Count $T.place 'RwgNoteSettledInsideCave(Q, Entry);') -ne 1 -or (Count $c 'RwgNoteSettledInsideCave(Q, Entry);') -ne 1) { $f += '(P10) settledInsideCave must be noted on both settle paths' }
     if (-not $T.place.Contains('RwgPcCaveRedealCave = RwgPcCaveRedealSurface = RwgPcInsideCaveChecked = RwgPcSettledInsideCave = RwgPcSettledInsideCaveSurfaceEntry = 0;')) { $f += '(P10) the per-pass cave counters must be zeroed' }
     # P11
-    if ((Count $T.nsmod ('LOADED (2026-10-18-rwg-' + 'p4c-1)')) -ne 1 -or (Count $T.nsmod ('2026-10-18-rwg-' + 'p5-2')) -ne 0 -or (Count $T.nsmod ('2026-10-18-rwg-' + 'p2g-1')) -ne 0) { $f += '(P11) marker must be rwg-p4c-1 with rwg-p5-2 and rwg-p2g-1 absent (moved by RWG P4c)' }
+    if ((Count $T.nsmod ('LOADED (2026-10-18-rwg-' + 'p4c-2)')) -ne 1 -or (Count $T.nsmod ('2026-10-18-rwg-' + 'p4c-1')) -ne 0 -or (Count $T.nsmod ('2026-10-18-rwg-' + 'p5-2')) -ne 0 -or (Count $T.nsmod ('2026-10-18-rwg-' + 'p2g-1')) -ne 0) { $f += '(P11) marker must be rwg-p4c-2 with rwg-p4c-1, rwg-p5-2 and rwg-p2g-1 absent (moved by the RWG P4c review fixes)' }
     # P12
     foreach ($fmt in @([regex]::Matches(($T.cave + $T.cavejson + $T.place), 'TEXT\("((?:RWGCAVE|ROLLCENSUS: map=rwg deal=api|PLACECENSUS: pass)[^"]*)"\)') | ForEach-Object { $_.Groups[1].Value })) {
         $fl = Fmt-Fields $fmt

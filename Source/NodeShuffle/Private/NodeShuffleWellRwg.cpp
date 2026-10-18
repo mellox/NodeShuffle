@@ -1,7 +1,8 @@
 // RWG P4 (2026-10-18) -- resource wells on RWG maps. Brief: _team/nodeshuffle-rwg-fullshuffle-spec.md §H P4 + the
 // 2026-10-18 P4 dispatch. The vanilla well pipeline (RollWellLayout / RollWellRelocation / ApplyWellRetype /
 // ApplyWellRelocation) keys EVERYTHING on actor paths (CorePath, SatellitePath), which are stable for level actors and
-// NOT stable on RWG: RWG re-spawns its fracking actors under new names on every load (R1). This file gives an RWG well
+// NOT guaranteed stable on RWG: a fresh generation names its fracking actors anew (R1); on a save load the cores were
+// measured keeping their saved paths (WELLCLAIM pathUnchanged=78, rwg-p5-2 reload). This file gives an RWG well
 // an identity that survives that: a CLAIM (FNodeShuffleWellEntry::RwgClaimGuid + RwgClaimCoreLocation, and each
 // satellite's RwgClaimLocation, all SaveGame). The claim is minted when RollWellLayout first enrols the core, and on a
 // reload RwgRebindWellClaimsOnce re-binds each saved claim to the live core at its claim location (one-to-one) and
@@ -250,7 +251,8 @@ void ANodeShuffleSubsystem::RwgRetryUnboundWellSatellites()
     }
 
     const float MatchSq = FMath::Square(WellAdoptMatchRadiusCm);
-    int32 BoundNow = 0, ViaList = 0, ViaLocation = 0, NowComplete = 0, SuppressedNow = 0, RekeyMoved = 0, RekeyCollision = 0;
+    int32 BoundNow = 0, ViaList = 0, ViaLocation = 0, NowComplete = 0, SuppressedNow = 0, RekeyMoved = 0, RekeyCollision = 0, SatsAmbiguous = 0;
+    float MaxBindSq = 0.f; // RWG P4c review: largest claim-location -> bound-satellite distance this pass (measured only)
     for (int32 K = 0; K < N; ++K)
     {
         FNodeShuffleWellEntry& E = WellLayout[Cands[K].Value];
@@ -275,13 +277,14 @@ void ANodeShuffleSubsystem::RwgRetryUnboundWellSatellites()
             {
                 AFGResourceNodeFrackingSatellite* Best = nullptr;
                 float BestSq = MatchSq;
+                int32 InTol = 0;
                 for (AFGResourceNodeFrackingSatellite* Sat : Pool)
                 {
                     if (RwgIsClaimedOriginal(Sat)) { continue; } // bound earlier in this pass
                     if (IsValid(Core)) { const AFGResourceNodeFrackingCore* SC = Sat->GetCore().Get(); if (SC && SC != Core) { continue; } } // linked to another core: never this claim's (RWG P2d, p2c2 rereview F-B2)
-                    const float D = FVector::DistSquared(Sat->GetActorLocation(), S.RwgClaimLocation);
-                    if (D < BestSq) { BestSq = D; Best = Sat; }
+                    const float D = FVector::DistSquared(Sat->GetActorLocation(), S.RwgClaimLocation); if (D >= MatchSq) { continue; } ++InTol; if (D < BestSq) { BestSq = D; Best = Sat; }
                 }
+                if (InTol > 1) { ++SatsAmbiguous; return nullptr; } // RWG P4c review F3: same refusal the core re-bind makes (:141)
                 return Best;
             };
             AFGResourceNodeFrackingSatellite* Hit = Nearest(Listed);
@@ -308,6 +311,7 @@ void ANodeShuffleSubsystem::RwgRetryUnboundWellSatellites()
             // OUR relocated copy is keyed by the record's path (adopted under the sentinel at load); re-key it with the record.
             AFGResourceNodeFrackingSatellite* OurCopy = nullptr;
             if (SpawnedWellSatellites.RemoveAndCopyValue(OldPath, OurCopy)) { SpawnedWellSatellites.Add(NewPath, OurCopy); ++RekeyMoved; }
+            MaxBindSq = FMath::Max(MaxBindSq, FVector::DistSquared(Hit->GetActorLocation(), S.RwgClaimLocation)); // measured only
             S.SatellitePath = NewPath;
             RwgClaimedOriginals.Add(FObjectKey(Hit));
             ++BoundHere;
@@ -341,9 +345,9 @@ void ANodeShuffleSubsystem::RwgRetryUnboundWellSatellites()
     if (BoundNow > 0 || (Pending > 0 && (RwgWellRetryPasses % 12) == 1) || (bQuietNow && !bRwgWellRetryQuiet))
     {
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("WELLCLAIM-RETRY: pass=%d groupsPending=%d satsBoundNow=%d satsStillUnbound=%d groupsNowComplete=%d suppressCallsNow=%d claimsTriedThisPass=%d viaCoreList=%d viaLocation=%d looseCandidates=%d ourCopyRekeyed=%d rekeyCollision=%d"),
+            TEXT("WELLCLAIM-RETRY: pass=%d groupsPending=%d satsBoundNow=%d satsStillUnbound=%d groupsNowComplete=%d suppressCallsNow=%d claimsTriedThisPass=%d viaCoreList=%d viaLocation=%d looseCandidates=%d ourCopyRekeyed=%d rekeyCollision=%d satsAmbiguousRefused=%d maxBindDistCm=%.0f"),
             RwgWellRetryPasses, Pending, BoundNow, StillUnbound, NowComplete, SuppressedNow, N, ViaList, ViaLocation, Loose.Num(),
-            RekeyMoved, RekeyCollision);
+            RekeyMoved, RekeyCollision, SatsAmbiguous, FMath::Sqrt(MaxBindSq));
     }
     bRwgWellRetryQuiet = bQuietNow;
 }
@@ -425,7 +429,7 @@ void ANodeShuffleSubsystem::RwgEmitWellRollCensus(bool bApiDeal, const FString& 
         if (E.bGroupPlaced) { ++Placed; }
     }
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("WELLROLL: map=rwg deal=%s apiStatus='%s' cores=%d coresOurs=%d entries=%d eligible=%d builtOn=%d dealt=%d dealFailed=%d drawn=%d rejectedOutside=%d rejectedWater=%d rejectedWaterSurfaceZBelow0=%d rejectedWaterSurfaceZAtOrAbove0=%d dealtBelowZ0=%d rejectedSlope=%d rejectedSatOutside=%d rejectedSatWater=%d rejectedSea=%d rejectedNearOriginal=%d rejectedSpacing=%d resolvedZ=%d zSpreadMaxCm=%d noAuthoredResource=%d claimedNew=%d mintRefusedNearClaim=%d placedBefore=%d durationMs=%d rejectedVoid=%d rejectedKillbox=%d dealtBelowKillbox=%d killboxTopZ=%.0f killboxTopActorZ=%.0f killboxTopApiZ=%.0f voidUsable=%d authoredFromLive=%d authoredFromSaved=%d authoredFromSatellite=%d membersFromClaimWells=%d membersFromClaimSats=%d"),
+        TEXT("WELLROLL: map=rwg deal=%s apiStatus='%s' cores=%d coresOurs=%d entries=%d eligible=%d builtOn=%d dealt=%d dealFailed=%d drawn=%d rejectedOutside=%d rejectedWater=%d rejectedWaterSurfaceZBelow0=%d rejectedWaterSurfaceZAtOrAbove0=%d dealtBelowZ0=%d rejectedSlope=%d rejectedSatOutside=%d rejectedSatWater=%d rejectedSea=%d rejectedNearOriginal=%d rejectedSpacing=%d resolvedZ=%d zSpreadMaxCm=%d noAuthoredResource=%d claimedNew=%d mintRefusedNearClaim=%d placedBefore=%d durationMs=%d rejectedVoid=%d rejectedKillbox=%d dealtBelowKillbox=%d killboxTopZ=%.0f killboxTopActorZ=%.0f killboxTopApiZ=%.0f voidUsable=%d authoredFromLive=%d authoredFromSaved=%d noAuthoredSatelliteReadNonEmpty=%d membersFromClaimWells=%d membersFromClaimSats=%d"),
         bApiDeal ? TEXT("api") : TEXT("fallback"), *ApiStatus, RwgWrCores, RwgWrCoresOurs, WellLayout.Num(), Eligible, BuiltOn, Dealt, DealFailed,
         RwgWrDrawn, RwgWrOutside, RwgWrWater, RwgWrWaterZBelow0, RwgWrWaterZAtOrAbove0, RwgWrDealtBelowZ0, RwgWrSlope, RwgWrSatOutside, RwgWrSatWater, RwgWrRejectedSea, RwgWrNearOriginal, RwgWrSpacing, RwgWrResolvedZ,
         RwgWrZSpreadMaxCm, RwgWrNoAuthored, RwgWrClaimedNew, RwgWrMintRefused, Placed,

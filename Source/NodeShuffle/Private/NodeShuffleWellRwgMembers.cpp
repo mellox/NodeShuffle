@@ -13,7 +13,10 @@
 // registry or SpawnedWellSatellites), never a satellite whose GetCore() names ANOTHER core (p2c2 rereview F-B2). A census
 // record that already has every member is untouched, so a fresh RWG world (census linked, 539 of 539) runs as before.
 //
-// Also here: the WELLROLL authoredFrom* accounting (live core read / saved field / bound satellite read).
+// RWG P4c review (2026-10-18): a short well with an UNCLAIMED live satellite (not ours, not bound to any claim) inside
+// WellSatMaxRadiusCm of its core is left short (F2), so the capture gate refuses it as its count check would on vanilla.
+// Also here: the WELLROLL authoredFrom* accounting (live core read / saved field); a non-empty bound satellite read on an
+// entry with neither is COUNTED (noAuthoredSatelliteReadNonEmpty), never written (F4).
 // Log lines report measured counts and the predicate that branched, never a cause.
 #include "NodeShuffleSubsystem.h"
 #include "NodeShuffleMapMode.h"
@@ -39,9 +42,23 @@ void ANodeShuffleSubsystem::RwgFillWellMembersFromClaims(FNodeShuffleWellCensus&
 
     int32 WellsShort = 0, WellsFilled = 0, SatsAdded = 0, SatsAlready = 0, SatsSentinel = 0, SatsNoLive = 0;
     int32 SatsOurs = 0, SatsOtherCore = 0, SatsNonFinite = 0;
-    TMap<FString, AFGResourceNodeFrackingSatellite*> LiveByPath; // built once, on the first short well
+    int32 SatsPurityDiffers = 0;
+    int32 WellsUnclaimedNearby = 0, SatsUnclaimedNearby = 0;
+    TMap<FString, AFGResourceNodeFrackingSatellite*> LiveByPath; // RWG P4c review F5: built eagerly, so liveSatActors is true on every call
     TSet<const AActor*> Ours;
-    bool bLiveBuilt = false;
+    for (TActorIterator<AFGResourceNodeFrackingSatellite> It(World); It; ++It)
+    {
+        if (IsValid(*It)) { LiveByPath.Add(WellPathOf(*It), *It); }
+    }
+    for (const TPair<FString, AFGResourceNodeFrackingSatellite*>& KV : SpawnedWellSatellites) { if (KV.Value) { Ours.Add(KV.Value); } }
+    // RWG P4c review F2: live satellites bound to NO claim this session and not ours -- the world-side view the capture gate's count check used to
+    // compare against. A short well with one inside its radius is left short, so the gate refuses it as it would have on vanilla.
+    TArray<const AFGResourceNodeFrackingSatellite*> Unclaimed;
+    for (const TPair<FString, AFGResourceNodeFrackingSatellite*>& KV : LiveByPath)
+    {
+        if (FNodeShuffleModule::IsManagedSpawnedNode(KV.Value) || Ours.Contains(KV.Value) || RwgIsClaimedOriginal(KV.Value)) { continue; }
+        Unclaimed.Add(KV.Value);
+    }
     for (FNodeShuffleWellRecord& W : Census.Wells)
     {
         if (!IsValid(W.Core) || FNodeShuffleModule::IsManagedSpawnedNode(W.Core)) { continue; }
@@ -50,15 +67,13 @@ void ANodeShuffleSubsystem::RwgFillWellMembersFromClaims(FNodeShuffleWellCensus&
         const FNodeShuffleWellEntry& E = **Found;
         if (W.Members.Num() >= E.Satellites.Num()) { continue; } // census already complete for this claim: untouched
         ++WellsShort;
-        if (!bLiveBuilt)
+        int32 UnclaimedNear = 0;
+        const FVector CoreAt = W.Core->GetActorLocation();
+        for (const AFGResourceNodeFrackingSatellite* U : Unclaimed)
         {
-            bLiveBuilt = true;
-            for (TActorIterator<AFGResourceNodeFrackingSatellite> It(World); It; ++It)
-            {
-                if (IsValid(*It)) { LiveByPath.Add(WellPathOf(*It), *It); }
-            }
-            for (const TPair<FString, AFGResourceNodeFrackingSatellite*>& KV : SpawnedWellSatellites) { if (KV.Value) { Ours.Add(KV.Value); } }
+            if (FVector::DistSquared2D(U->GetActorLocation(), CoreAt) <= FMath::Square(WellSatMaxRadiusCm)) { ++UnclaimedNear; }
         }
+        if (UnclaimedNear > 0) { ++WellsUnclaimedNearby; SatsUnclaimedNearby += UnclaimedNear; continue; } // left short: the capture gate refuses it
         TSet<const AActor*> Have;
         for (const FNodeShuffleWellMember& M : W.Members) { Have.Add(M.Actor); }
         int32 AddedHere = 0;
@@ -71,6 +86,7 @@ void ANodeShuffleSubsystem::RwgFillWellMembersFromClaims(FNodeShuffleWellCensus&
             if (FNodeShuffleModule::IsManagedSpawnedNode(Sat) || Ours.Contains(Sat)) { ++SatsOurs; continue; }
             const AFGResourceNodeFrackingCore* LinkedCore = Sat->GetCore().Get();
             if (LinkedCore && LinkedCore != W.Core) { ++SatsOtherCore; continue; } // linked to another core: never this claim's
+            if (S.OriginalPurity != RP_MAX && Sat->GetResourcePurity() != S.OriginalPurity) { ++SatsPurityDiffers; } // measured only; F1 keeps the record
             FNodeShuffleWellMember M;
             M.Actor = Sat;
             M.Location = Sat->GetActorLocation();
@@ -87,22 +103,23 @@ void ANodeShuffleSubsystem::RwgFillWellMembersFromClaims(FNodeShuffleWellCensus&
     RwgWrMembersFromClaimWells = WellsFilled;
     RwgWrMembersFromClaimSats = SatsAdded;
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("WELLCLAIMMEMBERS: caller=%s claimedBoundCores=%d censusShortWells=%d wellsFilled=%d satsAdded=%d satsAlreadyMember=%d satsSentinel=%d satsNoLiveActor=%d satsOurCopy=%d satsLinkedToOtherCore=%d satsNonFinite=%d liveSatActors=%d"),
+        TEXT("WELLCLAIMMEMBERS: caller=%s claimedBoundCores=%d censusShortWells=%d wellsFilled=%d satsAdded=%d satsAlreadyMember=%d satsSentinel=%d satsNoLiveActor=%d satsOurCopy=%d satsLinkedToOtherCore=%d satsNonFinite=%d liveSatActors=%d satsLivePurityDiffersFromRecord=%d wellsUnclaimedNearby=%d satsUnclaimedNearby=%d"),
         Caller, ByCore.Num(), WellsShort, WellsFilled, SatsAdded, SatsAlready, SatsSentinel, SatsNoLive, SatsOurs, SatsOtherCore,
-        SatsNonFinite, LiveByPath.Num());
+        SatsNonFinite, LiveByPath.Num(), SatsPurityDiffers, WellsUnclaimedNearby, SatsUnclaimedNearby);
 }
 
 void ANodeShuffleSubsystem::RwgNoteWellAuthoredSource(FNodeShuffleWellEntry& E, bool bLiveCoreRead, const TArray<FNodeShuffleWellMember>& Members)
 {
-    // Order: the live core read (already written by the caller) > the saved field > the first bound satellite's AUTHORED
-    // resource (GetResourceClassOriginal, never the effective one, so our own override can never feed the deck).
+    // Order: the live core read (already written by the caller) > the saved field. A bound satellite's AUTHORED resource
+    // (GetResourceClassOriginal, never the effective one) is only COUNTED when both are empty -- never written (review F4):
+    // its mResourceClass is the same non-SaveGame field as the core's, so a non-empty read there can only be a CDO default.
     if (bLiveCoreRead) { ++RwgWrAuthoredLive; return; }
     if (!E.OriginalResourceClassPath.IsEmpty()) { ++RwgWrAuthoredSaved; return; }
     for (const FNodeShuffleWellMember& M : Members)
     {
         if (!IsValid(M.Actor) || FNodeShuffleModule::IsManagedSpawnedNode(M.Actor)) { continue; }
         const FString FromSat = WellAuthoredResourcePath(M.Actor);
-        if (!FromSat.IsEmpty()) { E.OriginalResourceClassPath = FromSat; ++RwgWrAuthoredSatellite; return; }
+        if (!FromSat.IsEmpty()) { ++RwgWrAuthoredSatellite; break; } // RWG P4c review F4: COUNTED, never written
     }
-    ++RwgWrNoAuthored; // live core, saved field and every bound satellite empty: the deck excludes this entry
+    ++RwgWrNoAuthored; // live core read and saved field both empty: the deck excludes this entry
 }
