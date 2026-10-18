@@ -110,6 +110,7 @@ bool ANodeShuffleSubsystem::RwgVerifyCaveCandidate(const NodeShuffleMapMode::FRw
     double Floor = 0.0;
     if (!Q.CaveFloorAt(X, Y, Hint, Floor)) { return false; }
     ++RwgRcCaveFloorHits;
+    if (!(Floor < SurfZ - RwgCaveInsideProbeCm)) { ++RwgRcCaveRejSurface; return false; } // P5-2 re-review: the floor must lie under the API surface
     if (!Q.CaveInsideAt(FVector(X, Y, Floor + RwgCaveInsideProbeCm))) { ++RwgRcCaveRejInside; return false; }
     if (!Q.CaveInsideAt(FVector(X, Y, Floor + RwgCaveHeadroomCmMirror))) { ++RwgRcCaveRejHeadroom; return false; }
     if (!Q.CaveInsideAt(FVector(X, Y, Floor + RwgCaveMinCeilingCmMirror))) { ++RwgRcCaveRejCeiling; return false; } // RWG P5 review F6 (was + 1100)

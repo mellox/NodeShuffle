@@ -285,12 +285,12 @@ float ANodeShuffleSubsystem::RwgCaveShare(int32 Denominator) const
 {
     // P5-2 user decision 1 (2026-10-18): the numerator is cave CAPACITY. Vanilla (NodeShuffleSubsystem.cpp:2043-2044 roll, :6983-6984 redeal):
     //     CaveChance = min(CaveShareCap, CaveSeedCount / max(1, pool + Count))      [the vanilla redeal divides by Layout.Num()]
-    // RWG, the same shape with the seed count replaced by capacity, and capacity added to the denominator as the user wrote it:
-    //     share = min(CaveShareCap = 0.25, RwgCaveCapacity / max(1, Denominator + RwgCaveCapacity))
+    // RWG, the same shape with the seed count replaced by capacity and the vanilla denominator unchanged (orchestrator ruling 2026-10-18):
+    //     share = min(CaveShareCap = 0.25, RwgCaveCapacity / max(1, Denominator))
     // Denominator = the caller's pool term (roll: VanillaLocations.Num() + Count; redeal: Layout.Num()). Capacity is latched at RWGCAVECHECK from
     // RWG's file (or Num() x RwgCaveDefaultRoomsPerCave), so it never counts our own spawns and the share cannot feed on itself.
     if (!bRwgCaveCheckDone || !bRwgCaveUsable || RwgCaveNumAtCheck <= 0 || RwgCaveCapacity <= 0) { return 0.0f; }
-    return FMath::Min(static_cast<float>(NodeShuffleMapMode::RwgCaveShareCapMirror), static_cast<float>(RwgCaveCapacity) / FMath::Max(1, Denominator + RwgCaveCapacity));
+    return FMath::Min(static_cast<float>(NodeShuffleMapMode::RwgCaveShareCapMirror), static_cast<float>(RwgCaveCapacity) / FMath::Max(1, Denominator));
 }
 
 bool ANodeShuffleSubsystem::RwgDrawCaveSpot(const NodeShuffleMapMode::FRwgGroundQuery& Q, FRandomStream& Rng, int32 AnyNearBudget, FVector& OutSpot, int32& OutAnyNearCalls)

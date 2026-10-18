@@ -197,7 +197,7 @@ bool ANodeShuffleSubsystem::GenerateRwgLocations(FRandomStream& Rng, const TArra
     RwgRcRejectedVoid = RwgRcRejectedKillbox = RwgRcDealtBelowKillbox = 0; // RWG P2f: this roll only
     RwgRcCaveSpots = RwgRcCaveDrawsTried = RwgRcCaveDealFailed = RwgRcCaveAnyNearCalls = RwgRcCaveNearHits = RwgRcCaveFloorHits = RwgRcCaveCandidatesTried = 0; // RWG P5: this roll only
     RwgRcCaveRejInside = RwgRcCaveRejHeadroom = RwgRcCaveRejCeiling = RwgRcCaveRejSurface = RwgRcCaveRejKillbox = RwgRcCaveRejSpacing = 0; bRwgRcCaveBudgetSpent = false;
-    // RWG P5-2: the cave share by CAPACITY (RwgCaveShare: min(0.25, capacity / (PoolSize + capacity))); only when the caller takes cave indices.
+    // RWG P5-2: the cave share by CAPACITY (RwgCaveShare: min(0.25, capacity / PoolSize)); only when the caller takes cave indices.
     const float CaveChance = (OutCaveIndices && RwgEnsureCaveCheck(Q)) ? RwgCaveShare(PoolSize) : 0.0f;
     const int32 CaveRollBudget = FMath::Max(NodeShuffleMapMode::RwgCaveAnyNearPerRoll, FMath::CeilToInt(Count * CaveChance) * NodeShuffleMapMode::RwgCaveAnyNearPerSpot); // TODO(2026-10-18 P5 review F3): re-check vs rollDurationMs
     int32 Outside = 0, Water = 0, Disagree = 0, Spacing = 0, Drawn = 0, Slope = 0;
@@ -291,7 +291,7 @@ bool ANodeShuffleSubsystem::RwgResolveAtSpawn(FNodeShuffleEntry& Entry, bool& bO
     bOutApiUsed = false;
     bOutWaterNoLand = false;
     const NodeShuffleMapMode::FRwgGroundQuery Q(GetWorld(), RwgGenerator.Get());
-    if (!Q.IsUsable()) { ++RwgPcFallback; if (Entry.bRwgCave) { bOutApiUsed = true; ++RwgPcCaveDeferred; } return false; }
+    if (!Q.IsUsable()) { if (Entry.bRwgCave) { bOutApiUsed = true; ++RwgPcCaveDeferred; return false; } ++RwgPcFallback; return false; } // P5-2 re-review: a cave defer is not a fallback
     bOutApiUsed = true;
     if (RwgWaterVolumes.Num() == 0) { RwgBuildWaterVolumeCache(); }
     if (Entry.bRwgCave) { return RwgResolveCaveAtSpawn(Q, Entry, bOutWaterNoLand); } // RWG P5: floor-up geometry, BEFORE the surface predicates below

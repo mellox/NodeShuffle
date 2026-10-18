@@ -93,7 +93,7 @@ void ANodeShuffleSubsystem::LogWhereCaveNodesCensus() const
     const FVector P = Pawn->GetActorLocation();
     const double Yaw = Pawn->GetActorRotation().Yaw;
 
-    // ONE PASS over the whole layout. THE PREDICATE IS `E.bUnderground` ALONE -- deliberately wider than
+    // ONE PASS over the whole layout. THE PREDICATE IS `E.bUnderground || E.bRwgCave` (RWG P5 review F4) -- deliberately wider than
     // CountUndergroundEntries() (bIsNewNode && bActive && bUnderground), which is what NodeShuffle.Here
     // and the roll census print. T45 cold review F2: the line this command replaces printed
     // "0 of this layout's N entries carry the underground flag" using Layout.Num() as the denominator
@@ -159,12 +159,12 @@ void ANodeShuffleSubsystem::LogWhereCaveNodesCensus() const
     // THE SUMMARY PRINTS FIRST, BEFORE THE ROWS. A directory can be long, and a denominator that only
     // arrives after N rows is a denominator a truncated or scrolled log does not carry.
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("WHERECAVE: %d of this layout's %d entry(ies) carry the underground flag, and every one of ")
+        TEXT("WHERECAVE: %d of this layout's %d entry(ies) carry the underground flag or the RWG cave flag, and every one of ")
         TEXT("them gets a row below -- this command lists all of them and never a nearest one. Of those ")
         TEXT("%d: %d have a live actor right now and %d are records with no actor; %d are settled and ")
         TEXT("%d are not; %d are active and %d are not; %d were dealt as new node locations and %d are ")
         TEXT("records of vanilla nodes instead. ")
-        TEXT("THE PREDICATE BEHIND EVERY NUMBER ON THIS LINE is the underground flag ALONE, evaluated ")
+        TEXT("THE PREDICATE BEHIND EVERY NUMBER ON THIS LINE is the underground flag OR the RWG cave flag, evaluated ")
         TEXT("over EVERY entry in the layout, so the denominator is the population the predicate ran ")
         TEXT("over. That is deliberately wider than the predicate NodeShuffle.Here and the roll census ")
         TEXT("count with, which also requires the entry to be a new location AND active: a save whose ")
@@ -182,7 +182,7 @@ void ANodeShuffleSubsystem::LogWhereCaveNodesCensus() const
     if (Rows.Num() == 0)
     {
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("WHERECAVE: NO ROWS -- not one of this layout's %d entry(ies) carries the underground ")
+            TEXT("WHERECAVE: NO ROWS -- not one of this layout's %d entry(ies) carries the underground or RWG cave ")
             TEXT("flag, so there is no cave-placed node to walk to in this save and no row, distance or ")
             TEXT("bearing is printed. That is a different statement from one being far away, and a ")
             TEXT("different statement again from the flags existing on entries that are inactive: the ")

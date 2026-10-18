@@ -1128,7 +1128,7 @@ private:
     TSet<FGuid> RwgKillboxRefused;                     // session: below the killbox but pinned/occupied (re-checked next session)
     // ---- RWG P5 (2026-10-18): cave spots via the bound FPWCarvedCaves group. NodeShuffleMapModeCave.cpp. Every caller is RWG-only. ----
     bool RwgEnsureCaveCheck(const NodeShuffleMapMode::FRwgGroundQuery& Q);   // RWGCAVECHECK once per session; true = cave queries graded usable
-    float RwgCaveShare(int32 Denominator) const;                            // P5-2 capacity rule: min(0.25, RwgCaveCapacity / (Denominator + RwgCaveCapacity)); 0 unless graded usable
+    float RwgCaveShare(int32 Denominator) const;                            // P5-2 capacity rule: min(0.25, RwgCaveCapacity / max(1, Denominator)); 0 unless graded usable
     bool RwgDrawCaveSpot(const NodeShuffleMapMode::FRwgGroundQuery& Q, FRandomStream& Rng, int32 AnyNearBudget, FVector& OutSpot, int32& OutAnyNearCalls);
     // RWG P5-2 (NodeShuffleMapModeCaveJson.cpp): candidates from the per-world cave file, and the verify chain shared with the random draw.
     bool RwgDrawCaveSpotJson(const NodeShuffleMapMode::FRwgGroundQuery& Q, FRandomStream& Rng, FVector& OutSpot);
