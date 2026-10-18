@@ -631,6 +631,9 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll)
     }
 
     int32 Dealt = 0, DealFailed = 0, DealFailedWhilePlaced = 0;
+    // RWG P2e-2 (2026-10-18): the API deal draws up to RwgSeaWellDealDraws (review F2: ~3.7 % well-site share); the vanilla box keeps
+    // WellRedealTries. TODO(2026-10-18 -> R7): re-size from WELLROLL dealFailed.
+    const int32 RollDraws = bRwgApiDeal ? NodeShuffleMapMode::RwgSeaWellDealDraws : WellRedealTries;
     for (FNodeShuffleWellPendingCapture& P : Pending)
     {
         FNodeShuffleWellEntry& E = WellLayout[P.EntryIndex];
@@ -651,7 +654,7 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll)
             const float MinY = BoxMin.Y + Inset, MaxY = BoxMax.Y - Inset;
             TArray<FVector> RwgSatOffsets; // RWG P4: the footprint the API dealer checks (capture-frame offsets)
             if (bRwgApiDeal) { for (const TPair<FString, TPair<FVector, float>>& Off : P.OffsetByPath) { RwgSatOffsets.Add(Off.Value.Key); } }
-            for (int32 Try = 0; Try < WellRedealTries && !P.bDealt; ++Try)
+            for (int32 Try = 0; Try < RollDraws && !P.bDealt; ++Try)
             {
                 FVector Cand(FVector::ZeroVector);
                 if (bRwgApiDeal)
@@ -694,7 +697,7 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll)
                     TEXT("discovery). Spaced against %d other well site(s); a well's own vacating site is ")
                     TEXT("excluded from its OWN draw only, never from another well's."),
                     *WellShort(E.CorePath), *P.CoreLoc.ToCompactString(), *Cand.ToCompactString(),
-                    Try + 1, WellRedealTries, OtherSites);
+                    Try + 1, RollDraws, OtherSites);
             }
         }
         if (!P.bDealt)
@@ -713,10 +716,10 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll)
         // NodeShuffleSubsystem.h, which this packet does not own.
         UE_LOG(LogNodeShuffle, Warning,
             TEXT("WELLH2-ROLL: %d of %d candidate well(s) found no destination in %d draws each. That cap ")
-            TEXT("(WellRedealTries) was chosen when a roll enrolled 3-5 wells and this roll asked it for ")
+            TEXT("(WellRedealTries; RwgSeaWellDealDraws on the RWG API deal) was chosen when a roll enrolled 3-5 wells and this roll asked it for ")
             TEXT("%d. A well that fails here is never left with nowhere to be (T7b/A3) -- it keeps ")
             TEXT("whatever place it already had."),
-            DealFailed, Captured, WellRedealTries, Captured);
+            DealFailed, Captured, RollDraws, Captured);
     }
 
     // -------- PHASE 3: COMMIT. THE ONLY PLACE THIS ROLL WRITES A RELOCATION DECISION --------

@@ -131,16 +131,18 @@ bool ANodeShuffleSubsystem::RwgEnsureSeaCheck(const NodeShuffleMapMode::FRwgGrou
     const FVector PP = Pawn->GetActorLocation();
     const double PawnZ = Q.SurfaceZ(PP.X, PP.Y);
     const bool bPawnSea = !Q.Outside(PP.X, PP.Y) && FMath::IsFinite(PawnZ) && Q.InSea(PP.X, PP.Y, PawnZ);
-    // Grade (brief): open sea >= 95 % true AND RWG nodes >= 95 % false AND pawn false, each class needing >= 8 samples.
+    // Grade: open sea >= 95 % true AND RWG nodes >= 95 % false, each class needing >= 8 samples. The pawn is printed, not graded
+    // (RWG P2e review R8: one sample latched for the whole session).
     const bool bSeaOk = SeaN >= 8 && SeaT * 100 >= SeaN * 95;
     const bool bNodeOk = NodeN >= 8 && (NodeN - NodeT) * 100 >= NodeN * 95;
-    bRwgSeaUsable = bSeaOk && bNodeOk && !bPawnSea;
+    bRwgSeaUsable = bSeaOk && bNodeOk; // pawnInSea stays printed (measured only)
     bRwgSeaCheckDone = true;
     UE_LOG(LogNodeShuffle, Display,
         TEXT("RWGSEACHECK: graded usable=%d seaBind=%s draws=%d lakeN=%d lakeTrue=%d lakeFalse=%d openSeaN=%d openSeaTrue=%d openSeaFalse=%d rwgNodeN=%d rwgNodeTrue=%d rwgNodeFalse=%d rwgNodesFound=%d pawnInSea=%d pawn=(%.0f,%.0f) pawnSurfaceZ=%.0f openSeaPass=%d rwgNodePass=%d floorSource=%s floorZ=%.1f globalMinZ=%.1f drawsAtGlobalMin=%d modeZ=%lld modeCount=%d durationMs=%.0f"),
         bRwgSeaUsable ? 1 : 0, *NodeShuffleMapMode::RwgSeaBindStatus(), Draws.Num(), LakeN, LakeT, LakeN - LakeT, SeaN, SeaT, SeaN - SeaT,
         NodeN, NodeT, NodeN - NodeT, RwgNodes.Num(), bPawnSea ? 1 : 0, PP.X, PP.Y, PawnZ, bSeaOk ? 1 : 0, bNodeOk ? 1 : 0, FloorSource, FloorZ,
         GMin, AtGMin, static_cast<long long>(ModeZ), ModeN, (FPlatformTime::Seconds() - T0) * 1000.0);
+    if (!bRwgSeaUsable) { UE_LOG(LogNodeShuffle, Warning, TEXT("RWGSEACHECK-FAIL: openSeaPass=%d rwgNodePass=%d pawnInSea=%d; the sea term is off this session"), bSeaOk ? 1 : 0, bNodeOk ? 1 : 0, bPawnSea ? 1 : 0); }
     UE_LOG(LogNodeShuffle, Display, TEXT("RWGSEACHECK zprobe: n=%d trueWithSurfaceZ=%d trueWithZ0=%d; per point x,y,surfaceZ then the two answers [%s]"),
         ZProbeN, ZSurfT, Z0T, *ZProbe);
     return bRwgSeaUsable;
@@ -195,9 +197,11 @@ void ANodeShuffleSubsystem::RwgSeaRedealPass()
     }
     if (RwgWaterVolumes.Num() == 0) { RwgBuildWaterVolumeCache(); }
     ++RwgSeaPasses;
+    const double T0 = FPlatformTime::Seconds();
     int32 Left = NodeShuffleMapMode::RwgSeaRedealPerPass;
     int32 Checked = 0, Sea = 0, Redealt = 0, Kept = 0, DealFailed = 0, InSea = 0, SkipPlaced = 0, SkipPinned = 0, SkipFailedWell = 0, Outside = 0;
     int32 WellsChecked = 0, WellsRedealt = 0;
+    int32 PlacedWet = 0;
     const bool bDiag = FNodeShuffleModule::AreDiagnosticsEnabled();
     for (int32 I = 0; I < Layout.Num() && Left > 0; ++I)
     {
@@ -206,7 +210,7 @@ void ANodeShuffleSubsystem::RwgSeaRedealPass()
         --Left; ++Checked;
         // Placed = a live actor, OR settled at any time (bRayCasted / bRwgSettledOnTerrain are SaveGame; SpawnedNodes may not have
         // re-adopted a far actor yet this session, and an unadopted actor could carry a miner). A sea spot never settles (no terrain).
-        if (IsValid(SpawnedNodes.FindRef(E.EntryGuid)) || E.bRayCasted || E.bRwgSettledOnTerrain) { ++SkipPlaced; E.bRwgSeaChecked = true; continue; }
+        if (IsValid(SpawnedNodes.FindRef(E.EntryGuid)) || E.bRayCasted || E.bRwgSettledOnTerrain) { ++SkipPlaced; PlacedWet += (!Q.Outside(E.Location.X, E.Location.Y) && RwgWetV2(Q, FVector(E.Location.X, E.Location.Y, Q.SurfaceZ(E.Location.X, E.Location.Y))) != 0) ? 1 : 0; E.bRwgSeaChecked = true; continue; }
         if (E.bPinned || E.bUnderground) { ++SkipPinned; E.bRwgSeaChecked = true; continue; }
         if (Q.Outside(E.Location.X, E.Location.Y)) { ++Outside; E.bRwgSeaChecked = true; continue; }
         const FVector At(E.Location.X, E.Location.Y, Q.SurfaceZ(E.Location.X, E.Location.Y));
@@ -244,7 +248,7 @@ void ANodeShuffleSubsystem::RwgSeaRedealPass()
         const FVector From = W.DestCoreLocation;
         FVector Site(FVector::ZeroVector);
         bool bDealt = false;
-        for (int32 D = 0; D < WellRedealTries && !bDealt; ++D) { bDealt = RwgDealWellSite(Q, Rng, Offs, Site); }
+        for (int32 D = 0; D < NodeShuffleMapMode::RwgSeaWellDealDraws && !bDealt; ++D) { bDealt = RwgDealWellSite(Q, Rng, Offs, Site); }
         if (bDealt)
         {
             W.DestCoreLocation = Site;
@@ -261,7 +265,7 @@ void ANodeShuffleSubsystem::RwgSeaRedealPass()
     for (const FNodeShuffleEntry& E : Layout) { Remaining += (E.bIsNewNode && E.bActive && !E.bRwgSeaChecked && !RwgSeaDealFailed.Contains(E.EntryGuid)) ? 1 : 0; }
     for (const FNodeShuffleWellEntry& W : WellLayout) { Remaining += (W.bDestDealt && !W.bRwgSeaChecked && !RwgSeaWellDealFailed.Contains(W.CorePath)) ? 1 : 0; }
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("RWGSEAREDEAL: pass=%d checked=%d sea=%d redealt=%d kept=%d dealFailed=%d inSeaVolume=%d skippedPlaced=%d skippedPinnedOrCave=%d skippedFailedWell=%d outsideWorld=%d wellsChecked=%d wellsRedealt=%d remaining=%d perPassCap=%d"),
+        TEXT("RWGSEAREDEAL: pass=%d checked=%d sea=%d redealt=%d kept=%d dealFailed=%d inSeaVolume=%d skippedPlaced=%d skippedPinnedOrCave=%d skippedFailedWell=%d outsideWorld=%d wellsChecked=%d wellsRedealt=%d remaining=%d failedThisSession=%d placedWet=%d perPassCap=%d durationMs=%.0f"),
         RwgSeaPasses, Checked, Sea, Redealt, Kept, DealFailed, InSea, SkipPlaced, SkipPinned, SkipFailedWell, Outside, WellsChecked, WellsRedealt,
-        Remaining, NodeShuffleMapMode::RwgSeaRedealPerPass);
+        Remaining, RwgSeaDealFailed.Num() + RwgSeaWellDealFailed.Num(), PlacedWet, NodeShuffleMapMode::RwgSeaRedealPerPass, (FPlatformTime::Seconds() - T0) * 1000.0);
 }

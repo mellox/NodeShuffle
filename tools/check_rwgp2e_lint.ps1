@@ -8,14 +8,16 @@
 #       comparison against zero at all (user rule: water only where a water surface exists above the point; never a Z-sign rule).
 #   E3  Consumers go through v2: RwgDealOneSpot, both RwgResolveAtSpawn checks, RwgDealWellSite core + satellites; none of those bodies
 #       calls the bare volume test any more.
-#   E4  Z-SIGN DETECTOR: in Place/WellRwg/Sea every `<identifier containing Z> < 0` comparison must be one of the four measured-only
-#       diagnostic statements (whitelisted by exact line start); anything else is a sign rule and fails.
+#   E4  Z-SIGN DETECTOR: in Place/WellRwg/Sea every comparison of an identifier containing Z against a numeric literal (<, <=, >, >=,
+#       either operand order; P2e review R3) must be one of the seven whitelisted statements (by exact line start); anything else fails.
 #   E5  RwgSeaRedealPass: refuses before any flag write unless the query is usable AND the sea grade is usable; candidate filters skip
 #       already-flagged entries (idempotent); placed/pinned skips precede the re-deal; the flag is set only on success; bounded per pass.
-#   E6  RWGSEACHECK grade expression + the Z=0 probe; RWGSEAREDEAL census prefix as briefed; no repeated field in either format.
+#   E6  RWGSEACHECK grade expression + the Z=0 probe + open-sea class (b) predicate; RWGSEAREDEAL census prefix as briefed; no repeated
+#       field in either format.
 #   E7  ROLLCENSUS / WELLROLL carry rejectedSea; RWGLAYOUT carries seaEntries; RwgSpawnPass runs the sea pass once, before its candidates.
 #   E8  bRwgSeaChecked is a SaveGame property on both entry structs (exactly 2).
-#   E9  Constants pinned by value; the marker is rwg-p2e-1 and the previous marker is absent.
+#   E9  Constants pinned by value (incl. the P2e review's RwgRedealTries 80 / RwgSeaRedealPerPass 64 / RwgSeaWellDealDraws 128); the marker
+#       is rwg-p2e-2 and the previous marker is absent.
 # Mutants: scratchpad mutants_p2e.py. Exit 0 = all hold; 1 = at least one does not; 2 = a pinned FILE is missing.
 
 $ErrorActionPreference = 'Stop'
@@ -88,8 +90,10 @@ $ws = Get-Body $text.wrwg ('bool ' + $cls + 'RwgDealWellSite(')
 if (-not $ws -or -not $ws.Contains('const int32 WetCore = RwgWetV2(Q, FVector(X, Y, ' + 'Zc));') -or -not $ws.Contains('const int32 WetSat = RwgWetV2(Q, FVector(Sx, Sy, ' + 'Sz));') -or $ws.Contains('RwgIsPointInWater' + 'Cached(')) { $fails += 'E3: RwgDealWellSite core and satellites must go through v2' }
 
 # E4
-$allowed = @(('if (Z < 0.0) { ++RwgRc' + 'WaterZBelow0; }'), ('if (C.Z < 0.0) { ++RwgRc' + 'DealtBelowZ0;'), ('if (Zc < 0.0) { ++RwgWr' + 'WaterZBelow0; }'), ('if (Zc < 0.0) { ++RwgWr' + 'DealtBelowZ0;'))
-$zNeedle = '\b[A-Za-z_.]*[Zz][A-Za-z0-9_]*\s*(<|<=)\s*' + '0(\.0*)?\b' # z in either case: Sz, Zc, ApiZ0, P.Z
+$allowed = @(('if (Z < 0.0) { ++RwgRc' + 'WaterZBelow0; }'), ('if (C.Z < 0.0) { ++RwgRc' + 'DealtBelowZ0;'), ('if (Zc < 0.0) { ++RwgWr' + 'WaterZBelow0; }'), ('if (Zc < 0.0) { ++RwgWr' + 'DealtBelowZ0;'),
+             ('if (bVol && Z >= 0.0) { ++Lake' + 'Seen; }'), ('if (D.bVol && D.Z >= 0.0 && LakeN < NodeShuffleMapMode::RwgSea' + 'CheckPerClass)'), ('if (ZProbeN < ' + '8)'))
+# Both directions, either operand order, any numeric literal (a sign rule can be written as >= 0, > -1.0 or 0 > Z).
+$zNeedle = '\b[A-Za-z_.]*[Zz][A-Za-z0-9_]*\s*(<|<=|>|>=)\s*-?' + '[0-9]+(\.[0-9]*)?f?\b|\b-?[0-9]+(\.[0-9]*)?f?\s*(<|<=|>|>=)\s*[A-Za-z_.]*' + '[Zz]'
 foreach ($k in @('place','wrwg','sea')) {
     foreach ($line in ($text[$k] -split "`n")) {
         $c = ($line -replace '//.*$', '')
@@ -118,8 +122,9 @@ if (-not $sp) { $fails += 'E5: RwgSeaRedealPass body not found' } else {
 # E6
 $ec = Get-Body $text.sea ('bool ' + $cls + 'RwgEnsureSeaCheck(')
 if (-not $ec) { $fails += 'E6: RwgEnsureSeaCheck body not found' } else {
-    if (-not $ec.Contains('bRwgSeaUsable = bSeaOk && bNodeOk && ' + '!bPawnSea;') -or -not $ec.Contains('SeaN >= 8 && SeaT * 100 >= SeaN * ' + '95') -or -not $ec.Contains('NodeN >= 8 && (NodeN - NodeT) * 100 >= NodeN * ' + '95')) { $fails += 'E6: the grade must be open sea >= 95 % true AND RWG nodes >= 95 % false AND pawn false (n >= 8 each)' }
+    if (-not $ec.Contains('bRwgSeaUsable = bSeaOk && ' + 'bNodeOk;') -or -not $ec.Contains('SeaN >= 8 && SeaT * 100 >= SeaN * ' + '95') -or -not $ec.Contains('NodeN >= 8 && (NodeN - NodeT) * 100 >= NodeN * ' + '95')) { $fails += 'E6: the grade must be open sea >= 95 % true AND RWG nodes >= 95 % false (n >= 8 each; the pawn is printed, not graded)' }
     if (-not $ec.Contains('Q.InSea(D.X, D.Y, ' + '0.0)')) { $fails += 'E6: the Z=0 probe is missing' }
+    if (-not $ec.Contains('else if (bHaveFloor && !FMath::IsFinite(D.Wl) && FMath::Abs(D.Z - FloorZ) <= 1.0 && SeaN < NodeShuffleMapMode::RwgSea' + 'CheckPerClass)')) { $fails += 'E6: open-sea class (b) must require the floor Z AND no inland level' }
     if ($ec.IndexOf('if (!Pawn)') -lt 0 -or $ec.IndexOf('if (!Pawn)') -gt $ec.IndexOf('Draws.Reserve(')) { $fails += 'E6: the pawn test must precede the draw phase (no repeated census while deferred)' }
 }
 if ($text.sea -notmatch ('TEXT\("' + 'RWGSEAREDEAL: pass=%d checked=%d sea=%d redealt=%d kept=%d dealFailed=%d ')) { $fails += 'E6: the RWGSEAREDEAL census prefix is missing or reordered' }
@@ -141,8 +146,8 @@ if (-not $spb -or (Count $spb ('RwgSeaRedeal' + 'Pass();')) -ne 1 -or $spb.Index
 if ((Count $text.subsysh ('UPROPERTY(Save' + 'Game) bool bRwgSeaChecked = false;')) -ne 2) { $fails += 'E8: bRwgSeaChecked must be a SaveGame property on exactly the two entry structs' }
 
 # E9
-if ((Count $text.maph ('constexpr int32 RwgSeaRedealPerPass = ' + '256;')) -ne 1 -or (Count $text.maph ('constexpr int32 RwgSeaCheckPerClass = ' + '32;')) -ne 1) { $fails += 'E9: RwgSeaRedealPerPass 256 / RwgSeaCheckPerClass 32 must be pinned' }
-if ((Count $text.nsmod ('LOADED (2026-10-18-rwg-' + 'p2e-1)')) -ne 1 -or (Count $text.nsmod ('2026-10-18-rwg-' + 'p2d-2')) -ne 0) { $fails += 'E9: the marker must be rwg-p2e-1 and the previous marker absent' }
+if ((Count $text.maph ('constexpr int32 RwgSeaRedealPerPass = ' + '64;')) -ne 1 -or (Count $text.maph ('constexpr int32 RwgSeaCheckPerClass = ' + '32;')) -ne 1 -or (Count $text.maph ('constexpr int32 RwgRedealTries = ' + '80;')) -ne 1 -or (Count $text.maph ('constexpr int32 RwgSeaWellDealDraws = ' + '128;')) -ne 1) { $fails += 'E9: RwgSeaRedealPerPass 64 / RwgSeaCheckPerClass 32 / RwgRedealTries 80 / RwgSeaWellDealDraws 128 must be pinned' }
+if ((Count $text.nsmod ('LOADED (2026-10-18-rwg-' + 'p2e-2)')) -ne 1 -or (Count $text.nsmod ('2026-10-18-rwg-' + 'p2e-1')) -ne 0) { $fails += 'E9: the marker must be rwg-p2e-2 and the previous marker absent' }
 
 if ($fails.Count -gt 0) { $fails | ForEach-Object { Write-Host "FAIL $_" }; exit 1 }
 Write-Host "PASS: RWG P2e lint -- E1..E9 hold across $($files.Count) loaded files"

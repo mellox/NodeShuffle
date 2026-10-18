@@ -178,6 +178,7 @@ namespace
         else if (!SigOk(reinterpret_cast<const void*>(A.InSea), SigInSea, UE_ARRAY_COUNT(SigInSea))) { A.InSea = nullptr; A.SeaStatus = TEXT("signatureMismatch"); }
         else { A.SeaStatus = TEXT("bound"); }
         UE_LOG(LogNodeShuffle, Display, TEXT("RWGSEABIND: status=%s export='%s' optional=1; its term counts only after RWGSEACHECK grades it"), *A.SeaStatus, ANSI_TO_TCHAR(SymInSea));
+        if (!A.InSea) { UE_LOG(LogNodeShuffle, Warning, TEXT("RWGSEABIND-OFF: status=%s; the sea term is off this session"), *A.SeaStatus); }
         A.bUsable = true;
         A.Status = TEXT("bound");
 #else

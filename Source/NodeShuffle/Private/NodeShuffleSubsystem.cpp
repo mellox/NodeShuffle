@@ -6928,7 +6928,7 @@ bool ANodeShuffleSubsystem::TryRedealWaterLockedEntry(FNodeShuffleEntry& Entry)
     if (GetMapMode() == ENodeShuffleMapMode::Rwg)
     {
         bool bRwgMoved = false;
-        if (TryRedealRwgEntry(Entry, MinNodeSpacing, RedealTries, bRwgMoved)) { return bRwgMoved; }
+        if (TryRedealRwgEntry(Entry, MinNodeSpacing, NodeShuffleMapMode::RwgRedealTries, bRwgMoved)) { return bRwgMoved; }
     }
     const FVector BoxMin = GetDealBoundsMin();
     const FVector BoxMax = GetDealBoundsMax();

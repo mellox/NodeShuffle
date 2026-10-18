@@ -80,9 +80,11 @@ namespace NodeShuffleMapMode
     // RWG P2e (2026-10-18): the one-time sea re-deal checks at most RwgSeaRedealPerPass entries per spawn pass; RWGSEACHECK samples
     // RwgSeaCheckPerClass points per class out of at most RwgSeaCheckMaxDraws random draws.
     // TODO(2026-10-18, RWG P2e -> R7): re-check against RWGSEACHECK durationMs and RWGSEAREDEAL remaining.
-    constexpr int32 RwgSeaRedealPerPass = 256;
+    constexpr int32 RwgSeaRedealPerPass = 64;
     constexpr int32 RwgSeaCheckPerClass = 32;
     constexpr int32 RwgSeaCheckMaxDraws = 12000;
+    constexpr int32 RwgRedealTries = 80; // RWG P2e review: API redeal draws per call; P(no spot) ~0.6 % at the R6 ~6 % dealable share. TODO(2026-10-18 -> R7): re-size from RWGSEAREDEAL dealFailed/durationMs
+    constexpr int32 RwgSeaWellDealDraws = 128; // RWG P2e review: ~0.8 % fail at the R6 ~3.7 % well-site share. TODO(2026-10-18 -> R7)
 
     // RWG P2b ground query over the runtime-bound RWG exports (NodeShuffleMapModeHeightApi.cpp). Construct once
     // per batch (it holds the density field's strong reference for its lifetime, never across frames).
