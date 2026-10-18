@@ -49,6 +49,7 @@
 #include "NodeShuffleConfig.h"
 #include "NodeShuffleWellCensus.h" // H0's grouping -- CollectWellCensus + the well record/member types
 #include "NodeShuffleWellRetype.h" // the shared pure helpers -- incl. T16's EvaluateWellPin
+#include "NodeShuffleWellRelocate.h" // RWG P4 review F4: WellAdoptMatchRadiusCm
 // TWeakObjectPtr<T>::IsValid() does not need T complete, but GetActivator()/GetExtractor() return the
 // weak pointer BY VALUE, so the type has to be complete to copy one. Includes only -- no method of
 // either buildable is called anywhere in this file. Since T16 those accessors are reached through
@@ -197,7 +198,24 @@ void ANodeShuffleSubsystem::RollWellLayout(int32 Seed, bool bIsReroll)
             const FString SatPath = WellPathOf(Sat);
             int32 SatIdx;
             if (const int32* FoundSat = SatIndexByPath.Find(SatPath)) { SatIdx = *FoundSat; }
-            else { SatIdx = E.Satellites.AddDefaulted(); E.Satellites[SatIdx].SatellitePath = SatPath; SatIndexByPath.Add(SatPath, SatIdx); }
+            else
+            {
+                // RWG P4 review F4: off vanilla, re-bind a satellite record the load-time re-bind left on a sentinel path
+                // (same claim-location test, same 300 cm) instead of appending a second record for the same actor.
+                int32 Reb = INDEX_NONE;
+                if (GetMapMode() != ENodeShuffleMapMode::Vanilla)
+                {
+                    for (int32 s = 0; s < E.Satellites.Num() && Reb == INDEX_NONE; ++s)
+                    {
+                        const FNodeShuffleWellSatellite& R = E.Satellites[s];
+                        if (R.SatellitePath.StartsWith(TEXT("RWGUNBOUND_")) && !R.RwgClaimLocation.IsZero()
+                            && FVector::DistSquared(R.RwgClaimLocation, Sat->GetActorLocation()) < FMath::Square(WellAdoptMatchRadiusCm)) { Reb = s; }
+                    }
+                }
+                if (Reb != INDEX_NONE) { SatIdx = Reb; E.Satellites[Reb].SatellitePath = SatPath; }
+                else { SatIdx = E.Satellites.AddDefaulted(); E.Satellites[SatIdx].SatellitePath = SatPath; }
+                SatIndexByPath.Add(SatPath, SatIdx);
+            }
             // *** H2, READ THIS BEFORE USING E.Satellites AS A VECTOR ***
             // The ORDER of E.Satellites is census/merge order, which is ACTOR-ITERATION order for newly
             // seen satellites -- i.e. STREAMING-DEPENDENT and NOT stable across sessions or vantage

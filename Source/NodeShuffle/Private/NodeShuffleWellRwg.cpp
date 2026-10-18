@@ -113,7 +113,19 @@ void ANodeShuffleSubsystem::RwgRebindWellClaimsOnce(const TCHAR* Caller)
     int32 Saved = 0, Rebound = 0, Unchanged = 0, UnmatchedSaved = 0, Ambiguous = 0, SatsRebound = 0, SatsUnmatched = 0, Legacy = 0;
     for (FNodeShuffleWellEntry& E : WellLayout)
     {
-        if (!E.RwgClaimGuid.IsValid()) { ++Legacy; continue; }
+        if (!E.RwgClaimGuid.IsValid())
+        {
+            // RWG P4 review F3: an unclaimed entry off vanilla holds actor names from the session that rolled it, and
+            // RWG names are not keyed to identity across loads; neutralised exactly like an unmatched claim.
+            ++Legacy;
+            if (!E.CorePath.StartsWith(TEXT("RWGUNBOUND_")))
+            {
+                const FString Key = FString::Printf(TEXT("RWGUNBOUND_LEGACY_%d"), Legacy);
+                E.CorePath = Key;
+                for (int32 s = 0; s < E.Satellites.Num(); ++s) { E.Satellites[s].SatellitePath = FString::Printf(TEXT("%s_sat%d"), *Key, s); }
+            }
+            continue;
+        }
         ++Saved;
         int32 Best = INDEX_NONE, InTol = 0;
         float BestSq = MatchSq;
@@ -169,16 +181,21 @@ void ANodeShuffleSubsystem::RwgRebindWellClaimsOnce(const TCHAR* Caller)
         Caller, Saved, Claimed, Rebound, Unchanged, UnmatchedSaved + Ambiguous, UnmatchedSaved, Ambiguous,
         Live.Num() - UsedLive.Num(), Live.Num(), SatsRebound, SatsUnmatched, ViaList, ViaLink, Legacy,
         static_cast<int32>((FPlatformTime::Seconds() - T0) * 1000.0));
+    if (UnmatchedSaved + Ambiguous + SatsUnmatched > 0)
+    {
+        UE_LOG(LogNodeShuffle, Warning,
+            TEXT("WELLCLAIM-UNBOUND: caller=%s cores=%d (noLiveCoreInTolerance=%d twoOrMoreInTolerance=%d) satellites=%d of savedClaims=%d hold an RWGUNBOUND_ path this session; no actor lookup by that path resolves, and an unplaced entry with one is not placed"),
+            Caller, UnmatchedSaved + Ambiguous, UnmatchedSaved, Ambiguous, SatsUnmatched, Saved);
+    }
 }
 
 bool ANodeShuffleSubsystem::RwgDealWellSite(const NodeShuffleMapMode::FRwgGroundQuery& Q, FRandomStream& Rng,
                                             const TArray<FVector>& SatOffsets, FVector& OutCore)
 {
-    // One draw. The whole footprint must be inside the world and dry: the core and every satellite offset (capture
-    // frame, group yaw 0 -- the placement-time yaw search may rotate the group, and ValidateWellMemberSpot is the
-    // second gate there). A site within 2 x WellSatMaxRadiusCm of ANY claimed original core is refused too, so a
-    // relocated group never lands where the reload re-bind or the location adoption could confuse it with an original.
-    // The members' surface-height spread is MEASURED (zSpreadMaxCm) and gates nothing.
+    // One draw. The core and every captured satellite offset (capture frame, yaw 0) must be inside the world and dry, and the site must be
+    // >= 2 x WellSatMaxRadiusCm from every claimed original core. Placement (ns-t27-corefirst) does NOT replay these offsets: it settles the
+    // core and redraws each satellite in the WellSatMinRadiusCm..WellSatMaxRadiusCm annulus, so this is a dry-land proxy around the core and
+    // ValidateWellMemberSpot is the gate for the spots satellites take. The members' surface-height spread is MEASURED and gates nothing.
     ++RwgWrDrawn;
     const double H = Q.HalfExtent() - WellSatMaxRadiusCm;
     if (H <= 0.0) { ++RwgWrOutside; return false; }

@@ -23,6 +23,10 @@
 #   W12 The three claim fields are SaveGame properties.
 #   W13 No field name repeats inside one WELL* format string (legend-collision guard).
 #   W14 The LOADED marker line is present once with a dated tag.
+#   W15 2026-10-18 cold-review fixes: m11 the re-bind marks each bound live core used (UsedLive.Add); m12
+#       RwgIsClaimedOriginal really tests the set; F1 ApplyWellRelocation skips a sentinel-path group off vanilla
+#       BEFORE the search; F2 the unbound Warning; F3 legacy entries get the legacy sentinel; F4 the roll merge
+#       re-binds a sentinel satellite record before appending.
 # Exit 0 = all hold. Exit 1 = at least one does not. Exit 2 = a pinned FILE is missing.
 
 $ErrorActionPreference = 'Stop'
@@ -103,7 +107,24 @@ if (-not $rb) { $fails += 'W4: RwgRebindWellClaimsOnce body not found' } else {
     if ((Count $text.wrwg ('E.Core' + 'Path = ')) -ne (Count $rb ('E.Core' + 'Path = '))) { $fails += 'W4: CorePath is written outside RwgRebindWellClaimsOnce in NodeShuffleWellRwg.cpp' }
     if ($rb -notmatch 'if \(InTol > 1\) \{ \+\+Ambiguous; Best = INDEX_NONE; \}') { $fails += 'W4: two live cores in tolerance must leave the claim unbound (no double claim)' }
     if ($rb -notmatch 'UsedLive\.Contains\(i\)') { $fails += 'W4: a live core may be bound to at most one claim' }
+    # W15 m11: Contains alone is vacuous unless the bound core is ADDED to the used set.
+    if ((Count $rb ('UsedLive.' + 'Add(Best);')) -ne 1) { $fails += 'W15: the re-bind must mark each bound live core used (two claims could bind one core)' }
+    # W15 F2 + F3
+    if (-not $rb.Contains('TEXT("WELLCLAIM-' + 'UNBOUND: caller=%s ') -or -not $rb.Contains('UE_LOG(LogNodeShuffle, ' + 'Warning,')) { $fails += 'W15: the WELLCLAIM-UNBOUND Warning (review F2) is missing from the re-bind' }
+    if (-not $rb.Contains('FString::Printf(TEXT("RWGUNBOUND_' + 'LEGACY_%d"), Legacy)')) { $fails += 'W15: legacy (claim-less) entries must get the legacy sentinel path (review F3)' }
 }
+# W15 m12: the predicate body must test the session set, not merely exist at its call sites (W9).
+$ico = Get-Body $text.wrwg ('bool ' + $cls + 'RwgIsClaimedOriginal(const AActor* A) const')
+if (-not $ico -or -not $ico.Contains('RwgClaimedOriginals.' + 'Contains(FObjectKey(A))')) { $fails += 'W15: RwgIsClaimedOriginal must test RwgClaimedOriginals' }
+# W15 F1: sentinel-path skip, off vanilla, before the group is searched.
+$apb = Get-Body $text.wapp ('void ' + $cls + 'ApplyWellRelocation(')
+$f1 = 'if (' + $notV + ' && E.CorePath.StartsWith(TEXT("RWGUNBOUND_' + '"))) { ++Deferred; continue; }'
+if (-not $apb) { $fails += 'W15: ApplyWellRelocation body not found' } else {
+    $i1 = $apb.IndexOf($f1); $is = $apb.IndexOf('++Search' + 'ing;')
+    if ($i1 -lt 0 -or $is -lt 0 -or $i1 -gt $is) { $fails += 'W15: ApplyWellRelocation must skip an RWGUNBOUND_ group off vanilla before searching it (review F1)' }
+}
+# W15 F4
+if ($wl -and -not $wl.Contains('if (Reb != INDEX_NONE) { SatIdx = Reb; E.Satellites[Reb].Satellite' + 'Path = SatPath; }')) { $fails += 'W15: the roll merge must re-bind a sentinel satellite record before appending (review F4)' }
 
 # W5
 $dw = Get-Body $text.wrwg ('bool ' + $cls + 'RwgDealWellSite(')
@@ -186,5 +207,5 @@ foreach ($m in [regex]::Matches($text.wrwg, 'TEXT\("(WELL[A-Z]+: [^"]*)"\)')) {
 if (([regex]::Matches($text.mod, 'TEXT\("===== NodeShuffle 1\.4\.0 LOADED \(\d{4}-\d\d-\d\d-[a-z0-9-]+\)====="\)')).Count -ne 1) { $fails += 'W14: the LOADED marker line must be present once with a dated tag' }
 
 if ($fails.Count -gt 0) { $fails | ForEach-Object { Write-Host "FAIL $_" }; exit 1 }
-Write-Host "PASS: RWG P4 lint -- W1..W14 hold across $($files.Count) loaded files"
+Write-Host "PASS: RWG P4 lint -- W1..W15 hold across $($files.Count) loaded files"
 exit 0

@@ -1238,6 +1238,9 @@ void ANodeShuffleSubsystem::ApplyWellRelocation(float SpawnRadiusCm)
             {
                 continue;
             }
+            // RWG P4 review F1: an RWGUNBOUND_ path is a claim the re-bind could not match this session, so no original
+            // resolves for the suppression; placing the group would stand our copy beside the unidentified original.
+            if (GetMapMode() != ENodeShuffleMapMode::Vanilla && E.CorePath.StartsWith(TEXT("RWGUNBOUND_"))) { ++Deferred; continue; }
             // SPAWN-ON-DISCOVERY, exactly as for ordinary nodes: the search runs where a player is,
             // because that is where the terrain is streamed. Validation at roll time would trace into
             // unloaded regions and get void everywhere.
