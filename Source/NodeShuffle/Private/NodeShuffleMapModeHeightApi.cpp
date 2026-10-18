@@ -87,6 +87,7 @@ namespace
         FnKillboxTop KillboxTop = nullptr;    // RWG P2f: same
         FString VoidStatus = TEXT("notTried");
         FString KillboxStatus = TEXT("notTried");
+        void* Hmod = nullptr;                 // RWG P5: the bound module, set only together with bUsable (the cave group binds from it)
     };
     FRwgHeightApi& Api() { static FRwgHeightApi A; return A; } // per process: the RWG DLL never unloads
 
@@ -206,6 +207,7 @@ namespace
         UE_LOG(LogNodeShuffle, Display, TEXT("RWGVOIDBIND: voidAtStatus=%s killboxTopStatus=%s optional=1; the void term counts only after RWGVOIDCHECK grades it, the killbox floor reads the damage volumes first"),
             *A.VoidStatus, *A.KillboxStatus);
         if (!A.VoidAt) { UE_LOG(LogNodeShuffle, Warning, TEXT("RWGVOIDBIND-OFF: voidAtStatus=%s; the void term is off this session (the killbox floor still applies when measured)"), *A.VoidStatus); }
+        A.Hmod = H; // RWG P5: published only on the path that also sets bUsable
         A.bUsable = true;
         A.Status = TEXT("bound");
 #else
@@ -459,6 +461,13 @@ FString NodeShuffleMapMode::RwgKillboxBindStatus()
     const FRwgHeightApi& A = Api();
     if (!A.bTried) { return TEXT("notTried"); }
     return A.bUsable ? A.KillboxStatus : FString::Printf(TEXT("notBound:%s"), *A.Status);
+}
+
+void* NodeShuffleMapMode::RwgHeightApiBoundModule()
+{
+    FRwgHeightApi& A = Api();
+    if (!A.bTried) { TryBind(A); }
+    return A.bUsable ? A.Hmod : nullptr; // RWG P5: null = the version/export/signature gates did not pass; the cave group then stays unbound
 }
 
 FString NodeShuffleMapMode::RwgSeaBindStatus()

@@ -259,7 +259,7 @@ $rsb = Get-Body $text.subsys ('bool ' + $cls + 'RaycastSettle(FNodeShuffleEntry&
 if (-not $rsb -or (Count $rsb ('nullptr, nullptr, bTerrain' + 'Only)')) -ne 2) { $fails += 'C3: RaycastSettle must forward bTerrainOnly to the primary probe and the spiral' }
 # C4
 $sites = @(
-    @($text.subsys, ('Entry.bUnderground, &bTrySteep, nullptr, nullptr, ' + $isRwg + ')'), 'overlap nudge'),
+    @($text.subsys, ('Entry.bUnderground || Entry.bRwgCave, &bTrySteep, nullptr, nullptr, ' + $isRwg + ')'), 'overlap nudge'),
     @($text.subsys, ('RaycastSettle(Entry, *Node, nullptr, &bWaterNoLand, ' + $isRwg + ');'), 'legacy settle near players'),
     @($text.subsys, ('bRefitWater, false, nullptr, nullptr, nullptr,' + "`n" + '                                ' + $isRwg + '))'), 'adopt rotation refit'),
     @($text.subsys, ('nullptr, ' + $isRwg + ')) // RWG P2c: terrain-mesh normal on RWG'), 'rock-dress slope probe'),
@@ -405,7 +405,7 @@ if ($rp) {
 # D5 occlusion pass: population skips checked entries; only a non-solid result sets the flag; built-on is refused; run once per spawn pass.
 $op = Get-Body $text.rock ('void ' + $cls + 'RwgRockOcclusionPass()')
 if (-not $op) { $fails += 'D5: RwgRockOcclusionPass body not found' } else {
-    if (-not $op.Contains('if (!E.bIsNewNode || !E.bActive || E.bRwgRock' + 'Checked || E.bUnderground) { continue; }')) { $fails += 'D5: the occlusion pass must skip entries already checked (idempotent)' }
+    if (-not $op.Contains('if (!E.bIsNewNode || !E.bActive || E.bRwgRock' + 'Checked || E.bUnderground || E.bRwgCave) { continue; }')) { $fails += 'D5: the occlusion pass must skip entries already checked (idempotent)' }
     if ($op -notmatch ('if \(R != 1\)\s*\{\s*E\.bRwgRockChecked = ' + 'true;')) { $fails += 'D5: only a clear / non-rock result may set bRwgRockChecked' }
     if (-not $op.Contains('if (E.bPinned || IsNodeOccupiedAnyway(Node)) { ++RefusedBuiltOn; RwgRockRefused.Add(E.EntryGuid); ' + 'continue; }')) { $fails += 'D5: an occluded built-on node must never be redealt' }
     if (-not $op.Contains('TEXT("RESETTLE-' + 'ROCK: pass=%d checked=%d occluded=%d redealt=%d clear=%d ')) { $fails += 'D5: the RESETTLE-ROCK census is missing or reordered' }
@@ -441,7 +441,7 @@ if (-not $d1x) { $fails += 'D9: RwgDealOneSpot body not found' } else {
 }
 if (-not $text.place.Contains('rejectedWater=%d rejectedWaterSurfaceZBelow0=%d rejectedWaterSurfaceZAtOrAbove0=%d dealt' + 'BelowZ0=%d ')) { $fails += 'D9: ROLLCENSUS must carry the surface-Z split and dealtBelowZ0' }
 if (-not $text.place.Contains('if (N >= ' + '8) { return; }')) { $fails += 'D9: the water samples must be capped at 8 per kind' }
-if ((Count $text.nsmod ('LOADED (2026-10-18-rwg-' + 'p2g-1)')) -ne 1) { $fails += 'D10: the current marker (RWG P2g, rwg-p2g-1) must be present' }
+if ((Count $text.nsmod ('LOADED (2026-10-18-rwg-' + 'p5-1)')) -ne 1) { $fails += 'D10: the current marker (RWG P5, rwg-p5-1) must be present' }
 
 if ($fails.Count -gt 0) { $fails | ForEach-Object { Write-Host "FAIL $_" }; exit 1 }
 Write-Host "PASS: RWG P4/P2c/P2d lint -- W1..W17, C1..C14 and D1..D11 hold across $($files.Count) loaded files"

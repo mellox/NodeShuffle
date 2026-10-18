@@ -174,7 +174,7 @@ void ANodeShuffleSubsystem::RwgResettlePass()
     for (int32 I = 0; I < Layout.Num(); ++I)
     {
         FNodeShuffleEntry& E = Layout[I];
-        if (!E.bIsNewNode || !E.bActive || E.bRwgSettledOnTerrain || E.bUnderground) { continue; }
+        if (!E.bIsNewNode || !E.bActive || E.bRwgSettledOnTerrain || E.bUnderground || E.bRwgCave) { continue; } // RWG P5: a cave entry settles by the cave geometry only
         ++Remaining;
         if (RwgResettleGaveUp.Contains(E.EntryGuid)) { continue; }
         AFGResourceNode* const* Live = SpawnedNodes.Find(E.EntryGuid);

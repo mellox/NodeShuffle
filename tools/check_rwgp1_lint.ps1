@@ -295,7 +295,9 @@ if (-not $d1) { $fails += 'R14: RwgDealOneSpot body not found' } else {
 $gl = Get-Body $text.place ('bool ' + $cls + 'GenerateRwgLocations(FRandomStream& Rng, const TArray<FVector>& AvoidLocations, int32 Count,')
 if (-not $gl -or $gl.IndexOf('RwgDealOne' + 'Spot(') -lt 0 -or $gl.IndexOf('RwgDealOne' + 'Spot(') -gt $gl.IndexOf('DistSquared' + '2D(')) { $fails += 'R14: the RWG deal must call RwgDealOneSpot before its spacing scan' }
 $gn = Get-Body $text.subsys ('void ' + $cls + 'GenerateNewLocations(FRandomStream& Rng, const TArray<FVector>& VanillaLocations,')
-if (-not $gn -or $gn -notmatch ('if \(' + [regex]::Escape($notVanilla) + '\)\s*\{\s*OutUnderground' + 'Indices = nullptr;') -or $gn.IndexOf('OutUnderground' + 'Indices = nullptr;') -gt $gn.IndexOf('CaveChance')) { $fails += 'R14: GenerateNewLocations must null the cave output off vanilla before any cave share' }
+if (-not $gn -or $gn -notmatch ('if \(' + [regex]::Escape($notVanilla) + '\)\s*\{\s*(TSet<int32>\* const RwgCaveIndices = OutUnderground' + 'Indices;[^
+]*
+\s*)?OutUnderground' + 'Indices = nullptr;') -or $gn.IndexOf('OutUnderground' + 'Indices = nullptr;') -gt $gn.IndexOf('CaveChance')) { $fails += 'R14: GenerateNewLocations must null the cave output off vanilla before any cave share' }
 # R15
 if ($text.subsys -notmatch ('bool bSettled = \(GetMapMode\(\) == ENodeShuffleMapMode::Rwg\) \? RwgResolveAtSpawn\(Entry, bRwgApiUsed, bWaterNoLand\) : false;\s*if \(!bRwgApiUsed\) \{ bSettled = Raycast' + 'Settle\(Entry, nullptr, nullptr, &bWaterNoLand\); \}')) { $fails += 'R15: the settle block must ask RwgResolveAtSpawn on RWG and RaycastSettle only when the API was not used' }
 $ra = Get-Body $text.place ('bool ' + $cls + 'RwgResolveAtSpawn(FNodeShuffleEntry& Entry, bool& bOutApiUsed, bool& bOutWaterNoLand)')

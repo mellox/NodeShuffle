@@ -308,6 +308,7 @@ void ANodeShuffleSubsystem::CaptureLateOriginalNodes()
             E.Location = E.bActive ? Locations[I] : E.OriginalTrueLocation;
             E.Rotation = FRotator(0.f, Rng.FRandRange(0.f, 360.f), 0.f);
             E.bUnderground = E.bActive && Underground.Contains(I);
+            if (GetMapMode() == ENodeShuffleMapMode::Rwg) { E.bRwgCave = E.bUnderground; E.bUnderground = false; } // RWG P5: same move as the roll site
             FNodeShuffleSuppressedOriginal Rec;
             Rec.VanillaNodePath = E.VanillaNodePath;
             Rec.Location = Rec.TrueLocation = E.OriginalTrueLocation;

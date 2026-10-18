@@ -99,6 +99,18 @@ namespace NodeShuffleMapMode
     // same 5-point cross RWG's own node keep-out APWWorldGenerator::NearVoid uses (catalogue: disassembled, 1500 cm). Kept on the public VoidAt
     // instead of binding NearVoid (private export: a refactor can drop or rename it). RWGVOIDCHECK still grades the raw single-point VoidAt.
     constexpr double RwgVoidRingCm = 1500.0;
+    // RWG P5 (2026-10-18, user decision: caves on RWG use the VANILLA rule, natural share capped at 25 %). Design inputs, not measurements.
+    // TODO(2026-10-18, RWG P5 -> R10): re-check every value below against ROLLCENSUS caveDrawsTried/caveAnyNearCalls/caveDealFailed.
+    constexpr double RwgCaveNearRadiusCm = 3000.0;    // AnyNear radius of a cave-designated draw (cave tube radii in the JSON dumps: ~600-800 cm)
+    constexpr double RwgCaveFloorMatchCm = 300.0;     // cave settle: a terrain-mesh hit within this of the dealt floor Z settles
+    constexpr double RwgCaveInsideProbeCm = 100.0;    // IsInsideAt verify height above a floor (brief) and the settledInsideCave probe height
+    constexpr double RwgCaveHeadroomCmMirror = 350.0; // = CaveHeadroomCm (NodeShuffleSubsystem.cpp anonymous namespace), kept equal by hand
+    constexpr double RwgCaveMinCeilingCmMirror = 1200.0; // = CaveMinPlaceCeilingCm (same file): vanilla places only where a Miner fits
+    constexpr double RwgCaveShareCapMirror = 0.25;    // = CaveShareCap (same file)
+    constexpr int32 RwgCaveAnyNearPerSpot = 20000;    // AnyNear calls one cave-designated spot may spend before it falls back to a surface draw
+    constexpr int32 RwgCaveAnyNearPerRoll = 400000;   // per roll; once spent, the cave share is 0 for the rest of that roll (counted)
+    constexpr int32 RwgCaveSettleMissEscape = 8;      // mirror of the vanilla 8-miss cave escape (Subsystem.cpp EnsureNewNodeSpawned)
+    constexpr int32 RwgCaveSettleSkipMax = 8;         // non-terrain, non-solid, non-water hits skipped by one cave settle trace
 
     // RWG P2b ground query over the runtime-bound RWG exports (NodeShuffleMapModeHeightApi.cpp). Construct once
     // per batch (it holds the density field's strong reference for its lifetime, never across frames).
@@ -121,6 +133,13 @@ namespace NodeShuffleMapMode
         bool HasVoid() const;                            // RWG P2f: VoidAt bound (optional export) and the spliced world found
         bool VoidAt(double X, double Y) const;           // RWG P2f: raw VoidAt; false when !HasVoid() or outside the world (our check first)
         bool KillboxTopApi(double& OutZ) const;          // RWG P2f: GetKillboxTop on the generator; false when unbound or it returned false
+        // RWG P5 (2026-10-18): FPWCarvedCaves queries (NodeShuffleMapModeCave.cpp; optional group, own byte-signature gate). The cave object
+        // is CarvedCaves(F) = F+0x28, taken per call (never cached). Every method answers the "no cave" value when !HasCaves().
+        bool HasCaves() const;                                              // usable AND the optional cave group bound
+        int32 CaveNum() const;                                              // Num(); -1 when !HasCaves()
+        bool CaveAnyNear(double X, double Y, double RadiusCm) const;        // AnyNear(X, Y, R)
+        bool CaveFloorAt(double X, double Y, double ZHint, double& OutFloorZ) const; // FloorCmAt(X, Y, ZHint, out): the floor NEAREST ZHint
+        bool CaveInsideAt(const FVector& P) const;                          // IsInsideAt(P)
     private:
         TSharedPtr<const FPWDensityField, ESPMode::ThreadSafe> Field;
         const void* F = nullptr;
@@ -157,5 +176,7 @@ namespace NodeShuffleMapMode
     FString RwgVoidBindStatus();    // RWG P2f: VoidAt binding status (NodeShuffleMapModeHeightApi.cpp)
     inline double RwgNaN() { return std::numeric_limits<double>::quiet_NaN(); } // RWG P2f: census value printed for an unmeasured field
     FString RwgKillboxBindStatus(); // RWG P2f: GetKillboxTop binding status (NodeShuffleMapModeHeightApi.cpp)
+    void* RwgHeightApiBoundModule(); // RWG P5: the RWG module handle, non-null ONLY when the P2b gates passed (version, exports, signatures)
+    FString RwgCaveBindStatus();     // RWG P5: FPWCarvedCaves group binding status (NodeShuffleMapModeCave.cpp)
     bool IsOursForRwg(AFGResourceNodeBase* Node);
 }

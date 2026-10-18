@@ -181,7 +181,7 @@ bool ANodeShuffleSubsystem::RwgDealOneSpot(const NodeShuffleMapMode::FRwgGroundQ
 }
 
 bool ANodeShuffleSubsystem::GenerateRwgLocations(FRandomStream& Rng, const TArray<FVector>& AvoidLocations, int32 Count,
-                                                 float SpacingCm, TArray<FVector>& OutLocations)
+                                                 float SpacingCm, TArray<FVector>& OutLocations, int32 PoolSize, TSet<int32>* OutCaveIndices)
 {
     const double T0 = FPlatformTime::Seconds();
     const NodeShuffleMapMode::FRwgGroundQuery Q(GetWorld(), RwgGenerator.Get());
@@ -196,6 +196,10 @@ bool ANodeShuffleSubsystem::GenerateRwgLocations(FRandomStream& Rng, const TArra
     RwgRcWaterZBelow0 = RwgRcWaterZAtOrAbove0 = RwgRcDealtBelowZ0 = 0; // coordinator addendum: this roll only
     RwgRcRejectedSea = RwgRcApiLevelOnly = 0; // RWG P2e: this roll only
     RwgRcRejectedVoid = RwgRcRejectedKillbox = RwgRcDealtBelowKillbox = 0; // RWG P2f: this roll only
+    RwgRcCaveSpots = RwgRcCaveDrawsTried = RwgRcCaveDealFailed = RwgRcCaveAnyNearCalls = RwgRcCaveNearHits = RwgRcCaveFloorHits = 0; // RWG P5: this roll only
+    RwgRcCaveRejInside = RwgRcCaveRejHeadroom = RwgRcCaveRejCeiling = RwgRcCaveRejSurface = RwgRcCaveRejKillbox = RwgRcCaveRejSpacing = 0; bRwgRcCaveBudgetSpent = false;
+    // RWG P5: the vanilla cave rule (GenerateNewLocations): natural share min(0.25, seeds / (pool + Count)); only when the caller takes cave indices.
+    const float CaveChance = (OutCaveIndices && RwgEnsureCaveCheck(Q)) ? RwgCaveShare(PoolSize) : 0.0f;
     int32 Outside = 0, Water = 0, Disagree = 0, Spacing = 0, Drawn = 0, Slope = 0;
     double ZSum = 0.0, ZMin = TNumericLimits<double>::Max(), ZMax = TNumericLimits<double>::Lowest();
     const float SpacingSq = FMath::Square(SpacingCm);
@@ -204,12 +208,23 @@ bool ANodeShuffleSubsystem::GenerateRwgLocations(FRandomStream& Rng, const TArra
     {
         ++Drawn;
         FVector C;
-        if (!RwgDealOneSpot(Q, Rng, C, Outside, Water, Disagree, Slope)) { continue; }
-        // Spacing: identical to the vanilla deal's surface rule (2D, MinNodeSpacing, Avoid then Out).
+        bool bCavePick = false; // RWG P5: a failed cave draw falls through to a surface draw in the SAME iteration (vanilla: TryPickRawCaveCell's else)
+        if (CaveChance > 0.0f && !bRwgRcCaveBudgetSpent && Rng.FRand() < CaveChance)
+        {
+            ++RwgRcCaveDrawsTried;
+            int32 Calls = 0;
+            bCavePick = RwgDrawCaveSpot(Q, Rng, FMath::Min(NodeShuffleMapMode::RwgCaveAnyNearPerSpot, NodeShuffleMapMode::RwgCaveAnyNearPerRoll - RwgRcCaveAnyNearCalls), C, Calls);
+            RwgRcCaveAnyNearCalls += Calls;
+            if (!bCavePick) { ++RwgRcCaveDealFailed; bRwgRcCaveBudgetSpent = RwgRcCaveAnyNearCalls >= NodeShuffleMapMode::RwgCaveAnyNearPerRoll; }
+        }
+        if (!bCavePick && !RwgDealOneSpot(Q, Rng, C, Outside, Water, Disagree, Slope)) { continue; }
+        // Spacing: identical to the vanilla deal's rule (MinNodeSpacing, Avoid then Out; 2D, or 3D for a cave pick as in cave-nodes-2).
         bool bTooClose = false;
-        for (const FVector& E : AvoidLocations) { if (FVector::DistSquared2D(E, C) < SpacingSq) { bTooClose = true; break; } }
-        if (!bTooClose) { for (const FVector& E : OutLocations) { if (FVector::DistSquared2D(E, C) < SpacingSq) { bTooClose = true; break; } } }
-        if (bTooClose) { ++Spacing; continue; }
+        const auto Near = [&](const FVector& E) { return bCavePick ? FVector::DistSquared(E, C) < SpacingSq : FVector::DistSquared2D(E, C) < SpacingSq; };
+        for (const FVector& E : AvoidLocations) { if (Near(E)) { bTooClose = true; break; } }
+        if (!bTooClose) { for (const FVector& E : OutLocations) { if (Near(E)) { bTooClose = true; break; } } }
+        if (bTooClose) { ++Spacing; RwgRcCaveRejSpacing += bCavePick ? 1 : 0; continue; }
+        if (bCavePick) { OutCaveIndices->Add(OutLocations.Num()); ++RwgRcCaveSpots; }
         OutLocations.Add(C);
         if (C.Z < 0.0) { ++RwgRcDealtBelowZ0; RwgNoteWaterSample(Q, C, false, TEXT("nodeDeal")); } // coordinator addendum, measured only
         if (bRwgKillboxKnown && C.Z < RwgKillboxTopZ) { ++RwgRcDealtBelowKillbox; } // RWG P2f: measured control (v3 rejects these; expect 0)
@@ -223,9 +238,11 @@ bool ANodeShuffleSubsystem::GenerateRwgLocations(FRandomStream& Rng, const TArra
     DealMeanZ = OutLocations.Num() > 0 ? static_cast<float>(ZSum / OutLocations.Num()) : RwgMeanZ;
     if (OutLocations.Num() == 0) { ZMin = ZMax = 0.0; }
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("ROLLCENSUS: map=rwg deal=api extentHalfCm=%.0f requested=%d dealt=%d drawn=%d rejectedOutside=%d rejectedWater=%d rejectedWaterSurfaceZBelow0=%d rejectedWaterSurfaceZAtOrAbove0=%d dealtBelowZ0=%d rejectedSea=%d rejectedApiLevelOnly=%d waterApiDisagree=%d rejectedSlope=%d rejectedSpacing=%d resolvedZ=%d resolvedZMin=%.0f resolvedZMax=%.0f waterVolumes=%d caveSpots=0 rollDurationMs=%.0f rejectedVoid=%d rejectedKillbox=%d dealtBelowKillbox=%d killboxTopZ=%.0f killboxTopActorZ=%.0f killboxTopApiZ=%.0f voidUsable=%d"),
+        TEXT("ROLLCENSUS: map=rwg deal=api extentHalfCm=%.0f requested=%d dealt=%d drawn=%d rejectedOutside=%d rejectedWater=%d rejectedWaterSurfaceZBelow0=%d rejectedWaterSurfaceZAtOrAbove0=%d dealtBelowZ0=%d rejectedSea=%d rejectedApiLevelOnly=%d waterApiDisagree=%d rejectedSlope=%d rejectedSpacing=%d resolvedZ=%d resolvedZMin=%.0f resolvedZMax=%.0f waterVolumes=%d caveSpots=%d caveDrawsTried=%d caveDealFailed=%d caveAnyNearCalls=%d caveNearHits=%d caveFloorHits=%d caveRejInside=%d caveRejHeadroom=%d caveRejCeiling=%d caveRejSurface=%d caveRejKillbox=%d caveRejSpacing=%d caveBudgetSpent=%d caveShare=%.4f caveShareNum=%d caveShareDen=%d caveNum=%d caveUsable=%d rollDurationMs=%.0f rejectedVoid=%d rejectedKillbox=%d dealtBelowKillbox=%d killboxTopZ=%.0f killboxTopActorZ=%.0f killboxTopApiZ=%.0f voidUsable=%d"),
         H, Count, OutLocations.Num(), Drawn, Outside, Water, RwgRcWaterZBelow0, RwgRcWaterZAtOrAbove0, RwgRcDealtBelowZ0, RwgRcRejectedSea, RwgRcApiLevelOnly, Disagree, Slope, Spacing, OutLocations.Num(), ZMin, ZMax,
-        RwgWaterVolumes.Num(), (FPlatformTime::Seconds() - T0) * 1000.0, RwgRcRejectedVoid, RwgRcRejectedKillbox, RwgRcDealtBelowKillbox,
+        RwgWaterVolumes.Num(), RwgRcCaveSpots, RwgRcCaveDrawsTried, RwgRcCaveDealFailed, RwgRcCaveAnyNearCalls, RwgRcCaveNearHits, RwgRcCaveFloorHits, RwgRcCaveRejInside,
+        RwgRcCaveRejHeadroom, RwgRcCaveRejCeiling, RwgRcCaveRejSurface, RwgRcCaveRejKillbox, RwgRcCaveRejSpacing, bRwgRcCaveBudgetSpent ? 1 : 0, CaveChance, RwgCaveSeedCount, PoolSize,
+        RwgCaveNumAtCheck, bRwgCaveUsable ? 1 : 0, (FPlatformTime::Seconds() - T0) * 1000.0, RwgRcRejectedVoid, RwgRcRejectedKillbox, RwgRcDealtBelowKillbox,
         bRwgKillboxKnown ? RwgKillboxTopZ : NodeShuffleMapMode::RwgNaN(), bRwgKillboxActorKnown ? RwgKillboxTopActorZ : NodeShuffleMapMode::RwgNaN(),
         bRwgKillboxApiKnown ? RwgKillboxTopApiZ : NodeShuffleMapMode::RwgNaN(), bRwgVoidUsable ? 1 : 0);
     return true;
@@ -242,6 +259,7 @@ bool ANodeShuffleSubsystem::TryRedealRwgEntry(FNodeShuffleEntry& Entry, float Sp
     Salt++;
     FRandomStream Rng(static_cast<int32>(GetTypeHash(Entry.EntryGuid)) ^ (SavedSeed * 31) ^ (Salt * 7919));
     Entry.bUnderground = false;
+    if (RwgTryCaveRedeal(Q, Entry, Rng, SpacingCm)) { bOutMoved = true; ++RwgPcRedealApi; return true; } // RWG P5: vanilla redeal cave rule; cave entries try the cave pool first
     int32 Outside = 0, Water = 0, Disagree = 0, Spacing = 0, Slope = 0;
     const float SpacingSq = FMath::Square(SpacingCm);
     for (int32 I = 0; I < Tries && !bOutMoved; ++I)
@@ -274,6 +292,7 @@ bool ANodeShuffleSubsystem::RwgResolveAtSpawn(FNodeShuffleEntry& Entry, bool& bO
     if (!Q.IsUsable()) { ++RwgPcFallback; return false; }
     bOutApiUsed = true;
     if (RwgWaterVolumes.Num() == 0) { RwgBuildWaterVolumeCache(); }
+    if (Entry.bRwgCave) { return RwgResolveCaveAtSpawn(Q, Entry, bOutWaterNoLand); } // RWG P5: floor-up geometry, BEFORE the surface predicates below
     // The deal predicates again at this XY (starter, fallback-dealt and spiral-moved spots never passed RwgDealOneSpot).
     const double X0 = Entry.Location.X, Y0 = Entry.Location.Y;
     if (Q.Outside(X0, Y0)) { bOutWaterNoLand = true; return false; }
@@ -332,6 +351,7 @@ bool ANodeShuffleSubsystem::RwgResolveAtSpawn(FNodeShuffleEntry& Entry, bool& bO
     Entry.RwgApiToTerrainDzCm = static_cast<float>(Entry.Location.Z - ApiZ1);
     ++RwgPcSettledTerrain;
     RwgRecordDz(Entry.Location, Entry.RwgApiToTerrainDzCm);
+    RwgNoteSettledInsideCave(Q, Entry); // RWG P5: settledInsideCave census (surface entries; cave entries count in RwgResolveCaveAtSpawn)
     return true;
 }
 
@@ -418,12 +438,13 @@ void ANodeShuffleSubsystem::RwgSpawnPass(float SpawnRadiusCm, bool& bChangedWorl
     if (RwgPcSpawned > 0 || (RwgPcPasses % 12) == 1) // bounded: a pass that spawned, else once a minute
     {
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("PLACECENSUS: pass=%d attempted=%d spawned=%d notSpawned=%d deferredSettle=%d waterLockedNew=%d apiRedealCalls=%d budgetSkipped=%d farNoAttempt=%d liveReasserted=%d spawnTraceHit=%d spawnTraceMiss=%d spawnTraceFar=%d farTerrain=%d farCanopy=%d farWater=%d farOther=%d farSolid=%d rejectedRock=%d settledOnTerrain=%d noTerrainDefer=%d spawnSettlesWithAnySkip=%d terrainOnlyCapHitsAllCallers=%d fallbackNoApi=%d attemptRadiusM=%.0f spawnRadiusM=%.0f layoutEntries=%d"),
+            TEXT("PLACECENSUS: pass=%d attempted=%d spawned=%d notSpawned=%d deferredSettle=%d waterLockedNew=%d apiRedealCalls=%d budgetSkipped=%d farNoAttempt=%d liveReasserted=%d spawnTraceHit=%d spawnTraceMiss=%d spawnTraceFar=%d farTerrain=%d farCanopy=%d farWater=%d farOther=%d farSolid=%d rejectedRock=%d settledOnTerrain=%d noTerrainDefer=%d spawnSettlesWithAnySkip=%d terrainOnlyCapHitsAllCallers=%d fallbackNoApi=%d attemptRadiusM=%.0f spawnRadiusM=%.0f layoutEntries=%d caveSettleTried=%d caveSettled=%d caveDeferred=%d caveEscaped=%d caveFar=%d caveSolid=%d caveWater=%d caveRedealCave=%d caveRedealSurface=%d insideCaveChecked=%d settledInsideCave=%d settledInsideCaveSurfaceEntry=%d"),
             RwgPcPasses, RwgPcAttempted, RwgPcSpawned, RwgPcAttempted - RwgPcSpawned, DeferredThisPass - DeferredBefore,
             WaterLockedThisSession.Num() - WaterLockedBefore, RwgPcRedealApi, RwgPcBudgetSkipped, RwgPcFarNoAttempt, RwgPcLive,
             RwgPcTraceHit, RwgPcTraceMiss, RwgPcTraceFar, RwgPcFarTerrain, RwgPcFarCanopy, RwgPcFarWater, RwgPcFarOther, RwgPcFarSolid, RwgPcRejectedRock,
             RwgPcSettledTerrain, RwgPcNoTerrainDefer, RwgPcSkippedToTerrain, RwgProbeCapHits,
-            RwgPcFallback, AttemptRadiusCm / 100.f, SpawnRadiusCm / 100.f, Layout.Num());
+            RwgPcFallback, AttemptRadiusCm / 100.f, SpawnRadiusCm / 100.f, Layout.Num(), RwgPcCaveSettleTried, RwgPcCaveSettled, RwgPcCaveDeferred, RwgPcCaveEscaped,
+            RwgPcCaveFar, RwgPcCaveSolid, RwgPcCaveWater, RwgPcCaveRedealCave, RwgPcCaveRedealSurface, RwgPcInsideCaveChecked, RwgPcSettledInsideCave, RwgPcSettledInsideCaveSurfaceEntry);
         RwgEmitDzCensus(); // RWG P2c: session apiToTerrainDz distribution by band, emitted with PLACECENSUS
     }
     RwgEmitPlaceCensus();
@@ -463,6 +484,8 @@ void ANodeShuffleSubsystem::RwgEmitPlaceCensus()
     RwgPcFarSolid = RwgPcRejectedRock = 0; // RWG P2d
     RwgPcSettledTerrain = RwgPcNoTerrainDefer = RwgPcSkippedToTerrain = 0;
     RwgProbeCapHits = 0;
+    RwgPcCaveSettleTried = RwgPcCaveSettled = RwgPcCaveDeferred = RwgPcCaveEscaped = RwgPcCaveFar = RwgPcCaveSolid = RwgPcCaveWater = 0; // RWG P5
+    RwgPcCaveRedealCave = RwgPcCaveRedealSurface = RwgPcInsideCaveChecked = RwgPcSettledInsideCave = RwgPcSettledInsideCaveSurfaceEntry = 0;
 }
 
 void ANodeShuffleSubsystem::RwgLogSkipOnce(int32 Bit, const TCHAR* What)

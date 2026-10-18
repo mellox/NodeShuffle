@@ -113,7 +113,7 @@ if (-not $sp) { $fails += 'E5: RwgSeaRedealPass body not found' } else {
     # RWG P2f: the skip also re-opens entries whose void flag is unset while both P2f terms are on (pinned again by check_rwgp2f_lint.ps1 F5).
     if (-not $sp.Contains('if (!E.bIsNewNode || !E.bActive || (E.bRwgSeaChecked && (E.bRwgVoidChecked || !bVoidOn)) || RwgSeaDealFailed.Contains(E.EntryGuid)) { ' + 'continue; }')) { $fails += 'E5: node candidates must skip flagged entries (idempotent)' }
     if (-not $sp.Contains('if (!W.bDestDealt || (W.bRwgSeaChecked && (W.bRwgVoidChecked || !bVoidOn)) || RwgSeaWellDealFailed.Contains(W.CorePath)) { ' + 'continue; }')) { $fails += 'E5: well candidates must skip flagged entries (idempotent)' }
-    $iP = $sp.IndexOf('E.bRayCasted || E.bRwgSettledOnTerrain) { ++Skip' + 'Placed;'); $iPin = $sp.IndexOf('if (E.bPinned || E.bUnderground) { ++Skip' + 'Pinned;'); $iR = $sp.IndexOf('TryRedealWaterLocked' + 'Entry(E);')
+    $iP = $sp.IndexOf('E.bRayCasted || E.bRwgSettledOnTerrain) { ++Skip' + 'Placed;'); $iPin = $sp.IndexOf('if (E.bPinned || E.bUnderground || E.bRwgCave) { ++Skip' + 'Pinned;'); <#RWG P5: cave entries skip with pinned/underground#> $iR = $sp.IndexOf('TryRedealWaterLocked' + 'Entry(E);')
     if ($iP -lt 0 -or $iPin -lt $iP -or $iR -lt $iPin) { $fails += 'E5: placed then pinned skips must precede the node re-deal' }
     if (-not $sp.Contains('if (bMoved) { ++Redealt; E.bRwgSeaChecked = ' + 'true; E.bRwgVoidChecked |= bVoidOn; }')) { $fails += 'E5: a node is flagged after a re-deal only when it moved' }
     $iWp = $sp.IndexOf('if (W.bGroupPlaced) { ++Skip' + 'Placed;'); $iWf = $sp.IndexOf('if (W.bRelocationFailed) { ++Skip' + 'FailedWell;'); $iWd = $sp.IndexOf('RwgDealWell' + 'Site(Q, Rng, Offs, Site)')
@@ -149,7 +149,7 @@ if ((Count $text.subsysh ('UPROPERTY(Save' + 'Game) bool bRwgSeaChecked = false;
 
 # E9
 if ((Count $text.maph ('constexpr int32 RwgSeaRedealPerPass = ' + '64;')) -ne 1 -or (Count $text.maph ('constexpr int32 RwgSeaCheckPerClass = ' + '32;')) -ne 1 -or (Count $text.maph ('constexpr int32 RwgRedealTries = ' + '80;')) -ne 1 -or (Count $text.maph ('constexpr int32 RwgSeaWellDealDraws = ' + '128;')) -ne 1) { $fails += 'E9: RwgSeaRedealPerPass 64 / RwgSeaCheckPerClass 32 / RwgRedealTries 80 / RwgSeaWellDealDraws 128 must be pinned' }
-if ((Count $text.nsmod ('LOADED (2026-10-18-rwg-' + 'p2g-1)')) -ne 1 -or (Count $text.nsmod ('2026-10-18-rwg-' + 'p2f-2')) -ne 0) { $fails += 'E9: the marker must be rwg-p2g-1 (RWG P2g) and the previous marker absent' }
+if ((Count $text.nsmod ('LOADED (2026-10-18-rwg-' + 'p5-1)')) -ne 1 -or (Count $text.nsmod ('2026-10-18-rwg-' + 'p2g-1')) -ne 0) { $fails += 'E9: the marker must be rwg-p5-1 (RWG P5) and the previous marker absent' }
 
 if ($fails.Count -gt 0) { $fails | ForEach-Object { Write-Host "FAIL $_" }; exit 1 }
 Write-Host "PASS: RWG P2e lint -- E1..E9 hold across $($files.Count) loaded files"

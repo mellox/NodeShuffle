@@ -223,7 +223,7 @@ void ANodeShuffleSubsystem::RwgSeaRedealPass()
         // Placed = a live actor, OR settled at any time (bRayCasted / bRwgSettledOnTerrain are SaveGame; SpawnedNodes may not have
         // re-adopted a far actor yet this session, and an unadopted actor could carry a miner). A sea spot never settles (no terrain).
         if (IsValid(SpawnedNodes.FindRef(E.EntryGuid)) || E.bRayCasted || E.bRwgSettledOnTerrain) { ++SkipPlaced; PlacedWet += (!Q.Outside(E.Location.X, E.Location.Y) && RwgWetV2(Q, FVector(E.Location.X, E.Location.Y, Q.SurfaceZ(E.Location.X, E.Location.Y))) != 0) ? 1 : 0; E.bRwgSeaChecked = true; E.bRwgVoidChecked |= bVoidOn; continue; }
-        if (E.bPinned || E.bUnderground) { ++SkipPinned; E.bRwgSeaChecked = true; E.bRwgVoidChecked |= bVoidOn; continue; }
+        if (E.bPinned || E.bUnderground || E.bRwgCave) { ++SkipPinned; E.bRwgSeaChecked = true; E.bRwgVoidChecked |= bVoidOn; continue; }
         if (Q.Outside(E.Location.X, E.Location.Y)) { ++Outside; E.bRwgSeaChecked = true; E.bRwgVoidChecked |= bVoidOn; continue; }
         const FVector At(E.Location.X, E.Location.Y, Q.SurfaceZ(E.Location.X, E.Location.Y));
         const int32 Wet = RwgRejectV3(Q, At); // P2f: predicate v3

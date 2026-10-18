@@ -129,7 +129,7 @@ function Invoke-P2gChecks($T) {
     if (-not $cpp.Contains('static_assert(ScanDue(2, 420., 360., P, 0, Cap), "a third scan is due one period after the ' + 'second (no exhaustion)");')) { $f += '(G11) the periodic third-scan case must stay in the policy test' }
     if (([regex]::Matches($cpp, '(?m)^static_assert\(')).Count -lt 36) { $f += '(G11) the policy test must keep at least 36 cases' }
     # G8
-    if ((Count $T.nsmod ('LOADED (2026-10-18-rwg-' + 'p2g-1)')) -ne 1 -or (Count $T.nsmod ('2026-10-18-rwg-' + 'p2f-2')) -ne 0) { $f += '(G8) marker must be rwg-p2g-1 and rwg-p2f-2 absent' }
+    if ((Count $T.nsmod ('LOADED (2026-10-18-rwg-' + 'p5-1)')) -ne 1 -or (Count $T.nsmod ('2026-10-18-rwg-' + 'p2g-1')) -ne 0) { $f += '(G8) marker must be rwg-p5-1 and rwg-p2g-1 absent (moved by RWG P5)' }
     # G9
     $kb = Get-Body $T.void ('void ' + $cls + 'RwgEnsureKillboxTop(')
     if (-not $kb -or -not $kb.Contains('RwgKillboxTopZ = FMath::Max(RwgKillboxTopActorZ, RwgKillboxTop' + 'ApiZ);') -or $kb.Contains('FMath::Min(RwgKillboxTopActorZ, RwgKillboxTop' + 'ApiZ)')) { $f += '(G9) both known -> the HIGHER killbox top (Max), never Min' }

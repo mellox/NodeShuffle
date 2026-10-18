@@ -112,6 +112,7 @@ void ANodeShuffleSubsystem::RwgLogReprobes(bool bFull)
     RwgLogWater2();
     RwgLogRock(bFull);
     RwgLogHeightApi(bFull);
+    if (bFull) { const NodeShuffleMapMode::FRwgGroundQuery Q(GetWorld(), RwgGenerator.Get()); RwgEnsureCaveCheck(Q); } // RWG P5: RWGCAVECHECK at readiness (once per session; the roll re-asks if deferred)
 }
 
 void ANodeShuffleSubsystem::RwgLogCollision(bool bEmitWater)

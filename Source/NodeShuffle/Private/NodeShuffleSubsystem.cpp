@@ -1270,6 +1270,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
         E.bActive = false;
         E.NodeClassPath = SpawnableNodeClassPath;
         E.bUnderground = NewUnderground.Contains(LocIdx); // settles via the short in-cave trace
+        if (GetMapMode() == ENodeShuffleMapMode::Rwg) { E.bRwgCave = E.bUnderground; E.bUnderground = false; } // RWG P5: RWG cave picks settle by the cave geometry (NodeShuffleMapModeCave.cpp)
         NewLayout.Add(E);
     }
 
@@ -1676,6 +1677,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                 E.bIsNewNode = true;
                 E.Location = RelocSpots[RelocCursor];
                 E.bUnderground = RelocUnderground.Contains(RelocCursor); // cave-floor pick -> short-trace settle
+                if (GetMapMode() == ENodeShuffleMapMode::Rwg) { E.bRwgCave = E.bUnderground; E.bUnderground = false; } // RWG P5: same move as the roll site
                 RelocCursor++;
                 E.Rotation = FRotator(0.f, Rng.FRandRange(0.f, 360.f), 0.f);
                 E.bRayCasted = false; // re-settle onto terrain at the new spot
@@ -1964,8 +1966,9 @@ void ANodeShuffleSubsystem::GenerateNewLocations(FRandomStream& Rng, const TArra
     // (outside/water/Z) at roll time; it returns false only when the binding is unusable -> the deal below runs.
     if (GetMapMode() != ENodeShuffleMapMode::Vanilla)
     {
+        TSet<int32>* const RwgCaveIndices = OutUndergroundIndices; // RWG P5: cave picks reported here; the caller moves the flag to bRwgCave on RWG
         OutUndergroundIndices = nullptr;
-        if (GetMapMode() == ENodeShuffleMapMode::Rwg && GenerateRwgLocations(Rng, AvoidLocations, Count, MinNodeSpacing, OutLocations)) { return; }
+        if (GetMapMode() == ENodeShuffleMapMode::Rwg && GenerateRwgLocations(Rng, AvoidLocations, Count, MinNodeSpacing, OutLocations, VanillaLocations.Num() + Count, RwgCaveIndices)) { return; }
     }
 
     // MAP-WIDE SPREAD: the previous version anchored each new spot to a randomly
@@ -3226,7 +3229,7 @@ void ANodeShuffleSubsystem::SpawnVisualRockForNode(AFGResourceNode* Node, UClass
     bool bPinnedEntry = false;
     for (const FNodeShuffleEntry& E : Layout)
     {
-        if (E.EntryGuid == EntryGuid) { bUndergroundEntry = E.bUnderground; bPinnedEntry = E.bPinned; break; }
+        if (E.EntryGuid == EntryGuid) { bUndergroundEntry = E.bUnderground || E.bRwgCave; bPinnedEntry = E.bPinned; break; } // RWG P5: bRwgCave false on vanilla
     }
     // knowledge-1 item 5: a PINNED entry has a BUILDING on it (that is what pinning means), so the
     // slope probe below raycasts into the miner's mesh/foundation instead of terrain — a bogus steep
@@ -4268,7 +4271,7 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
         // the new clamped-actor rotation, and the forced re-dress below gives their rock the full-slope
         // relative alignment. Rotation only — location untouched; occupied/pinned/underground skipped.
         bool bRotRefit = false;
-        if (!Entry.bPinned && !Entry.bUnderground && !AdoptRotRefit.Contains(Entry.EntryGuid)
+        if (!Entry.bPinned && !Entry.bUnderground && !Entry.bRwgCave && !AdoptRotRefit.Contains(Entry.EntryGuid) // RWG P5: bRwgCave false on vanilla
             && !IsNodeOccupiedAnyway(*Existing))
         {
             AdoptRotRefit.Add(Entry.EntryGuid);
@@ -4592,7 +4595,7 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
                 // steepfix-1: nudge targets must also be flat enough to take a Miner.
                 // RWG P2c: the overlap nudge probes terrain-mesh hits only on RWG (false, the default, on vanilla).
                 if (RaycastGroundAt(Probe, Entry.Location.Z, nullptr, nullptr, TryLoc, TryRot, bTryWater,
-                                    Entry.bUnderground, &bTrySteep, nullptr, nullptr, GetMapMode() == ENodeShuffleMapMode::Rwg)
+                                    Entry.bUnderground || Entry.bRwgCave, &bTrySteep, nullptr, nullptr, GetMapMode() == ENodeShuffleMapMode::Rwg) // RWG P5: cave entries nudge on the floor too (bRwgCave is false on vanilla)
                     && !bTryWater && !bTrySteep && !OverlapsAt(TryLoc) && !IsEnclosed(TryLoc))
                 {
                     Entry.Location = TryLoc;

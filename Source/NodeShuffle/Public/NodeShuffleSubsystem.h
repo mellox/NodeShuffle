@@ -270,6 +270,10 @@ struct FNodeShuffleEntry
     // RWG P2f (2026-10-18): true once the re-deal pass checked this entry's spot under the void + killbox terms (predicate v3) in a session
     // where BOTH were on (VoidAt graded usable AND the killbox top measured). False on every vanilla entry (never read there).
     UPROPERTY(SaveGame) bool bRwgVoidChecked = false;
+    // RWG P5 (2026-10-18): this RWG entry was dealt on a carved-cave FLOOR (FPWCarvedCaves FloorCmAt + IsInsideAt verify). Its spawn settle traces
+    // down from floor + headroom (NodeShuffleMapModeCave.cpp), never from above the surface; the resettle, rock and sea passes skip it. Cleared
+    // when a redeal moves it to the surface. False on every vanilla entry (vanilla caves keep bUnderground; never read there).
+    UPROPERTY(SaveGame) bool bRwgCave = false;
 };
 
 // One original vanilla node location to suppress on stream-in after a wipe-on-
@@ -1044,7 +1048,7 @@ private:
     // Every function below is called only behind a `GetMapMode() != Vanilla` / `== Rwg` test at its call site.
     bool RwgPipelineMayRun();               // RefreshTick: false = return this tick
     bool GenerateRwgLocations(FRandomStream& Rng, const TArray<FVector>& AvoidLocations, int32 Count, float SpacingCm,
-                              TArray<FVector>& OutLocations);          // false = API unusable, caller deals the fallback
+                              TArray<FVector>& OutLocations, int32 PoolSize = 0, TSet<int32>* OutCaveIndices = nullptr); // false = API unusable, caller deals the fallback; RWG P5: cave picks' indices
     bool RwgDealOneSpot(const NodeShuffleMapMode::FRwgGroundQuery& Q, FRandomStream& Rng, FVector& OutSpot,
                         int32& Outside, int32& Water, int32& WaterApiDisagree, int32& Slope);
     bool TryRedealRwgEntry(FNodeShuffleEntry& Entry, float SpacingCm, int32 Tries, bool& bOutMoved); // false = API unusable, caller keeps its path
@@ -1122,6 +1126,27 @@ private:
     int32 RwgWrRejectedVoid = 0, RwgWrRejectedKillbox = 0, RwgWrDealtBelowKillbox = 0; // WELLROLL (per well roll)
     int32 RwgKbPasses = 0, RwgKbSettleRefused = 0, RwgKbSettleSamples = 0;
     TSet<FGuid> RwgKillboxRefused;                     // session: below the killbox but pinned/occupied (re-checked next session)
+    // ---- RWG P5 (2026-10-18): cave spots via the bound FPWCarvedCaves group. NodeShuffleMapModeCave.cpp. Every caller is RWG-only. ----
+    bool RwgEnsureCaveCheck(const NodeShuffleMapMode::FRwgGroundQuery& Q);   // RWGCAVECHECK once per session; true = cave queries graded usable
+    float RwgCaveShare(int32 Denominator) const;                            // vanilla rule: min(0.25, RwgCaveSeedCount / Denominator); 0 unless graded usable
+    bool RwgDrawCaveSpot(const NodeShuffleMapMode::FRwgGroundQuery& Q, FRandomStream& Rng, int32 AnyNearBudget, FVector& OutSpot, int32& OutAnyNearCalls);
+    bool RwgTryCaveRedeal(const NodeShuffleMapMode::FRwgGroundQuery& Q, FNodeShuffleEntry& Entry, FRandomStream& Rng, float SpacingCm); // true = moved to a cave floor
+    bool RwgResolveCaveAtSpawn(const NodeShuffleMapMode::FRwgGroundQuery& Q, FNodeShuffleEntry& Entry, bool& bOutWaterNoLand); // RwgResolveAtSpawn's bRwgCave branch
+    void RwgNoteSettledInsideCave(const NodeShuffleMapMode::FRwgGroundQuery& Q, const FNodeShuffleEntry& Entry); // settledInsideCave census, every RWG settle
+    bool bRwgCaveCheckDone = false, bRwgCaveUsable = false, bRwgCaveCheckDeferLogged = false;
+    double RwgCaveCheckRetryAt = 0.0;
+    int32 RwgCaveSeedCount = 0, RwgCaveSeedDen = 0;    // RWGCAVECHECK: RWG originals inside a carved cave / originals tested (latched once)
+    int32 RwgCaveNumAtCheck = -1;
+    // ROLLCENSUS (per roll, zeroed by GenerateRwgLocations).
+    int32 RwgRcCaveSpots = 0, RwgRcCaveDrawsTried = 0, RwgRcCaveDealFailed = 0, RwgRcCaveAnyNearCalls = 0, RwgRcCaveNearHits = 0, RwgRcCaveFloorHits = 0;
+    int32 RwgRcCaveRejInside = 0, RwgRcCaveRejHeadroom = 0, RwgRcCaveRejCeiling = 0, RwgRcCaveRejSurface = 0, RwgRcCaveRejKillbox = 0, RwgRcCaveRejSpacing = 0;
+    bool bRwgRcCaveBudgetSpent = false;
+    int32 RwgCaveDealSamples = 0, RwgCaveSettleSamples = 0; // session: RWGCAVEDEAL / RWGCAVESETTLE sample lines printed (cap 8 each)
+    TMap<FGuid, int32> RwgCaveSettleMisses;            // session: no-hit cave settles per entry while a player is near (escape at RwgCaveSettleMissEscape)
+    // PLACECENSUS per pass (zeroed by RwgEmitPlaceCensus).
+    int32 RwgPcCaveSettleTried = 0, RwgPcCaveSettled = 0, RwgPcCaveDeferred = 0, RwgPcCaveEscaped = 0, RwgPcCaveFar = 0, RwgPcCaveSolid = 0, RwgPcCaveWater = 0;
+    int32 RwgPcCaveRedealCave = 0, RwgPcCaveRedealSurface = 0;
+    int32 RwgPcInsideCaveChecked = 0, RwgPcSettledInsideCave = 0, RwgPcSettledInsideCaveSurfaceEntry = 0;
     // PLACECENSUS per-pass additions (zeroed by RwgEmitPlaceCensus).
     int32 RwgPcFarTerrain = 0, RwgPcFarCanopy = 0, RwgPcFarWater = 0, RwgPcFarOther = 0;
     int32 RwgPcSettledTerrain = 0, RwgPcNoTerrainDefer = 0, RwgPcSkippedToTerrain = 0;

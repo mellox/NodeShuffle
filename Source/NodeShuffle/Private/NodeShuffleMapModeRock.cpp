@@ -106,7 +106,7 @@ void ANodeShuffleSubsystem::RwgRockOcclusionPass()
     for (int32 I = 0; I < Layout.Num(); ++I)
     {
         const FNodeShuffleEntry& E = Layout[I];
-        if (!E.bIsNewNode || !E.bActive || E.bRwgRockChecked || E.bUnderground) { continue; }
+        if (!E.bIsNewNode || !E.bActive || E.bRwgRockChecked || E.bUnderground || E.bRwgCave) { continue; } // RWG P5: the window above a cave floor is the cave roof; its settle already refuses solid hits
         if (RwgRockRefused.Contains(E.EntryGuid)) { continue; }
         AFGResourceNode* Live = SpawnedNodes.FindRef(E.EntryGuid);
         if (!IsValid(Live)) { continue; }
