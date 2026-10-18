@@ -53,16 +53,21 @@ namespace NodeShuffleMapMode
     // node spawns at the API Z (R2: terrain-mesh hits p95 |dZ| 37.5 cm; foliage/water hits differ by metres).
     constexpr double RwgTraceAgreeCm = 300.0;
     // RWG P2c (2026-10-18): RwgTraceAgreeCm no longer selects the API Z anywhere. It is the census split of the primary
-    // probe's FIRST hit (spawnTraceHit vs spawnTraceFar) and the resettle's keep-vs-move tolerance.
+    // probe's FIRST hit (spawnTraceHit vs spawnTraceFar); the resettle keeps within RwgResettleKeepCm (P2c review S1).
     // A terrain-only trace (RaycastGroundAt bTerrainOnly) ignores at most this many non-terrain blocking components
     // (canopy instanced meshes, water sheets, other nodes) before it reads as no hit. TODO(2026-10-18, RWG P2c -> R5):
-    // re-check against RWGTERRAINSKIP lines and PLACECENSUS probeCapHits.
+    // re-check against RWGTERRAINSKIP lines and PLACECENSUS terrainOnlyCapHitsAllCallers.
     constexpr int32 RwgTerrainSkipMax = 8;
     // RWG P2c resettle: node entries probed per pass (nearest the pawn first), well groups per pass, and the number of
     // void probes (no terrain-mesh hit) one entry may take in a session before the pass stops re-probing it.
     constexpr int32 RwgResettlePerPass = 32;
     constexpr int32 RwgResettleWellsPerPass = 4;
     constexpr int32 RwgResettleVoidGiveUp = 12;
+    // RWG P4b (2026-10-18): satellite re-bind retry -- claims tried per pass (nearest the pawn first), and the attempts after
+    // which a still-unbound claim drops one priority tier. TODO(2026-10-18, P4b -> R5): re-check against WELLCLAIM-RETRY.
+    constexpr int32 RwgWellRetryClaimsPerPass = 32;
+    constexpr int32 RwgWellRetryTierPasses = 12;
+    constexpr double RwgResettleKeepCm = 50.0; // RWG P2c review: resettle keep tolerance (terrain-hit p95 37.5 cm). TODO(2026-10-18 -> R5)
     // Disagreement predicate for the water census: WaterLevelCmAt(x,y,0) > SurfaceHeightCm(x,y) + this.
     constexpr double RwgWaterApiMarginCm = 50.0;
 

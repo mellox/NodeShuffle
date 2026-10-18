@@ -403,7 +403,12 @@ void ANodeShuffleSubsystem::RwgObserveTick()
         // RwgApplyStableTicks ticks at any stage AND count >= RwgMinNodes. Brief "R2 measurements" (reload unmeasured).
         const bool bClauseB = bLayoutGenerated && T >= NodeShuffleMapMode::RwgApplyFallbackSeconds
             && RwgStableAnyStage >= NodeShuffleMapMode::RwgApplyStableTicks && Nodes >= SavedFloor;
-        const bool bReadyNow = bClauseA || bClauseB;
+        // RWG P4b part C (2026-10-18): a save that already holds a P2b+ RWG layout applies at the first tick that reads Ready
+        // (no stability wait; the saved-layout floor above still applies). A NEW game (no layout) and a legacy layout
+        // (version 0, re-rolled) keep clause A's stability requirement unchanged.
+        const bool bClauseImmediate = bLayoutGenerated && RwgLayoutVersion >= NodeShuffleMapMode::RwgLayoutVersionP2b
+            && bStageReadable && bStageReady && bFloor;
+        const bool bReadyNow = bClauseA || bClauseImmediate || bClauseB;
         if (!bReadyNow)
         {
             if ((RwgObserveTicks % NodeShuffleMapMode::RwgWaitEveryTicks) == 1)
@@ -426,7 +431,13 @@ void ANodeShuffleSubsystem::RwgObserveTick()
         }
 
         bRwgReady = true;
-        RwgReadyBy = bClauseA ? TEXT("stage") : TEXT("savedLayoutStable");
+        RwgReadyBy = bClauseA ? TEXT("stage") : bClauseImmediate ? TEXT("stage-immediate") : TEXT("savedLayoutStable");
+        if (!bClauseA && bClauseImmediate)
+        {
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("RWGLAYOUT: apply latched clause=stage-immediate t=%.1fs nodes=%d savedFloor=%d stableSinceReady=%d of %d rwgLayoutVersion=%d hideRecords=%d"),
+                T, Nodes, SavedFloor, RwgStableSinceReady, NodeShuffleMapMode::RwgStableTicksRequired, RwgLayoutVersion, OriginalNodeRecord.Num());
+        }
         RwgReadyTick = RwgObserveTicks;
         RwgReadyNodeCount = Nodes;
         // Extent for the P2b trace window / deal box (brief §1 extent fix): 2nd-98th percentile box, Z range and

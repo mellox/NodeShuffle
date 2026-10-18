@@ -9,6 +9,8 @@
 #include "Engine/World.h"
 #include "Engine/HitResult.h"
 #include "Components/PrimitiveComponent.h"
+#include "Components/StaticMeshComponent.h" // RWG P2c review MF5: mesh= on RWGTERRAINSKIP
+#include "Engine/StaticMesh.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
 #include "Resources/FGResourceNode.h"
@@ -76,9 +78,13 @@ void ANodeShuffleSubsystem::RwgNoteSkippedHit(const FHitResult& Hit, int32 Class
     const FString Kind = OwnerClass + TEXT("|") + CompClass + TEXT("|") + StripTrailingDigits(CompName);
     if (RwgSkippedHitKinds.Contains(Kind)) { return; }
     RwgSkippedHitKinds.Add(Kind);
+    const UStaticMeshComponent* Smc = Cast<UStaticMeshComponent>(Hit.GetComponent()); // ISM/HISM derive from it (non-const source)
+    const UStaticMesh* Mesh = Smc ? Smc->GetStaticMesh() : nullptr;
+    const FString MeshPath = Mesh ? Mesh->GetPathName() : FString(TEXT("<none>"));
+    const FVector Ext = C ? C->Bounds.BoxExtent : FVector::ZeroVector;
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("RWGTERRAINSKIP: first skip of this kind (a terrain-only trace ignored the component and traced again); class=%s ownerClass='%s' componentClass='%s' component='%s' hitZ=%.0f kindsSoFar=%d"),
-        RwgHitClassName(Class), *OwnerClass, *CompClass, *CompName, Hit.ImpactPoint.Z, RwgSkippedHitKinds.Num());
+        TEXT("RWGTERRAINSKIP: first skip of this kind (a terrain-only trace ignored the component and traced again); class=%s ownerClass='%s' componentClass='%s' component='%s' mesh='%s' hitZ=%.0f hitNormalZ=%.2f boundsExtentCm=(%.0f,%.0f,%.0f) kindsSoFar=%d"),
+        RwgHitClassName(Class), *OwnerClass, *CompClass, *CompName, *MeshPath, Hit.ImpactPoint.Z, Hit.ImpactNormal.Z, Ext.X, Ext.Y, Ext.Z, RwgSkippedHitKinds.Num());
 }
 
 double ANodeShuffleSubsystem::RwgNearestPawnDist2D(const FVector& At) const
@@ -108,7 +114,7 @@ void ANodeShuffleSubsystem::RwgEmitDzCensus()
     BandStats(RwgDzBand1, N1, M1, P1, X1);
     BandStats(RwgDzBand2, N2, M2, P2, X2);
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("PLACECENSUS: apiToTerrainDz session samples (terrain-mesh hit Z minus RWG surface Z, from spawn settles and resettle probes), bands by distance to the nearest pawn, 0 is 0-250 m, 1 is 250-500 m, 2 is 500-1000 m; dzN0=%d dzMeanAbsCm0=%.0f dzP95AbsCm0=%.0f dzMaxAbsCm0=%.0f dzN1=%d dzMeanAbsCm1=%.0f dzP95AbsCm1=%.0f dzMaxAbsCm1=%.0f dzN2=%d dzMeanAbsCm2=%.0f dzP95AbsCm2=%.0f dzMaxAbsCm2=%.0f dzBeyond1000m=%d"),
+        TEXT("PLACEDZ: apiToTerrainDz session samples (terrain-mesh hit Z minus RWG surface Z, from spawn settles and resettle probes), bands by distance to the nearest pawn, 0 is 0-250 m, 1 is 250-500 m, 2 is 500-1000 m; dzN0=%d dzMeanAbsCm0=%.0f dzP95AbsCm0=%.0f dzMaxAbsCm0=%.0f dzN1=%d dzMeanAbsCm1=%.0f dzP95AbsCm1=%.0f dzMaxAbsCm1=%.0f dzN2=%d dzMeanAbsCm2=%.0f dzP95AbsCm2=%.0f dzMaxAbsCm2=%.0f dzBeyond1000m=%d"),
         N0, M0, P0, X0, N1, M1, P1, X1, N2, M2, P2, X2, RwgDzBeyond);
 }
 
@@ -141,7 +147,7 @@ void ANodeShuffleSubsystem::RwgResettlePass()
     Cands.Sort([](const TPair<double, int32>& A, const TPair<double, int32>& B) { return A.Key < B.Key; });
     const int32 N = FMath::Min(Cands.Num(), NodeShuffleMapMode::RwgResettlePerPass);
     const bool bDiag = FNodeShuffleModule::AreDiagnosticsEnabled();
-    int32 Checked = 0, Moved = 0, Kept = 0, Deferred = 0, MaxDz = 0, Occupied = 0, Wet = 0, MovedSteep = 0, GaveUp = 0;
+    int32 Checked = 0, Moved = 0, Kept = 0, Deferred = 0, MaxDz = 0, Occupied = 0, Wet = 0, MovedSteep = 0, GaveUp = 0, MoveRefused = 0;
     for (int32 K = 0; K < N; ++K)
     {
         FNodeShuffleEntry& E = Layout[Cands[K].Value];
@@ -156,16 +162,21 @@ void ANodeShuffleSubsystem::RwgResettlePass()
         if (!RaycastGroundAt(Cur, static_cast<float>(Cur.Z), Node, nullptr, HitLoc, HitRot, bWater, false, &bSteep,
                              nullptr, nullptr, /*bTerrainOnly=*/true))
         {
-            ++Deferred; // no terrain-mesh hit in the window: terrain not resident at this XY, or a column of skipped components
-            int32& V = RwgResettleVoids.FindOrAdd(E.EntryGuid);
-            if (++V >= NodeShuffleMapMode::RwgResettleVoidGiveUp) { RwgResettleGaveUp.Add(E.EntryGuid); ++GaveUp; }
+            ++Deferred; // no terrain-mesh hit in the window
+            // Only a void within 250 m of a pawn counts toward the session give-up (measured residency 0.5-1 km: 11/16);
+            // a void farther out is retried on later passes, so the node is still probed once the pawn closes in.
+            if (Cands[K].Key < 25000.0)
+            {
+                int32& V = RwgResettleVoids.FindOrAdd(E.EntryGuid);
+                if (++V >= NodeShuffleMapMode::RwgResettleVoidGiveUp) { RwgResettleGaveUp.Add(E.EntryGuid); ++GaveUp; }
+            }
             continue;
         }
         const double DzMove = HitLoc.Z - Cur.Z;
         const double DzApi = Q.IsUsable() ? HitLoc.Z - Q.SurfaceZ(HitLoc.X, HitLoc.Y) : DzMove;
         RwgRecordDz(HitLoc, DzApi);
         MaxDz = FMath::Max(MaxDz, static_cast<int32>(FMath::Abs(DzMove)));
-        if (FMath::Abs(DzMove) <= NodeShuffleMapMode::RwgTraceAgreeCm)
+        if (FMath::Abs(DzMove) <= NodeShuffleMapMode::RwgResettleKeepCm)
         {
             E.bRwgSettledOnTerrain = true;
             E.RwgApiToTerrainDzCm = static_cast<float>(DzApi);
@@ -177,6 +188,17 @@ void ANodeShuffleSubsystem::RwgResettlePass()
         // Moved onto the terrain hit at the SAME XY, cliff or not: the actor rotation is kept and the established slopefit
         // refit (EnsureNewNodeSpawned, once per entry per session) re-derives it and re-dresses the rock on the next re-assert.
         Node->SetActorLocationAndRotation(HitLoc, Node->GetActorRotation(), false, nullptr, ETeleportType::TeleportPhysics);
+        // Readback (P2c review): whether the engine applied the move is closed-source (a non-Movable root refuses it with a
+        // warning only). The entry and the flag follow the ACTOR's measured Z, never the request.
+        const double ActorZAfter = Node->GetActorLocation().Z;
+        if (FMath::Abs(ActorZAfter - HitLoc.Z) > 10.0)
+        {
+            ++MoveRefused;
+            RwgResettleGaveUp.Add(E.EntryGuid);
+            UE_LOG(LogNodeShuffle, Display, TEXT("RESETTLE-REFUSED: entry=%s requestedZ=%.0f actorZAfter=%.0f (entry left unflagged)"),
+                *E.EntryGuid.ToString(), HitLoc.Z, ActorZAfter);
+            continue;
+        }
         AdoptRotRefit.Remove(E.EntryGuid);
         E.Location = HitLoc;
         E.bRwgSettledOnTerrain = true;
@@ -191,11 +213,11 @@ void ANodeShuffleSubsystem::RwgResettlePass()
     }
     int32 WChecked = 0, WMoved = 0, WKept = 0, WDeferred = 0, WOccupied = 0, WMaxDz = 0;
     RwgResettleWells(WChecked, WMoved, WKept, WDeferred, WOccupied, WMaxDz);
-    if (Checked > 0 || Requeued > 0 || WChecked > 0 || (RwgRsPasses % 12) == 1) // bounded: a pass that did work, else once a minute
+    if (Moved > 0 || Kept > 0 || MoveRefused > 0 || Occupied > 0 || Wet > 0 || GaveUp > 0 || Requeued > 0 || WMoved > 0 || WKept > 0 || WOccupied > 0 || (RwgRsPasses % 12) == 1) // bounded: a pass that changed state, else once a minute
     {
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("RESETTLE: pass=%d checked=%d moved=%d kept=%d deferred=%d maxDzCm=%d occupiedSkipped=%d wetNotMoved=%d movedOntoCliff=%d voidGaveUpNow=%d requeuedUnspawned=%d unflaggedEntries=%d wellGroupsChecked=%d wellMembersMoved=%d wellMembersKept=%d wellGroupsDeferred=%d wellGroupsInUse=%d wellMaxDzCm=%d"),
-            RwgRsPasses, Checked, Moved, Kept, Deferred, MaxDz, Occupied, Wet, MovedSteep, GaveUp, Requeued, Remaining,
+            TEXT("RESETTLE: pass=%d checked=%d moved=%d kept=%d deferred=%d maxDzCm=%d occupiedSkipped=%d wetNotMoved=%d movedOntoCliff=%d moveRefused=%d voidGaveUpNow=%d requeuedUnspawned=%d unflaggedEntries=%d wellGroupsChecked=%d wellMembersOffTerrain=%d wellMembersKept=%d wellGroupsDeferred=%d wellGroupsInUse=%d wellMaxDzCm=%d"),
+            RwgRsPasses, Checked, Moved, Kept, Deferred, MaxDz, Occupied, Wet, MovedSteep, MoveRefused, GaveUp, Requeued, Remaining,
             WChecked, WMoved, WKept, WDeferred, WOccupied, WMaxDz);
     }
 }
@@ -203,8 +225,8 @@ void ANodeShuffleSubsystem::RwgResettlePass()
 void ANodeShuffleSubsystem::RwgResettleWells(int32& Checked, int32& Moved, int32& Kept, int32& Deferred, int32& Occupied, int32& MaxDzCm)
 {
     // Placed RWG well groups without the flag (placed by builds <= rwg-p4-2 through the first-hit probe, which could end on a
-    // canopy or water-sheet component). Each member is probed on its OWN terrain-mesh hit and moved individually (satellites
-    // are redrawn per member at placement, not a rigid body). Any member void = the whole group waits for a later pass.
+    // canopy or water-sheet component). OBSERVE-ONLY since the P2c review (MF2): each member is probed on its OWN terrain-mesh
+    // hit and counted; nothing here moves a member or writes the flag. Any member void = the whole group waits for a later pass.
     TArray<TPair<double, int32>> Cands;
     for (int32 I = 0; I < WellLayout.Num(); ++I)
     {
@@ -249,23 +271,20 @@ void ANodeShuffleSubsystem::RwgResettleWells(int32& Checked, int32& Moved, int32
         }
         if (!bAllHit)
         {
-            ++Deferred;
-            int32& V = RwgResettleWellVoids.FindOrAdd(E.CorePath);
-            if (++V >= NodeShuffleMapMode::RwgResettleVoidGiveUp) { RwgResettleWellGaveUp.Add(E.CorePath); }
-            continue;
+            ++Deferred; if (Cands[K].Key < 25000.0) { int32& V = RwgResettleWellVoids.FindOrAdd(E.CorePath); if (++V >= NodeShuffleMapMode::RwgResettleVoidGiveUp) { RwgResettleWellGaveUp.Add(E.CorePath); } } continue;
         }
         for (const FMember& M : Members)
         {
             const FVector Cur = M.Actor->GetActorLocation();
             const double Dz = M.Hit.Z - Cur.Z;
             MaxDzCm = FMath::Max(MaxDzCm, static_cast<int32>(FMath::Abs(Dz)));
-            if (FMath::Abs(Dz) <= NodeShuffleMapMode::RwgTraceAgreeCm || M.bWater) { ++Kept; continue; } // wet terrain: not moved
-            M.Actor->SetActorLocationAndRotation(M.Hit, M.Actor->GetActorRotation(), false, nullptr, ETeleportType::TeleportPhysics);
-            if (M.SatIdx == INDEX_NONE) { E.PlacedCoreLocation = M.Hit; } else { E.Satellites[M.SatIdx].PlacedLocation = M.Hit; }
+            if (FMath::Abs(Dz) <= NodeShuffleMapMode::RwgResettleKeepCm || M.bWater) { ++Kept; continue; }
+            // OBSERVE-ONLY (P2c cold review): a well member is never moved in place (NodeShuffleWellDespawn.cpp,
+            // DESPAWN-ON-MOVE). Counted and logged until R5 sizes this set.
             ++Moved;
-            UE_LOG(LogNodeShuffle, Verbose, TEXT("RESETTLE-WELL: core='%s' member=%d from=%s to=%s dzCm=%.0f"),
-                *E.CorePath, M.SatIdx, *Cur.ToCompactString(), *M.Hit.ToCompactString(), Dz);
+            UE_LOG(LogNodeShuffle, Display, TEXT("RESETTLE-WELL: core='%s' member=%d at=%s terrainHitZ=%.0f dzCm=%.0f"),
+                *E.CorePath, M.SatIdx, *Cur.ToCompactString(), M.Hit.Z, Dz);
         }
-        E.bRwgSettledOnTerrain = true;
+        RwgResettleWellGaveUp.Add(E.CorePath); // probed once per session; NOT flagged, so a later build that may move re-probes it
     }
 }

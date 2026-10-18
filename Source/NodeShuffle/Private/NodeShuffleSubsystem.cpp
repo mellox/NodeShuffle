@@ -2307,6 +2307,9 @@ void ANodeShuffleSubsystem::ApplyLayout()
     // RWG P4 (2026-10-18): wells run on every map mode. Off vanilla, saved claims are re-bound to this session's actor
     // paths first (once per session), BEFORE ApplyWellRetype / AdoptRestoredWellGroups read any path.
     if (GetMapMode() != ENodeShuffleMapMode::Vanilla) { RwgRebindWellClaimsOnce(TEXT("apply")); }
+    // RWG P4b (2026-10-18): every pass, re-try the satellites the re-bind left on RWGUNBOUND_ paths (RWG restores a saved
+    // world over frames), and suppress a re-bound group at once. Before ApplyWellRetype for the same reason as the re-bind.
+    if (GetMapMode() != ENodeShuffleMapMode::Vanilla) { RwgRetryUnboundWellSatellites(); }
     {
     ApplyWellRetype();
 
@@ -4386,7 +4389,7 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
         // to fire and not an outcome; the two refusal counters below split ONLY by the flag
         // RaycastSettle sets, because that is the only sub-reason it exposes.
         ++NodeGateSettleReached;
-        // RWG P2b: on RWG the API resolves Z (a trace miss spawns at that Z, never defers); unusable API -> RaycastSettle.
+        // RWG P2c: on RWG the API supplies the trace window; the settle is terrain-mesh only and no terrain hit defers (never the API Z); unusable API -> RaycastSettle.
         bool bRwgApiUsed = false;
         bool bSettled = (GetMapMode() == ENodeShuffleMapMode::Rwg) ? RwgResolveAtSpawn(Entry, bRwgApiUsed, bWaterNoLand) : false;
         if (!bRwgApiUsed) { bSettled = RaycastSettle(Entry, nullptr, nullptr, &bWaterNoLand); }
@@ -6697,7 +6700,8 @@ bool ANodeShuffleSubsystem::RaycastGroundAt(const FVector& ProbeXY, float StartZ
     // this lambda is the plain single trace there). On RWG a blocking hit whose component fails RwgIsTerrainHit (canopy,
     // water sheet, another node) is ignored BY COMPONENT -- the terrain chunk actor owns those components too -- and the
     // same segment is traced again, at most RwgTerrainSkipMax times; exhausting the cap reads as no hit (the caller defers).
-    const auto TraceDown = [this, bTerrainOnly](FHitResult& H, const FVector& S, const FVector& En, FCollisionQueryParams& P) -> bool
+    bool bSkippedWaterSheet = false; // RWG P2c review S2: a skipped water-class hit marks the primary settle wet
+    const auto TraceDown = [this, bTerrainOnly, &bSkippedWaterSheet](FHitResult& H, const FVector& S, const FVector& En, FCollisionQueryParams& P) -> bool
     {
         if (!bTerrainOnly) { return GetWorld()->LineTraceSingleByChannel(H, S, En, ECC_WorldStatic, P); }
         for (int32 K = 0; K <= NodeShuffleMapMode::RwgTerrainSkipMax; ++K)
@@ -6705,9 +6709,14 @@ bool ANodeShuffleSubsystem::RaycastGroundAt(const FVector& ProbeXY, float StartZ
             if (!GetWorld()->LineTraceSingleByChannel(H, S, En, ECC_WorldStatic, P)) { return false; }
             const int32 Cls = RwgHitClassOf(H);
             if (K == 0 && bRwgProbeArmed && RwgProbeFirstClass < 0) { RwgProbeFirstClass = Cls; RwgProbeFirstZ = H.ImpactPoint.Z; }
-            // A player buildable is accepted like terrain: vanilla settles nodes on foundations by design (see the grid note below).
-            if (Cls == 0 || (H.GetActor() && H.GetActor()->IsA<AFGBuildable>())) { return true; }
+            // A player buildable is accepted like terrain: vanilla settles nodes on foundations by design. Lightweight buildables
+            // (foundations, walls, ramps) collide through abstract-instance components owned by AAbstractInstanceManager, not by
+            // the AFGBuildable actor, so that owner counts too (by class NAME: no new UClass import).
+            const AActor* HitOwner = H.GetActor();
+            if (Cls == 0 || (HitOwner && (HitOwner->IsA<AFGBuildable>()
+                                          || HitOwner->GetClass()->GetName().Contains(TEXT("AbstractInstanceManager"))))) { return true; }
             ++RwgProbeSkipped;
+            if (Cls == 2) { bSkippedWaterSheet = true; }
             RwgNoteSkippedHit(H, Cls);
             P.AddIgnoredComponent(H.GetComponent());
         }
@@ -6720,6 +6729,7 @@ bool ANodeShuffleSubsystem::RaycastGroundAt(const FVector& ProbeXY, float StartZ
     {
         return false; // no terrain / out of range (true void)
     }
+    const bool bPrimarySkippedWater = bSkippedWaterSheet;
     // ns-t45-verticaldiag: the diagnostic tap, taken from the SAME hit OutLoc is read from on the next
     // line, so a caller naming the actor names the actor that produced the landing point it printed.
     if (OutGroundHit) { *OutGroundHit = Hit; }
@@ -6773,7 +6783,7 @@ bool ANodeShuffleSubsystem::RaycastGroundAt(const FVector& ProbeXY, float StartZ
     // Cold review #3: short traces also do NOT teach the surface water grid (a cave floor says
     // nothing about the surface column above it) — see the recording condition below.
     const bool bBelowDepthFloor = !bShortTrace && OutLoc.Z < DeepWaterFloorZ && GetMapMode() == ENodeShuffleMapMode::Vanilla; // RWG P2b: vanilla-only floor
-    bOutWater = bBelowDepthFloor || IsPointInWater(OutLoc);
+    bOutWater = bBelowDepthFloor || IsPointInWater(OutLoc) || bPrimarySkippedWater;
     if (bBelowDepthFloor && FNodeShuffleModule::AreDiagnosticsEnabled())
     {
         UE_LOG(LogNodeShuffle, Verbose, TEXT("DEPTHGUARD: hit at %s is below the deep-water floor (%.0f) — treated as water"),

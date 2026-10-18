@@ -189,6 +189,155 @@ void ANodeShuffleSubsystem::RwgRebindWellClaimsOnce(const TCHAR* Caller)
     }
 }
 
+void ANodeShuffleSubsystem::RwgRetryUnboundWellSatellites()
+{
+    // RWG P4b (2026-10-18): the once-per-session re-bind above runs at the first apply/roll pass; on a measured reload
+    // (trwg_autosave_2) every claimed core re-bound by location while every satellite read RWGUNBOUND_ (satsViaCoreList=0),
+    // and the WELLH2-SUPPRESS lines that followed hid 0 members per group. This pass re-tries ONLY those satellites, every
+    // pass, for claims whose CORE is bound: the core's own satellite list first (Native_GetSatellites,
+    // FGResourceNodeFrackingCore.h:42), then any live satellite within WellAdoptMatchRadiusCm of the satellite's claim
+    // location. Bounded: at most RwgWellRetryClaimsPerPass claims per pass, nearest the pawn first (a claim that keeps
+    // failing drops one tier per RwgWellRetryTierPasses attempts, so it can never hold a slot forever). A live actor is
+    // bound at most once per session: RwgClaimedOriginals is the used set and every bind adds to it.
+    // Not handled here, deliberately: a claim whose CORE is a sentinel (F1 keeps it unplaced) and legacy entries
+    // (RWGUNBOUND_LEGACY_, no claim location). Session-only state; idempotent across reloads because the once-rebind
+    // re-derives every path from claim LOCATIONS on the next load.
+    if (GetMapMode() == ENodeShuffleMapMode::Vanilla) { return; }
+    // Our own restored relocated satellites are not in the managed registry until AdoptRestoredWellGroups has run once
+    // (first ApplyWellRelocation of the session); before that, a location match could not tell them from an original.
+    if (!bRwgWellRebindDone || !bAdoptedRestoredWells) { return; }
+    UWorld* World = GetWorld();
+    if (!World) { return; }
+    const FString Sentinel(TEXT("RWGUNBOUND_"));
+
+    // Population: claimed entries with a bound core and >= 1 sentinel satellite that has a claim location to match against.
+    TArray<TPair<double, int32>> Cands;
+    int32 StillUnboundBefore = 0;
+    for (int32 I = 0; I < WellLayout.Num(); ++I)
+    {
+        const FNodeShuffleWellEntry& E = WellLayout[I];
+        if (!E.RwgClaimGuid.IsValid() || E.CorePath.StartsWith(Sentinel)) { continue; }
+        bool bBindable = false;
+        for (const FNodeShuffleWellSatellite& S : E.Satellites)
+        {
+            if (!S.SatellitePath.StartsWith(Sentinel)) { continue; }
+            ++StillUnboundBefore;
+            if (!S.RwgClaimLocation.IsZero()) { bBindable = true; }
+        }
+        if (!bBindable) { continue; }
+        const int32 Tries = RwgWellRetryAttempts.FindRef(E.RwgClaimGuid);
+        const double Tier = static_cast<double>(Tries / NodeShuffleMapMode::RwgWellRetryTierPasses);
+        Cands.Emplace(Tier * 1.0e12 + RwgNearestPawnDist2D(E.RwgClaimCoreLocation), I);
+    }
+    if (Cands.Num() == 0 && StillUnboundBefore == 0 && bRwgWellRetryQuiet) { return; }
+    ++RwgWellRetryPasses;
+    Cands.Sort([](const TPair<double, int32>& A, const TPair<double, int32>& B) { return A.Key < B.Key; });
+    const int32 N = FMath::Min(Cands.Num(), NodeShuffleMapMode::RwgWellRetryClaimsPerPass);
+
+    // Location candidates, built once per pass only when a claim is pending: live, not ours (managed registry or our spawned
+    // map), and not already bound to a claim this session.
+    TSet<const AActor*> Ours;
+    for (const TPair<FString, AFGResourceNodeFrackingSatellite*>& KV : SpawnedWellSatellites) { if (KV.Value) { Ours.Add(KV.Value); } }
+    TArray<AFGResourceNodeFrackingSatellite*> Loose;
+    if (N > 0)
+    {
+        for (TActorIterator<AFGResourceNodeFrackingSatellite> It(World); It; ++It)
+        {
+            AFGResourceNodeFrackingSatellite* Sat = *It;
+            if (!IsValid(Sat) || FNodeShuffleModule::IsManagedSpawnedNode(Sat) || Ours.Contains(Sat) || RwgIsClaimedOriginal(Sat)) { continue; }
+            Loose.Add(Sat);
+        }
+    }
+
+    const float MatchSq = FMath::Square(WellAdoptMatchRadiusCm);
+    int32 BoundNow = 0, ViaList = 0, ViaLocation = 0, NowComplete = 0, SuppressedNow = 0, RekeyMoved = 0, RekeyCollision = 0;
+    for (int32 K = 0; K < N; ++K)
+    {
+        FNodeShuffleWellEntry& E = WellLayout[Cands[K].Value];
+        ++RwgWellRetryAttempts.FindOrAdd(E.RwgClaimGuid);
+        AFGResourceNodeFrackingCore* Core = Cast<AFGResourceNodeFrackingCore>(FindOriginalBaseByPath(E.CorePath));
+        TArray<AFGResourceNodeFrackingSatellite*> Listed;
+        if (IsValid(Core))
+        {
+            for (const TWeakObjectPtr<AFGResourceNodeFrackingSatellite>& W : Core->Native_GetSatellites())
+            {
+                AFGResourceNodeFrackingSatellite* Sat = W.Get();
+                if (IsValid(Sat) && !RwgIsClaimedOriginal(Sat) && !FNodeShuffleModule::IsManagedSpawnedNode(Sat) && !Ours.Contains(Sat)) { Listed.Add(Sat); }
+            }
+        }
+        int32 BoundHere = 0, LeftHere = 0;
+        for (int32 s = 0; s < E.Satellites.Num(); ++s)
+        {
+            FNodeShuffleWellSatellite& S = E.Satellites[s];
+            if (!S.SatellitePath.StartsWith(Sentinel)) { continue; }
+            if (S.RwgClaimLocation.IsZero()) { ++LeftHere; continue; }
+            const auto Nearest = [&](const TArray<AFGResourceNodeFrackingSatellite*>& Pool) -> AFGResourceNodeFrackingSatellite*
+            {
+                AFGResourceNodeFrackingSatellite* Best = nullptr;
+                float BestSq = MatchSq;
+                for (AFGResourceNodeFrackingSatellite* Sat : Pool)
+                {
+                    if (RwgIsClaimedOriginal(Sat)) { continue; } // bound earlier in this pass
+                    const float D = FVector::DistSquared(Sat->GetActorLocation(), S.RwgClaimLocation);
+                    if (D < BestSq) { BestSq = D; Best = Sat; }
+                }
+                return Best;
+            };
+            AFGResourceNodeFrackingSatellite* Hit = Nearest(Listed);
+            if (Hit) { ++ViaList; }
+            else if ((Hit = Nearest(Loose)) != nullptr) { ++ViaLocation; }
+            if (!Hit) { ++LeftHere; continue; }
+            const FString OldPath = S.SatellitePath;
+            const FString NewPath = WellPathOf(Hit);
+            // OUR relocated copy of this satellite is keyed by the record's path (SpawnedWellSatellites, key: SatellitePath),
+            // adopted under the sentinel at load. Re-key it with the record, or the maintenance pass would read the copy as
+            // missing and spawn a second one.
+            AFGResourceNodeFrackingSatellite* OurCopy = nullptr;
+            if (SpawnedWellSatellites.RemoveAndCopyValue(OldPath, OurCopy))
+            {
+                if (SpawnedWellSatellites.Contains(NewPath)) { ++RekeyCollision; }
+                else { SpawnedWellSatellites.Add(NewPath, OurCopy); ++RekeyMoved; }
+            }
+            S.SatellitePath = NewPath;
+            RwgClaimedOriginals.Add(FObjectKey(Hit));
+            ++BoundHere;
+        }
+        BoundNow += BoundHere;
+        if (BoundHere == 0) { continue; }
+        bool bAnyLeft = LeftHere > 0;
+        if (!bAnyLeft) { ++NowComplete; RwgWellRetryAttempts.Remove(E.RwgClaimGuid); }
+        // The group's suppression runs NOW for a group that already owns it: placed (its originals must be hidden while our
+        // copy stands) or unplaced with a suppression record and no restore pending (the chain's re-assert arm). Any other
+        // unplaced group is left to ApplyWellRelocation's own arms later in this pass.
+        if (E.bGroupPlaced || (!E.bUnhidePending && WellGroupHasSuppressedMember(E)))
+        {
+            SuppressVanillaWellGroup(E, EWellSuppressPhase::Apply);
+            ++SuppressedNow;
+        }
+    }
+    int32 StillUnbound = 0, Pending = 0;
+    for (const FNodeShuffleWellEntry& E : WellLayout)
+    {
+        if (!E.RwgClaimGuid.IsValid() || E.CorePath.StartsWith(Sentinel)) { continue; }
+        bool bP = false;
+        for (const FNodeShuffleWellSatellite& S : E.Satellites)
+        {
+            if (S.SatellitePath.StartsWith(Sentinel)) { ++StillUnbound; if (!S.RwgClaimLocation.IsZero()) { bP = true; } }
+        }
+        if (bP) { ++Pending; }
+    }
+    // Bounded: a pass that bound something, else once a minute while claims are pending, and one closing line when none are.
+    const bool bQuietNow = (Pending == 0);
+    if (BoundNow > 0 || (Pending > 0 && (RwgWellRetryPasses % 12) == 1) || (bQuietNow && !bRwgWellRetryQuiet))
+    {
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("WELLCLAIM-RETRY: pass=%d groupsPending=%d satsBoundNow=%d satsStillUnbound=%d groupsNowComplete=%d suppressedNow=%d claimsTriedThisPass=%d viaCoreList=%d viaLocation=%d looseCandidates=%d ourCopyRekeyed=%d rekeyCollision=%d"),
+            RwgWellRetryPasses, Pending, BoundNow, StillUnbound, NowComplete, SuppressedNow, N, ViaList, ViaLocation, Loose.Num(),
+            RekeyMoved, RekeyCollision);
+    }
+    bRwgWellRetryQuiet = bQuietNow;
+}
+
 bool ANodeShuffleSubsystem::RwgDealWellSite(const NodeShuffleMapMode::FRwgGroundQuery& Q, FRandomStream& Rng,
                                             const TArray<FVector>& SatOffsets, FVector& OutCore)
 {

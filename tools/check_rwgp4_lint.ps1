@@ -39,7 +39,15 @@
 #   C8  Slope reject in RwgDealOneSpot and RwgDealWellSite; the mirror constant equals CliffSlopeDeg; census fields present.
 #   C9  RESETTLE / RWGTERRAINSKIP / apiToTerrainDz lines at line-initial position; no repeated field in their formats.
 #   C10 bRwgSettledOnTerrain (entry + well) and RwgApiToTerrainDzCm are single SaveGame properties.
-#   C11 The flag is set true only in RwgResolveAtSpawn (1) and the resettle file (3).
+#   C11 The flag is set true only in RwgResolveAtSpawn (1) and the resettle file (2: node moved + node kept; wells are observe-only).
+# RWG P2c review fixes + P4b/C (2026-10-18, marker rwg-p2c-2), pins C12..C14 and W16..W17:
+#   C12 MapMode.h constants pinned by value (RwgTerrainSkipMax 8, RwgResettleKeepCm 50); the void give-up counts only within 250 m
+#       and still gives up (node + well); the move is read back before the entry/flag/AdoptRotRefit are touched (MF1).
+#   C13 MF5 RWGTERRAINSKIP fields; S2 water-sheet skip marks the primary settle wet; MF4 abstract-instance owner accepted.
+#   C14 S5: PLACEDZ prefix for the dZ census; the renamed PLACECENSUS counters.
+#   W16 P4b: the satellite retry runs every pass behind the off-vanilla test, after the once-rebind and before ApplyWellRetype;
+#       its body re-keys our spawned copy, uses RwgClaimedOriginals as the used set, suppresses a re-bound group, prints its census.
+#   W17 Part C: the immediate apply clause requires a saved P2b+ layout (never a new game, never a legacy layout) and no stability term.
 # Exit 0 = all hold. Exit 1 = at least one does not. Exit 2 = a pinned FILE is missing.
 
 $ErrorActionPreference = 'Stop'
@@ -62,6 +70,7 @@ $files = [ordered]@{
     rsettle = 'NodeShuffle\Private\NodeShuffleMapModeResettle.cpp'   # RWG P2c
     wfoot   = 'NodeShuffle\Private\NodeShuffleWellFootprint.cpp'     # RWG P2c
     maph    = 'NodeShuffle\Public\NodeShuffleMapMode.h'              # RWG P2c
+    mm      = 'NodeShuffle\Private\NodeShuffleMapMode.cpp'           # RWG P4b part C (readiness clause)
 }
 $text = @{}
 foreach ($k in $files.Keys) {
@@ -231,7 +240,7 @@ if ((Count $text.subsysh ('bool* bOutWaterNoLand = nullptr, bool bTerrainOnly = 
 $rg = Get-Body $text.subsys ('bool ' + $cls + 'RaycastGroundAt(const FVector& ProbeXY, float StartZ, const AActor* IgnoreNode,')
 if (-not $rg) { $fails += 'C2: RaycastGroundAt body not found' } else {
     $off = $rg.IndexOf('if (!bTerrainOnly) { return GetWorld()->LineTrace' + 'SingleByChannel(H, S, En, ECC_WorldStatic, P); }')
-    $acc = $rg.IndexOf('if (Cls == 0 || (H.GetActor() && H.GetActor()->IsA<AFGBuildable>())) { return ' + 'true; }'); $ign = $rg.IndexOf('P.AddIgnored' + 'Component(H.GetComponent());')
+    $acc = $rg.IndexOf('|| HitOwner->GetClass()->GetName().Contains(TEXT("AbstractInstance' + 'Manager"))))) { return ' + 'true; }'); $ign = $rg.IndexOf('P.AddIgnored' + 'Component(H.GetComponent());')
     if ($off -lt 0 -or $acc -lt $off -or $ign -lt $acc) { $fails += 'C2: the trace helper must keep the plain trace when off and skip non-terrain hits by component when on' }
     if ($rg -notmatch ('\+\+RwgProbeCapHits;\s*H = FHitResult\(\);\s*return ' + 'false;')) { $fails += 'C2: exhausting the skip cap must read as no hit' }
     if ((Count $rg ('if (!TraceDown(Hit, Start, End, ' + 'Params))')) -ne 1 -or (Count $rg ('if (TraceDown(RingHit, ')) -ne 1) { $fails += 'C2: the primary and ring traces must both go through the helper' }
@@ -257,7 +266,7 @@ $flag = 'E.bRwgSettledOn' + 'Terrain = true;'
 if (-not $rp) { $fails += 'C6: RwgResettlePass body not found' } else {
     $mv = $rp.IndexOf('E.Location = ' + 'HitLoc;'); $mm = $rp.IndexOf('++Moved;')
     if ($mv -lt 0 -or $mm -lt $mv -or -not $rp.Substring($mv, $mm - $mv).Contains($flag)) { $fails += 'C6: the moved branch must write the settled-on-terrain flag' }
-    $kp = $rp.IndexOf('<= NodeShuffleMapMode::RwgTrace' + 'AgreeCm)'); $kk = $rp.IndexOf('++Kept;')
+    $kp = $rp.IndexOf('<= NodeShuffleMapMode::RwgResettle' + 'KeepCm)'); $kk = $rp.IndexOf('++Kept;')
     if ($kp -lt 0 -or $kk -lt $kp -or -not $rp.Substring($kp, $kk - $kp).Contains($flag)) { $fails += 'C6: the kept branch must write the flag' }
     $vd = $rp.IndexOf('/*bTerrainOnly=*/' + 'true))'); $ve = $rp.IndexOf('const double DzMove')
     if ($vd -lt 0 -or $ve -lt $vd -or $rp.Substring($vd, $ve - $vd).Contains($flag)) { $fails += 'C6: the void branch must not write the flag' }
@@ -269,7 +278,7 @@ if (-not $rp) { $fails += 'C6: RwgResettlePass body not found' } else {
 $spb = Get-Body $text.place ('void ' + $cls + 'RwgSpawnPass(float SpawnRadiusCm, bool& bChangedWorld)')
 if (-not $spb -or (Count $spb ('RwgResettle' + 'Pass();')) -ne 1) { $fails += 'C7: RwgSpawnPass must run the resettle once per pass' }
 $rwb = Get-Body $text.rsettle ('void ' + $cls + 'RwgResettleWells(')
-if (-not $rwb -or -not $rwb.Contains('if (bInUse) { ++Occupied; RwgResettleWellGaveUp.Add(E.CorePath); ' + 'continue; }') -or -not $rwb.Contains('E.bRwgSettledOn' + 'Terrain = true;')) { $fails += 'C6: the well resettle must skip in-use groups and flag probed groups' }
+if (-not $rwb -or -not $rwb.Contains('if (bInUse) { ++Occupied; RwgResettleWellGaveUp.Add(E.CorePath); ' + 'continue; }') -or -not $rwb.Contains('RwgResettleWellGaveUp.Add(E.CorePath); // probed ' + 'once') -or $rwb.Contains('SetActorLocation' + 'AndRotation(')) { $fails += 'C6: the well resettle must skip in-use groups, give up after one probe, and never move a member (observe-only, MF2)' }
 # C8
 $do = Get-Body $text.place ('bool ' + $cls + 'RwgDealOneSpot(')
 if (-not $do -or $do -notmatch ('if \(RwgApiSlope' + 'TooSteep\(Q, X, Y, RiseRun\)\) \{ \+\+Slope; return false; \}\s*(//[^\n]*)?\s*return true;')) { $fails += 'C8: RwgDealOneSpot must reject on the API slope before accepting' }
@@ -281,9 +290,9 @@ if (-not $text.wrwg.Contains('cores=%d cores' + 'Ours=%d entries=%d') -or -not $
 # C9
 if ($text.rsettle -notmatch ('TEXT\("' + 'RESETTLE: pass=%d checked=%d moved=%d kept=%d deferred=%d maxDzCm=%d ')) { $fails += 'C9: the RESETTLE census line is missing or reordered' }
 if ($text.rsettle -notmatch ('TEXT\("' + 'RWGTERRAINSKIP: ')) { $fails += 'C9: the RWGTERRAINSKIP line is missing' }
-if ($text.rsettle -notmatch ('TEXT\("' + 'PLACECENSUS: apiToTerrainDz ')) { $fails += 'C9: the apiToTerrainDz census line is missing' }
+if ($text.rsettle -notmatch ('TEXT\("' + 'PLACEDZ: apiToTerrainDz ')) { $fails += 'C9: the apiToTerrainDz census line is missing (PLACEDZ prefix, S5)' }
 foreach ($src2 in @($text.rsettle, $text.place)) {
-    foreach ($m in [regex]::Matches($src2, 'TEXT\("((?:RESETTLE|PLACECENSUS|ROLLCENSUS)[A-Z-]*: [^"]*)"\)')) {
+    foreach ($m in [regex]::Matches($src2, 'TEXT\("((?:RESETTLE|PLACECENSUS|PLACEDZ|ROLLCENSUS)[A-Z-]*: [^"]*)"\)')) {
         $names = [regex]::Matches($m.Groups[1].Value, '(\w+)=') | ForEach-Object { $_.Groups[1].Value }
         $dup = $names | Group-Object | Where-Object { $_.Count -gt 1 }
         if ($dup) { $fails += "C9: field name repeated in a census format: $($dup.Name -join ',')" }
@@ -295,8 +304,57 @@ if ((Count $text.subsysh ('UPROPERTY(Save' + 'Game) float RwgApiToTerrainDzCm = 
 # C11
 $fp = ([regex]::Matches($text.place, 'bRwgSettledOn' + 'Terrain = true;')).Count; $fr = ([regex]::Matches($text.rsettle, 'bRwgSettledOn' + 'Terrain = true;')).Count
 $fo = 0; foreach ($k in $files.Keys) { if ($k -ne 'place' -and $k -ne 'rsettle') { $fo += ([regex]::Matches($text[$k], 'bRwgSettledOn' + 'Terrain = true;')).Count } }
-if ($fp -ne 1 -or $fr -ne 3 -or $fo -ne 0) { $fails += "C11: the flag must be set only by the resolver (1) and the resettle (3); found place=$fp resettle=$fr other=$fo" }
+if ($fp -ne 1 -or $fr -ne 2 -or $fo -ne 0) { $fails += "C11: the flag must be set only by the resolver (1) and the resettle (2); found place=$fp resettle=$fr other=$fo" }
+
+# ---------------- RWG P2c review fixes (C12..C14) ----------------
+# C12
+if ((Count $text.maph ('constexpr int32 RwgTerrainSkipMax = ' + '8;')) -ne 1) { $fails += 'C12: RwgTerrainSkipMax must stay 8 (0 turns every non-terrain first hit into a deferral)' }
+if ((Count $text.maph ('constexpr double RwgResettleKeepCm = ' + '50.0;')) -ne 1) { $fails += 'C12: RwgResettleKeepCm must be 50.0 (S1)' }
+if ($rp) {
+    $gn = 'if (++V >= NodeShuffleMapMode::RwgResettleVoidGiveUp) { RwgResettleGaveUp.Add(E.EntryGuid); ++' + 'GaveUp; }'
+    $g250 = $rp.IndexOf('if (Cands[K].Key < ' + '25000.0)'); $gi = $rp.IndexOf($gn)
+    if ((Count $rp $gn) -ne 1 -or $g250 -lt 0 -or $gi -lt $g250) { $fails += 'C12: the node void give-up must exist once, inside the 250 m test (MF3)' }
+    $rb = $rp.IndexOf('if (FMath::Abs(ActorZAfter - HitLoc.Z) > ' + '10.0)'); $rf = $rp.IndexOf('TEXT("RESETTLE-' + 'REFUSED: ')
+    $ar = $rp.IndexOf('AdoptRotRefit.Remove(E.EntryGuid);'); $el = $rp.IndexOf('E.Location = ' + 'HitLoc;')
+    if ((Count $rp 'AdoptRotRefit.Remove(E.EntryGuid);') -ne 1 -or $rb -lt 0 -or $rf -lt $rb -or $ar -lt $rf -or $el -lt $ar) { $fails += 'C12: the move readback (MF1) must precede AdoptRotRefit.Remove, which must precede the entry write' }
+    if ($rp -notmatch ('\+\+MoveRefused;\s*RwgResettleGaveUp\.Add\(E\.EntryGuid\);[\s\S]{0,400}?' + 'continue;')) { $fails += 'C12: a refused move must give up and continue without writing the entry' }
+}
+if ($rwb) {
+    $gw = 'if (++V >= NodeShuffleMapMode::RwgResettleVoidGiveUp) { RwgResettleWellGaveUp.Add(E.CorePath); ' + '}'
+    if ((Count $rwb $gw) -ne 1 -or -not $rwb.Contains('++Deferred; if (Cands[K].Key < ' + '25000.0) {')) { $fails += 'C12: the well void give-up must exist once, inside the 250 m test (MF3)' }
+}
+# C13
+if (-not $text.rsettle.Contains("mesh='%s' hitZ=%.0f hitNormalZ=%.2f boundsExtent" + 'Cm=(%.0f,%.0f,%.0f) kindsSoFar=%d')) { $fails += 'C13: RWGTERRAINSKIP must carry mesh, hitNormalZ and boundsExtentCm (MF5)' }
+if ($rg) {
+    if ((Count $rg ('if (Cls == 2) { bSkippedWaterSheet = ' + 'true; }')) -ne 1 -or (Count $rg ('bOutWater = bBelowDepthFloor || IsPointInWater(OutLoc) || bPrimarySkipped' + 'Water;')) -ne 1) { $fails += 'C13: a skipped water sheet must mark the primary settle wet (S2)' }
+}
+# C14
+if (-not $text.place.Contains('noTerrainDefer=%d spawnSettlesWithAnySkip=%d terrainOnlyCapHits' + 'AllCallers=%d')) { $fails += 'C14: PLACECENSUS must carry the renamed counters (S5)' }
+
+# ---------------- RWG P4b / part C (W16..W17) ----------------
+# W16
+$rtc = 'if (' + $notV + ') { RwgRetryUnbound' + 'WellSatellites(); }'
+$iT = $text.subsys.IndexOf($rtc)
+if ((Count $text.subsys ('RwgRetryUnbound' + 'WellSatellites();')) -ne 1 -or $iT -lt 0 -or $iA -lt 0 -or $iT -lt $iA -or $iR -lt $iT) { $fails += 'W16: the satellite retry must run once per pass, behind the off-vanilla test, after the re-bind and before ApplyWellRetype' }
+$rtb = Get-Body $text.wrwg ('void ' + $cls + 'RwgRetryUnbound' + 'WellSatellites()')
+if (-not $rtb) { $fails += 'W16: RwgRetryUnboundWellSatellites body not found' } else {
+    if (-not $rtb.Contains('if (' + $isV + ') { return; }')) { $fails += 'W16: the retry must return on vanilla' }
+    if (-not $rtb.Contains('if (!bRwgWellRebindDone || !bAdopted' + 'RestoredWells) { return; }')) { $fails += 'W16: the retry must wait for the once-rebind and the restored-well adoption' }
+    if ((Count $rtb ('SuppressVanillaWellGroup(E, EWellSuppressPhase::' + 'Apply);')) -ne 1 -or -not $rtb.Contains('if (E.bGroupPlaced || (!E.bUnhidePending && WellGroupHas' + 'SuppressedMember(E)))')) { $fails += 'W16: a re-bound group that owns suppression must be suppressed in the same call' }
+    if (-not $rtb.Contains('SpawnedWellSatellites.RemoveAndCopy' + 'Value(OldPath, OurCopy)') -or -not $rtb.Contains('SpawnedWellSatellites.Add(NewPath, ' + 'OurCopy);')) { $fails += 'W16: our spawned copy must be re-keyed with the record path' }
+    if ((Count $rtb ('RwgClaimedOriginals.Add(FObjectKey(' + 'Hit));')) -ne 1 -or (Count $rtb ('if (RwgIsClaimedOriginal(Sat)) { ' + 'continue; }')) -ne 1) { $fails += 'W16: RwgClaimedOriginals must be the used set (checked per candidate, added per bind)' }
+    if (-not $rtb.Contains('NodeShuffleMapMode::RwgWellRetry' + 'ClaimsPerPass')) { $fails += 'W16: the retry must be bounded per pass' }
+    if (-not $rtb.Contains('TEXT("WELLCLAIM-' + 'RETRY: pass=%d groupsPending=%d satsBoundNow=%d satsStillUnbound=%d groupsNowComplete=%d suppressedNow=%d ')) { $fails += 'W16: the WELLCLAIM-RETRY census is missing or reordered' }
+}
+if ((Count $text.maph ('constexpr int32 RwgWellRetryClaimsPerPass = ' + '32;')) -ne 1) { $fails += 'W16: RwgWellRetryClaimsPerPass must be 32' }
+# W17
+$ci = 'const bool bClauseImmediate = bLayoutGenerated && RwgLayoutVersion >= NodeShuffleMapMode::RwgLayoutVersion' + 'P2b' + "`n" + '            && bStageReadable && bStageReady && ' + 'bFloor;'
+if ((Count $text.mm $ci) -ne 1) { $fails += 'W17: the immediate clause must require a saved P2b+ layout, a Ready stage and the floor, and nothing else' }
+if ((Count $text.mm ('const bool bReadyNow = bClauseA || bClauseImmediate || ' + 'bClauseB;')) -ne 1) { $fails += 'W17: bReadyNow must OR the immediate clause' }
+if ((Count $text.mm ('RwgReadyBy = bClauseA ? TEXT("stage") : bClauseImmediate ? TEXT("stage-' + 'immediate") : TEXT("savedLayoutStable");')) -ne 1) { $fails += 'W17: RwgReadyBy must name the immediate clause' }
+if (-not $text.mm.Contains('TEXT("RWGLAYOUT: apply latched clause=stage-' + 'immediate ')) { $fails += 'W17: the stage-immediate RWGLAYOUT line is missing' }
+if ((Count $text.mm ('const bool bClauseA = bStageReadable && bStageReady && bStable && ' + 'bFloor;')) -ne 1) { $fails += 'W17: clause A (new game) must keep its stability term' }
 
 if ($fails.Count -gt 0) { $fails | ForEach-Object { Write-Host "FAIL $_" }; exit 1 }
-Write-Host "PASS: RWG P4/P2c lint -- W1..W15 and C1..C11 hold across $($files.Count) loaded files"
+Write-Host "PASS: RWG P4/P2c lint -- W1..W17 and C1..C14 hold across $($files.Count) loaded files"
 exit 0

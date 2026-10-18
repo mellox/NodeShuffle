@@ -623,8 +623,7 @@ struct FNodeShuffleWellEntry
     // The committed placement. PlacedCoreLocation carries the settled Z.
     UPROPERTY(SaveGame) FVector PlacedCoreLocation = FVector::ZeroVector;
     UPROPERTY(SaveGame) FRotator PlacedCoreRotation = FRotator::ZeroRotator;
-    // RWG P2c (2026-10-18): true once the resettle pass probed every placed member of this RWG group against a terrain-MESH
-    // hit (groups placed by this build through the terrain-only probe are probed once too and read as kept). False on vanilla.
+    // RWG P2c: reserved; the P2c resettle is observe-only for wells (cold review MF2) and never sets it.
     UPROPERTY(SaveGame) bool bRwgSettledOnTerrain = false;
 
     // ns-t27-corefirst: BOTH FIELDS KEPT THEIR NAMES AND BOTH CHANGED MEANING. Renaming a
@@ -1024,7 +1023,7 @@ private:
     bool RwgIsPointInWaterCached(const FVector& P) const;
     void RwgLogSkipOnce(int32 Bit, const TCHAR* What);
     // ---- RWG P2c (2026-10-18): terrain-only settle, resettle pass, roll-time slope reject, dZ census. ----
-    // Predicates/classifier in NodeShuffleMapModePlace.cpp; the resettle pass in NodeShuffleMapModeResettle.cpp.
+    // Predicates/classifier and the resettle pass in NodeShuffleMapModeResettle.cpp; RwgApiSlopeTooSteep in NodeShuffleMapModePlace.cpp.
     static bool RwgIsTerrainHit(const struct FHitResult& Hit);   // owner class has "TerrainChunk" AND component name has "Terrain" (HeightApi F1)
     static int32 RwgHitClassOf(const struct FHitResult& Hit);    // 0 terrain, 1 canopy (instanced mesh), 2 water (name has "Water"), 3 other
     void RwgNoteSkippedHit(const struct FHitResult& Hit, int32 Class) const; // RWGTERRAINSKIP once per (owner class, component class, name)
@@ -1040,7 +1039,7 @@ private:
     mutable int32 RwgProbeFirstClass = -1;
     mutable double RwgProbeFirstZ = 0.0;
     mutable int32 RwgProbeSkipped = 0;
-    mutable int32 RwgProbeCapHits = 0;            // per PLACECENSUS pass (zeroed there): traces that exhausted RwgTerrainSkipMax (read as no hit)
+    mutable int32 RwgProbeCapHits = 0;            // per PLACECENSUS pass (zeroed there): terrain-only traces from ANY caller that exhausted RwgTerrainSkipMax (read as no hit)
     mutable TSet<FString> RwgSkippedHitKinds;     // session: RWGTERRAINSKIP already printed for these kinds
     // PLACECENSUS per-pass additions (zeroed by RwgEmitPlaceCensus).
     int32 RwgPcFarTerrain = 0, RwgPcFarCanopy = 0, RwgPcFarWater = 0, RwgPcFarOther = 0;
@@ -1067,6 +1066,11 @@ private:
     void RwgEmitWellPlace(int32 Searching, int32 PlacedNow, int32 Deferred);
     bool bRwgWellRebindDone = false;      // per session: the claim re-bind ran once (roll or first apply, whichever first)
     TSet<FObjectKey> RwgClaimedOriginals; // per session: RWG original well actors bound to a claim (never adoptable as ours)
+    // RWG P4b (2026-10-18): per-pass re-bind of RWGUNBOUND_ satellites of core-bound claims (NodeShuffleWellRwg.cpp).
+    void RwgRetryUnboundWellSatellites();
+    int32 RwgWellRetryPasses = 0;            // passes the retry ran with a non-empty population (census pass=)
+    bool bRwgWellRetryQuiet = false;         // the closing groupsPending=0 line was printed
+    TMap<FGuid, int32> RwgWellRetryAttempts; // session: retry attempts per claim (priority tier only; never a give-up)
     // WELLROLL counters (reset by RwgWellRollBegin at each well roll); WELLPLACE counters (per pass).
     int32 RwgWrCores = 0, RwgWrNoAuthored = 0, RwgWrClaimedNew = 0, RwgWrMintRefused = 0, RwgWrDrawn = 0;
     int32 RwgWrOutside = 0, RwgWrWater = 0, RwgWrSatOutside = 0, RwgWrSatWater = 0, RwgWrNearOriginal = 0;

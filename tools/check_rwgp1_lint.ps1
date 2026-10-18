@@ -204,7 +204,9 @@ if (-not $ot) { $fails += 'R9: RwgObserveTick body not found' } else {
     if ($ot -notmatch ('const bool bClauseA = bStageReadable && bStageReady && bStable && ' + 'bFloor;')) { $fails += 'R9: clause A must AND stage-readable, stage-Ready, stable and floor' }
     if ($ot -notmatch ('const bool bClauseB = bLayout' + 'Generated && T >= NodeShuffleMapMode::RwgApplyFallbackSeconds\s*&& RwgStableAnyStage >= NodeShuffleMapMode::RwgApplyStableTicks && Nodes >= Saved' + 'Floor;')) { $fails += 'R9: clause B must require a saved layout, the world-time floor, the any-stage stable count and the saved-records floor' }
     if ($ot -notmatch ('const int32 SavedFloor = FMath::Max\(NodeShuffleMapMode::RwgMinNodes, OriginalNode' + 'Record\.Num\(\) / 2\);')) { $fails += 'R9: the saved-layout floor must be max(RwgMinNodes, half the hide records)' }
-    if ($ot -notmatch ('const bool bReadyNow = bClauseA \|\| ' + 'bClauseB;')) { $fails += 'R9: the latch must be clause A or clause B, nothing else' }
+    # RWG P4b part C (2026-10-18, rwg-p2c-2): changed DELIBERATELY -- a saved P2b+ layout may latch at the first Ready read
+    # (bClauseImmediate; its shape is pinned by check_rwgp4_lint.ps1 W17). A new game still needs clause A.
+    if ($ot -notmatch ('const bool bReadyNow = bClauseA \|\| bClauseImmediate \|\| ' + 'bClauseB;')) { $fails += 'R9: the latch must be clause A, the saved-layout immediate clause or clause B, nothing else' }
     # RWG P4 (2026-10-18): P2b re-review S2, verbatim.
     if ($ot -notmatch ('const bool bFloor = bLayoutGenerated \? \(RwgAnyLoadedNodesAtFloor\(\) && Nodes >= Saved' + 'Floor\) : IsWorldReadyForRoll\(\);')) { $fails += 'R9: on a saved layout the clause-A floor must also require the saved-records floor' }
     if ($ot -notmatch ('RwgStableAnyStage = bLayout' + 'Generated \? \(\(Delta == 0\) \? RwgStableAnyStage \+ 1 : 0\) : 0;')) { $fails += 'R9: the clause-B counter must count only on a save holding a layout and reset on any count change' }
