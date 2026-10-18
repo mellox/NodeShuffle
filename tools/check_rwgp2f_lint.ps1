@@ -12,7 +12,7 @@
 #   F5  Re-deal pass: candidates re-open on the void flag only while both P2f terms are on; the void flag is written only as `|= bVoidOn`;
 #       the verdict is v3; the sea refusal still precedes every flag write; the census carries voidN / killboxN.
 #   F6  RWGVOIDCHECK grade expression + class (a) predicate; no repeated field in any P2f format string.
-#   F7  RWGKILLBOX: the volume value wins over GetKillboxTop; bottom before perimeter; plausibility = finite, below 0, above -200000
+#   F7  RWGKILLBOX: both known -> the HIGHER of volume and GetKillboxTop (P2g 2026-10-18; was volume-wins); bottom before perimeter; plausibility = finite, below 0, above -200000
 #       (review MF1: GlobalMinSurfaceCm is RWG's clamp floor, never the top's ceiling).
 #   F8  ROLLCENSUS / WELLROLL carry the killbox fields; RwgSpawnPass runs RESETTLE-KILLBOX once, after the rock pass; the un-settle uses
 #       RwgRedealLiveEntry and clears the void flag on success; the vanilla-box well fallback clears it too; RwgRedealLiveEntry
@@ -150,8 +150,14 @@ foreach ($lit in @(('RWGVOID' + 'CHECK: graded usable=%d '), ('RWGKILL' + 'BOX: 
 # F7
 $kb = Get-Body $text.void ('void ' + $cls + 'RwgEnsureKillboxTop(')
 if (-not $kb) { $fails += 'F7: RwgEnsureKillboxTop body not found' } else {
-    $iA = $kb.IndexOf('if (bRwgKillboxActorKnown) { RwgKillboxTopZ = RwgKillboxTop' + 'ActorZ;'); $iP = $kb.IndexOf('else if (bRwgKillboxApiKnown) { RwgKillboxTopZ = RwgKillboxTop' + 'ApiZ;')
-    if ($iA -lt 0 -or $iP -lt $iA) { $fails += 'F7: the measured volume top must win over GetKillboxTop' }
+    # RWG P2g (2026-10-18): both known -> the HIGHER Z (max, the conservative floor); single-source arms follow it.
+    $iM = $kb.IndexOf('RwgKillboxTopZ = FMath::Max(RwgKillboxTopActorZ, RwgKillboxTop' + 'ApiZ); bRwgKillboxKnown = true; Chosen = TEXT("max");')
+    $iBoth = $kb.IndexOf('if (bRwgKillboxActorKnown && bRwgKillbox' + 'ApiKnown)' + "`n")
+    $iA = $kb.IndexOf('else if (bRwgKillboxActorKnown) { RwgKillboxTopZ = RwgKillboxTop' + 'ActorZ;'); $iP = $kb.IndexOf('else if (bRwgKillboxApiKnown) { RwgKillboxTopZ = RwgKillboxTop' + 'ApiZ;')
+    if ($iBoth -lt 0 -or $iM -lt $iBoth -or $iA -lt $iM -or $iP -lt $iA) { $fails += 'F7: with both tops known the higher Z (FMath::Max) must be used, before the actor-only and api-only arms' }
+    if ($kb.Contains('FMath::Min(RwgKillboxTopActorZ, RwgKillboxTop' + 'ApiZ)')) { $fails += 'F7: the deeper (min) top must never be chosen when both are known' }
+    if (-not $kb.Contains('Chosen = TEXT("actor' + 'Only");') -or -not $kb.Contains('Chosen = TEXT("api' + 'Only");') -or -not $kb.Contains('source=%s chosen=%s killbox' + 'TopActorZ')) { $fails += 'F7: RWGKILLBOX must print chosen=max|actorOnly|apiOnly' }
+    if (-not $kb.Contains('TEXT("RWGKILLBOX-' + 'DISAGREE: ')) { $fails += 'F7: the DISAGREE warning must stay' }
     $iB = $kb.IndexOf('if (BottomN > 0 && Plausible(Bottom' + 'Top))'); $iPe = $kb.IndexOf('else if (PerimN > 0 && Plausible(Perim' + 'Top))')
     if ($iB -lt 0 -or $iPe -lt $iB) { $fails += 'F7: the bottom volume must be read before the perimeter (a perimeter wall may reach above the terrain)' }
     if (-not $kb.Contains('const auto Plausible = [](double Z) { return FMath::IsFinite(Z) && Z < 0.' + '0 && Z > -200000.0; };')) { $fails += 'F7: the killbox top must be finite, below 0 and above -200000 (GlobalMinSurfaceCm is a clamp floor, never its ceiling)' }
@@ -175,7 +181,7 @@ if (-not $rl -or -not $rl.Contains("    E.bRwgRockChecked = false;`n    E.bRwgVo
 # F9
 if ((Count $text.subsysh ('UPROPERTY(Save' + 'Game) bool bRwgVoidChecked = false;')) -ne 2) { $fails += 'F9: bRwgVoidChecked must be a SaveGame property on exactly the two entry structs' }
 if ((Count $text.maph ('constexpr double RwgVoidPlateauCm = -3000.' + '0;')) -ne 1 -or (Count $text.maph ('constexpr int32 RwgVoidCheckPerClass = ' + '32;')) -ne 1 -or (Count $text.maph ('constexpr double RwgKillboxMarginCm = 1000.' + '0;')) -ne 1 -or (Count $text.maph ('constexpr int32 RwgKillboxResettlePerPass = ' + '16;')) -ne 1 -or (Count $text.maph ('constexpr double RwgVoidRingCm = 1500.' + '0;')) -ne 1) { $fails += 'F9: RwgVoidPlateauCm -3000 / RwgVoidCheckPerClass 32 / RwgKillboxMarginCm 1000 / RwgKillboxResettlePerPass 16 / RwgVoidRingCm 1500 must be pinned' }
-if ((Count $text.nsmod ('LOADED (2026-10-18-rwg-' + 'p2f-2)')) -ne 1 -or (Count $text.nsmod ('2026-10-18-rwg-' + 'p2f-1')) -ne 0) { $fails += 'F9: the marker must be rwg-p2f-2 and the previous marker absent' }
+if ((Count $text.nsmod ('LOADED (2026-10-18-rwg-' + 'p2g-1)')) -ne 1 -or (Count $text.nsmod ('2026-10-18-rwg-' + 'p2f-2')) -ne 0) { $fails += 'F9: the marker must be rwg-p2g-1 (RWG P2g) and the previous marker absent' }
 
 # F10
 $allowed = @(('else if (Z > 0.0 && CN < ' + 'PerClass)'), ('const auto Plausible = [](double Z) { return FMath::IsFinite(Z) && Z < 0.' + '0 && Z > -200000.0; };'))

@@ -5,7 +5,7 @@
 // FPWDensityField::KillboxTopAboveSeaCm, min(derived, -22463): another seed can report a deeper top, never a higher one, so it is never
 // used here as a constant; the measured damage-volume top is the runtime value). This file holds (1) predicate v3 = v2 OR the graded VoidAt
 // term OR the killbox floor (bBelowKillbox: a playability rule, not a water rule), (2) RWGKILLBOX, the once-per-session killbox top read
-// from the damage volumes AND from GetKillboxTop (both printed; the volume value wins when they disagree), (3) the RWGVOIDCHECK census
+// from the damage volumes AND from GetKillboxTop (both printed; when both are known the HIGHER Z is used -- P2g 2026-10-18), (3) the RWGVOIDCHECK census
 // that GRADES VoidAt before its term may count, and (4) RESETTLE-KILLBOX, which tears down placed entries whose actor stands below the
 // killbox top and re-deals them. Every function is reached only from RWG call sites (RwgDealOneSpot, RwgResolveAtSpawn, RwgDealWellSite,
 // RwgSeaRedealPass, RwgSpawnPass); vanilla never enters this file.
@@ -103,14 +103,23 @@ void ANodeShuffleSubsystem::RwgEnsureKillboxTop(const NodeShuffleMapMode::FRwgGr
     const TCHAR* ActorFrom = TEXT("none");
     if (BottomN > 0 && Plausible(BottomTop)) { RwgKillboxTopActorZ = BottomTop; bRwgKillboxActorKnown = true; ActorFrom = TEXT("bottomVolume"); }
     else if (PerimN > 0 && Plausible(PerimTop)) { RwgKillboxTopActorZ = PerimTop; bRwgKillboxActorKnown = true; ActorFrom = TEXT("perimeterVolume"); }
-    // Route 3: the bound export (optional), compared in the census; never preferred over the volumes.
+    // Route 3: the bound export (optional).
     double ApiZ = std::numeric_limits<double>::quiet_NaN();
     const bool bApiReturned = Q && Q->KillboxTopApi(ApiZ);
     if (bApiReturned && Plausible(ApiZ)) { RwgKillboxTopApiZ = ApiZ; bRwgKillboxApiKnown = true; }
     const bool bAgree = bRwgKillboxActorKnown && bRwgKillboxApiKnown && FMath::Abs(RwgKillboxTopActorZ - RwgKillboxTopApiZ) <= 100.0;
+    // RWG P2g (2026-10-18): resolution rule. When BOTH sources are known and plausible the HIGHER Z is used (max = the more
+    // conservative floor). R8 read actor -32463 vs API -22463; the user reported damage from about -203 m to -275 m in an earlier
+    // world, above the actor value. The actor-bounds reading may include volume geometry below where damage starts (UNMEASURED).
     const TCHAR* Source = TEXT("none");
-    if (bRwgKillboxActorKnown) { RwgKillboxTopZ = RwgKillboxTopActorZ; bRwgKillboxKnown = true; Source = ActorFrom; }
-    else if (bRwgKillboxApiKnown) { RwgKillboxTopZ = RwgKillboxTopApiZ; bRwgKillboxKnown = true; Source = TEXT("getKillboxTop"); }
+    const TCHAR* Chosen = TEXT("none");
+    if (bRwgKillboxActorKnown && bRwgKillboxApiKnown)
+    {
+        RwgKillboxTopZ = FMath::Max(RwgKillboxTopActorZ, RwgKillboxTopApiZ); bRwgKillboxKnown = true; Chosen = TEXT("max");
+        Source = RwgKillboxTopZ == RwgKillboxTopActorZ ? ActorFrom : TEXT("getKillboxTop");
+    }
+    else if (bRwgKillboxActorKnown) { RwgKillboxTopZ = RwgKillboxTopActorZ; bRwgKillboxKnown = true; Source = ActorFrom; Chosen = TEXT("actorOnly"); }
+    else if (bRwgKillboxApiKnown) { RwgKillboxTopZ = RwgKillboxTopApiZ; bRwgKillboxKnown = true; Source = TEXT("getKillboxTop"); Chosen = TEXT("apiOnly"); }
     if (!bRwgKillboxKnown && RwgKillboxTries < 12)
     {
         if (RwgKillboxTries == 1)
@@ -122,14 +131,15 @@ void ANodeShuffleSubsystem::RwgEnsureKillboxTop(const NodeShuffleMapMode::FRwgGr
     }
     bRwgKillboxDone = true;
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("RWGKILLBOX: known=%d killboxTopZ=%.0f source=%s killboxTopActorZ=%.0f actorKnown=%d killboxTopApiZ=%.0f apiKnown=%d apiReturned=%d apiBind=%s agree=%d globalMinSurfaceZ=%.0f dotVolumes=%d bottomVolumes=%d perimeterVolumes=%d tries=%d [%s]"),
-        bRwgKillboxKnown ? 1 : 0, bRwgKillboxKnown ? RwgKillboxTopZ : std::numeric_limits<double>::quiet_NaN(), Source,
+        TEXT("RWGKILLBOX: known=%d killboxTopZ=%.0f source=%s chosen=%s killboxTopActorZ=%.0f actorKnown=%d killboxTopApiZ=%.0f apiKnown=%d apiReturned=%d apiBind=%s agree=%d globalMinSurfaceZ=%.0f dotVolumes=%d bottomVolumes=%d perimeterVolumes=%d tries=%d [%s]"),
+        bRwgKillboxKnown ? 1 : 0, bRwgKillboxKnown ? RwgKillboxTopZ : std::numeric_limits<double>::quiet_NaN(), Source, Chosen,
         bRwgKillboxActorKnown ? RwgKillboxTopActorZ : (BottomN > 0 ? BottomTop : std::numeric_limits<double>::quiet_NaN()),
         bRwgKillboxActorKnown ? 1 : 0, ApiZ, bRwgKillboxApiKnown ? 1 : 0, bApiReturned ? 1 : 0, *NodeShuffleMapMode::RwgKillboxBindStatus(),
         bAgree ? 1 : 0, GMin, DotN, BottomN, PerimN, RwgKillboxTries, *List);
     if (bRwgKillboxActorKnown && bRwgKillboxApiKnown && !bAgree)
     {
-        UE_LOG(LogNodeShuffle, Warning, TEXT("RWGKILLBOX-DISAGREE: the volume top and GetKillboxTop differ by more than 100 cm; the volume top is used"));
+        UE_LOG(LogNodeShuffle, Warning, TEXT("RWGKILLBOX-DISAGREE: the volume top (%.0f) and GetKillboxTop (%.0f) differ by more than 100 cm; chosen=%s, the higher Z (%.0f) is used"),
+            RwgKillboxTopActorZ, RwgKillboxTopApiZ, Chosen, RwgKillboxTopZ);
     }
     if (!bRwgKillboxKnown) { UE_LOG(LogNodeShuffle, Warning, TEXT("RWGKILLBOX-OFF: no plausible killbox top after %d tries; the killbox floor and RESETTLE-KILLBOX are off this session"), RwgKillboxTries); }
 }

@@ -991,11 +991,28 @@ private:
     // premise is false — see MinVanillaNodesForRoll in NodeShuffleSubsystem.cpp.)
     bool IsWorldReadyForReroll() const;
     void RollLayout(int32 Seed, bool bIsReroll);
-    // Two discovery scans per world session: after readiness/adoption, then 60 game seconds later.
-    // These scheduling fields are deliberately not SaveGame; every load gets a fresh schedule.
+    // RWG P2g (2026-10-18): periodic discovery for the whole world session -- the first scan after readiness/adoption,
+    // then one every NodeShuffleLateNodePolicy::ScanPeriodSeconds game seconds, until the session has appended
+    // GrowthCapEntries layout entries. These fields are deliberately not SaveGame; every load gets a fresh schedule and cap.
     void MaybeCaptureLateOriginalNodes();
     int32 LateNodeScansCompleted = 0;
     double FirstLateNodeScanTime = 0.0;
+    double LastLateNodeScanTime = 0.0;
+    int32 LateNodeTotalAddedSession = 0;
+    bool bLateNodeGrowthCapWarned = false;
+    int32 LateCaptureLinesThisScan = 0;
+    int32 LateCaptureUnlistedThisScan = 0;
+    // RWG P2g: visible-original census (NodeShuffleLateNodes.cpp). Pre runs before SuppressOriginalNodes every pass
+    // and walks a bounded round-robin slice of the hide records every 12th pass; Post runs after it and reports.
+    void LogLateCapture(const AFGResourceNodeBase* Node); // RWG P2g: one LATE-CAPTURE line, 32 per scan
+    void RehideVisibleOriginalsPre();
+    void RehideVisibleOriginalsPost();
+    int32 RehideCensusPass = 0;
+    int32 RehideCensusCursor = 0;
+    int32 RehideCensusChecked = 0, RehideCensusUnresolved = 0, RehideCensusIdentityReject = 0, RehideCensusOccupied = 0;
+    int32 RehideCensusNotSteady = 0, RehideCensusNewInstance = 0, RehideCensusHiddenOk = 0;
+    TArray<TWeakObjectPtr<AFGResourceNodeBase>> RehidePendingNodes; // visible-again originals this census pass
+    TMap<FString, int32> SteadyHiddenAtPass; // RehideCensusPass at which SuppressOriginalNodes marked a record steady
     // Appends only; never rerolls existing entries or touches wells.
     void CaptureLateOriginalNodes();
 
@@ -1185,6 +1202,7 @@ private:
     mutable bool bStoreCaveFlushSkipLogged = false;
     FString LastLateCaptureCensus;
     TSet<FString> LateDeferredClassWarnings;
+    TSet<FString> LateDeferredLocationWarnings; // RWG P2g: latched per resource (the periodic scan would repeat it every 60 s)
     // ns-truth-diagnostics B: the once-per-roll `ROLLCENSUS:` truth line + the ZERO-ACTIVE alarm.
     // DIAGNOSTICS ONLY -- reads Layout and does one read-only live actor pass; writes nothing.
     // Every field it prints is a measurement and names its own test; nothing in it asserts a cause.

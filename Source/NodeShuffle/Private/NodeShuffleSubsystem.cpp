@@ -222,6 +222,11 @@ void ANodeShuffleSubsystem::BeginPlay()
     Super::BeginPlay();
     LateNodeScansCompleted = 0;
     FirstLateNodeScanTime = 0.0;
+    LastLateNodeScanTime = 0.0;
+    LateNodeTotalAddedSession = 0; // RWG P2g: session cap counter; rerolls never reset it
+    bLateNodeGrowthCapWarned = false;
+    RehideCensusPass = 0;
+    RehideCensusCursor = 0;
     if (!HasAuthority())
     {
         return;
@@ -512,6 +517,7 @@ void ANodeShuffleSubsystem::RestoreOriginalsForReroll()
     // coexist-1: the steady-hidden markers describe the OLD roll's hide state — drop them so the new
     // roll's funnel re-processes every record from scratch (same lifecycle as ScannerDeregistered).
     SteadyHiddenOriginals.Empty();
+    SteadyHiddenAtPass.Empty(); // RWG P2g: same lifecycle as the steady marks it timestamps
     // dirtdress-1 (cold review): same lifecycle for the capture-chain diag dedupe — the re-rolled
     // population re-runs capture from scratch, so it should re-emit its CAPTURE-CHAIN breadcrumbs.
     CaptureChainLogged.Empty();
@@ -2349,7 +2355,11 @@ void ANodeShuffleSubsystem::ApplyLayout()
     // redesign-1 CORE: hide EVERY unoccupied original node (vanilla AND modded) + its rock whenever
     // it streams in. This is what removes the world's original nodes so only our relocated nodes and
     // the untouched occupied originals remain. Reliable across sessions via the persistent record.
+    // RWG P2g: the visible-original census brackets the hide pass -- Pre measures (and clears the steady mark of a
+    // visible-again original so the funnel below re-applies its hide), Post reports what the funnel left hidden.
+    RehideVisibleOriginalsPre();
     SuppressOriginalNodes();
+    RehideVisibleOriginalsPost();
 
     if (GetMapMode() == ENodeShuffleMapMode::Vanilla) { OrphanRockCleanup(); } // RWG P2b: no rock hiding off vanilla
 
@@ -5366,7 +5376,11 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
                 // (cheap: every step above is idempotent/set-gated) so its resource's capture retries
                 // each pass instead of losing its one shot per session. It goes steady the pass its
                 // resource captures (or proves terminal).
-                if (!bCapturePending) { SteadyHiddenOriginals.Add(Rec.VanillaNodePath, Node); }
+                if (!bCapturePending)
+                {
+                    SteadyHiddenOriginals.Add(Rec.VanillaNodePath, Node);
+                    SteadyHiddenAtPass.Add(Rec.VanillaNodePath, RehideCensusPass); // RWG P2g: read by REHIDE-VISIBLE only
+                }
             }
         }
     }

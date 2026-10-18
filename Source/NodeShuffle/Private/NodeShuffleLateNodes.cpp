@@ -8,30 +8,52 @@
 #include "Resources/FGResourceDeposit.h"
 #include "Resources/FGResourceDescriptor.h"
 
-// The existing refresh timer only polls this cheap schedule. Actor discovery stops after scan two.
+// RWG P2g (2026-10-18): the refresh timer polls this cheap schedule every pass. One bounded actor pass per
+// ScanPeriodSeconds for the whole session (was two scans, t=0 and +60 s), until the session growth cap is reached.
 void ANodeShuffleSubsystem::MaybeCaptureLateOriginalNodes()
 {
     if (!HasAuthority() || !bLayoutGenerated || !bAdoptedRestoredNodes) { return; }
+    if (NodeShuffleLateNodePolicy::GrowthCapReached(LateNodeTotalAddedSession, NodeShuffleLateNodePolicy::GrowthCapEntries))
+    {
+        if (!bLateNodeGrowthCapWarned)
+        {
+            bLateNodeGrowthCapWarned = true;
+            UE_LOG(LogNodeShuffle, Warning,
+                TEXT("LATE-NODES growth cap reached: %d layout entries appended this session, cap %d; periodic late capture stopped until the next load (scans run: %d)"),
+                LateNodeTotalAddedSession, NodeShuffleLateNodePolicy::GrowthCapEntries, LateNodeScansCompleted);
+        }
+        return;
+    }
     const double Now = GetWorld()->GetTimeSeconds();
-    if (!NodeShuffleLateNodePolicy::ScanDue(LateNodeScansCompleted, Now, FirstLateNodeScanTime)) { return; }
+    if (!NodeShuffleLateNodePolicy::ScanDue(LateNodeScansCompleted, Now, LastLateNodeScanTime,
+        NodeShuffleLateNodePolicy::ScanPeriodSeconds, LateNodeTotalAddedSession, NodeShuffleLateNodePolicy::GrowthCapEntries)) { return; }
     if (!FNodeShuffleConfigStruct::GetActiveConfig(this).IncludeModdedNodes) { return; }
     if (LateNodeScansCompleted == 0 && !IsWorldReadyForReroll()) { return; }
 
     const double Started = FPlatformTime::Seconds();
     const int32 LayoutBefore = Layout.Num();
     const int32 RecordsBefore = OriginalNodeRecord.Num();
+    LateCaptureLinesThisScan = 0;
+    LateCaptureUnlistedThisScan = 0;
     CaptureLateOriginalNodes();
     if (LateNodeScansCompleted == 0) { FirstLateNodeScanTime = Now; }
-    ++LateNodeScansCompleted; // Count empty/deferred scans too: never create an unbounded retry loop.
+    LastLateNodeScanTime = Now; // every completed scan, empty or not, restarts the period
+    ++LateNodeScansCompleted; // Count empty/deferred scans too: never create a faster-than-period retry loop.
+    const int32 AddedEntries = Layout.Num() - LayoutBefore;
+    LateNodeTotalAddedSession += AddedEntries;
+    if (LateCaptureUnlistedThisScan > 0)
+    {
+        UE_LOG(LogNodeShuffle, Display, TEXT("LATE-CAPTURE: %d further captures this scan not listed (32 lines per scan); scan %d"),
+            LateCaptureUnlistedThisScan, LateNodeScansCompleted);
+    }
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("LATE-NODES scan=%d/2 elapsedSinceFirst=%.1fs durationMs=%.2f addedEntries=%d addedHideRecords=%d layoutTotal=%d hideRecordsTotal=%d scheduleExhausted=%d"),
-        LateNodeScansCompleted, Now - FirstLateNodeScanTime, (FPlatformTime::Seconds() - Started) * 1000.0,
-        Layout.Num() - LayoutBefore, OriginalNodeRecord.Num() - RecordsBefore, Layout.Num(), OriginalNodeRecord.Num(),
-        LateNodeScansCompleted == 2);
+        TEXT("LATE-NODES scan=%d addedEntries=%d addedHideRecords=%d totalAddedSession=%d layoutTotal=%d hideRecordsTotal=%d durationMs=%.1f elapsedSinceFirstS=%.0f"),
+        LateNodeScansCompleted, AddedEntries, OriginalNodeRecord.Num() - RecordsBefore, LateNodeTotalAddedSession,
+        Layout.Num(), OriginalNodeRecord.Num(), (FPlatformTime::Seconds() - Started) * 1000.0, Now - FirstLateNodeScanTime);
 }
 
 // Additional originals are dealt into new locations, without changing the existing draw.
-// No mod names: the bounded startup/load scans admit any eligible resource node.
+// No mod names: each periodic scan admits any eligible resource node (vanilla late-placed nodes included, F3 KEEP).
 void ANodeShuffleSubsystem::CaptureLateOriginalNodes()
 {
     if (!HasAuthority() || !bLayoutGenerated || !bAdoptedRestoredNodes) { return; }
@@ -193,6 +215,7 @@ void ANodeShuffleSubsystem::CaptureLateOriginalNodes()
                 E.ResourceForm = Node->GetResourceForm() == EResourceForm::RF_LIQUID ? 2 : 1;
                 E.bPinned = true;
                 Layout.Add(E);
+                LogLateCapture(Node);
                 ++Pinned; ++Added; ++GroupPinned;
             }
             else
@@ -212,7 +235,7 @@ void ANodeShuffleSubsystem::CaptureLateOriginalNodes()
                         {
                             LateDeferredClassWarnings.Add(WarningKey);
                             UE_LOG(LogNodeShuffle, Warning,
-                                TEXT("LATE-NODES deferred: original='%s' resource='%s' has no compatible node representative; original retained (retry on remaining scheduled scan or next load)"),
+                                TEXT("LATE-NODES deferred: original='%s' resource='%s' has no compatible node representative; original retained (retried on every periodic scan; said once per class and resource)"),
                                 *Node->GetPathName(), *ResourcePath);
                         }
                         continue;
@@ -254,9 +277,13 @@ void ANodeShuffleSubsystem::CaptureLateOriginalNodes()
         DealBoundsMin = OldMin; DealBoundsMax = OldMax; DealMeanZ = OldZ;
         if (Locations.Num() != Active)
         {
-            UE_LOG(LogNodeShuffle, Warning,
-                TEXT("LATE-NODES deferred: resource='%s' unoccupied=%d requiredLocations=%d generated=%d; originals retained, retry on remaining scheduled scan or next load"),
-                *ResourcePath, Free.Num(), Active, Locations.Num());
+            if (!LateDeferredLocationWarnings.Contains(ResourcePath)) // RWG P2g: latched; the scan repeats every period
+            {
+                LateDeferredLocationWarnings.Add(ResourcePath);
+                UE_LOG(LogNodeShuffle, Warning,
+                    TEXT("LATE-NODES deferred: resource='%s' unoccupied=%d requiredLocations=%d generated=%d; originals retained, retried on every periodic scan (said once per resource)"),
+                    *ResourcePath, Free.Num(), Active, Locations.Num());
+            }
             Begin = End;
             continue;
         }
@@ -287,7 +314,7 @@ void ANodeShuffleSubsystem::CaptureLateOriginalNodes()
             Rec.OriginalNodeClassPath = E.NodeClassPath;
             Rec.OriginalResourceClassPath = ResourcePath;
             Rec.bModdedOrigin = !ResourcePath.StartsWith(TEXT("/Game/"));
-            if (bHasOriginal) { OriginalNodeRecord.Add(Rec); }
+            if (bHasOriginal) { OriginalNodeRecord.Add(Rec); LogLateCapture(Node); }
             Layout.Add(E);
             AvoidLocations.Add(E.Location);
             E.bActive ? ++Relocated : ++Inactive;
@@ -308,4 +335,91 @@ void ANodeShuffleSubsystem::CaptureLateOriginalNodes()
             TEXT("LATE-NODES appended: added=%d pinned=%d relocated=%d hiddenOnly=%d layout=%d hideRecords=%d seed=%d"),
             Added, Pinned, Relocated, Inactive, Layout.Num(), OriginalNodeRecord.Num(), SavedSeed);
     }
+}
+
+// RWG P2g: one line per captured original (pinned in place, or hidden + dealt). Bounded per scan; the remainder is counted.
+void ANodeShuffleSubsystem::LogLateCapture(const AFGResourceNodeBase* Node)
+{
+    if (LateCaptureLinesThisScan >= 32) { ++LateCaptureUnlistedThisScan; return; }
+    ++LateCaptureLinesThisScan;
+    const FVector L = Node->GetActorLocation();
+    UE_LOG(LogNodeShuffle, Display, TEXT("LATE-CAPTURE: class=%s path=%s at=(%.0f,%.0f,%.0f) scan=%d"),
+        *Node->GetClass()->GetName(), *Node->GetPathName(), L.X, L.Y, L.Z, LateNodeScansCompleted + 1);
+}
+
+// RWG P2g visible-original census, part 1 (runs every pass BEFORE SuppressOriginalNodes; works every 12th pass).
+// Walks up to 256 hide records round-robin. A record counts as visible again only when the SAME instance that
+// SuppressOriginalNodes marked steady is resolved by path, passes the path-identity test, is unoccupied, and has its
+// actor hidden flag cleared or its collision back on. Its steady mark is then removed, so the hide funnel in
+// SuppressOriginalNodes (the existing hide path, nothing here hides) runs in full for it this same pass. Measured only.
+void ANodeShuffleSubsystem::RehideVisibleOriginalsPre()
+{
+    ++RehideCensusPass;
+    RehidePendingNodes.Reset();
+    if ((RehideCensusPass % 12) != 1) { return; }
+    RehideCensusChecked = RehideCensusUnresolved = RehideCensusIdentityReject = RehideCensusOccupied = 0;
+    RehideCensusNotSteady = RehideCensusNewInstance = RehideCensusHiddenOk = 0;
+    const int32 Records = OriginalNodeRecord.Num();
+    if (Records == 0) { return; }
+    constexpr int32 MaxChecksPerPass = 256;
+    constexpr int32 MaxLinesPerPass = 32;
+    constexpr float IdentityMatchCm = 300.0f; // mirrors AdoptMatchRadiusCm (Subsystem.cpp:191), as RWGHIDECHECK does
+    if (RehideCensusCursor >= Records) { RehideCensusCursor = 0; }
+    int32 Lines = 0, Unlisted = 0;
+    const int32 ToCheck = FMath::Min(Records, MaxChecksPerPass);
+    for (int32 K = 0; K < ToCheck; ++K)
+    {
+        const FNodeShuffleSuppressedOriginal& Rec = OriginalNodeRecord[RehideCensusCursor];
+        RehideCensusCursor = (RehideCensusCursor + 1) % Records;
+        ++RehideCensusChecked;
+        AFGResourceNodeBase* Orig = FindOriginalBaseByPath(Rec.VanillaNodePath);
+        if (!Orig) { ++RehideCensusUnresolved; continue; }
+        if (!Rec.OriginalNodeClassPath.IsEmpty())
+        {
+            const UClass* Res = Orig->GetResourceClass();
+            const FVector Anchor = Rec.TrueLocation.IsNearlyZero() ? Rec.Location : Rec.TrueLocation;
+            if (Orig->GetClass()->GetPathName() != Rec.OriginalNodeClassPath || !Res || Res->GetPathName() != Rec.OriginalResourceClassPath
+                || FVector::Dist(Orig->GetActorLocation(), Anchor) >= IdentityMatchCm) { ++RehideCensusIdentityReject; continue; }
+        }
+        const AFGResourceNode* AsNode = Cast<AFGResourceNode>(Orig);
+        if (Orig->IsOccupied() || (AsNode && IsNodeOccupiedAnyway(AsNode))) { ++RehideCensusOccupied; continue; }
+        const TWeakObjectPtr<AFGResourceNodeBase>* Steady = SteadyHiddenOriginals.Find(Rec.VanillaNodePath);
+        if (!Steady) { ++RehideCensusNotSteady; continue; }
+        if (Steady->Get() != Orig) { ++RehideCensusNewInstance; continue; } // a re-streamed actor: the funnel treats it as new
+        const bool bHidden = Orig->IsHidden();
+        const bool bCollision = Orig->GetActorEnableCollision();
+        if (bHidden && !bCollision) { ++RehideCensusHiddenOk; continue; }
+        SteadyHiddenOriginals.Remove(Rec.VanillaNodePath); // route it back through SuppressOriginalNodes' full hide funnel
+        RehidePendingNodes.Add(Orig);
+        if (Lines >= MaxLinesPerPass) { ++Unlisted; continue; }
+        ++Lines;
+        const int32* At = SteadyHiddenAtPass.Find(Rec.VanillaNodePath);
+        const FVector L = Orig->GetActorLocation();
+        UE_LOG(LogNodeShuffle, Display, TEXT("REHIDE-VISIBLE: class=%s path=%s at=(%.0f,%.0f,%.0f) passesSinceHidden=%d actorHidden=%d collisionOn=%d"),
+            *Orig->GetClass()->GetName(), *Rec.VanillaNodePath, L.X, L.Y, L.Z, At ? RehideCensusPass - *At : -1,
+            bHidden ? 1 : 0, bCollision ? 1 : 0);
+    }
+    if (Unlisted > 0)
+    {
+        UE_LOG(LogNodeShuffle, Display, TEXT("REHIDE-VISIBLE: %d further visible-again originals this pass not listed (32 lines per pass)"), Unlisted);
+    }
+}
+
+// RWG P2g visible-original census, part 2 (runs every pass AFTER SuppressOriginalNodes; reports on census passes).
+// rehidden = visible-again originals that now have the actor hidden flag set and collision off.
+void ANodeShuffleSubsystem::RehideVisibleOriginalsPost()
+{
+    if ((RehideCensusPass % 12) != 1) { return; }
+    int32 Rehidden = 0, Gone = 0;
+    for (const TWeakObjectPtr<AFGResourceNodeBase>& W : RehidePendingNodes)
+    {
+        const AFGResourceNodeBase* N = W.Get();
+        if (!N) { ++Gone; continue; }
+        if (N->IsHidden() && !N->GetActorEnableCollision()) { ++Rehidden; }
+    }
+    UE_LOG(LogNodeShuffle, Display,
+        TEXT("REHIDE-CENSUS: pass=%d checked=%d visibleAgain=%d rehidden=%d unresolved=%d identityReject=%d occupied=%d notSteady=%d newInstance=%d hiddenOk=%d actorGone=%d records=%d"),
+        RehideCensusPass, RehideCensusChecked, RehidePendingNodes.Num(), Rehidden, RehideCensusUnresolved, RehideCensusIdentityReject,
+        RehideCensusOccupied, RehideCensusNotSteady, RehideCensusNewInstance, RehideCensusHiddenOk, Gone, OriginalNodeRecord.Num());
+    RehidePendingNodes.Reset();
 }

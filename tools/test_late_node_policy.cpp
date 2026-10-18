@@ -3,15 +3,33 @@ using NodeShuffleLateNodePolicy::AdditionalActive;
 using NodeShuffleLateNodePolicy::MatchesOriginalIdentity;
 using NodeShuffleLateNodePolicy::ScanDue;
 
-static_assert(ScanDue(0, 10., 0.), "first ready scan runs");
-static_assert(ScanDue(0, 300., 0.), "slow loading does not consume the first scan");
-static_assert(!ScanDue(1, 300., 300.), "first scan cannot immediately repeat");
-static_assert(!ScanDue(1, 359.999, 300.), "follow-up waits a full minute from the first scan");
-static_assert(ScanDue(1, 360., 300.), "follow-up is due at exactly sixty seconds");
-static_assert(ScanDue(1, 365., 300.), "a delayed refresh still runs the follow-up");
-static_assert(!ScanDue(2, 365., 300.), "two scans exhaust the session");
-static_assert(!ScanDue(2, 999999., 300.), "no ongoing discovery even hours later");
-static_assert(ScanDue(0, 10., 0.), "a new session with reset state starts again");
+using NodeShuffleLateNodePolicy::GrowthCapReached;
+using NodeShuffleLateNodePolicy::ScanPeriodSeconds;
+using NodeShuffleLateNodePolicy::GrowthCapEntries;
+constexpr double P = ScanPeriodSeconds;
+constexpr int Cap = GrowthCapEntries;
+
+// RWG P2g (2026-10-18): the schedule is periodic; the old "two scans exhaust" cases are inverted below, not deleted.
+static_assert(ScanDue(0, 10., 0., P, 0, Cap), "first ready scan runs");
+static_assert(ScanDue(0, 300., 0., P, 0, Cap), "slow loading does not consume the first scan");
+static_assert(!ScanDue(1, 300., 300., P, 0, Cap), "first scan cannot immediately repeat");
+static_assert(!ScanDue(1, 359.999, 300., P, 0, Cap), "follow-up waits a full period from the last scan");
+static_assert(ScanDue(1, 360., 300., P, 0, Cap), "follow-up is due at exactly one period");
+static_assert(ScanDue(1, 365., 300., P, 0, Cap), "a delayed refresh still runs the follow-up");
+static_assert(!ScanDue(2, 365., 360., P, 0, Cap), "the period restarts at the scan that just ran");
+static_assert(ScanDue(2, 420., 360., P, 0, Cap), "a third scan is due one period after the second (no exhaustion)");
+static_assert(ScanDue(0, 10., 0., P, 0, Cap), "a new session with reset state starts again");
+static_assert(ScanDue(500, 99999., 99939., P, 37, Cap), "discovery continues hours into the session");
+static_assert(!ScanDue(500, 99998.9, 99939., P, 37, Cap), "hours in, the period still gates the next scan");
+static_assert(ScanPeriodSeconds == 60.0, "period is 60 s (design input, dated in the header)");
+static_assert(GrowthCapEntries == 2048, "growth cap is 2048 entries (design input, dated in the header)");
+static_assert(ScanDue(9, 999., 0., P, Cap - 1, Cap), "one entry below the cap still scans");
+static_assert(!ScanDue(9, 999., 0., P, Cap, Cap), "reaching the cap stops scanning");
+static_assert(!ScanDue(9, 999., 0., P, Cap + 500, Cap), "a scan that overshot the cap stops scanning");
+static_assert(!ScanDue(0, 10., 0., P, Cap, Cap), "the cap also blocks a first scan");
+static_assert(GrowthCapReached(Cap, Cap) && !GrowthCapReached(Cap - 1, Cap), "cap boundary is inclusive");
+static_assert(ScanDue(1, 330., 300., 30., 0, Cap), "a shorter configured period fires sooner");
+static_assert(!ScanDue(1, 330., 300., 60., 0, Cap), "the same moment is not due under the 60 s period");
 
 // Compile-time tests execute the same policy used by the game, without loading the engine.
 static_assert(AdditionalActive(1, 0, 0, 85, 2) == 2, "singleton needs a supplemental slot");
