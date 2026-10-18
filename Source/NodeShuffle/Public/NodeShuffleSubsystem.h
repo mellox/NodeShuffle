@@ -19,6 +19,7 @@ class AFGResourceScanner;
 class AFGResourceNodeFrackingCore;
 class AFGResourceNodeFrackingSatellite;
 struct FNodeShuffleWellMember; // RWG P4: NodeShuffleWellCensus.h (Private); used by reference only below
+struct FNodeShuffleWellCensus; // RWG P4c: NodeShuffleWellCensus.h (Private); used by reference only below
 class UFGResourceDescriptor; // scanregen-1: TSubclassOf<> member below only needs the forward decl
 
 // T4 (docs/TECH-DEBT.md) -- ONE WATCHED ORIGINAL: a record whose AFGNodeMeshActor was NOT resolvable
@@ -1185,6 +1186,12 @@ private:
     int32 RwgWellRetryPasses = 0;            // passes the retry ran with a non-empty population (census pass=)
     bool bRwgWellRetryQuiet = false;         // the closing groupsPending=0 line was printed
     TMap<FGuid, int32> RwgWellRetryAttempts; // session: retry attempts per claim (priority tier only; never a give-up)
+    // RWG P4c (2026-10-18): a reloaded RWG well's census members come from its bound claim satellite paths when the engine
+    // links are empty (NodeShuffleWellRwgMembers.cpp); every caller is behind the off-vanilla test.
+    void RwgFillWellMembersFromClaims(FNodeShuffleWellCensus& Census, const TCHAR* Caller);
+    void RwgNoteWellAuthoredSource(FNodeShuffleWellEntry& E, bool bLiveCoreRead, const TArray<FNodeShuffleWellMember>& Members);
+    int32 RwgWrAuthoredLive = 0, RwgWrAuthoredSaved = 0, RwgWrAuthoredSatellite = 0;   // WELLROLL authoredFrom* (per well roll)
+    int32 RwgWrMembersFromClaimWells = 0, RwgWrMembersFromClaimSats = 0;             // WELLROLL membersFromClaim* (last fill call)
     // WELLROLL counters (reset by RwgWellRollBegin at each well roll); WELLPLACE counters (per pass).
     int32 RwgWrCores = 0, RwgWrNoAuthored = 0, RwgWrClaimedNew = 0, RwgWrMintRefused = 0, RwgWrDrawn = 0;
     int32 RwgWrOutside = 0, RwgWrWater = 0, RwgWrSatOutside = 0, RwgWrSatWater = 0, RwgWrNearOriginal = 0;

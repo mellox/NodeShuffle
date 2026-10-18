@@ -107,6 +107,8 @@ void ANodeShuffleSubsystem::RollWellLayout(int32 Seed, bool bIsReroll)
              "assignment (or stay vanilla) -- H1 never fails to a broken well, only to an untouched one."),
         Census.Wells.Num(), CensusSatellites, Census.IteratorCores, Census.AdoptedCores,
         Census.InvalidCoresSkipped, Census.OrphanSatellites.Num());
+    // RWG P4c (2026-10-18): off vanilla, a claimed well the engine links left short gets its members from its bound claim paths.
+    if (GetMapMode() != ENodeShuffleMapMode::Vanilla) { RwgFillWellMembersFromClaims(Census, TEXT("layout")); }
     // ns-review-h2 F1: the exclusion has to be VISIBLE, not merely correct -- a silent filter is
     // indistinguishable from a census that never saw the wells at all. Logged after the merge below.
 
@@ -160,7 +162,7 @@ void ANodeShuffleSubsystem::RollWellLayout(int32 Seed, bool bIsReroll)
         E.CoreNodeClassPath = WellClassPathOf(Core);
         const FString Authored = WellAuthoredResourcePath(Core);
         if (!Authored.IsEmpty()) { E.OriginalResourceClassPath = Authored; }
-        else if (GetMapMode() != ENodeShuffleMapMode::Vanilla) { ++RwgWrNoAuthored; } // RWG P4: WELLROLL noAuthoredResource
+        if (GetMapMode() != ENodeShuffleMapMode::Vanilla) { RwgNoteWellAuthoredSource(E, !Authored.IsEmpty(), W.Members); } // RWG P4c: live > saved > bound satellite; WELLROLL authoredFrom*
 
         // PIN. Live state decides whenever the well's actors are loaded -- the same rule RollLayout uses
         // for a carried spawned node ("with a live actor, LIVE occupancy decides"), so a well whose

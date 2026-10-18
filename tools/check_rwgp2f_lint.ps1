@@ -166,7 +166,8 @@ if (-not $kb) { $fails += 'F7: RwgEnsureKillboxTop body not found' } else {
 
 # F8
 if (-not $text.place.Contains('rejectedVoid=%d rejectedKillbox=%d dealtBelowKillbox=%d killboxTopZ=%.0f killboxTopActorZ=%.0f killboxTop' + 'ApiZ=%.0f voidUsable=%d"),')) { $fails += 'F8: ROLLCENSUS must carry the P2f fields' }
-if (-not $text.wrwg.Contains('rejectedVoid=%d rejectedKillbox=%d dealtBelowKillbox=%d killboxTopZ=%.0f killboxTopActorZ=%.0f killboxTop' + 'ApiZ=%.0f voidUsable=%d"),')) { $fails += 'F8: WELLROLL must carry the P2f fields' }
+# RWG P4c (2026-10-18): WELLROLL's tail grew authoredFrom*/membersFromClaim* after voidUsable; the P2f run is pinned up to the first P4c field.
+if (-not $text.wrwg.Contains('rejectedVoid=%d rejectedKillbox=%d dealtBelowKillbox=%d killboxTopZ=%.0f killboxTopActorZ=%.0f killboxTop' + 'ApiZ=%.0f voidUsable=%d authoredFromLive=%d')) { $fails += 'F8: WELLROLL must carry the P2f fields' }
 $spb = Get-Body $text.place ('void ' + $cls + 'RwgSpawnPass(float SpawnRadiusCm, bool& bChangedWorld)')
 if ($spb) { $spb = (($spb -split "`n") | ForEach-Object { $_ -replace '//.*$', '' }) -join "`n" } # a commented-out call is not a call
 if (-not $spb -or (Count $spb ('RwgKillboxResettle' + 'Pass();')) -ne 1 -or $spb.IndexOf('RwgKillboxResettle' + 'Pass();') -lt $spb.IndexOf('RwgRockOcclusion' + 'Pass();')) { $fails += 'F8: RwgSpawnPass must run RESETTLE-KILLBOX once, after the rock pass' }
@@ -181,7 +182,7 @@ if (-not $rl -or -not $rl.Contains("    E.bRwgRockChecked = false;`n    E.bRwgVo
 # F9
 if ((Count $text.subsysh ('UPROPERTY(Save' + 'Game) bool bRwgVoidChecked = false;')) -ne 2) { $fails += 'F9: bRwgVoidChecked must be a SaveGame property on exactly the two entry structs' }
 if ((Count $text.maph ('constexpr double RwgVoidPlateauCm = -3000.' + '0;')) -ne 1 -or (Count $text.maph ('constexpr int32 RwgVoidCheckPerClass = ' + '32;')) -ne 1 -or (Count $text.maph ('constexpr double RwgKillboxMarginCm = 1000.' + '0;')) -ne 1 -or (Count $text.maph ('constexpr int32 RwgKillboxResettlePerPass = ' + '16;')) -ne 1 -or (Count $text.maph ('constexpr double RwgVoidRingCm = 1500.' + '0;')) -ne 1) { $fails += 'F9: RwgVoidPlateauCm -3000 / RwgVoidCheckPerClass 32 / RwgKillboxMarginCm 1000 / RwgKillboxResettlePerPass 16 / RwgVoidRingCm 1500 must be pinned' }
-if ((Count $text.nsmod ('LOADED (2026-10-18-rwg-' + 'p5-2)')) -ne 1 -or (Count $text.nsmod ('2026-10-18-rwg-' + 'p5-1')) -ne 0) { $fails += 'F9: the marker must be rwg-p5-2 (RWG P5 build 2) and the previous marker absent' }
+if ((Count $text.nsmod ('LOADED (2026-10-18-rwg-' + 'p4c-1)')) -ne 1 -or (Count $text.nsmod ('2026-10-18-rwg-' + 'p5-2')) -ne 0) { $fails += 'F9: the marker must be rwg-p4c-1 (RWG P4c, moved from rwg-p5-2) and the previous marker absent' }
 
 # F10
 $allowed = @(('else if (Z > 0.0 && CN < ' + 'PerClass)'), ('const auto Plausible = [](double Z) { return FMath::IsFinite(Z) && Z < 0.' + '0 && Z > -200000.0; };'))

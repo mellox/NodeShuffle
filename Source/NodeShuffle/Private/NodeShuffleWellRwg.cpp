@@ -412,6 +412,7 @@ void ANodeShuffleSubsystem::RwgWellRollBegin()
     RwgWrWaterZBelow0 = RwgWrWaterZAtOrAbove0 = RwgWrDealtBelowZ0 = 0; // coordinator addendum
     RwgWrRejectedSea = 0; // RWG P2e
     RwgWrRejectedVoid = RwgWrRejectedKillbox = RwgWrDealtBelowKillbox = 0; // RWG P2f
+    RwgWrAuthoredLive = RwgWrAuthoredSaved = RwgWrAuthoredSatellite = RwgWrMembersFromClaimWells = RwgWrMembersFromClaimSats = 0; // RWG P4c
     RwgWrT0 = FPlatformTime::Seconds();
 }
 
@@ -424,13 +425,14 @@ void ANodeShuffleSubsystem::RwgEmitWellRollCensus(bool bApiDeal, const FString& 
         if (E.bGroupPlaced) { ++Placed; }
     }
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("WELLROLL: map=rwg deal=%s apiStatus='%s' cores=%d coresOurs=%d entries=%d eligible=%d builtOn=%d dealt=%d dealFailed=%d drawn=%d rejectedOutside=%d rejectedWater=%d rejectedWaterSurfaceZBelow0=%d rejectedWaterSurfaceZAtOrAbove0=%d dealtBelowZ0=%d rejectedSlope=%d rejectedSatOutside=%d rejectedSatWater=%d rejectedSea=%d rejectedNearOriginal=%d rejectedSpacing=%d resolvedZ=%d zSpreadMaxCm=%d noAuthoredResource=%d claimedNew=%d mintRefusedNearClaim=%d placedBefore=%d durationMs=%d rejectedVoid=%d rejectedKillbox=%d dealtBelowKillbox=%d killboxTopZ=%.0f killboxTopActorZ=%.0f killboxTopApiZ=%.0f voidUsable=%d"),
+        TEXT("WELLROLL: map=rwg deal=%s apiStatus='%s' cores=%d coresOurs=%d entries=%d eligible=%d builtOn=%d dealt=%d dealFailed=%d drawn=%d rejectedOutside=%d rejectedWater=%d rejectedWaterSurfaceZBelow0=%d rejectedWaterSurfaceZAtOrAbove0=%d dealtBelowZ0=%d rejectedSlope=%d rejectedSatOutside=%d rejectedSatWater=%d rejectedSea=%d rejectedNearOriginal=%d rejectedSpacing=%d resolvedZ=%d zSpreadMaxCm=%d noAuthoredResource=%d claimedNew=%d mintRefusedNearClaim=%d placedBefore=%d durationMs=%d rejectedVoid=%d rejectedKillbox=%d dealtBelowKillbox=%d killboxTopZ=%.0f killboxTopActorZ=%.0f killboxTopApiZ=%.0f voidUsable=%d authoredFromLive=%d authoredFromSaved=%d authoredFromSatellite=%d membersFromClaimWells=%d membersFromClaimSats=%d"),
         bApiDeal ? TEXT("api") : TEXT("fallback"), *ApiStatus, RwgWrCores, RwgWrCoresOurs, WellLayout.Num(), Eligible, BuiltOn, Dealt, DealFailed,
         RwgWrDrawn, RwgWrOutside, RwgWrWater, RwgWrWaterZBelow0, RwgWrWaterZAtOrAbove0, RwgWrDealtBelowZ0, RwgWrSlope, RwgWrSatOutside, RwgWrSatWater, RwgWrRejectedSea, RwgWrNearOriginal, RwgWrSpacing, RwgWrResolvedZ,
         RwgWrZSpreadMaxCm, RwgWrNoAuthored, RwgWrClaimedNew, RwgWrMintRefused, Placed,
         static_cast<int32>((FPlatformTime::Seconds() - RwgWrT0) * 1000.0), RwgWrRejectedVoid, RwgWrRejectedKillbox, RwgWrDealtBelowKillbox,
         bRwgKillboxKnown ? RwgKillboxTopZ : NodeShuffleMapMode::RwgNaN(), bRwgKillboxActorKnown ? RwgKillboxTopActorZ : NodeShuffleMapMode::RwgNaN(),
-        bRwgKillboxApiKnown ? RwgKillboxTopApiZ : NodeShuffleMapMode::RwgNaN(), bRwgVoidUsable ? 1 : 0);
+        bRwgKillboxApiKnown ? RwgKillboxTopApiZ : NodeShuffleMapMode::RwgNaN(), bRwgVoidUsable ? 1 : 0,
+        RwgWrAuthoredLive, RwgWrAuthoredSaved, RwgWrAuthoredSatellite, RwgWrMembersFromClaimWells, RwgWrMembersFromClaimSats); // RWG P4c
 }
 
 void ANodeShuffleSubsystem::RwgEmitWellPlace(int32 Searching, int32 PlacedNow, int32 Deferred)

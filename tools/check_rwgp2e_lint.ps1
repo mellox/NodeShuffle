@@ -149,7 +149,7 @@ if ((Count $text.subsysh ('UPROPERTY(Save' + 'Game) bool bRwgSeaChecked = false;
 
 # E9
 if ((Count $text.maph ('constexpr int32 RwgSeaRedealPerPass = ' + '64;')) -ne 1 -or (Count $text.maph ('constexpr int32 RwgSeaCheckPerClass = ' + '32;')) -ne 1 -or (Count $text.maph ('constexpr int32 RwgRedealTries = ' + '80;')) -ne 1 -or (Count $text.maph ('constexpr int32 RwgSeaWellDealDraws = ' + '128;')) -ne 1) { $fails += 'E9: RwgSeaRedealPerPass 64 / RwgSeaCheckPerClass 32 / RwgRedealTries 80 / RwgSeaWellDealDraws 128 must be pinned' }
-if ((Count $text.nsmod ('LOADED (2026-10-18-rwg-' + 'p5-2)')) -ne 1 -or (Count $text.nsmod ('2026-10-18-rwg-' + 'p5-1')) -ne 0) { $fails += 'E9: the marker must be rwg-p5-2 (RWG P5 build 2) and the previous marker absent' }
+if ((Count $text.nsmod ('LOADED (2026-10-18-rwg-' + 'p4c-1)')) -ne 1 -or (Count $text.nsmod ('2026-10-18-rwg-' + 'p5-2')) -ne 0) { $fails += 'E9: the marker must be rwg-p4c-1 (RWG P4c, moved from rwg-p5-2) and the previous marker absent' }
 
 if ($fails.Count -gt 0) { $fails | ForEach-Object { Write-Host "FAIL $_" }; exit 1 }
 Write-Host "PASS: RWG P2e lint -- E1..E9 hold across $($files.Count) loaded files"

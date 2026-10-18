@@ -192,6 +192,10 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll)
 
     FNodeShuffleWellCensus Census;
     CollectWellCensus(GetWorld(), Census);
+    // RWG P4c (2026-10-18): off vanilla, a claimed well whose census record is short of its layout satellites (a reloaded RWG
+    // well: null GetCore() and an empty core list, measured orphanSats=539) is topped up from its bound claim paths BEFORE
+    // ByCorePath below points at the records -- the capture gate further down reads W.Members (NodeShuffleWellRwgMembers.cpp).
+    if (GetMapMode() != ENodeShuffleMapMode::Vanilla) { RwgFillWellMembersFromClaims(Census, TEXT("relocation")); }
 
     // ns-review-h2 F1 (CRITICAL): exclude OUR OWN spawned cores. CollectWellCensus is deliberately
     // unfiltered (NodeShuffle.DumpWells depends on that), so the filter lives at every DECISION site
