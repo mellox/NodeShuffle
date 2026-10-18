@@ -398,7 +398,7 @@ void ANodeShuffleSubsystem::RehideVisibleOriginalsPre()
         const FVector L = Orig->GetActorLocation();
         UE_LOG(LogNodeShuffle, Display, TEXT("REHIDE-VISIBLE: class=%s path=%s at=(%.0f,%.0f,%.0f) passesSinceHidden=%d actorHidden=%d collisionOn=%d"),
             *Orig->GetClass()->GetName(), *Rec.VanillaNodePath, L.X, L.Y, L.Z, At ? RehideCensusPass - *At : -1,
-            bHidden ? 1 : 0, bCollision ? 1 : 0);
+            bActorHidden ? 1 : 0, bCollision ? 1 : 0);
     }
     if (Unlisted > 0)
     {
