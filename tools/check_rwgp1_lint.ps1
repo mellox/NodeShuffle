@@ -22,7 +22,7 @@
 #       and floor; the stable counter advances only in the stage-Ready branch and the first Ready tick zeroes
 #       it; the P1 quiescence constant and counter are gone.
 #   R10 RWGWAIT names the refusing clause: its census format string ends in the gatedBy field.
-#   R11 RWGHEIGHTAPI: the accepted RWG build is one code constant; each decorated export name lives once, in
+#   R11 RWGHEIGHTAPI: the accepted RWG builds are one code list (RWG 0.1.9: {SemVer, build} pairs); each decorated export name lives once, in
 #       the HeightApi file only; TryBind refuses on version BEFORE it refuses on exports and allows calls only
 #       after both; no RWG call precedes the callsAllowed guard in RwgLogHeightApi; no library is linked.
 # RWG P2b (2026-10-17, P2 spec §2 + "R2 measurements": roll ON for mode=rwg, placement v2, apply-on-load) changes R1
@@ -223,8 +223,9 @@ if ($text.mapcpp -match ('by=quies' + 'cence|TEXT\("quies' + 'cence"\)')) { $fai
 if ($text.mapcpp -notmatch ('TEXT\("RWGWAIT: t=%\.0fs [^"]* gated' + 'By=%s savedLayout=%d stableAnyStage=%d/%d"\)')) { $fails += 'R10: the RWGWAIT census format must carry gatedBy then the clause-B fields' }
 
 # R11
-$acc = 'constexpr int32 RwgHeightApiAccepted' + 'Build = 705;'
-if (([regex]::Matches($text.hapi, [regex]::Escape($acc))).Count -ne 1) { $fails += 'R11: the accepted RWG build constant must appear exactly once in the HeightApi file' }
+# RWG 0.1.9 (2026-10-18): the single accepted build became an accept LIST of {SemVer, build} pairs; check_rwg019_lint.ps1 V1 pins its content.
+$acc = 'const FRwgAcceptedBuild RwgHeightApi' + 'Accepted[] = {'
+if (([regex]::Matches($text.hapi, [regex]::Escape($acc))).Count -ne 1) { $fails += 'R11: the accepted RWG build list must be declared exactly once in the HeightApi file' }
 $syms = @(
     ('?Get@APWWorld' + 'Generator@@SAPEAV1@PEAVUWorld@@@Z'),
     ('?GetField@APWWorld' + 'Generator@@QEBA?AV?$TSharedPtr@$$CBVFPWDensityField@@$00@@XZ'),

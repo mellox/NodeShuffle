@@ -3,7 +3,7 @@
 // Reached only from RwgLogReprobes (NodeShuffleMapModeR1.cpp), i.e. only off vanilla, only after the v2 latch.
 // It resolves six RWG exports by DECORATED name at runtime (GetModuleHandleW + GetProcAddress, no link
 // dependency, so nothing here enters the import table but KERNEL32), refuses to call unless the RWG .uplugin
-// next to the bound DLL names the accepted build, and compares the API's surface height with a line trace at
+// next to the bound DLL names an accepted build, and compares the API's surface height with a line trace at
 // the same XY. It gates nothing, writes nothing and changes no node: every result is a log line.
 #include "NodeShuffleSubsystem.h"
 #include "NodeShuffleMapMode.h"
@@ -23,12 +23,22 @@ class FPWDensityField; // RWG's type. Never completed here: only an opaque point
 
 namespace
 {
-    // ACCEPTED RWG BUILD -- a code constant, deliberately NOT a config row: the six signatures below were
-    // measured against exactly this build (dumpbin /EXPORTS on FactoryGameSteam-ProceduralWorld-Win64-Shipping.dll,
-    // RWG 0.1.7 build 705, sha256 EE60A003A44A4ABC..., 2026-10-17). Any other build is refused, never called.
-    // Bump both only after re-measuring the exports AND re-running the RWGHEIGHTAPI census on that build.
-    constexpr int32 RwgHeightApiAcceptedBuild = 705;
-    const TCHAR* const RwgHeightApiAcceptedSemVer = TEXT("0.1.7");
+    // ACCEPTED RWG BUILDS -- code constants, deliberately NOT a config row. Each {SemVersion, PWBuildNumber} pair was measured
+    // (dumpbin /EXPORTS + /DISASM on FactoryGameSteam-ProceduralWorld-Win64-Shipping.dll):
+    //   0.1.7 build 705, sha256 EE60A003A44A4ABC..., 2026-10-17;
+    //   0.1.9 build 745, sha256 93516E7F09E60F27..., 2026-10-18 (_team/test-logs/2026-10-18-rwg-0.1.9-export-diff.md: 14 of 16
+    //   bound prefixes byte-identical; GetField + GetKillboxTop differ ONLY in member displacements, which the masks below wildcard).
+    // SemVersion AND build must both equal ONE entry; anything else is refused, never called. Add an entry only after re-measuring
+    // every bound export on that build AND re-running the RWGHEIGHTAPI census on it.
+    struct FRwgAcceptedBuild { const TCHAR* SemVer; int32 Build; };
+    const FRwgAcceptedBuild RwgHeightApiAccepted[] = { { TEXT("0.1.7"), 705 }, { TEXT("0.1.9"), 745 } };
+    // RWG 0.1.9 (2026-10-18): the accept list as printed by the census and the refusals, e.g. {0.1.7,705} {0.1.9,745}.
+    FString RwgAcceptedList()
+    {
+        FString S;
+        for (const FRwgAcceptedBuild& E : RwgHeightApiAccepted) { S += FString::Printf(TEXT("%s{%s,%d}"), S.IsEmpty() ? TEXT("") : TEXT(" "), E.SemVer, E.Build); }
+        return S;
+    }
 
     // x64 MSVC MEMBER ABI -- ASSUMED, graded by the census below (|dZ| vs line trace), never by reasoning:
     // a non-static member function is called as a free function with `this` as the first argument (RCX);
@@ -70,6 +80,7 @@ namespace
         FString Uplugin = TEXT("<none>");
         FString SemVer = TEXT("<unread>");
         int32 Build = -1;
+        FString Matched = TEXT("none");       // RWG 0.1.9: the accept-list entry SemVer+Build matched, {semver,build}; "none" = refused
         int32 Required = 0;
         int32 Optional = 0;
         FString Missing;
@@ -145,38 +156,62 @@ namespace
         A.Water = reinterpret_cast<FnWater>(Resolve(SymWater, true));
         A.GMin = reinterpret_cast<FnScalar>(Resolve(SymGMin, false));
         A.GMax = reinterpret_cast<FnScalar>(Resolve(SymGMax, false));
-        const bool bVersion = A.Build == RwgHeightApiAcceptedBuild && A.SemVer == RwgHeightApiAcceptedSemVer;
-        if (!bVersion) { A.Status = TEXT("versionMismatch"); return; }
+        bool bVersion = false;
+        for (const FRwgAcceptedBuild& E : RwgHeightApiAccepted)
+        {
+            if (A.Build == E.Build && A.SemVer == E.SemVer) { bVersion = true; A.Matched = FString::Printf(TEXT("{%s,%d}"), E.SemVer, E.Build); break; }
+        }
+        if (!bVersion) { A.Status = TEXT("versionMismatch"); UE_LOG(LogNodeShuffle, Warning, TEXT("RWGHEIGHTAPI-REFUSED: status=versionMismatch semVer='%s' build=%d accepted='%s' uplugin='%s' callsAllowed=0"), *A.SemVer, A.Build, *RwgAcceptedList(), *A.Uplugin); return; }
         if (A.Required != 6) { A.Status = TEXT("exportMissing"); return; }
         // RWG P2b BYTE-SIGNATURE GATE (P2a cold review alternative 2): each export's leading bytes must equal the
-        // build-705 disassembly (dumpbin /DISASM, 2026-10-17); -1 = wildcard (GetField's F40h is the field offset
-        // a same-version rebuild could move; IsOutsideWorld's RIP displacement is skipped). Mismatch = fail closed.
+        // build-705 disassembly (dumpbin /DISASM, 2026-10-17); -1 = wildcard. Mismatch = fail closed.
+        // Wildcards: IsOutsideWorld's RIP displacement; SINCE RWG 0.1.9 (2026-10-18) the 4-byte member displacement of GetField
+        // (bytes 3..6 of `mov rax,[rcx+disp32]`) -- measured F40h on build 705, 1008h on build 745. The opcode/ModRM bytes
+        // around it (48 8B 81 / 48 89 02) stay pinned; only the displacement value is not compared.
         static const int16 SigGet[] = { 0x48,0x83,0xEC,0x28,0x48,0x85,0xC9 };
-        static const int16 SigField[] = { 0x48,0x8B,0x81,0x40,0x0F,0x00,0x00,0x48,0x89,0x02 };
+        static const int16 SigField[] = { 0x48,0x8B,0x81,-1,-1,-1,-1,0x48,0x89,0x02 }; // disp32 @3..6: 705 = 0x00000F40, 745 = 0x00001008
         static const int16 SigSpliced[] = { 0x48,0x8B,0x81,0x90,0x00,0x00,0x00,0xC3 };
         static const int16 SigSurface[] = { 0x40,0x53,0x48,0x83,0xEC,0x40,0x0F,0x29,0x74,0x24,0x30,0x48,0x8B,0xD9 };
         static const int16 SigOutside[] = { 0xF2,0x0F,0x10,0x1D,-1,-1,-1,-1,0xF2,0x0F,0x10,0x41,0x08,0x0F,0x54,0xCB };
         static const int16 SigWater[] = { 0x48,0x8B,0xC4,0x44,0x89,0x48,0x20,0x48,0x89,0x48,0x08 };
         static const int16 SigGMin[] = { 0xF2,0x0F,0x10,0x41,0x18,0xC3 };
         static const int16 SigGMax[] = { 0xF2,0x0F,0x10,0x41,0x20,0xC3 };
-        const auto SigOk = [](const void* Fn, const int16* Sig, int32 N) -> bool
+        // RWG 0.1.9: SigOk also records the index of the first PINNED byte that differed (LastSigDiff; -1 = every pinned byte matched)
+        // so each signature refusal can print it.
+        int32 LastSigDiff = -1;
+        const auto SigOk = [&LastSigDiff](const void* Fn, const int16* Sig, int32 N) -> bool
         {
             const uint8* B = static_cast<const uint8*>(Fn);
-            for (int32 I = 0; I < N; ++I) { if (Sig[I] >= 0 && B[I] != static_cast<uint8>(Sig[I])) { return false; } }
+            LastSigDiff = -1;
+            for (int32 I = 0; I < N; ++I) { if (Sig[I] >= 0 && B[I] != static_cast<uint8>(Sig[I])) { LastSigDiff = I; return false; } }
             return true;
+        };
+        // RWG 0.1.9: one Warning per refused export (required or optional), measured values only.
+        const auto WarnSigRefused = [&A, &LastSigDiff](const TCHAR* Name, bool bRequired)
+        {
+            UE_LOG(LogNodeShuffle, Warning, TEXT("RWGSIGREFUSED: export=%s required=%d firstDiffByte=%d semVer='%s' build=%d matchedEntry='%s'"),
+                Name, bRequired ? 1 : 0, LastSigDiff, *A.SemVer, A.Build, *A.Matched);
         };
         FString SigBad;
         bool bRequiredSigBad = false;
-        const auto Check = [&](const void* Fn, const int16* Sig, int32 N, const TCHAR* Name) { if (!SigOk(Fn, Sig, N)) { bRequiredSigBad = true; SigBad += FString(SigBad.IsEmpty() ? TEXT("") : TEXT(" ")) + Name; } };
+        const auto Check = [&](const void* Fn, const int16* Sig, int32 N, const TCHAR* Name)
+        {
+            if (!SigOk(Fn, Sig, N)) { bRequiredSigBad = true; SigBad += FString::Printf(TEXT("%s%s@+%d"), SigBad.IsEmpty() ? TEXT("") : TEXT(" "), Name, LastSigDiff); WarnSigRefused(Name, true); }
+        };
         Check(A.Get, SigGet, UE_ARRAY_COUNT(SigGet), TEXT("Get"));
         Check(A.GetField, SigField, UE_ARRAY_COUNT(SigField), TEXT("GetField"));
         Check(A.GetSpliced, SigSpliced, UE_ARRAY_COUNT(SigSpliced), TEXT("GetSpliced"));
         Check(A.Surface, SigSurface, UE_ARRAY_COUNT(SigSurface), TEXT("SurfaceHeightCm"));
         Check(A.Outside, SigOutside, UE_ARRAY_COUNT(SigOutside), TEXT("IsOutsideWorld"));
         Check(A.Water, SigWater, UE_ARRAY_COUNT(SigWater), TEXT("WaterLevelCmAt"));
-        if (A.GMin && !SigOk(A.GMin, SigGMin, UE_ARRAY_COUNT(SigGMin))) { A.GMin = nullptr; SigBad += TEXT(" GlobalMinSurfaceCm(optional,dropped)"); }
-        if (A.GMax && !SigOk(A.GMax, SigGMax, UE_ARRAY_COUNT(SigGMax))) { A.GMax = nullptr; SigBad += TEXT(" GlobalMaxSurfaceCm(optional,dropped)"); }
-        UE_LOG(LogNodeShuffle, Display, TEXT("RWGHEIGHTAPI: signature check mismatched='%s' (empty = all 8 match build 705)"), *SigBad);
+        if (A.GMin && !SigOk(A.GMin, SigGMin, UE_ARRAY_COUNT(SigGMin))) { A.GMin = nullptr; SigBad += FString::Printf(TEXT(" GlobalMinSurfaceCm@+%d(optional,dropped)"), LastSigDiff); WarnSigRefused(TEXT("GlobalMinSurfaceCm"), false); }
+        if (A.GMax && !SigOk(A.GMax, SigGMax, UE_ARRAY_COUNT(SigGMax))) { A.GMax = nullptr; SigBad += FString::Printf(TEXT(" GlobalMaxSurfaceCm@+%d(optional,dropped)"), LastSigDiff); WarnSigRefused(TEXT("GlobalMaxSurfaceCm"), false); }
+        // RWG 0.1.9: the member displacement GetField actually carries (bytes 3..6, little-endian) -- read, never compared.
+        uint32 FieldDisp = 0;
+        FMemory::Memcpy(&FieldDisp, static_cast<const uint8*>(reinterpret_cast<const void*>(A.GetField)) + 3, sizeof(FieldDisp));
+        UE_LOG(LogNodeShuffle, Display, TEXT("RWGHEIGHTAPI: signature check mismatched='%s' matchedEntry='%s' getFieldDisp=0x%X (empty list = all 8 masks match; each item is the export and the offset of its first differing pinned byte)"),
+            *SigBad, *A.Matched, FieldDisp);
+        if (bRequiredSigBad) { UE_LOG(LogNodeShuffle, Warning, TEXT("RWGHEIGHTAPI-REFUSED: status=signatureMismatch semVer='%s' build=%d matchedEntry='%s' accepted='%s' mismatched='%s' callsAllowed=0"), *A.SemVer, A.Build, *A.Matched, *RwgAcceptedList(), *SigBad); }
         if (bRequiredSigBad) { A.Status = TEXT("signatureMismatch"); return; }
         // RWG P2e (2026-10-18): InSeaVolume, OPTIONAL like GMin/GMax -- resolved only after the version, export and required-signature
         // gates passed; a missing export or a byte mismatch leaves it null and the old water predicate stays in place. Build-705
@@ -185,7 +220,7 @@ namespace
         static const int16 SigInSea[] = { 0x48,0x89,0x5C,0x24,0x08,0x57,0x48,0x83,0xEC,0x30,0x0F,0x57,0xC0,0x0F,0x28,0xEA,0x66,0x0F,0x2F,0xD8,0x48,0x8B,0xF9 };
         A.InSea = reinterpret_cast<FnInSea>(::GetProcAddress(H, SymInSea));
         if (!A.InSea) { A.SeaStatus = TEXT("exportMissing"); }
-        else if (!SigOk(reinterpret_cast<const void*>(A.InSea), SigInSea, UE_ARRAY_COUNT(SigInSea))) { A.InSea = nullptr; A.SeaStatus = TEXT("signatureMismatch"); }
+        else if (!SigOk(reinterpret_cast<const void*>(A.InSea), SigInSea, UE_ARRAY_COUNT(SigInSea))) { A.InSea = nullptr; A.SeaStatus = TEXT("signatureMismatch"); WarnSigRefused(TEXT("InSeaVolume"), false); }
         else { A.SeaStatus = TEXT("bound"); }
         UE_LOG(LogNodeShuffle, Display, TEXT("RWGSEABIND: status=%s export='%s' optional=1; its term counts only after RWGSEACHECK grades it"), *A.SeaStatus, ANSI_TO_TCHAR(SymInSea));
         if (!A.InSea) { UE_LOG(LogNodeShuffle, Warning, TEXT("RWGSEABIND-OFF: status=%s; the sea term is off this session"), *A.SeaStatus); }
@@ -193,19 +228,27 @@ namespace
         // signature gates, before A.bUsable = true); missing or byte-mismatched = null, its term stays off. Build-705 disassembly (dumpbin
         // /DISASM, 2026-10-18): VoidAt = this RCX, X XMM1, Y XMM2, returns false when the void count [+0x2E8] is 0 and on a negative or
         // >= N sample index (its own bounds check); GetKillboxTop = mov rax,[rcx+0C58h] / mov [rdx],rax / cmp dword [rcx+0C48h],0 / setg al.
-        // Both signatures are pinned in full (the displacements included: the version gate is exact, a moved field must fail closed).
+        // SigVoidAt is pinned in full (its +0x2E8 displacement included). SINCE RWG 0.1.9 (2026-10-18) SigKillboxTop wildcards exactly
+        // its two 4-byte member displacements (bytes 3..6 of `mov rax,[rcx+disp32]`, bytes 12..15 of `cmp dword [rcx+disp32],0`):
+        // measured C58h/C48h on build 705, C60h/C50h on build 745. Opcode/ModRM bytes, the cmp imm8 (byte 16) and setg/ret stay pinned.
         static const int16 SigVoidAt[] = { 0x40,0x53,0x48,0x83,0xEC,0x30,0x48,0x83,0xB9,0xE8,0x02,0x00,0x00,0x00,0x0F,0x28,0xE2,0x0F,0x28,0xC1,0x48,0x8B,0xD9,0x0F,0x84 };
-        static const int16 SigKillboxTop[] = { 0x48,0x8B,0x81,0x58,0x0C,0x00,0x00,0x48,0x89,0x02,0x83,0xB9,0x48,0x0C,0x00,0x00,0x00,0x0F,0x9F,0xC0,0xC3 };
+        static const int16 SigKillboxTop[] = { 0x48,0x8B,0x81,-1,-1,-1,-1,0x48,0x89,0x02,0x83,0xB9,-1,-1,-1,-1,0x00,0x0F,0x9F,0xC0,0xC3 }; // disp32 @3..6: 705 = 0xC58, 745 = 0xC60; disp32 @12..15: 705 = 0xC48, 745 = 0xC50
         A.VoidAt = reinterpret_cast<FnVoidAt>(::GetProcAddress(H, SymVoidAt));
         if (!A.VoidAt) { A.VoidStatus = TEXT("exportMissing"); }
-        else if (!SigOk(reinterpret_cast<const void*>(A.VoidAt), SigVoidAt, UE_ARRAY_COUNT(SigVoidAt))) { A.VoidAt = nullptr; A.VoidStatus = TEXT("signatureMismatch"); }
+        else if (!SigOk(reinterpret_cast<const void*>(A.VoidAt), SigVoidAt, UE_ARRAY_COUNT(SigVoidAt))) { A.VoidAt = nullptr; A.VoidStatus = TEXT("signatureMismatch"); WarnSigRefused(TEXT("VoidAt"), false); }
         else { A.VoidStatus = TEXT("bound"); }
         A.KillboxTop = reinterpret_cast<FnKillboxTop>(::GetProcAddress(H, SymKillboxTop));
+        uint32 KillboxDispA = 0, KillboxDispB = 0; // RWG 0.1.9: the two displacements the export carries (read, never compared); 0 = export missing
+        if (A.KillboxTop)
+        {
+            FMemory::Memcpy(&KillboxDispA, reinterpret_cast<const uint8*>(A.KillboxTop) + 3, sizeof(KillboxDispA));
+            FMemory::Memcpy(&KillboxDispB, reinterpret_cast<const uint8*>(A.KillboxTop) + 12, sizeof(KillboxDispB));
+        }
         if (!A.KillboxTop) { A.KillboxStatus = TEXT("exportMissing"); }
-        else if (!SigOk(reinterpret_cast<const void*>(A.KillboxTop), SigKillboxTop, UE_ARRAY_COUNT(SigKillboxTop))) { A.KillboxTop = nullptr; A.KillboxStatus = TEXT("signatureMismatch"); }
+        else if (!SigOk(reinterpret_cast<const void*>(A.KillboxTop), SigKillboxTop, UE_ARRAY_COUNT(SigKillboxTop))) { A.KillboxTop = nullptr; A.KillboxStatus = TEXT("signatureMismatch"); WarnSigRefused(TEXT("GetKillboxTop"), false); }
         else { A.KillboxStatus = TEXT("bound"); }
-        UE_LOG(LogNodeShuffle, Display, TEXT("RWGVOIDBIND: voidAtStatus=%s killboxTopStatus=%s optional=1; the void term counts only after RWGVOIDCHECK grades it, the killbox floor reads the damage volumes first"),
-            *A.VoidStatus, *A.KillboxStatus);
+        UE_LOG(LogNodeShuffle, Display, TEXT("RWGVOIDBIND: voidAtStatus=%s killboxTopStatus=%s optional=1 killboxTopDisps=0x%X/0x%X; the void term counts only after RWGVOIDCHECK grades it, the killbox floor reads the damage volumes first"),
+            *A.VoidStatus, *A.KillboxStatus, KillboxDispA, KillboxDispB);
         if (!A.VoidAt) { UE_LOG(LogNodeShuffle, Warning, TEXT("RWGVOIDBIND-OFF: voidAtStatus=%s; the void term is off this session (the killbox floor still applies when measured)"), *A.VoidStatus); }
         A.Hmod = H; // RWG P5: published only on the path that also sets bUsable
         A.bUsable = true;
@@ -248,8 +291,8 @@ void ANodeShuffleSubsystem::RwgLogHeightApi(bool bFull)
     if (bFull)
     {
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("RWGHEIGHTAPI: bind status=%s module='%s' uplugin='%s' semVer='%s' build=%d acceptedSemVer='%s' acceptedBuild=%d requiredResolved=%d of 6 optionalResolved=%d of 2 missing='%s' callsAllowed=%d"),
-            *A.Status, *A.Module, *A.Uplugin, *A.SemVer, A.Build, RwgHeightApiAcceptedSemVer, RwgHeightApiAcceptedBuild,
+            TEXT("RWGHEIGHTAPI: bind status=%s module='%s' uplugin='%s' semVer='%s' build=%d accepted='%s' matchedEntry='%s' requiredResolved=%d of 6 optionalResolved=%d of 2 missing='%s' callsAllowed=%d"),
+            *A.Status, *A.Module, *A.Uplugin, *A.SemVer, A.Build, *RwgAcceptedList(), *A.Matched,
             A.Required, A.Optional, *A.Missing, A.bUsable ? 1 : 0);
     }
     UWorld* World = GetWorld();
