@@ -25,7 +25,7 @@
 //     deposits and anything IsOursForRwg -- deduplicated by actor. Every OTHER original in VanillaNodeCache (a kept,
 //     unhidden neighbour) enters the same nearest-wins contest as a COMPETITOR, so a shuffled original can never claim
 //     the rock of a node beside it that stays visible; competitors are never added to the cache.
-//   ROCKS = AFGNodeMeshActor, not transient, owning EXACTLY ONE non-instanced StaticMeshComponent with a mesh
+//   ROCKS = AFGNodeMeshActor (transient or not), owning EXACTLY ONE non-instanced StaticMeshComponent with a mesh
 //     whose name passes IsNodeRockMeshName (the backstop's own rock-name test, no extra patterns).
 //   WELL EXCLUSION (NodeMeshActor_C also carries fracking geometry; the fracking index has 642 members):
 //     a rock is never claimed when (1) its mNodeMeshType is not MT_Node, (2) its mNodeActor back-link
@@ -71,8 +71,8 @@ namespace
 
     FIntPoint RwgRockCell(const FVector& L)
     {
-        return FIntPoint(FMath::FloorToInt(L.X / NodeShuffleRock::RockOwnRangeCm),
-                         FMath::FloorToInt(L.Y / NodeShuffleRock::RockOwnRangeCm));
+        return FIntPoint(FMath::FloorToInt32(L.X / NodeShuffleRock::RockOwnRangeCm),
+                         FMath::FloorToInt32(L.Y / NodeShuffleRock::RockOwnRangeCm));
     }
 }
 
@@ -103,12 +103,15 @@ void ANodeShuffleSubsystem::RebuildRwgRockCache()
     struct FRwgRock { AFGNodeMeshActor* Actor; FVector Loc; const AFGResourceNodeBase* Back; double NearestFrackSq; FString Mesh; };
     TArray<FRwgRock> Rocks;
     TMap<FIntPoint, TArray<int32>> RockGrid;
-    int32 MeshActorsIterated = 0, WellExcluded = 0, ShapeRejected = 0;
+    int32 MeshActorsIterated = 0, WellExcluded = 0, ShapeRejected = 0, TransientRocks = 0;
     for (TActorIterator<AFGNodeMeshActor> It(World); It; ++It)
     {
         AFGNodeMeshActor* MA = *It;
-        if (!IsValid(MA) || MA->HasAnyFlags(RF_Transient)) { continue; }
+        if (!IsValid(MA)) { continue; }
         ++MeshActorsIterated;
+        // NOT filtered on RF_Transient: nothing this mod spawns is an AFGNodeMeshActor (our rocks are RockMesh
+        // subobjects), and runtime-generated RWG actors may carry the flag -- skipping them would read as "not resident".
+        if (MA->HasAnyFlags(RF_Transient)) { ++TransientRocks; }
         const AFGResourceNodeBase* Back = MA->mNodeActor.Get();
         // WELL EXCLUSION (1)+(2): engine-authored well geometry type, or a back-link into a fracking actor.
         if (MA->mNodeMeshType != ENodeMeshType::MT_Node || IsFrackingActor(Back)) { ++WellExcluded; continue; }
@@ -307,10 +310,10 @@ void ANodeShuffleSubsystem::RebuildRwgRockCache()
         RwgRockCacheLastPaired = Paired;
         UE_LOG(LogNodeShuffle, Display,
             TEXT("RWGROCKCACHE originals=%d paired=%d unpairedNoRockWithin8m=%d ambiguousMultiRock=%d alreadyClaimed=%d resident=%d ms=%.1f")
-            TEXT(" records=%d pathUnresolved=%d ineligible=%d competitors=%d competitorClaims=%d meshActorsIterated=%d wellExcluded=%d shapeRejected=%d noRockWellContested=%d linkedElsewhereSkips=%d firstPassAfterRollOrLoad=%d"),
+            TEXT(" records=%d pathUnresolved=%d ineligible=%d competitors=%d competitorClaims=%d meshActorsIterated=%d transientMeshActors=%d wellExcluded=%d shapeRejected=%d noRockWellContested=%d linkedElsewhereSkips=%d firstPassAfterRollOrLoad=%d"),
             RecordedOrigs, Paired, NoRock, Ambiguous, AlreadyClaimed, Resident, ElapsedMs,
             OriginalNodeRecord.Num(), PathUnresolved, Ineligible, Origs.Num() - RecordedOrigs, CompetitorClaims,
-            MeshActorsIterated, WellExcluded, ShapeRejected,
+            MeshActorsIterated, TransientRocks, WellExcluded, ShapeRejected,
             NoRockWellContested, LinkedElsewhereSkips, bFirstPassAfterRollOrLoad ? 1 : 0);
     }
 }

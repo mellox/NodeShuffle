@@ -111,7 +111,7 @@ function Invoke-RockcacheChecks($T) {
     if ((Count $T.rcc ('SetNode' + 'Actor(')) -ne 0) { $f += '(K5) the RWG rebuild must never write the engine back-link' }
     # K6
     $specs = @(
-        @{ P = 'RWGROCKCACHE '; N = 18; Head = 'RWGROCKCACHE originals=%d paired=%d unpairedNoRockWithin8m=%d ambiguousMultiRock=%d alreadyClaimed=%d resident=%d ms=%.1f'; K = 'rcc' }
+        @{ P = 'RWGROCKCACHE '; N = 19; Head = 'RWGROCKCACHE originals=%d paired=%d unpairedNoRockWithin8m=%d ambiguousMultiRock=%d alreadyClaimed=%d resident=%d ms=%.1f'; K = 'rcc' }
         @{ P = 'ROCKPAIR node='; N = 6; Head = 'ROCKPAIR node=%s rock=%s dist2dM=%.1f'; K = 'rcc' }
         @{ P = 'ROCKPAIR-UNPAIRED '; N = 3; Head = 'ROCKPAIR-UNPAIRED node=%s'; K = 'rcc' }
         @{ P = 'ROCKPAIR-CAP '; N = 2; Head = 'ROCKPAIR-CAP lines=%d'; K = 'rcc' }
