@@ -66,6 +66,14 @@
 // NodeShuffle node, never an original to shuffle) if it carries that component OR is a legacy old-save
 // ANodeShuffleResourceNode (kept compiled so old saves still load; phased out by a re-roll). This
 // replaces every former IsA<ANodeShuffleResourceNode> identity test.
+// rwg-repclass-2: the entry's spawn class BEFORE any session substitution -- conversion restamp, else the
+// Base-only representative, else the original class. Shared by ResolveSpawnNodeClassPath and the eviction loop.
+static const FString& PreSubstituteSpawnPath(const FNodeShuffleEntry& E)
+{
+    return !E.RepClassSpawnPath.IsEmpty() ? E.RepClassSpawnPath
+        : (E.SpawnNodeClassPath.IsEmpty() ? E.NodeClassPath : E.SpawnNodeClassPath);
+}
+
 static bool NodeShuffleIsOurNode(const AActor* Node)
 {
     return IsValid(Node)
@@ -1705,7 +1713,8 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
 
         int32 RelocCursor = 0;
         int32 Converted = 0, Dropped = 0, KeptOccupied = 0, Recorded = 0;
-        int32 ConvOwnClassAvailable = 0, ConvSlotClassKept = 0; // rwg-repclass-1 REPCLASS-CONVERT census
+        int32 ConvOwnClassAvailable = 0, ConvRestamped = 0, ConvAlreadyOwn = 0, ConvKept = 0; // rwg-repclass-2 REPCLASS-CONVERT census
+        TMap<FString, TPair<int32, int32>> ConvRestampByRes; // modded dealt resource -> (restamped, kept)
         for (FNodeShuffleEntry& E : NewLayout)
         {
             if (E.bIsNewNode) { continue; }
@@ -1754,14 +1763,34 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                 E.bRayCasted = false; // re-settle onto terrain at the new spot
                 E.OverlapNudges = 0;
                 if (E.NodeClassPath.IsEmpty()) { E.NodeClassPath = SpawnableNodeClassPath; }
-                // rwg-repclass-1: census only -- converted copies keep their slot's class (this packet does not restamp them).
-                if (const FString* OwnByRes = NodeClassByResource.Find(E.AssignedResourceClassPath))
+                // rwg-repclass-2 RESTAMP. Runs AFTER Rec.OriginalNodeClassPath was taken above from E.NodeClassPath, and
+                // writes only E.RepClassSpawnPath -- E.NodeClassPath (the original's class) is never changed here.
+                // Predicate: the DEALT resource is modded (not /Game/) and its latched/registry class is own-mount rank 2
+                // and differs from the slot's class -> spawn that class. Vanilla deals and modded deals without a rank-2
+                // class keep the slot's class exactly as before.
+                E.RepClassSpawnPath.Reset();
+                if (!NodeShuffleRepClass::IsGenericNodeClassPath(E.AssignedResourceClassPath))
                 {
-                    if (NodeShuffleRepClass::IsOwnNodeClass(*OwnByRes, E.AssignedResourceClassPath))
+                    const FString* OwnByRes = NodeClassByResource.Find(E.AssignedResourceClassPath);
+                    const bool bOwnAvailable = OwnByRes && NodeShuffleRepClass::IsOwnNodeClass(*OwnByRes, E.AssignedResourceClassPath);
+                    TPair<int32, int32>& PerRes = ConvRestampByRes.FindOrAdd(E.AssignedResourceClassPath, TPair<int32, int32>(0, 0));
+                    if (bOwnAvailable) { ConvOwnClassAvailable++; }
+                    if (bOwnAvailable && *OwnByRes != E.NodeClassPath)
                     {
-                        ConvOwnClassAvailable++;
-                        if (*OwnByRes != E.NodeClassPath) { ConvSlotClassKept++; }
+                        E.RepClassSpawnPath = *OwnByRes;
+                        ConvRestamped++;
+                        PerRes.Key++;
+                        if (FNodeShuffleModule::AreDiagnosticsEnabled())
+                        {
+                            UE_LOG(LogNodeShuffle, Display, TEXT("RESTAMP node=%s from=%s to=%s res=%s"),
+                                *FPackageName::ObjectPathToObjectName(E.VanillaNodePath),
+                                *FPackageName::ObjectPathToObjectName(E.NodeClassPath),
+                                *FPackageName::ObjectPathToObjectName(*OwnByRes),
+                                *FPackageName::ObjectPathToObjectName(E.AssignedResourceClassPath));
+                        }
                     }
+                    else if (bOwnAvailable) { ConvAlreadyOwn++; }
+                    else { ConvKept++; PerRes.Value++; }
                 }
                 Converted++;
             }
@@ -1776,8 +1805,17 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
             TEXT("Hide & Replace conversion: %d unoccupied originals recorded for hiding, %d relocated to spawned nodes, %d left hidden-only, %d occupied originals kept in place"),
             Recorded, Converted, Dropped, KeptOccupied);
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("REPCLASS-CONVERT converted=%d ownClassAvailable=%d slotClassKept=%d"),
-            Converted, ConvOwnClassAvailable, ConvSlotClassKept);
+            TEXT("REPCLASS-CONVERT converted=%d ownClassAvailable=%d restamped=%d alreadyOwn=%d kept=%d"),
+            Converted, ConvOwnClassAvailable, ConvRestamped, ConvAlreadyOwn, ConvKept);
+        TArray<FString> ConvResKeys;
+        ConvRestampByRes.GetKeys(ConvResKeys);
+        ConvResKeys.Sort();
+        for (const FString& Res : ConvResKeys)
+        {
+            const TPair<int32, int32>& PerRes = ConvRestampByRes.FindChecked(Res);
+            UE_LOG(LogNodeShuffle, Display, TEXT("REPCLASS-CONVERT-RES res=%s restamped=%d kept=%d"),
+                *FPackageName::ObjectPathToObjectName(Res), PerRes.Key, PerRes.Value);
+        }
     }
     // Remove the now-detached inactive originals from the layout (they are pure hide records now —
     // keeping them as non-new inactive entries would do nothing and confuse the apply loop).
@@ -7266,7 +7304,7 @@ FString ANodeShuffleSubsystem::ResolveSpawnNodeClassPath(const FNodeShuffleEntry
     // Original NodeClassPath remains the identity used to find and hide the original. Num()==0 fast path
     // mirrors the established idiom elsewhere in this file (e.g. VanillaNodeCache/SteadyHiddenOriginals
     // early-outs) — the common case (no eviction ever happened) is a single int compare.
-    const FString& ClassPath = Entry.SpawnNodeClassPath.IsEmpty() ? Entry.NodeClassPath : Entry.SpawnNodeClassPath;
+    const FString& ClassPath = PreSubstituteSpawnPath(Entry);
     if (SpawnRefusedClassSubstitute.Num() == 0) { return ClassPath; }
     const FString* Sub = SpawnRefusedClassSubstitute.Find(ClassPath);
     return (Sub && !Sub->IsEmpty()) ? *Sub : ClassPath;
@@ -7563,7 +7601,7 @@ void ANodeShuffleSubsystem::EvictSpawnRefusingClass(const FString& RefusedPath, 
     for (FNodeShuffleEntry& E : Layout)
     {
         if (!E.bIsNewNode || !E.bActive || E.bPinned) { continue; }  // occupied originals + pinned: untouched
-        const FString& SpawnPath = E.SpawnNodeClassPath.IsEmpty() ? E.NodeClassPath : E.SpawnNodeClassPath;
+        const FString& SpawnPath = PreSubstituteSpawnPath(E);
         if (SpawnPath != RefusedPath) { continue; }
         if (DormantThisSession.Contains(E.EntryGuid)) { continue; } // dormant entries do no work
         if (SpawnedNodes.Contains(E.EntryGuid)) { continue; }       // defensive: cannot happen, class never spawned
@@ -7919,6 +7957,7 @@ void ANodeShuffleSubsystem::LogHereCensus() const
         // P3 (deckevict-1): surface spawn-parked / class-substituted state so NodeShuffle.Here can
         // diagnose a dead spot without a second launch.
         if (SpawnParkedThisSession.Contains(E.EntryGuid)) { Flags += TEXT("|SPAWN-PARKED"); }
+        if (!E.RepClassSpawnPath.IsEmpty()) { Flags += TEXT("|RESTAMPED"); } // rwg-repclass-2
         if (ResolveSpawnNodeClassPath(E) != E.NodeClassPath) { Flags += TEXT("|CLASS-SUBBED"); }
         UE_LOG(LogNodeShuffle, Display,
             TEXT("HERE: entry %s dist=%.0fm dz=%+.0fm [%s] at %s"),

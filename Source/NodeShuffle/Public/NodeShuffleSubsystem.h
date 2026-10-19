@@ -230,6 +230,12 @@ struct FNodeShuffleEntry
     // Keep its original identity above; this optional representative is only for spawning.
     UPROPERTY(SaveGame) FString SpawnNodeClassPath;
 
+    // rwg-repclass-2: the dealt modded resource's own node class (rank 2, NodeShuffleRepClass::IsOwnNodeClass),
+    // set by the Hide & Replace conversion when it differs from the slot's class. Spawn-only: NodeClassPath above
+    // stays the ORIGINAL's class (suppression/late-node identity, re-roll latch input). Never carried through the
+    // re-roll rebuild, so each roll recomputes it. Read first by PreSubstituteSpawnPath.
+    UPROPERTY(SaveGame) FString RepClassSpawnPath;
+
     // FIX C (overlap guard): how many times this new node's location has been
     // spiral-nudged off an overlap. Persisted so retries don't restart each load.
     // When it exceeds the cap the entry is resolved (deactivated) instead of being

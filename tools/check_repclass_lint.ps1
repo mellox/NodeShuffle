@@ -1,4 +1,4 @@
-# REPCLASS lint (2026-10-19, packet rwg-repclass-1): modded resources spawn their own mod's node class.
+# REPCLASS lint (2026-10-19, packets rwg-repclass-1/-2): modded resources spawn their own mod's node class.
 # Spec: _team/test-logs/2026-10-19-nodeshuffle-modclass-lookup-feasibility.md. LOADS and PINS every source file the packet touched.
 # Needles naming a forbidden or superseded literal are BUILT BY CONCATENATION so this file cannot match itself.
 #   R1  Ranking predicate: generic = /Game/ or /Script/FactoryGame.; base-game resource ranks every class 0 (first-seen kept);
@@ -12,7 +12,10 @@
 #   R5  Census lines: REPCLASS, REPCLASS-REGISTRY, REPCLASS-REGISTRY-QUERY, REPCLASS-CONVERT, DRESS-SKIP (x3), DRESS-NOSKIP (x2):
 #       Display, exact formats, exact args where single, specifier count == argument count; DRESS lines diagnostics-gated.
 #   R6  No repeated field inside any new format; the superseded first-seen CONFLICT line is gone.
-#   R7  Marker rwg-repclass-1 present once, rwg-capmat-1 absent.
+#   R7  Marker rwg-repclass-2 present once, rwg-repclass-1 absent.
+#   R8  (repclass-2) Conversion restamp: only a modded deal with a rank-2 class differing from the slot class; writes ONLY
+#       E.RepClassSpawnPath (SaveGame), AFTER Rec.OriginalNodeClassPath took E.NodeClassPath (trap i); the re-roll rebuild
+#       neither carries RepClassSpawnPath nor latches anything but Old.NodeClassPath (trap ii); resolver + eviction share it.
 # Mutants run in-file. Exit 0 = all hold; 1 = at least one does not; 2 = a pinned FILE is missing.
 
 $ErrorActionPreference = 'Stop'
@@ -119,13 +122,16 @@ function Invoke-RepclassChecks($T) {
         @('*FPackageName::ObjectPathToObjectName(Res)', 'RegQuery.Derived', 'RegMatch.MountFiltered', 'RegMatch.Loaded', 'RegMatch.Failed', 'RegMatch.Rejected', 'NodeShuffleRepClass::RegistryLoadCap', 'RegMatch.Matched.IsEmpty() ? TEXT("none") : *FPackageName::ObjectPathToObjectName(RegMatch.Matched)', 'RegMatch.Ms') 1
     $f += Check-Log $T 'R5' 'REPCLASS-REGISTRY-QUERY ' 'REPCLASS-REGISTRY-QUERY resources=%d derived=%d baseGameBp=%d modCandidates=%d cap=%d ms=%.1f' `
         @('RegistryWanted.Num()', 'RegQuery.Derived', 'RegQuery.BaseGameBp', 'RegQuery.CandidatePaths.Num()', 'NodeShuffleRepClass::RegistryLoadCap', 'RegQuery.Ms') 1
-    $f += Check-Log $T 'R5' 'REPCLASS-CONVERT ' 'REPCLASS-CONVERT converted=%d ownClassAvailable=%d slotClassKept=%d' @('Converted', 'ConvOwnClassAvailable', 'ConvSlotClassKept') 1
+    $f += Check-Log $T 'R5' 'REPCLASS-CONVERT ' 'REPCLASS-CONVERT converted=%d ownClassAvailable=%d restamped=%d alreadyOwn=%d kept=%d' @('Converted', 'ConvOwnClassAvailable', 'ConvRestamped', 'ConvAlreadyOwn', 'ConvKept') 1
+    $f += Check-Log $T 'R5' 'REPCLASS-CONVERT-RES ' 'REPCLASS-CONVERT-RES res=%s restamped=%d kept=%d' @('*FPackageName::ObjectPathToObjectName(Res)', 'PerRes.Key', 'PerRes.Value') 1
+    $f += Check-Log $T 'R5' 'RESTAMP ' 'RESTAMP node=%s from=%s to=%s res=%s' @('*FPackageName::ObjectPathToObjectName(E.VanillaNodePath)', '*FPackageName::ObjectPathToObjectName(E.NodeClassPath)', '*FPackageName::ObjectPathToObjectName(*OwnByRes)', '*FPackageName::ObjectPathToObjectName(E.AssignedResourceClassPath)') 1
+    if (-not (Ordered $s @('E.RepClassSpawnPath = *OwnByRes;', 'if (FNodeShuffleModule::AreDiagnosticsEnabled())', 'TEXT("RESTAMP node='))) { $f += '(R5) RESTAMP must be diagnostics-gated, after the restamp' }
     $f += Check-Log $T 'R5' 'DRESS-SKIP ' 'DRESS-SKIP node=%s class=%s reason=ownClass' $null 3
     $f += Check-Log $T 'R5' 'DRESS-NOSKIP ' 'DRESS-NOSKIP node=%s class=%s reason=ownClassNoOwnVisual' $null 2
     if ((Count $s 'if (bOwnClass && bSpawnDiag)') -ne 1 -or (Count $s 'if (bOwnClassAdopt && FNodeShuffleModule::AreDiagnosticsEnabled() && !OwnClassDressLogged.Contains(Entry.EntryGuid))') -ne 1 -or (Count $s 'if (FNodeShuffleModule::AreDiagnosticsEnabled() && !OwnClassDressLogged.Contains(Entry.EntryGuid))') -ne 1) { $f += '(R5) every DRESS-SKIP/NOSKIP line must be diagnostics-gated (adopt and redress once per node)' }
     if ((Count $T.hdr 'TSet<FGuid> OwnClassDressLogged;') -ne 1) { $f += '(R5) OwnClassDressLogged must be declared' }
     # R6
-    foreach ($p in @('REPCLASS res=', 'REPCLASS-REGISTRY res=', 'REPCLASS-REGISTRY-QUERY ', 'REPCLASS-CONVERT ', 'DRESS-SKIP ', 'DRESS-NOSKIP ')) {
+    foreach ($p in @('REPCLASS res=', 'REPCLASS-REGISTRY res=', 'REPCLASS-REGISTRY-QUERY ', 'REPCLASS-CONVERT ', 'REPCLASS-CONVERT-RES ', 'RESTAMP ', 'DRESS-SKIP ', 'DRESS-NOSKIP ')) {
         foreach ($l in @(Get-Logs $s $p)) {
             $dup = (Fmt-Fields $l.Fmt) | Group-Object | Where-Object { $_.Count -gt 1 }
             if ($dup) { $f += "(R6) repeated field(s) $(($dup | ForEach-Object { $_.Name }) -join ',') in '$($l.Fmt)'" }
@@ -133,8 +139,17 @@ function Invoke-RepclassChecks($T) {
     }
     if ((Count $s ('rep-class byResource ' + 'CONFLICT')) -ne 0 -or (Count $s ('NodeClassByResource' + 'ConflictLogged')) -ne 0) { $f += '(R6) the first-seen CONFLICT line and its set must be gone' }
     # R7
-    if ((Count $T.nsmod ('LOADED (2026-10-19-rwg-' + 'repclass-1)')) -ne 1 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'capmat-1')) -ne 0) { $f += '(R7) marker must be rwg-repclass-1 with rwg-capmat-1 absent' }
+    if ((Count $T.nsmod ('LOADED (2026-10-19-rwg-' + 'repclass-2)')) -ne 1 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'repclass-1')) -ne 0) { $f += '(R7) marker must be rwg-repclass-2 with rwg-repclass-1 absent' }
     if ((Count $s '#include "NodeShuffleRepClass.h"') -ne 1) { $f += '(R7) subsystem must include NodeShuffleRepClass.h' }
+    # R8 restamp (rwg-repclass-2)
+    if ((Count $s ('RepClassSpawnPath =' + ' ')) -ne 1 -or (Count $s 'E.RepClassSpawnPath = *OwnByRes;') -ne 1 -or (Count $s 'E.RepClassSpawnPath.Reset();') -ne 1) { $f += '(R8) RepClassSpawnPath is written only by the conversion restamp (one assignment, one reset)' }
+    if ((Count $s ('Old.' + 'RepClassSpawnPath')) -ne 0 -or (Count $s ('PreSubstituteSpawnPath(' + 'Old)')) -ne 0) { $f += '(R8) trap (ii): the re-roll rebuild must neither carry nor latch a restamped class' }
+    if ((Count $s 'LatchByResource(Old.OriginalResourceClassPath, Old.NodeClassPath, NodeClassByResource, RepClassStats);') -ne 1) { $f += '(R8) trap (ii): the re-roll latch must read the ORIGINAL class (Old.NodeClassPath)' }
+    if (-not (Ordered $s @('Rec.OriginalResourceClassPath = E.OriginalResourceClassPath;', 'if (!E.OriginalTrueLocation.IsNearlyZero()) { Rec.OriginalNodeClassPath = E.NodeClassPath; }', 'OriginalNodeRecord.Add(Rec);', 'if (E.NodeClassPath.IsEmpty()) { E.NodeClassPath = SpawnableNodeClassPath; }', 'E.RepClassSpawnPath.Reset();', 'if (!NodeShuffleRepClass::IsGenericNodeClassPath(E.AssignedResourceClassPath))', 'const bool bOwnAvailable = OwnByRes && NodeShuffleRepClass::IsOwnNodeClass(*OwnByRes, E.AssignedResourceClassPath);', 'if (bOwnAvailable && *OwnByRes != E.NodeClassPath)', 'E.RepClassSpawnPath = *OwnByRes;', 'Converted++;'))) { $f += '(R8) trap (i) + predicate: Rec takes E.NodeClassPath BEFORE the restamp; restamp only for a modded deal with a rank-2 class that differs from the slot class' }
+    $rs = $s.IndexOf('E.RepClassSpawnPath.Reset();'); $re = $s.IndexOf('Converted++;', [Math]::Max(0, $rs))
+    if ($rs -ge 0 -and $re -gt $rs) { $blk = $s.Substring($rs, $re - $rs); if ($blk.Contains('E.NodeClassPath =') -or $blk.Contains('Rec.')) { $f += '(R8) trap (i): the restamp block must not write E.NodeClassPath or any record field' } }
+    if ((Count $s 'return !E.RepClassSpawnPath.IsEmpty() ? E.RepClassSpawnPath') -ne 1 -or (Count $s 'const FString& ClassPath = PreSubstituteSpawnPath(Entry);') -ne 1 -or (Count $s 'const FString& SpawnPath = PreSubstituteSpawnPath(E);') -ne 1) { $f += '(R8) resolver and eviction loop must both read the restamp through PreSubstituteSpawnPath' }
+    if ((Count $T.hdr 'UPROPERTY(SaveGame) FString RepClassSpawnPath;') -ne 1) { $f += '(R8) RepClassSpawnPath must be a SaveGame field' }
     return $f
 }
 
@@ -159,7 +174,15 @@ $mutants = @(
     @{ Name = 'M17 DRESS-SKIP reason becomes a cause sentence'; Key = 'sub'; Expect = 'R5'; Find = 'reason=ownClass"),'; Repl = 'reason=the mod already dressed it"),' }
     @{ Name = 'M18 DRESS-SKIP ungated at spawn'; Key = 'sub'; Expect = 'R5'; Find = 'if (bOwnClass && bSpawnDiag)'; Repl = 'if (bOwnClass)' }
     @{ Name = 'M19 REPCLASS repeats a field'; Key = 'sub'; Expect = 'R6'; Find = ' replacedFirstSeen=%d source=%s"),'; Repl = ' replacedFirstSeen=%d source=%s seen=%d"),' }
-    @{ Name = 'M20 marker reverted'; Key = 'nsmod'; Expect = 'R7'; Find = ('2026-10-19-rwg-' + 'repclass-1'); Repl = ('2026-10-19-rwg-' + 'capmat-1') }
+    @{ Name = 'M20 marker reverted'; Key = 'nsmod'; Expect = 'R7'; Find = ('2026-10-19-rwg-' + 'repclass-2'); Repl = ('2026-10-19-rwg-' + 'repclass-1') }
+    @{ Name = 'M21 trap ii: rebuild carries the restamp'; Key = 'sub'; Expect = 'R8'; Find = '            E.SpawnNodeClassPath = Old.SpawnNodeClassPath;'; Repl = ('            E.SpawnNodeClassPath = Old.SpawnNodeClassPath; E.RepClassSpawnPath = Old.' + 'RepClassSpawnPath;') }
+    @{ Name = 'M22 trap ii: re-roll latch learns the copy class'; Key = 'sub'; Expect = 'R8'; Find = 'LatchByResource(Old.OriginalResourceClassPath, Old.NodeClassPath, NodeClassByResource, RepClassStats);'; Repl = ('LatchByResource(Old.OriginalResourceClassPath, PreSubstituteSpawnPath(' + 'Old), NodeClassByResource, RepClassStats);') }
+    @{ Name = 'M23 trap i: restamp writes the original class'; Key = 'sub'; Expect = 'R8'; Find = 'E.RepClassSpawnPath = *OwnByRes;'; Repl = 'E.RepClassSpawnPath = *OwnByRes; E.NodeClassPath = *OwnByRes;' }
+    @{ Name = 'M24 trap i: record takes the restamped class'; Key = 'sub'; Expect = 'R8'; Find = 'if (!E.OriginalTrueLocation.IsNearlyZero()) { Rec.OriginalNodeClassPath = E.NodeClassPath; }'; Repl = 'if (!E.OriginalTrueLocation.IsNearlyZero()) { Rec.OriginalNodeClassPath = PreSubstituteSpawnPath(E); }' }
+    @{ Name = 'M25 restamp vanilla deals too'; Key = 'sub'; Expect = 'R8'; Find = 'if (!NodeShuffleRepClass::IsGenericNodeClassPath(E.AssignedResourceClassPath))'; Repl = 'if (true)' }
+    @{ Name = 'M26 restamp without a rank-2 class'; Key = 'sub'; Expect = 'R8'; Find = 'const bool bOwnAvailable = OwnByRes && NodeShuffleRepClass::IsOwnNodeClass(*OwnByRes, E.AssignedResourceClassPath);'; Repl = 'const bool bOwnAvailable = OwnByRes != nullptr;' }
+    @{ Name = 'M27 eviction loop ignores the restamp'; Key = 'sub'; Expect = 'R8'; Find = 'const FString& SpawnPath = PreSubstituteSpawnPath(E);'; Repl = 'const FString& SpawnPath = E.SpawnNodeClassPath.IsEmpty() ? E.NodeClassPath : E.SpawnNodeClassPath;' }
+    @{ Name = 'M28 RESTAMP ungated'; Key = 'sub'; Expect = 'R5'; Find = "                        if (FNodeShuffleModule::AreDiagnosticsEnabled())`n                        {`n                            UE_LOG(LogNodeShuffle, Display, TEXT(`"RESTAMP"; Repl = "                        {`n                            UE_LOG(LogNodeShuffle, Display, TEXT(`"RESTAMP" }
 )
 $mutantFails = @()
 $caught = 0
@@ -178,5 +201,5 @@ if ($all.Count -gt 0) {
     Write-Host "REPCLASS LINT: FAIL -- $($all.Count) problem(s). Mutants caught $caught/$($mutants.Count)."
     exit 1
 }
-Write-Host "PASS: REPCLASS lint -- R1..R7 hold across $($text.Count) loaded files; mutants caught $caught/$($mutants.Count)."
+Write-Host "PASS: REPCLASS lint -- R1..R8 hold across $($text.Count) loaded files; mutants caught $caught/$($mutants.Count)."
 exit 0
