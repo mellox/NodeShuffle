@@ -3107,7 +3107,7 @@ bool ANodeShuffleSubsystem::CaptureOriginalVisualIfNeeded(AFGResourceNodeBase* N
     Cap.ResourceClassName = ShortName;
     Cap.MeshPath = Smc->GetStaticMesh()->GetPathName();
     // capmat-1 (diagnostics only): per-slot provenance of what the capture READ, before the MID unwrap.
-    struct FCapMatDiag { FString Path; FString MidParent; bool bIsMid; bool bOverride; bool bMeshDefault; };
+    struct FCapMatDiag { FString Path; FString MidParent; bool bIsMid; bool bOverride; bool bMeshDefault; int32 MidVec; int32 MidScalar; };
     TArray<FCapMatDiag> CapMatDiag;
     for (int32 i = 0; i < Smc->GetNumMaterials(); i++)
     {
@@ -3121,7 +3121,8 @@ bool ANodeShuffleSubsystem::CaptureOriginalVisualIfNeeded(AFGResourceNodeBase* N
             const bool bMeshDefault = RawMat == Smc->GetStaticMesh()->GetMaterial(i);
             CapMatDiag.Add({ RawMat ? RawMat->GetPathName() : FString(TEXT("null")),
                              RawMid ? (RawMid->Parent ? RawMid->Parent->GetPathName() : FString(TEXT("null"))) : FString(TEXT("-")),
-                             RawMid != nullptr, bOverride, bMeshDefault });
+                             RawMid != nullptr, bOverride, bMeshDefault,
+                             RawMid ? RawMid->VectorParameterValues.Num() : -1, RawMid ? RawMid->ScalarParameterValues.Num() : -1 });
         }
         // A dynamic instance's path is transient — persist its PARENT asset path instead.
         if (const UMaterialInstanceDynamic* Mid = Cast<UMaterialInstanceDynamic>(Mat))
@@ -3140,9 +3141,11 @@ bool ANodeShuffleSubsystem::CaptureOriginalVisualIfNeeded(AFGResourceNodeBase* N
         *ShortName, *Node->GetName(), Source, *Cap.MeshPath, Cap.MaterialPaths.Num(),
         Cap.MeshScale.X, Cap.MeshScale.Y, Cap.MeshScale.Z);
     // capmat-1 (2026-10-19, diagnostics only, Display behind EnableDiagnostics like ROCK-CENTER): WHAT the capture
-    // read and FROM WHERE. Field definitions live in the handoff, not in a legend. srcAgeS = world time minus the
-    // source component OWNER's CreationTime (both seconds); srcLoc = the component's world location; pawnDistM =
-    // metres from srcLoc to the nearest player pawn, -1 when no controller has a pawn.
+    // read and FROM WHERE. Field definitions live in the handoff, not in a legend. srcCreatedS = the source component
+    // OWNER's CreationTime and worldS = world time (both seconds; the owner's CreationTime has one writer, the
+    // SpawnActor path, so a level-loaded owner keeps 0); srcLoc = the component's world location; pawnDistM =
+    // metres from srcLoc to the nearest player pawn, -1 when no controller has a pawn; cpdN = the source component's
+    // Custom Primitive Data float count.
     if (FNodeShuffleModule::AreDiagnosticsEnabled())
     {
         const AActor* SrcActor = Smc->GetOwner();
@@ -3160,16 +3163,16 @@ bool ANodeShuffleSubsystem::CaptureOriginalVisualIfNeeded(AFGResourceNodeBase* N
                 if (NearestPawnDistSq < 0.0 || DSq < NearestPawnDistSq) { NearestPawnDistSq = DSq; }
             }
         }
-        const float SrcAgeS = (World && SrcActor) ? static_cast<float>(World->GetTimeSeconds() - SrcActor->CreationTime) : -1.0f;
         const float PawnDistM = NearestPawnDistSq < 0.0 ? -1.0f : static_cast<float>(FMath::Sqrt(NearestPawnDistSq) / 100.0);
-        UE_LOG(LogNodeShuffle, Display, TEXT("CAPTURE-SRC res=%s srcClass=%s srcComp=%s srcAgeS=%.1f srcLoc=%.0f/%.0f/%.0f pawnDistM=%.0f"),
-            *ShortName, SrcActor ? *SrcActor->GetClass()->GetName() : TEXT("null"), *Smc->GetName(), SrcAgeS,
-            SrcLoc.X, SrcLoc.Y, SrcLoc.Z, PawnDistM);
+        UE_LOG(LogNodeShuffle, Display, TEXT("CAPTURE-SRC res=%s srcClass=%s srcComp=%s srcCreatedS=%.1f worldS=%.1f srcLoc=%.0f/%.0f/%.0f pawnDistM=%.0f cpdN=%d"),
+            *ShortName, SrcActor ? *SrcActor->GetClass()->GetName() : TEXT("null"), *Smc->GetName(),
+            SrcActor ? SrcActor->CreationTime : -1.0f, World ? static_cast<float>(World->GetTimeSeconds()) : -1.0f,
+            SrcLoc.X, SrcLoc.Y, SrcLoc.Z, PawnDistM, Smc->GetCustomPrimitiveData().Data.Num());
         for (int32 Slot = 0; Slot < CapMatDiag.Num(); Slot++)
         {
             const FCapMatDiag& D = CapMatDiag[Slot];
-            UE_LOG(LogNodeShuffle, Display, TEXT("CAPTURE-MAT res=%s slot=%d path=%s isMID=%d midParent=%s override=%d meshDefault=%d"),
-                *ShortName, Slot, *D.Path, D.bIsMid ? 1 : 0, *D.MidParent, D.bOverride ? 1 : 0, D.bMeshDefault ? 1 : 0);
+            UE_LOG(LogNodeShuffle, Display, TEXT("CAPTURE-MAT res=%s slot=%d path=%s isMID=%d midParent=%s override=%d meshDefault=%d midVec=%d midScalar=%d"),
+                *ShortName, Slot, *D.Path, D.bIsMid ? 1 : 0, *D.MidParent, D.bOverride ? 1 : 0, D.bMeshDefault ? 1 : 0, D.MidVec, D.MidScalar);
         }
     }
     // dirtdress-1 (cold review): success wipes the retry budget — including a pending report an
@@ -3372,9 +3375,11 @@ void ANodeShuffleSubsystem::SpawnVisualRockForNode(AFGResourceNode* Node, UClass
             UMaterialInterface* const Loaded = MatPtrs[Slot];
             const bool bHasPath = Persisted && Persisted->MaterialPaths.IsValidIndex(Slot) && !Persisted->MaterialPaths[Slot].IsEmpty();
             const bool bApplied = Loaded != nullptr && RockMC->GetMaterial(Slot) == Loaded;
-            UE_LOG(LogNodeShuffle, Display, TEXT("DRESS-MAT res=%s slot=%d loaded=%d path=%s applied=%d"),
+            UE_LOG(LogNodeShuffle, Display, TEXT("DRESS-MAT res=%s slot=%d loaded=%d path=%s applied=%d ovr=%d shows=%s node=%s"),
                 *ResourceClass->GetName(), Slot, Loaded ? 1 : 0,
-                bHasPath ? *Persisted->MaterialPaths[Slot] : TEXT("null"), bApplied ? 1 : 0);
+                bHasPath ? *Persisted->MaterialPaths[Slot] : TEXT("null"), bApplied ? 1 : 0,
+                (RockMC->OverrideMaterials.IsValidIndex(Slot) && RockMC->OverrideMaterials[Slot] == Loaded) ? 1 : 0,
+                RockMC->GetMaterial(Slot) ? *RockMC->GetMaterial(Slot)->GetPathName() : TEXT("null"), *Node->GetName());
         }
     }
 

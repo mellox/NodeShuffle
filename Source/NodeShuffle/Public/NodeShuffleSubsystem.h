@@ -1683,8 +1683,7 @@ private:
     // pairing, no own mesh) — the caller then defers the steady-hidden mark so the original is
     // re-attempted next pass instead of losing its one shot per session (Fertilized-dirt bug).
     bool CaptureOriginalVisualIfNeeded(class AFGResourceNodeBase* Node);
-    // dirtdress-1: resources whose full capture-decision chain was already logged this session
-    // (diagnostics are once per resource per session, so retries can't spam the log).
+    // dirtdress-1, widened capmat-1: (resource|node class) keys whose capture-decision chain was already logged since session start or the last re-roll (Empty() at Subsystem.cpp:523).
     TSet<FString> CaptureChainLogged;
     // dirtdress-1 (cold review): terminal cap for the capture retry loop — same count-then-tombstone
     // idiom as ExternalDestroyCounts/DormantThisSession. A resource that reports capture-PENDING for
