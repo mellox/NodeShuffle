@@ -12,7 +12,7 @@
 #       differing pinned byte before returning false; no refusal format names a cause.
 #   V4  The bind census prints accepted + matchedEntry; no field repeats in the bind census, the signature-check line, either refusal
 #       tag or RWGVOIDBIND (the formats this packet wrote or edited).
-#   V5  Marker rwg-density-1 (rwg-rockcache-2 absent) present once, rwg-p4c-2 absent.
+#   V5  Marker rwg-density-2 (rwg-rockcache-2 absent) present once, rwg-p4c-2 absent.
 # Mutants run in-file. Exit 0 = all hold; 1 = at least one does not; 2 = a pinned FILE is missing.
 
 $ErrorActionPreference = 'Stop'
@@ -99,7 +99,7 @@ function Invoke-019Checks($T) {
     }
     if ($v4n -ne 7) { $f += "(V4) expected 7 scoped formats (bind census, signature check, 3 refusals, RWGSIGREFUSED, RWGVOIDBIND), found $v4n -- the duplicate scan would be vacuous" }
     # V5
-    if ((Count $T.nsmod ('LOADED (2026-10-19-rwg-' + 'density-1)')) -ne 1 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'rockcache-2')) -ne 0 -or (Count $T.nsmod ('2026-10-18-rwg-' + 'p4c-2')) -ne 0) { $f += '(V5) marker must be rwg-repclass-3 (rwg-repclass-2 absent) with rwg-p4c-2 absent' }
+    if ((Count $T.nsmod ('LOADED (2026-10-19-rwg-' + 'density-2)')) -ne 1 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'rockcache-2')) -ne 0 -or (Count $T.nsmod ('2026-10-18-rwg-' + 'p4c-2')) -ne 0) { $f += '(V5) marker must be rwg-repclass-3 (rwg-repclass-2 absent) with rwg-p4c-2 absent' }
     return $f
 }
 
@@ -115,7 +115,7 @@ $mutants = @(
     @{ Name = 'M8 lookup ignores the build number'; Key = 'hapi'; Expect = 'V1'; Find = 'if (A.Build == E.Build && A.SemVer == E.SemVer)'; Repl = 'if (A.SemVer == E.SemVer)' }
     @{ Name = 'M9 GetKillboxTop refusal warning removed'; Key = 'hapi'; Expect = 'V3'; Find = ' WarnSigRefused(TEXT("GetKillboxTop"), false);'; Repl = '' }
     @{ Name = 'M10 SigKillboxTop cmp imm8 wildcarded'; Key = 'hapi'; Expect = 'V2'; Find = '0x83,0xB9,-1,-1,-1,-1,0x00,0x0F'; Repl = '0x83,0xB9,-1,-1,-1,-1,-1,0x0F' }
-    @{ Name = 'M11 marker reverted'; Key = 'nsmod'; Expect = 'V5'; Find = ('2026-10-19-rwg-' + 'density-1'); Repl = ('2026-10-19-rwg-' + 'rockcache-2') }
+    @{ Name = 'M11 marker reverted'; Key = 'nsmod'; Expect = 'V5'; Find = ('2026-10-19-rwg-' + 'density-2'); Repl = ('2026-10-19-rwg-' + 'rockcache-2') }
     @{ Name = 'M13 census repeats the build field'; Key = 'hapi'; Expect = 'V4'; Find = "matchedEntry='%s' requiredResolved"; Repl = "matchedEntry='%s' build=%d requiredResolved" }
     @{ Name = 'M12 745 displacement note dropped from SigField'; Key = 'hapi'; Expect = 'V2'; Find = ', 745 = 0x00001008'; Repl = '' }
 )

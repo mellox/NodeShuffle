@@ -29,7 +29,7 @@ DEFINE_LOG_CATEGORY(LogNodeShuffle);
 
 // playtest-fixes-1: `NodeShuffle.Here` console command (backtick console). Logs the player's exact
 // position + a census of every NodeShuffle-relevant thing within 300 m (layout entries with state,
-// streamed originals with hidden/radiation status, water/depth test). Log-only and side-effect-free,
+// streamed originals with hidden/radiation status, water/depth test). Log-only and side-effect-free (except RwgRejectV3's latch grading if it is still pending),
 // so it is NOT gated behind EnableDiagnostics — it exists precisely so the user can report a location.
 static FAutoConsoleCommandWithWorldAndArgs GNodeShuffleHereCmd(
     TEXT("NodeShuffle.Here"),
@@ -583,7 +583,7 @@ void FNodeShuffleModule::StartupModule()
     // UNREVIEWED binary printing the REVIEWED t68-3 banner, which is the one state that makes a
     // deployed DLL indistinguishable from its parked predecessor in a log. Bump the tag in the same
     // action as the build, never after it.
-    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle 1.4.0 LOADED (2026-10-19-rwg-density-1)====="));
+    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle 1.4.0 LOADED (2026-10-19-rwg-density-2)====="));
     FNodeShuffleModule::LogAutoAllowExtractorsState(); // Packet G: log the CVar state once at startup
 
 #if !WITH_EDITOR

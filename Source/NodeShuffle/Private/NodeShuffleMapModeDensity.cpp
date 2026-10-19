@@ -17,7 +17,7 @@
 namespace
 {
     constexpr int32 RwgDensityGridN = 10;            // grid cells per side over the deal square (30 km square -> 3 km cells)
-    constexpr int32 RwgDensitySubSample = 8;         // land sub-sample points per cell side (8 x 8 = 64 per cell, 6400 per census)
+    constexpr int32 RwgDensitySubSample = 8;         // land sub-sample points per cell side (8 x 8 = 64 per cell, 6400 per census) // TODO(2026-10-19 rwg-density-1): cost unmeasured (predicted 200-400 ms/census); read landSampleMs, drop to 4 if > 400, gate or remove before a public release.
     constexpr int32 RwgStuckMinFailedAttempts = 3;   // stuck = at least this many failed spawn-attempt passes since the entry was last live
     constexpr int32 RwgStuckMaxEntryLines = 10;      // RWGSTUCK-ENTRY lines per census (nearest first)
     // The PLACECENSUS field name each tracked counter prints under (killboxSettleRefused prints on RWGKILLBOXSETTLE).
@@ -26,9 +26,9 @@ namespace
         TEXT("spawnTraceHit"), TEXT("spawnTraceMiss"), TEXT("spawnTraceFar"), TEXT("farTerrain"), TEXT("farCanopy"), TEXT("farWater"),
         TEXT("farOther"), TEXT("farSolid"), TEXT("rejectedRock"), TEXT("settledOnTerrain"), TEXT("noTerrainDefer"), TEXT("apiRedealCalls"),
         TEXT("fallbackNoApi"), TEXT("caveSettleTried"), TEXT("caveSettled"), TEXT("caveDeferred"), TEXT("caveEscaped"), TEXT("caveFar"),
-        TEXT("caveSolid"), TEXT("caveWater"), TEXT("caveRedealCave"), TEXT("caveRedealSurface"), TEXT("killboxSettleRefused") };
+        TEXT("caveSolid"), TEXT("caveWater"), TEXT("caveRedealCave"), TEXT("caveRedealSurface"), TEXT("killboxSettleRefused"), TEXT("deferredSettle") };
     constexpr int32 RwgStuckCounterN = UE_ARRAY_COUNT(RwgStuckCounterNames);
-    static_assert(RwgStuckCounterN == 23, "RwgStuckCounterNames must match RwgStuckCounter's switch (cases 0-22)");
+    static_assert(RwgStuckCounterN == 24, "RwgStuckCounterNames must match RwgStuckCounter's switch (cases 0-23)");
     FString RwgDensityShortPath(const FString& P) { int32 Dot = INDEX_NONE; return P.FindLastChar(TEXT('.'), Dot) ? P.Mid(Dot + 1) : P; }
 }
 
@@ -44,6 +44,7 @@ int32 ANodeShuffleSubsystem::RwgStuckCounter(int32 I) const
     case 15: return RwgPcCaveDeferred;  case 16: return RwgPcCaveEscaped;    case 17: return RwgPcCaveFar;
     case 18: return RwgPcCaveSolid;     case 19: return RwgPcCaveWater;      case 20: return RwgPcCaveRedealCave;
     case 21: return RwgPcCaveRedealSurface; case 22: return RwgKbSettleRefused;
+    case 23: return DeferredThisPass;
     default: return 0;
     }
 }
@@ -54,6 +55,7 @@ void ANodeShuffleSubsystem::RwgStuckBeforeAttempt(const FNodeShuffleEntry& E)
     RwgStuckSnap.SetNumZeroed(RwgStuckCounterN);
     for (int32 I = 0; I < RwgStuckCounterN; ++I) { RwgStuckSnap[I] = RwgStuckCounter(I); }
     bRwgStuckSnapWaterLocked = WaterLockedThisSession.Contains(E.EntryGuid);
+    RwgStuckSnapLoc = E.Location;
 }
 
 void ANodeShuffleSubsystem::RwgStuckAfterAttempt(const FNodeShuffleEntry& E)
@@ -69,7 +71,7 @@ void ANodeShuffleSubsystem::RwgStuckAfterAttempt(const FNodeShuffleEntry& E)
     }
     if (!bRwgStuckSnapWaterLocked && WaterLockedThisSession.Contains(E.EntryGuid)) { if (!Moved.IsEmpty()) { Moved += TEXT("+"); } Moved += TEXT("waterLockedNew"); }
     TPair<int32, FString>& T = RwgStuckTracker.FindOrAdd(E.EntryGuid, TPair<int32, FString>(0, FString()));
-    ++T.Key;
+    if (FVector::DistSquared2D(RwgStuckSnapLoc, E.Location) > 1.0) { T.Key = 0; } else { ++T.Key; } // moved in XY by this attempt: no attempt has run at the new spot
     T.Value = Moved.IsEmpty() ? FString(TEXT("none")) : Moved;
 }
 
@@ -119,6 +121,7 @@ void ANodeShuffleSubsystem::RwgEmitDensityCensus(const TCHAR* Trigger)
         ++InSquare;
         ++Active[Cy * N + Cx];
     }
+    const int32 LatchMaskBefore = (bRwgSeaUsable ? 1 : 0) | (bRwgVoidUsable ? 2 : 0) | (bRwgKillboxKnown ? 4 : 0);
     const double T0 = FPlatformTime::Seconds();
     for (int32 Cy = 0; Cy < N; ++Cy)
     {
@@ -136,10 +139,11 @@ void ANodeShuffleSubsystem::RwgEmitDensityCensus(const TCHAR* Trigger)
         }
     }
     const double LandMs = (FPlatformTime::Seconds() - T0) * 1000.0;
+    const int32 LatchMaskAfter = (bRwgSeaUsable ? 1 : 0) | (bRwgVoidUsable ? 2 : 0) | (bRwgKillboxKnown ? 4 : 0);
     double LandWeighted = 0.0;
     int32 LandTotal = 0;
     for (int32 I = 0; I < N * N; ++I) { LandTotal += Land[I]; LandWeighted += static_cast<double>(Land[I]) / (S * S); }
-    const double ExpectedFull = LandWeighted > 0.0 ? TotalActive / LandWeighted : 0.0;
+    const double ExpectedFull = LandWeighted > 0.0 ? InSquare / LandWeighted : 0.0;
     TArray<int32> Cells50;
     double Expected50Sum = 0.0;
     for (int32 Cy = 0; Cy < N; ++Cy)
@@ -157,10 +161,10 @@ void ANodeShuffleSubsystem::RwgEmitDensityCensus(const TCHAR* Trigger)
     Cells50.Sort();
     const int32 C50 = Cells50.Num();
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("RWGDENSITY: trigger=%s totalActive=%d inSquare=%d caveActive=%d gridN=%d cellM=%.0f landSamplesPerCell=%d landSamples=%d samples=%d landWeightedCells=%.2f expectedPerFullLandCell=%.2f landCells50=%d minEntriesLandCells50=%d lowerMedianEntriesLandCells50=%d maxEntriesLandCells50=%d meanExpectedLandCells50=%.2f seaUsable=%d voidUsable=%d killboxKnown=%d landSampleMs=%.0f layoutEntries=%d"),
+        TEXT("RWGDENSITY: trigger=%s totalActive=%d inSquare=%d caveActive=%d gridN=%d cellM=%.0f landSamplesPerCell=%d landSamples=%d samples=%d landWeightedCells=%.2f expectedPerFullLandCell=%.2f landCells50=%d minEntriesLandCells50=%d lowerMedianEntriesLandCells50=%d maxEntriesLandCells50=%d meanExpectedLandCells50=%.2f seaUsable=%d voidUsable=%d killboxKnown=%d landSampleMs=%.0f layoutEntries=%d latchesChangedDuringSample=%d"),
         Trigger, TotalActive, InSquare, CaveActive, N, Cell / 100.0, S * S, LandTotal, N * N * S * S, LandWeighted, ExpectedFull, C50,
         C50 > 0 ? Cells50[0] : 0, C50 > 0 ? Cells50[(C50 - 1) / 2] : 0, C50 > 0 ? Cells50.Last() : 0, C50 > 0 ? Expected50Sum / C50 : 0.0,
-        bRwgSeaUsable ? 1 : 0, bRwgVoidUsable ? 1 : 0, bRwgKillboxKnown ? 1 : 0, LandMs, Layout.Num());
+        bRwgSeaUsable ? 1 : 0, bRwgVoidUsable ? 1 : 0, bRwgKillboxKnown ? 1 : 0, LandMs, Layout.Num(), LatchMaskBefore != LatchMaskAfter ? 1 : 0);
 }
 
 void ANodeShuffleSubsystem::RwgDensityPassHook(const TArray<FVector>& Pawns, float AttemptRadiusCm)
@@ -212,10 +216,11 @@ void ANodeShuffleSubsystem::RwgEmitStuckCensus(const TArray<FVector>& Pawns, flo
             RwgApiSlopeTooSteep(Q, X, Y, RiseRun);
         }
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("RWGSTUCK-ENTRY: pass=%d entry=%s res=%s loc=%.0f/%.0f/%.0f distM=%.0f failedAttempts=%d lastAttemptCounters=%s settled=%d caveEntry=%d apiUsable=%d apiOutside=%d apiSurfaceZ=%.0f apiWater=%d volumeWater=%d rejectV3Bits=%d apiSlopeRiseRun=%.2f"),
+            TEXT("RWGSTUCK-ENTRY: pass=%d entry=%s res=%s loc=%.0f/%.0f/%.0f distM=%.0f failedAttemptsAtLoc=%d lastAttemptCounters=%s settled=%d caveEntry=%d apiUsable=%d apiOutside=%d apiSurfaceZ=%.0f apiWater=%d volumeWater=%d rejectV3Bits=%d apiSlopeRiseRun=%.2f parkedThisSession=%d dormantThisSession=%d"),
             RwgPcPasses, *E.EntryGuid.ToString().Left(8), *RwgDensityShortPath(E.AssignedResourceClassPath), X, Y, E.Location.Z,
-            FMath::Sqrt(Local[K].Key) / 100.0, T.Key, *T.Value, E.bRayCasted ? 1 : 0, E.bRwgCave ? 1 : 0, bQ ? 1 : 0, bOut ? 1 : 0, ApiZ,
-            Bits < 0 ? -1 : ((Bits & 5) != 0 ? 1 : 0), Bits < 0 ? -1 : ((Bits & 2) != 0 ? 1 : 0), Bits, RiseRun);
+            FMath::Sqrt(Local[K].Key) / 100.0, T.Key, *T.Value, E.bRayCasted ? 1 : 0, E.bRwgCave ? 1 : 0, bQ ? 1 : 0, bQ ? (bOut ? 1 : 0) : -1, ApiZ,
+            Bits < 0 ? -1 : ((Bits & 5) != 0 ? 1 : 0), Bits < 0 ? -1 : ((Bits & 2) != 0 ? 1 : 0), Bits, RiseRun,
+            SpawnParkedThisSession.Contains(E.EntryGuid) ? 1 : 0, DormantThisSession.Contains(E.EntryGuid) ? 1 : 0);
     }
 }
 
@@ -240,6 +245,12 @@ void ANodeShuffleSubsystem::LogHereDensity(const FVector& P, float HereRadiusCm)
         }
     }
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("HERE-DENSITY: within %.0f m: active=%d live=%d deferred=%d stuck=%d noFailedAttempt=%d; within %.0f m: active=%d live=%d deferred=%d stuck=%d noFailedAttempt=%d (deferred counts unspawned active entries whose tracked spawn attempts since last live all failed, stuck ones included; stuck needs %d such passes; noFailedAttempt is the rest of the unspawned active entries)"),
+        TEXT("HERE-DENSITY: within %.0f m: active=%d live=%d deferred=%d stuck=%d noFailedAttempt=%d; within %.0f m: active=%d live=%d deferred=%d stuck=%d noFailedAttempt=%d (deferred counts unspawned active entries with at least one failed spawn attempt since they were last live or last moved in XY, stuck ones included; stuck needs %d such passes; noFailedAttempt is the rest of the unspawned active entries)"),
         Radii[0] / 100.f, A[0], L[0], D[0], St[0], A[0] - L[0] - D[0], Radii[1] / 100.f, A[1], L[1], D[1], St[1], A[1] - L[1] - D[1], RwgStuckMinFailedAttempts);
+    // HERE-LAND (cold review F1): the deal's land predicate measured at the player's own position -- a 100 m lattice inside the 1000 m attempt
+    // radius, plus the RwgRejectV3 bits at the pawn's feet. Pure reads of the predicate; user-invoked only (NodeShuffle.Here on RWG).
+    ANodeShuffleSubsystem* const Self = const_cast<ANodeShuffleSubsystem*>(this); // RwgRejectV3 is non-const only for its session latches; this object is not const
+    const NodeShuffleMapMode::FRwgGroundQuery Q(GetWorld(), RwgGenerator.Get()); constexpr double Step = 10000.0; const double R = Radii[0]; int32 LandPts = 0, DiskPts = 0, PawnBits = -1; const double T0 = FPlatformTime::Seconds();
+    if (Q.IsUsable()) { for (double Dy = -R + 0.5 * Step; Dy < R; Dy += Step) { for (double Dx = -R + 0.5 * Step; Dx < R; Dx += Step) { if (Dx * Dx + Dy * Dy >= R * R) { continue; } ++DiskPts; if (Self->RwgDensityLandSample(Q, P.X + Dx, P.Y + Dy)) { ++LandPts; } } } if (!Q.Outside(P.X, P.Y)) { PawnBits = Self->RwgRejectV3(Q, FVector(P.X, P.Y, Q.SurfaceZ(P.X, P.Y))); } }
+    UE_LOG(LogNodeShuffle, Display, TEXT("HERE-LAND: within %.0f m: landPoints=%d diskPoints=%d spacingM=%.0f pawnRejectV3Bits=%d apiUsable=%d seaUsable=%d voidUsable=%d killboxKnown=%d landSampleMs=%.0f"), R / 100.0, LandPts, DiskPts, Step / 100.0, PawnBits, Q.IsUsable() ? 1 : 0, bRwgSeaUsable ? 1 : 0, bRwgVoidUsable ? 1 : 0, bRwgKillboxKnown ? 1 : 0, (FPlatformTime::Seconds() - T0) * 1000.0);
 }

@@ -1147,6 +1147,7 @@ private:
     TMap<FGuid, TPair<int32, FString>> RwgStuckTracker;             // session: entry -> (failed attempt passes since last live, counters moved by the last one)
     TArray<int32> RwgStuckSnap;                                     // counters read by RwgStuckBeforeAttempt
     bool bRwgStuckSnapWaterLocked = false;                          // the attempted entry was already water-locked before the attempt
+    FVector RwgStuckSnapLoc = FVector::ZeroVector;                  // entry location read by RwgStuckBeforeAttempt
     bool bRwgDensityEmitted = false;                                // session: RWGDENSITY printed (roll or load trigger)
     // ---- RWG P5 (2026-10-18): cave spots via the bound FPWCarvedCaves group. NodeShuffleMapModeCave.cpp. Every caller is RWG-only. ----
     bool RwgEnsureCaveCheck(const NodeShuffleMapMode::FRwgGroundQuery& Q);   // RWGCAVECHECK once per session; true = cave queries graded usable

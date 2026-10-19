@@ -1,6 +1,6 @@
-# check_density_lint.ps1 -- rwg-density-1: RWGDENSITY / RWGSTUCK / HERE-DENSITY (NodeShuffleMapModeDensity.cpp). Diagnostics only.
+# check_density_lint.ps1 -- rwg-density-2 (packet rwg-density-1 + cold-review fixes F1-F7): RWGDENSITY / RWGSTUCK / HERE-DENSITY / HERE-LAND (NodeShuffleMapModeDensity.cpp). Diagnostics only.
 # Source-text pins, then an in-file mutation suite (every mutant must be caught by the pin it names).
-#   D1  Formats: RWGDENSITY, RWGDENSITY-ROW, RWGDENSITY-SKIP, RWGSTUCK, RWGSTUCK-ENTRY, HERE-DENSITY -- one line each, exact head,
+#   D1  Formats: RWGDENSITY, RWGDENSITY-ROW, RWGDENSITY-SKIP, RWGSTUCK, RWGSTUCK-ENTRY, HERE-DENSITY, HERE-LAND -- one line each, exact head,
 #       spec count == arg count == expected; no field repeats (HERE-DENSITY repeats its five fields once per radius by design);
 #       every `name=` in a format is followed by a conversion (no legend example in field=value form).
 #   D2  Cadence: RWGSTUCK runs from RwgDensityPassHook behind the 12th-pass test, one call site.
@@ -11,8 +11,11 @@
 #       RwgSeaRedealPass and directly before RwgEmitPlaceCensus; RollLayout and LogHereCensus hooks behind an Rwg map-mode test.
 #   D6  Diagnostics only: the density file writes no layout, spawn, water-lock or PLACECENSUS state.
 #   D7  RWGDENSITY load trigger latches once (bRwgDensityEmitted set by every census); the roll trigger clears the stuck tracker.
-#   D8  Marker rwg-density-1 present once, rwg-rockcache-2 absent.
+#   D8  Marker rwg-density-2 present once, rwg-density-1 and rwg-rockcache-2 absent.
 #   D9  Grid constants pinned by value (10 cells per side, 8 x 8 land sub-sample).
+#   D10 Cold-review fixes F1-F7: HERE-LAND lattice + pawn bits (F1), XY-move reset of the failed-attempt count + legend (F2), the
+#       RWGSTUCK-ENTRY parked/dormant tail (F3, in D1), latch masks around the sample (F4), InSquare numerator (F5), apiOutside -1 and the
+#       deferredSettle counter (F6), the dated TODO on the sub-sample constant and the NodeShuffle.Here comment (F7).
 # Exit 0 = all hold; 1 = at least one does not; 2 = a pinned FILE is missing.
 
 $ErrorActionPreference = 'Stop'
@@ -74,12 +77,13 @@ function Invoke-DensityChecks($T) {
     $f = @()
     # D1
     $specs = @(
-        @{ P = 'RWGDENSITY: '; N = 21; Dup = $false; Head = 'RWGDENSITY: trigger=%s totalActive=%d inSquare=%d caveActive=%d gridN=%d cellM=%.0f landSamplesPerCell=%d landSamples=%d samples=%d landWeightedCells=%.2f expectedPerFullLandCell=%.2f landCells50=%d minEntriesLandCells50=%d lowerMedianEntriesLandCells50=%d maxEntriesLandCells50=%d meanExpectedLandCells50=%.2f' }
+        @{ P = 'RWGDENSITY: '; N = 22; Tail = ' layoutEntries=%d latchesChangedDuringSample=%d'; Dup = $false; Head = 'RWGDENSITY: trigger=%s totalActive=%d inSquare=%d caveActive=%d gridN=%d cellM=%.0f landSamplesPerCell=%d landSamples=%d samples=%d landWeightedCells=%.2f expectedPerFullLandCell=%.2f landCells50=%d minEntriesLandCells50=%d lowerMedianEntriesLandCells50=%d maxEntriesLandCells50=%d meanExpectedLandCells50=%.2f' }
         @{ P = 'RWGDENSITY-ROW: '; N = 7; Dup = $false; Head = 'RWGDENSITY-ROW: trigger=%s row=%d yMinM=%.0f xMinM=%.0f cellM=%.0f landSamplesPerCell=%d activeSlashLand=%s' }
         @{ P = 'RWGDENSITY-SKIP: '; N = 4; Dup = $false; Head = 'RWGDENSITY-SKIP: trigger=%s apiUsable=%d apiStatus=''%s'' layoutEntries=%d' }
         @{ P = 'RWGSTUCK: '; N = 8; Dup = $false; Head = 'RWGSTUCK: pass=%d threshold=%d attemptRadiusM=%.0f pawns=%d stuckInAttemptRadius=%d stuckTotalMap=%d trackedEntries=%d entryLinesPrinted=%d' }
-        @{ P = 'RWGSTUCK-ENTRY: '; N = 18; Dup = $false; Head = 'RWGSTUCK-ENTRY: pass=%d entry=%s res=%s loc=%.0f/%.0f/%.0f distM=%.0f failedAttempts=%d lastAttemptCounters=%s settled=%d caveEntry=%d apiUsable=%d apiOutside=%d apiSurfaceZ=%.0f apiWater=%d volumeWater=%d rejectV3Bits=%d apiSlopeRiseRun=%.2f' }
+        @{ P = 'RWGSTUCK-ENTRY: '; N = 20; Tail = ' apiSlopeRiseRun=%.2f parkedThisSession=%d dormantThisSession=%d'; Dup = $false; Head = 'RWGSTUCK-ENTRY: pass=%d entry=%s res=%s loc=%.0f/%.0f/%.0f distM=%.0f failedAttemptsAtLoc=%d lastAttemptCounters=%s settled=%d caveEntry=%d apiUsable=%d apiOutside=%d apiSurfaceZ=%.0f apiWater=%d volumeWater=%d rejectV3Bits=%d apiSlopeRiseRun=%.2f' }
         @{ P = 'HERE-DENSITY: '; N = 13; Dup = $true; Head = 'HERE-DENSITY: within %.0f m: active=%d live=%d deferred=%d stuck=%d noFailedAttempt=%d; within %.0f m: active=%d live=%d deferred=%d stuck=%d noFailedAttempt=%d (' }
+        @{ P = 'HERE-LAND: '; N = 10; Dup = $false; Head = 'HERE-LAND: within %.0f m: landPoints=%d diskPoints=%d spacingM=%.0f pawnRejectV3Bits=%d apiUsable=%d seaUsable=%d voidUsable=%d killboxKnown=%d landSampleMs=%.0f' }
     )
     foreach ($s in $specs) {
         $logs = @(Get-Logs $T.den $s.P)
@@ -87,6 +91,7 @@ function Invoke-DensityChecks($T) {
         $fmt = $logs[0].Fmt; $sc = Spec-Count $fmt; $ac = $logs[0].Args.Count
         if ($sc -ne $s.N -or $ac -ne $s.N) { $f += "(D1) $($s.P.Trim()): specs=$sc args=$ac expected=$($s.N)" }
         if (-not $fmt.StartsWith($s.Head)) { $f += "(D1) $($s.P.Trim()) must start with: $($s.Head)" }
+        if ($s.Tail -and -not $fmt.EndsWith($s.Tail)) { $f += "(D1) $($s.P.Trim()) must end with: $($s.Tail)" }
         $fields = @(Fmt-Fields $fmt)
         if (-not $s.Dup -and ($fields | Select-Object -Unique).Count -ne $fields.Count) { $f += "(D1) $($s.P.Trim()) repeats a field" }
         if ([regex]::IsMatch($fmt, '(?<![A-Za-z0-9])[A-Za-z][A-Za-z0-9]*=(?!''?%)')) { $f += "(D1) $($s.P.Trim()) has a name= not followed by a conversion (legend example?)" }
@@ -129,9 +134,29 @@ function Invoke-DensityChecks($T) {
     $roll = Body $T.den 'void ANodeShuffleSubsystem::RwgDensityOnRoll('
     if (-not (Ordered $roll @('RwgStuckTracker.Reset();', 'RwgEmitDensityCensus(TEXT("roll"));'))) { $f += '(D7) the roll trigger must clear the stuck tracker then print' }
     # D8
-    if ((Count $T.nsmod ('LOADED (2026-10-19-rwg-' + 'density-1)')) -ne 1 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'rockcache-2')) -ne 0) { $f += '(D8) marker must be rwg-density-1 with rwg-rockcache-2 absent' }
+    if ((Count $T.nsmod ('LOADED (2026-10-19-rwg-' + 'density-2)')) -ne 1 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'density-1')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'rockcache-2')) -ne 0) { $f += '(D8) marker must be rwg-density-2 with rwg-density-1 and rwg-rockcache-2 absent' }
     # D9
     if ((Count $T.den ('constexpr int32 RwgDensityGridN = ' + '10;')) -ne 1 -or (Count $T.den ('constexpr int32 RwgDensitySubSample = ' + '8;')) -ne 1) { $f += '(D9) grid constants must be 10 cells per side and an 8 x 8 sub-sample' }
+    # D10
+    $here = Body $T.den 'void ANodeShuffleSubsystem::LogHereDensity('
+    foreach ($n in @('constexpr double Step = 10000.0;', 'const double R = Radii[0];', 'for (double Dy = -R + 0.5 * Step; Dy < R; Dy += Step)', 'for (double Dx = -R + 0.5 * Step; Dx < R; Dx += Step)', 'if (Dx * Dx + Dy * Dy >= R * R) { continue; }', 'if (Self->RwgDensityLandSample(Q, P.X + Dx, P.Y + Dy)) { ++LandPts; }', 'if (!Q.Outside(P.X, P.Y)) { PawnBits = Self->RwgRejectV3(Q, FVector(P.X, P.Y, Q.SurfaceZ(P.X, P.Y))); }')) {
+        if ((Count $here $n) -ne 1) { $f += "(D10) F1 HERE-LAND: LogHereDensity must contain exactly once: $n" }
+    }
+    $before = Body $T.den 'void ANodeShuffleSubsystem::RwgStuckBeforeAttempt('
+    if ((Count $before 'RwgStuckSnapLoc = E.Location;') -ne 1) { $f += '(D10) F2 the pre-attempt snapshot must record the entry location' }
+    $after = Body $T.den 'void ANodeShuffleSubsystem::RwgStuckAfterAttempt('
+    if ((Count $after 'if (FVector::DistSquared2D(RwgStuckSnapLoc, E.Location) > 1.0) { T.Key = 0; } else { ++T.Key; }') -ne 1) { $f += '(D10) F2 the failed-attempt count must reset when the attempt moved the entry in XY' }
+    if ((Count $T.hdr 'FVector RwgStuckSnapLoc = FVector::ZeroVector;') -ne 1) { $f += '(D10) F2 header must declare RwgStuckSnapLoc once' }
+    if ((Count $T.den 'with at least one failed spawn attempt since they were last live or last moved in XY') -ne 1) { $f += '(D10) F2 the HERE-DENSITY legend must define deferred as since last live or last moved in XY' }
+    $latch = 'const int32 LatchMask{0} = (bRwgSeaUsable ? 1 : 0) | (bRwgVoidUsable ? 2 : 0) | (bRwgKillboxKnown ? 4 : 0);'
+    $emit2 = Body $T.den 'void ANodeShuffleSubsystem::RwgEmitDensityCensus('
+    if (-not (Ordered $emit2 @(($latch -f 'Before'), 'const double T0 = FPlatformTime::Seconds();', 'const double LandMs = (FPlatformTime::Seconds() - T0) * 1000.0;', ($latch -f 'After')))) { $f += '(D10) F4 the latch mask must be taken before the sample loop and again right after LandMs' }
+    if ((Count $T.den 'LatchMaskBefore != LatchMaskAfter ? 1 : 0);') -ne 1) { $f += '(D10) F4 latchesChangedDuringSample must print LatchMaskBefore != LatchMaskAfter' }
+    if ((Count $T.den 'InSquare / LandWeighted : 0.0;') -ne 1 -or (Count $T.den ('Total' + 'Active / LandWeighted')) -ne 0) { $f += '(D10) F5 expectedPerFullLandCell must divide InSquare' }
+    if ((Count $T.den 'bQ ? (bOut ? 1 : 0) : -1, ApiZ,') -ne 1) { $f += '(D10) F6 apiOutside must print -1 when the API is unusable' }
+    if ((Count $T.den 'case 23: return DeferredThisPass;') -ne 1 -or (Count $T.den 'TEXT("deferredSettle") };') -ne 1 -or (Count $T.den 'RwgStuckCounterN == 24') -ne 1) { $f += '(D10) F6 deferredSettle must be counter 23 (name, case, static_assert 24)' }
+    if (-not [regex]::IsMatch($T.den, 'constexpr int32 RwgDensitySubSample = 8;[^\n]*TODO\(2026-10-19 rwg-density-1\)')) { $f += '(D10) F7 the sub-sample constant must carry its dated TODO' }
+    if ((Count $T.nsmod "side-effect-free (except RwgRejectV3's latch grading if it is still pending)") -ne 1) { $f += '(D10) F1 the NodeShuffle.Here comment must name the RwgRejectV3 latch grading' }
     return $f
 }
 
@@ -139,7 +164,7 @@ $fails = @(Invoke-DensityChecks $text)
 Write-Host ("CONTROL (unmutated tree): {0}" -f $(if ($fails.Count -eq 0) { 'PASS' } else { "FAILING with $($fails.Count)" }))
 
 $mutants = @(
-    @{ Name = 'Y1 RWGDENSITY loses an argument'; Key = 'den'; Expect = 'D1'; Find = 'LandMs, Layout.Num());'; Repl = 'LandMs);' }
+    @{ Name = 'Y1 RWGDENSITY loses an argument'; Key = 'den'; Expect = 'D1'; Find = 'LandMs, Layout.Num(), LatchMaskBefore != LatchMaskAfter ? 1 : 0);'; Repl = 'LandMs);' }
     @{ Name = 'Y2 RWGSTUCK loses stuckTotalMap'; Key = 'den'; Expect = 'D1'; Find = 'stuckInAttemptRadius=%d stuckTotalMap=%d '; Repl = 'stuckInAttemptRadius=%d ' }
     @{ Name = 'Y3 RWGSTUCK-ENTRY loses the API water verdict'; Key = 'den'; Expect = 'D1'; Find = 'apiSurfaceZ=%.0f apiWater=%d '; Repl = 'apiSurfaceZ=%.0f ' }
     @{ Name = 'Y4 HERE-DENSITY legend gains a field example'; Key = 'den'; Expect = 'D1'; Find = 'stuck needs %d such passes'; Repl = ('stuck needs ' + 'failedAttempts=3') }
@@ -158,8 +183,27 @@ $mutants = @(
     @{ Name = 'Y17 diagnostic redeals an entry'; Key = 'den'; Expect = 'D6'; Find = '        ++StuckMap;'; Repl = ('        ++StuckMap; TryRedeal' + 'WaterLockedEntry(Layout[I]);') }
     @{ Name = 'Y18 load latch dropped (prints every pass)'; Key = 'den'; Expect = 'D7'; Find = "{`n    bRwgDensityEmitted = true;`n"; Repl = "{`n" }
     @{ Name = 'Y19 roll keeps the old tracker'; Key = 'den'; Expect = 'D7'; Find = '    RwgStuckTracker.Reset();'; Repl = '' }
-    @{ Name = 'Y20 marker reverted'; Key = 'nsmod'; Expect = 'D8'; Find = ('2026-10-19-rwg-' + 'density-1'); Repl = ('2026-10-19-rwg-' + 'rockcache-2') }
+    @{ Name = 'Y20 marker reverted'; Key = 'nsmod'; Expect = 'D8'; Find = ('2026-10-19-rwg-' + 'density-2'); Repl = ('2026-10-19-rwg-' + 'density-1') }
     @{ Name = 'Y21 sub-sample shrunk to 4'; Key = 'den'; Expect = 'D9'; Find = ('constexpr int32 RwgDensitySubSample = ' + '8;'); Repl = ('constexpr int32 RwgDensitySubSample = ' + '4;') }
+    @{ Name = 'Y22 HERE-LAND loses an argument'; Key = 'den'; Expect = 'D1'; Find = 'bRwgKillboxKnown ? 1 : 0, (FPlatformTime::Seconds() - T0) * 1000.0);'; Repl = 'bRwgKillboxKnown ? 1 : 0);' }
+    @{ Name = 'Y23 HERE-LAND lattice spacing doubled'; Key = 'den'; Expect = 'D10'; Find = 'constexpr double Step = 10000.0;'; Repl = 'constexpr double Step = 20000.0;' }
+    @{ Name = 'Y24 HERE-LAND samples the 300 m radius'; Key = 'den'; Expect = 'D10'; Find = 'const double R = Radii[0];'; Repl = 'const double R = Radii[1];' }
+    @{ Name = 'Y25 HERE-LAND pawn bits through a re-implemented term'; Key = 'den'; Expect = 'D10'; Find = 'PawnBits = Self->RwgRejectV3(Q, FVector(P.X, P.Y, Q.SurfaceZ(P.X, P.Y)));'; Repl = ('PawnBits = Self->RwgWet' + 'V2(Q, FVector(P.X, P.Y, Q.SurfaceZ(P.X, P.Y)));') }
+    @{ Name = 'Y26 HERE-LAND lattice no longer asks the deal land test'; Key = 'den'; Expect = 'D10'; Find = 'if (Self->RwgDensityLandSample(Q, P.X + Dx, P.Y + Dy)) { ++LandPts; }'; Repl = '{ ++LandPts; }' }
+    @{ Name = 'Y27 RWGSTUCK-ENTRY loses the parked/dormant tail'; Key = 'den'; Expect = 'D1'; Find = ' parkedThisSession=%d dormantThisSession=%d"),'; Repl = '"),' }
+    @{ Name = 'Y28 RWGSTUCK-ENTRY loses the dormant argument'; Key = 'den'; Expect = 'D1'; Find = ', DormantThisSession.Contains(E.EntryGuid) ? 1 : 0);'; Repl = ');' }
+    @{ Name = 'Y29 failedAttemptsAtLoc rename reverted'; Key = 'den'; Expect = 'D1'; Find = 'failedAttemptsAtLoc=%d'; Repl = 'failedAttempts=%d' }
+    @{ Name = 'Y30 stuck count not reset on an XY move'; Key = 'den'; Expect = 'D10'; Find = 'if (FVector::DistSquared2D(RwgStuckSnapLoc, E.Location) > 1.0) { T.Key = 0; } else { ++T.Key; }'; Repl = '++T.Key;' }
+    @{ Name = 'Y31 snapshot no longer records the location'; Key = 'den'; Expect = 'D10'; Find = "    RwgStuckSnapLoc = E.Location;`n"; Repl = '' }
+    @{ Name = 'Y32 HERE-DENSITY legend reverted'; Key = 'den'; Expect = 'D10'; Find = 'with at least one failed spawn attempt since they were last live or last moved in XY'; Repl = 'whose tracked spawn attempts since last live all failed' }
+    @{ Name = 'Y33 RWGDENSITY loses latchesChangedDuringSample'; Key = 'den'; Expect = 'D1'; Find = ' layoutEntries=%d latchesChangedDuringSample=%d"),'; Repl = ' layoutEntries=%d"),' }
+    @{ Name = 'Y34 latchesChangedDuringSample hard-coded to 0'; Key = 'den'; Expect = 'D10'; Find = 'LatchMaskBefore != LatchMaskAfter ? 1 : 0);'; Repl = '0);' }
+    @{ Name = 'Y35 latch mask after the sample is the mask before'; Key = 'den'; Expect = 'D10'; Find = 'const int32 LatchMaskAfter = (bRwgSeaUsable ? 1 : 0) | (bRwgVoidUsable ? 2 : 0) | (bRwgKillboxKnown ? 4 : 0);'; Repl = 'const int32 LatchMaskAfter = LatchMaskBefore;' }
+    @{ Name = 'Y36 expected-per-cell numerator back to TotalActive'; Key = 'den'; Expect = 'D10'; Find = 'InSquare / LandWeighted : 0.0;'; Repl = ('Total' + 'Active / LandWeighted : 0.0;') }
+    @{ Name = 'Y37 apiOutside reads 0 when the API is unusable'; Key = 'den'; Expect = 'D10'; Find = 'bQ ? (bOut ? 1 : 0) : -1, ApiZ,'; Repl = 'bOut ? 1 : 0, ApiZ,' }
+    @{ Name = 'Y38 deferredSettle counter case dropped'; Key = 'den'; Expect = 'D10'; Find = "    case 23: return DeferredThisPass;`n"; Repl = '' }
+    @{ Name = 'Y39 sub-sample TODO removed'; Key = 'den'; Expect = 'D10'; Find = '// TODO(2026-10-19 rwg-density-1): cost unmeasured'; Repl = '// cost unmeasured' }
+    @{ Name = 'Y40 NodeShuffle.Here comment reverted'; Key = 'nsmod'; Expect = 'D10'; Find = "side-effect-free (except RwgRejectV3's latch grading if it is still pending),"; Repl = 'side-effect-free,' }
 )
 $caught = 0
 $mutantFails = @()
@@ -177,5 +221,5 @@ if ($all.Count -gt 0) {
     Write-Host "DENSITY LINT: FAIL -- $($all.Count) problem(s). Mutants caught $caught/$($mutants.Count)."
     exit 1
 }
-Write-Host "PASS: DENSITY lint -- D1..D9 hold across $($text.Count) loaded files; mutants caught $caught/$($mutants.Count)."
+Write-Host "PASS: DENSITY lint -- D1..D10 hold across $($text.Count) loaded files; mutants caught $caught/$($mutants.Count)."
 exit 0
