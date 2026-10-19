@@ -1294,6 +1294,8 @@ private:
     // real-class redesign: modded-origin nodes whose native visual we've already rebuilt this session
     // (keyed by entry guid), so the per-node ProcessEvent rebuild fires once, not every tick (W2).
     TSet<FGuid> ModdedVisualRebuilt;
+    // rwg-repclass-1: adopt-branch DRESS-SKIP / DRESS-NOSKIP printed once per node per session (adopt re-runs every pass).
+    TSet<FGuid> OwnClassDressLogged;
     void AdoptRestoredSpawnedNodes();
     // coexist-veto-1 FIX A: REGISTRY-ONLY pre-pass run in BeginPlay, before the veto arms. Registers
     // restored spawned-node actors into the module's managed-node registry using the SAME identity

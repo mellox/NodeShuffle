@@ -8,6 +8,7 @@
 #include "NodeShuffleCentreShadow.h" // ns-t42-centreshadow: the one shadow-reading emitter
 #include "NodeShuffleTotallyInside.h" // ns-t53-totallyinside: the positive-only containment probe
 #include "NodeShuffleGroundIdentity.h" // ns-t45-verticaldiag: hit-identity + cave-store emitters
+#include "NodeShuffleRepClass.h" // rwg-repclass-1: per-resource node-class ranking + registry fallback + own-class predicate
 
 #include "EngineUtils.h"
 #include "TimerManager.h"
@@ -762,26 +763,32 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     // (SpawnRefusedClassSubstitute) exclusion. The form tiers (Spawnable*NodeClassPath) remain
     // untouched as the fallback for a resource this session never actually observed on a real node.
     TMap<FString, FString> NodeClassByResource;      // resource descriptor path -> node class path
-    TSet<FString> NodeClassByResourceConflictLogged; // diagnostics-only: resources already logged for a class conflict
+    // rwg-repclass-1: per-resource latch stats for the REPCLASS census (first seen, distinct classes seen,
+    // whether a better-ranked class replaced the first seen, whether the registry fallback supplied it).
+    TMap<FString, NodeShuffleRepClass::FStat> RepClassStats;
+    // rwg-repclass-1: RANKED latch (was first-seen-wins). Per resource, a later-seen class replaces the latched
+    // one only when RepClassShouldReplace (strictly higher RepClassRank: own-mount 2 > non-generic 1 > generic 0;
+    // see NodeShuffleRepClass.h). Ties keep the first seen, and a base-game (/Game/) resource ranks every class 0,
+    // so for it -- and for any resource with exactly one observed class -- this is the pre-change first-seen
+    // latch. ORDERING: NodeClassByResource is local to this function and read only by the Phase-2 stamp loop
+    // below; every LatchByResource call and the registry fallback sit textually before that loop
+    // (tools/check_repclass_lint.ps1 R2), so a replacement can never land after a copy was stamped.
     const auto LatchByResource = [](const FString& ResourcePath, const FString& ClassPath,
-        TMap<FString, FString>& Map, TSet<FString>& ConflictLogged)
+        TMap<FString, FString>& Map, TMap<FString, NodeShuffleRepClass::FStat>& Stats)
     {
         if (ResourcePath.IsEmpty() || ClassPath.IsEmpty()) { return; }
-        if (const FString* Existing = Map.Find(ResourcePath))
+        NodeShuffleRepClass::FStat& St = Stats.FindOrAdd(ResourcePath);
+        St.Seen.Add(ClassPath);
+        if (FString* Existing = Map.Find(ResourcePath))
         {
-            // Same resource, two different observed node classes across this roll's capture sites.
-            // Keep the FIRST (matches LatchRepresentative's first-seen semantics) -- genuinely
-            // interesting, not noise, so log it once per resource (diagnostics-gated; the map write
-            // itself is unconditional behavior above/below this branch).
-            if (*Existing != ClassPath && FNodeShuffleModule::AreDiagnosticsEnabled() && !ConflictLogged.Contains(ResourcePath))
+            if (NodeShuffleRepClass::RepClassShouldReplace(*Existing, ClassPath, ResourcePath))
             {
-                ConflictLogged.Add(ResourcePath);
-                UE_LOG(LogNodeShuffle, Display,
-                    TEXT("rep-class byResource CONFLICT: resource='%s' second class='%s' seen -- keeping first '%s'"),
-                    *ResourcePath, *ClassPath, **Existing);
+                *Existing = ClassPath;
+                St.bReplacedFirstSeen = true;
             }
             return;
         }
+        St.FirstSeen = ClassPath;
         Map.Add(ResourcePath, ClassPath);
     };
     int32 VanillaCount = 0;
@@ -891,7 +898,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                 {
                     LatchRepresentative(Old.NodeClassPath, SpawnableNodeClassPath, SpawnableVanillaNodeClassPath);
                 }
-                LatchByResource(Old.OriginalResourceClassPath, Old.NodeClassPath, NodeClassByResource, NodeClassByResourceConflictLogged);
+                LatchByResource(Old.OriginalResourceClassPath, Old.NodeClassPath, NodeClassByResource, RepClassStats);
             }
             VanillaCount++;
         }
@@ -982,7 +989,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                     {
                         LatchRepresentative(E.NodeClassPath, SpawnableNodeClassPath, SpawnableVanillaNodeClassPath);
                     }
-                    LatchByResource(E.OriginalResourceClassPath, E.NodeClassPath, NodeClassByResource, NodeClassByResourceConflictLogged);
+                    LatchByResource(E.OriginalResourceClassPath, E.NodeClassPath, NodeClassByResource, RepClassStats);
                 }
                 VanillaCount++;
                 ExperimentalAdded++;
@@ -1069,7 +1076,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                 if (!SpawnRefusedClassSubstitute.Contains(E.NodeClassPath))
                 {
                     LatchRepresentative(E.NodeClassPath, SpawnableNodeClassPath, SpawnableVanillaNodeClassPath);
-                    LatchByResource(E.OriginalResourceClassPath, E.NodeClassPath, NodeClassByResource, NodeClassByResourceConflictLogged);
+                    LatchByResource(E.OriginalResourceClassPath, E.NodeClassPath, NodeClassByResource, RepClassStats);
                 }
                 VanillaCount++;
                 bModded ? ModdedAdded++ : VanillaAdded++;
@@ -1182,7 +1189,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                 {
                     LatchRepresentative(BaseNode->GetClass()->GetPathName(), SpawnableNodeClassPath, SpawnableVanillaNodeClassPath);
                 }
-                LatchByResource(E.OriginalResourceClassPath, BaseNode->GetClass()->GetPathName(), NodeClassByResource, NodeClassByResourceConflictLogged);
+                LatchByResource(E.OriginalResourceClassPath, BaseNode->GetClass()->GetPathName(), NodeClassByResource, RepClassStats);
             }
             VanillaCount++;
         }
@@ -1546,6 +1553,69 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
             SolidExisting, SolidNew, LiquidExisting, LiquidNew, SolidDeck.Num(), LiquidDeck.Num());
     }
 
+    // rwg-repclass-1 (b) REGISTRY FALLBACK + REPCLASS census. Runs once per roll, BEFORE the Phase-2 stamp loop
+    // (the only reader of NodeClassByResource), and only for modded (non-/Game/) resources whose latched class
+    // is not own-mount rank 2 (or that have no latched class). One GetDerivedClassNames query; candidates are
+    // filtered by the resource's mount root and at most NodeShuffleRepClass::RegistryLoadCap are loaded per
+    // resource; a CDO whose GetResourceClass() path equals the resource is latched. Session-refused classes are
+    // excluded, matching the four live latch sites. Any load failure or mismatch leaves the live latch as is.
+    {
+        TArray<FString> RegistryWanted;
+        for (const TPair<FString, int32>& KV : VanillaResourceCounts)
+        {
+            if (NodeShuffleRepClass::IsGenericNodeClassPath(KV.Key)) { continue; }
+            const FString* Latched = NodeClassByResource.Find(KV.Key);
+            if (!Latched || NodeShuffleRepClass::RepClassRank(*Latched, KV.Key) < 2) { RegistryWanted.Add(KV.Key); }
+        }
+        RegistryWanted.Sort();
+        if (RegistryWanted.Num() > 0)
+        {
+            NodeShuffleRepClass::FRegistryQuery RegQuery;
+            NodeShuffleRepClass::QueryDerivedNodeClasses(RegQuery);
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("REPCLASS-REGISTRY-QUERY resources=%d derived=%d baseGameBp=%d modCandidates=%d cap=%d ms=%.1f"),
+                RegistryWanted.Num(), RegQuery.Derived, RegQuery.BaseGameBp, RegQuery.CandidatePaths.Num(),
+                NodeShuffleRepClass::RegistryLoadCap, RegQuery.Ms);
+            TMap<FString, UClass*> RegLoadCache;
+            for (const FString& Res : RegistryWanted)
+            {
+                NodeShuffleRepClass::FRegistryMatch RegMatch;
+                NodeShuffleRepClass::MatchByRegistry(Res, RegQuery, SpawnRefusedClassSubstitute, RegLoadCache, RegMatch);
+                const FString* Latched = NodeClassByResource.Find(Res);
+                if (!RegMatch.Matched.IsEmpty()
+                    && (!Latched || NodeShuffleRepClass::RepClassShouldReplace(*Latched, RegMatch.Matched, Res)))
+                {
+                    NodeClassByResource.Add(Res, RegMatch.Matched);
+                    RepClassStats.FindOrAdd(Res).bFromRegistry = true;
+                }
+                UE_LOG(LogNodeShuffle, Display,
+                    TEXT("REPCLASS-REGISTRY res=%s derived=%d mountFiltered=%d loaded=%d failed=%d rejected=%d cap=%d matched=%s ms=%.1f"),
+                    *FPackageName::ObjectPathToObjectName(Res), RegQuery.Derived, RegMatch.MountFiltered, RegMatch.Loaded,
+                    RegMatch.Failed, RegMatch.Rejected, NodeShuffleRepClass::RegistryLoadCap,
+                    RegMatch.Matched.IsEmpty() ? TEXT("none") : *FPackageName::ObjectPathToObjectName(RegMatch.Matched), RegMatch.Ms);
+            }
+        }
+        // REPCLASS census: one line per modded resource in the pool, plus any base-game resource that was
+        // observed on more than one class (that case printed the old diagnostics-gated CONFLICT line).
+        TArray<FString> CensusKeys;
+        VanillaResourceCounts.GetKeys(CensusKeys);
+        CensusKeys.Sort();
+        for (const FString& Res : CensusKeys)
+        {
+            const NodeShuffleRepClass::FStat* St = RepClassStats.Find(Res);
+            const int32 SeenN = St ? St->Seen.Num() : 0;
+            if (NodeShuffleRepClass::IsGenericNodeClassPath(Res) && SeenN < 2) { continue; }
+            const FString* Chosen = NodeClassByResource.Find(Res);
+            const TCHAR* Source = !Chosen ? TEXT("none") : ((St && St->bFromRegistry) ? TEXT("registry") : TEXT("live"));
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("REPCLASS res=%s chosen=%s rank=%s seen=%d replacedFirstSeen=%d source=%s"),
+                *FPackageName::ObjectPathToObjectName(Res),
+                Chosen ? *FPackageName::ObjectPathToObjectName(*Chosen) : TEXT("none"),
+                Chosen ? NodeShuffleRepClass::RepClassRankName(NodeShuffleRepClass::RepClassRank(*Chosen, Res)) : TEXT("none"),
+                SeenN, (St && St->bReplacedFirstSeen) ? 1 : 0, Source);
+        }
+    }
+
     // Phase 2: now that every active new node has its resource, stamp its form and
     // choose the correct node BP class to spawn from. A new oil (RF_LIQUID) node
     // must spawn from a liquid node class so oil extractors accept it; solid nodes
@@ -1635,6 +1705,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
 
         int32 RelocCursor = 0;
         int32 Converted = 0, Dropped = 0, KeptOccupied = 0, Recorded = 0;
+        int32 ConvOwnClassAvailable = 0, ConvSlotClassKept = 0; // rwg-repclass-1 REPCLASS-CONVERT census
         for (FNodeShuffleEntry& E : NewLayout)
         {
             if (E.bIsNewNode) { continue; }
@@ -1683,6 +1754,15 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                 E.bRayCasted = false; // re-settle onto terrain at the new spot
                 E.OverlapNudges = 0;
                 if (E.NodeClassPath.IsEmpty()) { E.NodeClassPath = SpawnableNodeClassPath; }
+                // rwg-repclass-1: census only -- converted copies keep their slot's class (this packet does not restamp them).
+                if (const FString* OwnByRes = NodeClassByResource.Find(E.AssignedResourceClassPath))
+                {
+                    if (NodeShuffleRepClass::IsOwnNodeClass(*OwnByRes, E.AssignedResourceClassPath))
+                    {
+                        ConvOwnClassAvailable++;
+                        if (*OwnByRes != E.NodeClassPath) { ConvSlotClassKept++; }
+                    }
+                }
                 Converted++;
             }
             else
@@ -1695,6 +1775,9 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
         UE_LOG(LogNodeShuffle, Display,
             TEXT("Hide & Replace conversion: %d unoccupied originals recorded for hiding, %d relocated to spawned nodes, %d left hidden-only, %d occupied originals kept in place"),
             Recorded, Converted, Dropped, KeptOccupied);
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("REPCLASS-CONVERT converted=%d ownClassAvailable=%d slotClassKept=%d"),
+            Converted, ConvOwnClassAvailable, ConvSlotClassKept);
     }
     // Remove the now-detached inactive originals from the layout (they are pure hide records now —
     // keeping them as non-new inactive entries would do nothing and confuse the apply loop).
@@ -3201,7 +3284,20 @@ void ANodeShuffleSubsystem::RedressSpawnedOfResource(const FString& ResourceClas
             // rock exclusion (cold review: a legacy node's own RockMesh must not be swept as "native").
             UNodeShuffleNodeComponent* LiveComp = UNodeShuffleNodeComponent::Find(*Live);
             ANodeShuffleResourceNode* LiveLegacy = LiveComp ? nullptr : Cast<ANodeShuffleResourceNode>(*Live);
-            HideNativeNodeMesh(*Live, LiveComp ? LiveComp->RockMesh : (LiveLegacy ? LiveLegacy->RockMesh : nullptr));
+            // rwg-repclass-1 (c): an own-class node (spawn/adopt branches) keeps its native visual here too.
+            UStaticMeshComponent* const LiveRock = LiveComp ? LiveComp->RockMesh : (LiveLegacy ? LiveLegacy->RockMesh : nullptr);
+            if (NodeShuffleRepClass::IsOwnNodeClass(ResolveSpawnNodeClassPath(Entry), Entry.AssignedResourceClassPath)
+                && NodeHasOwnVisual(*Live, LiveRock))
+            {
+                if (FNodeShuffleModule::AreDiagnosticsEnabled() && !OwnClassDressLogged.Contains(Entry.EntryGuid))
+                {
+                    OwnClassDressLogged.Add(Entry.EntryGuid);
+                    UE_LOG(LogNodeShuffle, Display, TEXT("DRESS-SKIP node=%s class=%s reason=ownClass"),
+                        *(*Live)->GetName(), *(*Live)->GetClass()->GetName());
+                }
+                continue;
+            }
+            HideNativeNodeMesh(*Live, LiveRock);
             SpawnVisualRockForNode(*Live, ResClass, Entry.EntryGuid);
             Redressed++;
         }
@@ -4419,7 +4515,28 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
                 RebuildNodeNativeVisual(*Existing);
                 ModdedVisualRebuilt.Add(Entry.EntryGuid);
             }
-            if (ResourceHasAuthoredLook(RC))
+            // rwg-repclass-1 (c): own-class node (see the spawn branch) keeps its native visual -- no hide, no dress.
+            const bool bOwnClassAdopt = NodeShuffleRepClass::IsOwnNodeClass(ResolveSpawnNodeClassPath(Entry), Entry.AssignedResourceClassPath);
+            const bool bOwnClassAdoptVisual = bOwnClassAdopt && NodeHasOwnVisual(*Existing, RockMC);
+            if (bOwnClassAdopt && FNodeShuffleModule::AreDiagnosticsEnabled() && !OwnClassDressLogged.Contains(Entry.EntryGuid))
+            {
+                OwnClassDressLogged.Add(Entry.EntryGuid);
+                if (bOwnClassAdoptVisual)
+                {
+                    UE_LOG(LogNodeShuffle, Display, TEXT("DRESS-SKIP node=%s class=%s reason=ownClass"),
+                        *(*Existing)->GetName(), *(*Existing)->GetClass()->GetName());
+                }
+                else
+                {
+                    UE_LOG(LogNodeShuffle, Display, TEXT("DRESS-NOSKIP node=%s class=%s reason=ownClassNoOwnVisual"),
+                        *(*Existing)->GetName(), *(*Existing)->GetClass()->GetName());
+                }
+            }
+            if (bOwnClassAdoptVisual)
+            {
+                if ((*Existing)->IsHidden()) { (*Existing)->SetActorHiddenInGame(false); }
+            }
+            else if (ResourceHasAuthoredLook(RC))
             {
                 // visfix-1: assigned resource's look wins — hide the native mesh (re-asserted each
                 // pass; BP component visibility resets from the CDO on reload) and dress if needed.
@@ -4952,7 +5069,29 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
         // dress (lithium's Alkali node, uncaptured modded ores, esc_ item resources = dirty quartz).
         RebuildNodeNativeVisual(Node);
         const bool bSpawnDiag = FNodeShuffleModule::AreDiagnosticsEnabled();
-        if (ResourceHasAuthoredLook(ResourceClass))
+        // rwg-repclass-1 (c): a node spawned from the assigned resource's OWN class (non-generic, same mount root as
+        // the resource; NodeShuffleRepClass::IsOwnNodeClass) keeps its native visual -- no hide, no captured dress --
+        // provided it renders one after spawn (NodeHasOwnVisual). Otherwise the pre-change branches below run.
+        const bool bOwnClass = NodeShuffleRepClass::IsOwnNodeClass(ResolvedNodeClassPath, Entry.AssignedResourceClassPath);
+        const bool bOwnClassVisual = bOwnClass && NodeHasOwnVisual(Node, Comp ? Comp->RockMesh : nullptr);
+        if (bOwnClass && bSpawnDiag)
+        {
+            if (bOwnClassVisual)
+            {
+                UE_LOG(LogNodeShuffle, Display, TEXT("DRESS-SKIP node=%s class=%s reason=ownClass"),
+                    *Node->GetName(), *SpawnClass->GetName());
+            }
+            else
+            {
+                UE_LOG(LogNodeShuffle, Display, TEXT("DRESS-NOSKIP node=%s class=%s reason=ownClassNoOwnVisual"),
+                    *Node->GetName(), *SpawnClass->GetName());
+            }
+        }
+        if (bOwnClassVisual)
+        {
+            if (Comp) { Comp->ForceVisible(); }
+        }
+        else if (ResourceHasAuthoredLook(ResourceClass))
         {
             HideNativeNodeMesh(Node, Comp ? Comp->RockMesh : nullptr);
             SpawnVisualRockForNode(Node, ResourceClass, Entry.EntryGuid);

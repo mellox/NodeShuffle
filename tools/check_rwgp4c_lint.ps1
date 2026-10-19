@@ -12,7 +12,7 @@
 #   K4  WELLROLL carries authoredFromLive/Saved + noAuthoredSatelliteReadNonEmpty + membersFromClaimWells/Sats with matching
 #       args; the counters are zeroed in RwgWellRollBegin; WELLCLAIMMEMBERS is line-initial in its TEXT(.
 #   K5  No field repeated inside the WELLROLL, WELLCLAIMMEMBERS or WELLCLAIM-RETRY format.
-#   K6  Marker rwg-capmat-1 (rwg-0-1-9-1 absent) present once (RWG 0.1.9, was rwg-p4c-2), rwg-p4c-2, rwg-p4c-1 and rwg-p5-2 absent.
+#   K6  Marker rwg-repclass-1 (rwg-capmat-1 absent) present once (RWG 0.1.9, was rwg-p4c-2), rwg-p4c-2, rwg-p4c-1 and rwg-p5-2 absent.
 #   K7  Header: forward declaration, both declarations, the five counters.
 #   K8  (review F1) RollWellLayout's purity record is written from the live read only on vanilla or when unrecorded (one
 #       live read in the body); the fill MEASURES live-vs-record purity (satsLivePurityDiffersFromRecord) and writes nothing.
@@ -105,7 +105,7 @@ function Invoke-P4cChecks($T) {
         if ($dup) { $f += "(K5) repeated field(s) $(($dup | ForEach-Object { $_.Name }) -join ',') in '$($fmt.Substring(0, [Math]::Min(40, $fmt.Length)))'" }
     }
     # K6
-    if ((Count $T.nsmod ('LOADED (2026-10-19-rwg-' + 'capmat-1)')) -ne 1 -or (Count $T.nsmod ('2026-10-18-rwg-' + '0-1-9-1')) -ne 0 -or (Count $T.nsmod ('2026-10-18-rwg-' + 'p4c-2')) -ne 0 -or (Count $T.nsmod ('2026-10-18-rwg-' + 'p4c-1')) -ne 0 -or (Count $T.nsmod ('2026-10-18-rwg-' + 'p5-2')) -ne 0) { $f += '(K6) marker must be rwg-capmat-1 (rwg-0-1-9-1 absent) with rwg-p4c-2, rwg-p4c-1 and rwg-p5-2 absent' }
+    if ((Count $T.nsmod ('LOADED (2026-10-19-rwg-' + 'repclass-1)')) -ne 1 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'capmat-1')) -ne 0 -or (Count $T.nsmod ('2026-10-18-rwg-' + 'p4c-2')) -ne 0 -or (Count $T.nsmod ('2026-10-18-rwg-' + 'p4c-1')) -ne 0 -or (Count $T.nsmod ('2026-10-18-rwg-' + 'p5-2')) -ne 0) { $f += '(K6) marker must be rwg-repclass-1 (rwg-capmat-1 absent) with rwg-p4c-2, rwg-p4c-1 and rwg-p5-2 absent' }
     # K7
     if ((Count $T.subsysh 'struct FNodeShuffleWellCensus; // RWG P4c') -ne 1 -or (Count $T.subsysh 'void RwgFillWellMembersFromClaims(FNodeShuffleWellCensus& Census, const TCHAR* Caller);') -ne 1 -or (Count $T.subsysh 'void RwgNoteWellAuthoredSource(FNodeShuffleWellEntry& E, bool bLiveCoreRead, const TArray<FNodeShuffleWellMember>& Members);') -ne 1 -or (Count $T.subsysh 'int32 RwgWrAuthoredLive = 0, RwgWrAuthoredSaved = 0, RwgWrAuthoredSatellite = 0;') -ne 1 -or (Count $T.subsysh 'int32 RwgWrMembersFromClaimWells = 0, RwgWrMembersFromClaimSats = 0;') -ne 1) { $f += '(K7) header declarations and counters' }
     # K8 (review F1)
