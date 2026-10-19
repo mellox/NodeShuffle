@@ -162,7 +162,7 @@ namespace
             if (A.Build == E.Build && A.SemVer == E.SemVer) { bVersion = true; A.Matched = FString::Printf(TEXT("{%s,%d}"), E.SemVer, E.Build); break; }
         }
         if (!bVersion) { A.Status = TEXT("versionMismatch"); UE_LOG(LogNodeShuffle, Warning, TEXT("RWGHEIGHTAPI-REFUSED: status=versionMismatch semVer='%s' build=%d accepted='%s' uplugin='%s' callsAllowed=0"), *A.SemVer, A.Build, *RwgAcceptedList(), *A.Uplugin); return; }
-        if (A.Required != 6) { A.Status = TEXT("exportMissing"); return; }
+        if (A.Required != 6) { A.Status = TEXT("exportMissing"); UE_LOG(LogNodeShuffle, Warning, TEXT("RWGHEIGHTAPI-REFUSED: status=exportMissing semVer='%s' build=%d matchedEntry='%s' requiredResolved=%d of 6 missing='%s' callsAllowed=0"), *A.SemVer, A.Build, *A.Matched, A.Required, *A.Missing); return; }
         // RWG P2b BYTE-SIGNATURE GATE (P2a cold review alternative 2): each export's leading bytes must equal the
         // build-705 disassembly (dumpbin /DISASM, 2026-10-17); -1 = wildcard. Mismatch = fail closed.
         // Wildcards: IsOutsideWorld's RIP displacement; SINCE RWG 0.1.9 (2026-10-18) the 4-byte member displacement of GetField
@@ -209,8 +209,8 @@ namespace
         // RWG 0.1.9: the member displacement GetField actually carries (bytes 3..6, little-endian) -- read, never compared.
         uint32 FieldDisp = 0;
         FMemory::Memcpy(&FieldDisp, static_cast<const uint8*>(reinterpret_cast<const void*>(A.GetField)) + 3, sizeof(FieldDisp));
-        UE_LOG(LogNodeShuffle, Display, TEXT("RWGHEIGHTAPI: signature check mismatched='%s' matchedEntry='%s' getFieldDisp=0x%X (empty list = all 8 masks match; each item is the export and the offset of its first differing pinned byte)"),
-            *SigBad, *A.Matched, FieldDisp);
+        UE_LOG(LogNodeShuffle, Display, TEXT("RWGHEIGHTAPI: signature check mismatched='%s' matchedEntry='%s' optionalResolved=%d getFieldDisp=0x%X (empty list = every resolved export matched its mask; the GetField value is its bytes 3..6 read as a little-endian uint32, a displacement only while GetField is absent from the list; each item is the export and the offset of its first differing pinned byte)"),
+            *SigBad, *A.Matched, A.Optional, FieldDisp);
         if (bRequiredSigBad) { UE_LOG(LogNodeShuffle, Warning, TEXT("RWGHEIGHTAPI-REFUSED: status=signatureMismatch semVer='%s' build=%d matchedEntry='%s' accepted='%s' mismatched='%s' callsAllowed=0"), *A.SemVer, A.Build, *A.Matched, *RwgAcceptedList(), *SigBad); }
         if (bRequiredSigBad) { A.Status = TEXT("signatureMismatch"); return; }
         // RWG P2e (2026-10-18): InSeaVolume, OPTIONAL like GMin/GMax -- resolved only after the version, export and required-signature

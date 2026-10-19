@@ -97,7 +97,7 @@ function Invoke-019Checks($T) {
         $dup = (Fmt-Fields $m.Groups[1].Value) | Group-Object | Where-Object { $_.Count -gt 1 }
         if ($dup) { $f += "(V4) repeated field(s) $(($dup | ForEach-Object { $_.Name }) -join ',') in '$($m.Groups[1].Value.Substring(0, [Math]::Min(40, $m.Groups[1].Value.Length)))'" }
     }
-    if ($v4n -ne 6) { $f += "(V4) expected 6 scoped formats (bind census, signature check, 2 refusals, RWGSIGREFUSED, RWGVOIDBIND), found $v4n -- the duplicate scan would be vacuous" }
+    if ($v4n -ne 7) { $f += "(V4) expected 7 scoped formats (bind census, signature check, 3 refusals, RWGSIGREFUSED, RWGVOIDBIND), found $v4n -- the duplicate scan would be vacuous" }
     # V5
     if ((Count $T.nsmod ('LOADED (2026-10-18-rwg-' + '0-1-9-1)')) -ne 1 -or (Count $T.nsmod ('2026-10-18-rwg-' + 'p4c-2')) -ne 0) { $f += '(V5) marker must be rwg-0-1-9-1 with rwg-p4c-2 absent' }
     return $f
