@@ -103,12 +103,13 @@ void ANodeShuffleSubsystem::RebuildRwgRockCache()
     struct FRwgRock { AFGNodeMeshActor* Actor; FVector Loc; const AFGResourceNodeBase* Back; double NearestFrackSq; FString Mesh; };
     TArray<FRwgRock> Rocks;
     TMap<FIntPoint, TArray<int32>> RockGrid;
-    int32 MeshActorsIterated = 0, WellExcluded = 0, ShapeRejected = 0, TransientRocks = 0;
+    int32 MeshActorsIterated = 0, WellExcluded = 0, ShapeRejected = 0, TransientRocks = 0, OwnerOursSkips = 0;
     for (TActorIterator<AFGNodeMeshActor> It(World); It; ++It)
     {
         AFGNodeMeshActor* MA = *It;
         if (!IsValid(MA)) { continue; }
         ++MeshActorsIterated;
+        if (AFGResourceNodeBase* OwnNode = Cast<AFGResourceNodeBase>(MA->GetOwner())) { if (NodeShuffleMapMode::IsOursForRwg(OwnNode)) { ++OwnerOursSkips; continue; } }
         // NOT filtered on RF_Transient: nothing this mod spawns is an AFGNodeMeshActor (our rocks are RockMesh
         // subobjects), and runtime-generated RWG actors may carry the flag -- skipping them would read as "not resident".
         if (MA->HasAnyFlags(RF_Transient)) { ++TransientRocks; }
@@ -134,7 +135,7 @@ void ANodeShuffleSubsystem::RebuildRwgRockCache()
         const int32 Idx = Rocks.Add({ MA, Only->GetComponentLocation(), Back, TNumericLimits<double>::Max(), MeshName });
         RockGrid.FindOrAdd(RwgRockCell(Rocks[Idx].Loc)).Add(Idx);
     }
-    // `resident` on the census: rock-shaped actors the iterator found THIS pass (premise-4 measurement).
+    // `rocksEligible` on the census: rock-shaped actors left AFTER the shape/name/well filters THIS pass (meshActorsIterated is the residency proxy).
     const int32 Resident = Rocks.Num();
 
     // ---- 2. WELL EXCLUSION (4): nearest fracking actor per rock, within range (the contest rule) ----
@@ -188,12 +189,9 @@ void ANodeShuffleSubsystem::RebuildRwgRockCache()
         AFGResourceNodeBase* Node = Claimants[Ci];
         const bool bRecorded = Ci < RecordedClaimants;
         if (SeenOrig.Contains(Node)) { if (bRecorded) { ++Ineligible; } continue; } // a duplicate record, or a recorded node met again
-        if (IsFrackingActor(Node) || Node->GetResourceNodeType() == EResourceNodeType::Geyser
-            || Node->IsA<AFGResourceDeposit>() || NodeShuffleMapMode::IsOursForRwg(Node))
-        {
-            if (bRecorded) { ++Ineligible; }
-            continue;
-        }
+        const bool bCacheIneligible = IsFrackingActor(Node) || Node->GetResourceNodeType() == EResourceNodeType::Geyser || Node->IsA<AFGResourceDeposit>() || NodeShuffleMapMode::IsOursForRwg(Node);
+        if (bRecorded && bCacheIneligible) { ++Ineligible; SeenOrig.Add(Node); continue; } // recorded geyser/deposit/well: neither claimant nor competitor, as before
+        if (!bRecorded && IsFrackingActor(Node)) { continue; } // wells compete through the NearestFrackSq contest instead
         SeenOrig.Add(Node);
         const int32 O = Origs.Add(Node);
         if (bRecorded) { RecordedOrigs = Origs.Num(); }
@@ -282,6 +280,7 @@ void ANodeShuffleSubsystem::RebuildRwgRockCache()
         {
             ++NoRock;
             if (HadContested[O]) { ++NoRockWellContested; }
+            if (bDiag) { if (ContendedLines < RwgRockPairContendedCap) { ++ContendedLines; const FVector L = Node->GetActorLocation(); UE_LOG(LogNodeShuffle, Display, TEXT("ROCKPAIR-NOCAND node=%s wellContested=%d atM=%.0f/%.0f"), *Node->GetName(), HadContested[O] ? 1 : 0, L.X / 100.0, L.Y / 100.0); } else { ++ContendedSuppressed; } }
         }
         else
         {
@@ -305,15 +304,16 @@ void ANodeShuffleSubsystem::RebuildRwgRockCache()
     }
 
     const double ElapsedMs = (FPlatformTime::Seconds() - StartSeconds) * 1000.0;
-    if (bFirstPassAfterRollOrLoad || Paired != RwgRockCacheLastPaired)
+    const bool bNewMaxMs = ElapsedMs > RwgRockCacheMaxMs + 1.0; if (ElapsedMs > RwgRockCacheMaxMs) { RwgRockCacheMaxMs = ElapsedMs; }
+    if (bFirstPassAfterRollOrLoad || Paired != RwgRockCacheLastPaired || bNewMaxMs)
     {
         RwgRockCacheLastPaired = Paired;
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("RWGROCKCACHE originals=%d paired=%d unpairedNoRockWithin8m=%d ambiguousMultiRock=%d alreadyClaimed=%d resident=%d ms=%.1f")
-            TEXT(" records=%d pathUnresolved=%d ineligible=%d competitors=%d competitorClaims=%d meshActorsIterated=%d transientMeshActors=%d wellExcluded=%d shapeRejected=%d noRockWellContested=%d linkedElsewhereSkips=%d firstPassAfterRollOrLoad=%d"),
+            TEXT("RWGROCKCACHE originals=%d paired=%d unpairedNoCandidateWithin8m=%d ambiguousMultiRock=%d alreadyClaimed=%d rocksEligible=%d ms=%.1f")
+            TEXT(" records=%d pathUnresolved=%d ineligible=%d competitors=%d competitorClaims=%d meshActorsIterated=%d transientMeshActors=%d wellExcluded=%d shapeRejected=%d noRockWellContested=%d linkedElsewhereSkips=%d firstPassAfterRollOrLoad=%d ownerOursSkips=%d"),
             RecordedOrigs, Paired, NoRock, Ambiguous, AlreadyClaimed, Resident, ElapsedMs,
             OriginalNodeRecord.Num(), PathUnresolved, Ineligible, Origs.Num() - RecordedOrigs, CompetitorClaims,
             MeshActorsIterated, TransientRocks, WellExcluded, ShapeRejected,
-            NoRockWellContested, LinkedElsewhereSkips, bFirstPassAfterRollOrLoad ? 1 : 0);
+            NoRockWellContested, LinkedElsewhereSkips, bFirstPassAfterRollOrLoad ? 1 : 0, OwnerOursSkips);
     }
 }

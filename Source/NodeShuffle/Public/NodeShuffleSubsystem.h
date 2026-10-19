@@ -2087,6 +2087,7 @@ private:
     // no engine link to its rock), every ApplyLayout pass, only when the map mode is Rwg. Defined in
     // NodeShuffleRwgRockCache.cpp -- read its header for the pairing predicate and the well exclusion.
     void RebuildRwgRockCache();
+    double RwgRockCacheMaxMs = 0.0;      // RWGROCKCACHE re-print key (a new maximum of the rebuild's ms, +1.0 ms hysteresis)
     int32 RwgRockCacheLastPaired = -1;   // RWGROCKCACHE re-print key (paired count of the last printed line)
     bool bRwgCaptureSkipLogged = false;  // one-shot RWGROCKCACHE-CAPTURE-SKIP line (CaptureOriginalVisualIfNeeded)
     int32 RwgRockHideCensusLast[6] = { -1, -1, -1, -1, -1, -1 }; // RWGROCKHIDE delta key (SuppressOriginalNodes)

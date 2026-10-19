@@ -355,7 +355,8 @@ void ANodeShuffleSubsystem::RwgLogRock(bool bPerNode)
                 OwnMeshes, Over.Num(), MeshActorHere, InstRockHere, *List);
         }
     }
+    int32 StrictCachePaired = 0; for (int32 I = 0; I < NStrict; ++I) { if (FindMeshActorForNode(Strict[I])) { ++StrictCachePaired; } }
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("RWGROCK2: sampled=%d strictSampled=%d depositsSampled=%d linked=%d own=%d nearMeshActor=%d nearInstancedRockMesh=%d none=%d"),
-        Nodes.Num(), NStrict, Nodes.Num() - NStrict, Linked, Own, NearMeshActor, NearInstRock, None);
+        TEXT("RWGROCK2: sampled=%d strictSampled=%d depositsSampled=%d linked=%d own=%d nearMeshActor=%d nearInstancedRockMesh=%d none=%d strictCachePaired=%d (nearMeshActor counts 8 m overlap-query hits; a mesh actor NodeShuffle hid has its actor collision disabled)"),
+        Nodes.Num(), NStrict, Nodes.Num() - NStrict, Linked, Own, NearMeshActor, NearInstRock, None, StrictCachePaired);
 }

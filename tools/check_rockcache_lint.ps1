@@ -1,4 +1,4 @@
-# check_rockcache_lint.ps1 -- rwg-rockcache-1: RWG rock pairing into MeshActorCache (NodeShuffleRwgRockCache.cpp).
+# check_rockcache_lint.ps1 -- rwg-rockcache-2: RWG rock pairing into MeshActorCache (NodeShuffleRwgRockCache.cpp).
 # Source-text pins, then an in-file mutation suite (every mutant must be caught by the pin it names).
 #   K1  ApplyLayout's RWG branch calls RebuildRwgRockCache, directly after the byte-identical Vanilla gate and before
 #       the hide pass; the old combined skip-once text (pairing + orphan cleanup) is gone; exactly one call site.
@@ -11,12 +11,12 @@
 #       kept originals in VanillaNodeCache compete for rocks but are never cached.
 #   K5  The new .cpp resets the cache once, adds once, runs the T64 stream-in hide immediately after the add, and
 #       never writes the engine back-link.
-#   K6  Census formats: RWGROCKCACHE (brief field order + appended fields), ROCKPAIR, ROCKPAIR-UNPAIRED, ROCKPAIR-CAP,
+#   K6  Census formats: RWGROCKCACHE (brief field order + appended fields), ROCKPAIR, ROCKPAIR-NOCAND, ROCKPAIR-UNPAIRED, ROCKPAIR-CAP,
 #       RWGROCKHIDE (carries rocksHiddenWithNode), RWGROCKCACHE-CAPTURE-SKIP -- spec count == arg count == expected,
 #       no field repeats.
 #   K7  Vanilla inertness: both Vanilla gates byte-identical; the capture skip, the backstop attribution set and the
 #       RWGROCKHIDE line are each behind an Rwg map-mode test.
-#   K8  Marker rwg-rockcache-1 present once, rwg-repclass-3 absent.
+#   K8  Marker rwg-rockcache-2 present once, rwg-repclass-3 absent.
 # Exit 0 = all hold; 1 = at least one does not; 2 = a pinned FILE is missing.
 
 $ErrorActionPreference = 'Stop'
@@ -92,8 +92,10 @@ function Invoke-RockcacheChecks($T) {
         ('if (MeshName.Contains(TEXT("' + 'Frack"))) { ++WellExcluded; continue; }'),
         'if (Rocks[R].NearestFrackSq <= D) { HadContested[O] = true; continue; }',
         'if (!IsValid(*It) || !IsFrackingActor(*It)) { continue; }',
-        'if (IsFrackingActor(Node) || Node->GetResourceNodeType() == EResourceNodeType::Geyser',
-        '|| Node->IsA<AFGResourceDeposit>() || NodeShuffleMapMode::IsOursForRwg(Node))',
+        'const bool bCacheIneligible = IsFrackingActor(Node) || Node->GetResourceNodeType() == EResourceNodeType::Geyser || Node->IsA<AFGResourceDeposit>() || NodeShuffleMapMode::IsOursForRwg(Node);',
+        'if (bRecorded && bCacheIneligible) { ++Ineligible; SeenOrig.Add(Node); continue; }',
+        'if (!bRecorded && IsFrackingActor(Node)) { continue; }',
+        'if (AFGResourceNodeBase* OwnNode = Cast<AFGResourceNodeBase>(MA->GetOwner())) { if (NodeShuffleMapMode::IsOursForRwg(OwnNode)) { ++OwnerOursSkips; continue; } }',
         'if (Rocks[R].Back && Rocks[R].Back != Node) { ++LinkedElsewhereSkips; continue; }')) {
         if ((Count $T.rcc $n) -ne 1) { $f += "(K3) well/originals exclusion missing: $n" }
     }
@@ -111,8 +113,9 @@ function Invoke-RockcacheChecks($T) {
     if ((Count $T.rcc ('SetNode' + 'Actor(')) -ne 0) { $f += '(K5) the RWG rebuild must never write the engine back-link' }
     # K6
     $specs = @(
-        @{ P = 'RWGROCKCACHE '; N = 19; Head = 'RWGROCKCACHE originals=%d paired=%d unpairedNoRockWithin8m=%d ambiguousMultiRock=%d alreadyClaimed=%d resident=%d ms=%.1f'; K = 'rcc' }
+        @{ P = 'RWGROCKCACHE '; N = 20; Head = 'RWGROCKCACHE originals=%d paired=%d unpairedNoCandidateWithin8m=%d ambiguousMultiRock=%d alreadyClaimed=%d rocksEligible=%d ms=%.1f'; K = 'rcc' }
         @{ P = 'ROCKPAIR node='; N = 6; Head = 'ROCKPAIR node=%s rock=%s dist2dM=%.1f'; K = 'rcc' }
+        @{ P = 'ROCKPAIR-NOCAND '; N = 4; Head = 'ROCKPAIR-NOCAND node=%s wellContested=%d atM=%.0f/%.0f'; K = 'rcc' }
         @{ P = 'ROCKPAIR-UNPAIRED '; N = 3; Head = 'ROCKPAIR-UNPAIRED node=%s'; K = 'rcc' }
         @{ P = 'ROCKPAIR-CAP '; N = 2; Head = 'ROCKPAIR-CAP lines=%d'; K = 'rcc' }
         @{ P = 'RWGROCKHIDE '; N = 9; Head = 'RWGROCKHIDE hide-pass=%d nodesHidden=%d rocksHiddenWithNode=%d'; K = 'sub' }
@@ -137,7 +140,10 @@ function Invoke-RockcacheChecks($T) {
     if ((Count $T.sub "if (bRwgRockAttrib)`n    {`n        const int32 RwgHide[6]") -ne 1) { $f += '(K7) RWGROCKHIDE must be behind the Rwg flag' }
     if ((Count $T.sub "            if (bRwgRockAttrib)`n            {`n                if (RockOwner && RwgCachePairedRocks.Contains(RockOwner))") -ne 1) { $f += '(K7) backstop hit attribution must be behind the Rwg flag' }
     # K8
-    if ((Count $T.nsmod ('LOADED (2026-10-19-rwg-' + 'rockcache-1)')) -ne 1 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'repclass-3')) -ne 0) { $f += '(K8) marker must be rwg-rockcache-1 with rwg-repclass-3 absent' }
+    if ((Count $T.nsmod ('LOADED (2026-10-19-rwg-' + 'rockcache-2)')) -ne 1 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'repclass-3')) -ne 0) { $f += '(K8) marker must be rwg-rockcache-2 with rwg-repclass-3 absent' }
+    if ((Count $T.rcc ('if (D >= Range' + 'Sq) { continue; }')) -ne 1) { $f += '(K2) the 8 m pairing range test must be present once' }
+    if ((Count $T.rcc ('if (!IsNodeRockMeshName(MeshName, TArray<FString>())) { ++Shape' + 'Rejected; continue; }')) -ne 1) { $f += '(K3) rocks must pass IsNodeRockMeshName' }
+    if ((Count $T.sub (("        MeshActor = " + "nullptr;") + "`n    }`n    if (MeshActor)`n    {`n        UStaticMeshComponent* MaSmc")) -ne 1) { $f += '(K7) the Rwg capture skip must null MeshActor before Source 1 reads it' }
     return $f
 }
 
@@ -158,11 +164,14 @@ $mutants = @(
     @{ Name = 'X18 kept originals no longer compete'; Key = 'rcc'; Expect = 'K4'; Find = 'for (const TPair<FString, TWeakObjectPtr<AFGResourceNodeBase>>& KV : VanillaNodeCache)'; Repl = 'for (const TPair<FString, TWeakObjectPtr<AFGResourceNodeBase>>& KV : TMap<FString, TWeakObjectPtr<AFGResourceNodeBase>>())' }
     @{ Name = 'X10 T64 stream-in hide dropped'; Key = 'rcc'; Expect = 'K5'; Find = '            TryHideStreamedRockForSteadyOriginal(Node, MA);'; Repl = '' }
     @{ Name = 'X11 engine back-link written'; Key = 'rcc'; Expect = 'K5'; Find = ('MeshActorCache.' + 'Add(Node, MA);'); Repl = ('MeshActorCache.' + 'Add(Node, MA); MA->SetNode' + 'Actor(Node);') }
-    @{ Name = 'X12 RWGROCKCACHE loses an argument'; Key = 'rcc'; Expect = 'K6'; Find = 'NoRockWellContested, LinkedElsewhereSkips, bFirstPassAfterRollOrLoad ? 1 : 0);'; Repl = 'NoRockWellContested, LinkedElsewhereSkips);' }
+    @{ Name = 'X12 RWGROCKCACHE loses an argument'; Key = 'rcc'; Expect = 'K6'; Find = 'NoRockWellContested, LinkedElsewhereSkips, bFirstPassAfterRollOrLoad ? 1 : 0, OwnerOursSkips);'; Repl = 'NoRockWellContested, LinkedElsewhereSkips);' }
     @{ Name = 'X13 RWGROCKHIDE loses rocksHiddenWithNode'; Key = 'sub'; Expect = 'K6'; Find = 'nodesHidden=%d rocksHiddenWithNode=%d cacheEntries'; Repl = 'nodesHidden=%d cacheEntries' }
     @{ Name = 'X14 capture skip ungated (Vanilla loses Source 1)'; Key = 'sub'; Expect = 'K7'; Find = 'if (MeshActor && GetMapMode() == ENodeShuffleMapMode::Rwg)'; Repl = 'if (MeshActor)' }
     @{ Name = 'X15 RWGROCKHIDE printed on Vanilla'; Key = 'sub'; Expect = 'K7'; Find = "if (bRwgRockAttrib)`n    {`n        const int32 RwgHide[6]"; Repl = "if (true)`n    {`n        const int32 RwgHide[6]" }
-    @{ Name = 'X16 marker reverted'; Key = 'nsmod'; Expect = 'K8'; Find = ('2026-10-19-rwg-' + 'rockcache-1'); Repl = ('2026-10-19-rwg-' + 'repclass-3') }
+    @{ Name = 'X19 8 m range test dropped'; Key = 'rcc'; Expect = 'K2'; Find = ('if (D >= Range' + 'Sq) { continue; }'); Repl = '' }
+    @{ Name = 'X20 rock-name test dropped'; Key = 'rcc'; Expect = 'K3'; Find = ('if (!IsNodeRockMeshName(MeshName, TArray<FString>())) { ++Shape' + 'Rejected; continue; }'); Repl = '' }
+    @{ Name = 'X21 capture skip de-fanged'; Key = 'sub'; Expect = 'K7'; Find = (("        MeshActor = " + "nullptr;") + "`n"); Repl = '' }
+    @{ Name = 'X16 marker reverted'; Key = 'nsmod'; Expect = 'K8'; Find = ('2026-10-19-rwg-' + 'rockcache-2'); Repl = ('2026-10-19-rwg-' + 'repclass-3') }
 )
 $caught = 0
 $mutantFails = @()
