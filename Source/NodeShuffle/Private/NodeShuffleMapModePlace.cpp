@@ -396,9 +396,11 @@ void ANodeShuffleSubsystem::RwgSpawnPass(float SpawnRadiusCm, bool& bChangedWorl
     {
         FNodeShuffleEntry& E = Layout[Cands[K].Value];
         ++RwgPcAttempted;
+        RwgStuckBeforeAttempt(E); // rwg-density-1: RWGSTUCK snapshot (diagnostics only, NodeShuffleMapModeDensity.cpp)
         EnsureNewNodeSpawned(E, bChangedWorld);
         AFGResourceNode* const* Now = SpawnedNodes.Find(E.EntryGuid);
         if (Now && IsValid(*Now)) { ++RwgPcSpawned; }
+        RwgStuckAfterAttempt(E); // rwg-density-1: per-entry failed-attempt count (reads only)
     }
     RwgPcBudgetSkipped += Cands.Num() - N;
     ++RwgPcPasses;
@@ -449,6 +451,7 @@ void ANodeShuffleSubsystem::RwgSpawnPass(float SpawnRadiusCm, bool& bChangedWorl
             RwgPcCaveFar, RwgPcCaveSolid, RwgPcCaveWater, RwgPcCaveRedealCave, RwgPcCaveRedealSurface, RwgPcInsideCaveChecked, RwgPcSettledInsideCave, RwgPcSettledInsideCaveSurfaceEntry);
         RwgEmitDzCensus(); // RWG P2c: session apiToTerrainDz distribution by band, emitted with PLACECENSUS
     }
+    RwgDensityPassHook(Pawns, AttemptRadiusCm); // rwg-density-1: RWGDENSITY on load (first pass, after RwgSeaRedealPass) + RWGSTUCK every 12th pass
     RwgEmitPlaceCensus();
 }
 

@@ -1933,6 +1933,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
 
     EmitRollCensus(Seed, bIsReroll, PoolSize, TargetActive, VanillaCount, NewLocations.Num(),
                    VanillaResourceCounts);
+    if (GetMapMode() == ENodeShuffleMapMode::Rwg) { RwgDensityOnRoll(); } // rwg-density-1: RWGDENSITY trigger=roll (diagnostics only)
 }
 
 // ns-truth-diagnostics B. ONE line per roll carrying the numbers that two separate log-archaeology
@@ -8110,6 +8111,7 @@ void ANodeShuffleSubsystem::LogHereCensus() const
         }
     }
 
+    if (GetMapMode() == ENodeShuffleMapMode::Rwg) { LogHereDensity(P, static_cast<float>(CensusRadiusCm)); } // rwg-density-1: HERE-DENSITY
     UE_LOG(LogNodeShuffle, Display, TEXT("HERE: census done — %d layout entries + %d streamed originals within %dm"),
         Shown, OrigShown, CensusRadiusCm / 100);
 }

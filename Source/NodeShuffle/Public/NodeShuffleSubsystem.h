@@ -1133,6 +1133,21 @@ private:
     int32 RwgWrRejectedVoid = 0, RwgWrRejectedKillbox = 0, RwgWrDealtBelowKillbox = 0; // WELLROLL (per well roll)
     int32 RwgKbPasses = 0, RwgKbSettleRefused = 0, RwgKbSettleSamples = 0;
     TSet<FGuid> RwgKillboxRefused;                     // session: below the killbox but pinned/occupied (re-checked next session)
+    // ---- RWG density / stuck census (2026-10-19, rwg-density-1): DIAGNOSTICS ONLY, gates nothing. NodeShuffleMapModeDensity.cpp; every
+    // caller is behind an Rwg map-mode test (RollLayout, RwgSpawnPass, LogHereCensus), so none of these runs on vanilla.
+    void RwgDensityOnRoll();                                        // RWGDENSITY trigger=roll + clears the stuck tracker (new layout guids)
+    void RwgEmitDensityCensus(const TCHAR* Trigger);                // RWGDENSITY: 10 x 10 grid of active entries / land samples
+    bool RwgDensityLandSample(const NodeShuffleMapMode::FRwgGroundQuery& Q, double X, double Y); // the deal's land test (Outside, v3, slope)
+    void RwgDensityPassHook(const TArray<FVector>& Pawns, float AttemptRadiusCm); // load-trigger RWGDENSITY + RWGSTUCK every 12th pass
+    void RwgEmitStuckCensus(const TArray<FVector>& Pawns, float AttemptRadiusCm); // RWGSTUCK + up to 10 RWGSTUCK-ENTRY lines
+    void RwgStuckBeforeAttempt(const FNodeShuffleEntry& E);         // snapshot of the PLACECENSUS counters before one spawn attempt
+    void RwgStuckAfterAttempt(const FNodeShuffleEntry& E);          // failed-attempt count + the counters that attempt moved
+    int32 RwgStuckCounter(int32 I) const;                           // tracked counter I (names: RwgStuckCounterNames in the .cpp)
+    void LogHereDensity(const FVector& P, float HereRadiusCm) const; // HERE-DENSITY line (NodeShuffle.Here on RWG)
+    TMap<FGuid, TPair<int32, FString>> RwgStuckTracker;             // session: entry -> (failed attempt passes since last live, counters moved by the last one)
+    TArray<int32> RwgStuckSnap;                                     // counters read by RwgStuckBeforeAttempt
+    bool bRwgStuckSnapWaterLocked = false;                          // the attempted entry was already water-locked before the attempt
+    bool bRwgDensityEmitted = false;                                // session: RWGDENSITY printed (roll or load trigger)
     // ---- RWG P5 (2026-10-18): cave spots via the bound FPWCarvedCaves group. NodeShuffleMapModeCave.cpp. Every caller is RWG-only. ----
     bool RwgEnsureCaveCheck(const NodeShuffleMapMode::FRwgGroundQuery& Q);   // RWGCAVECHECK once per session; true = cave queries graded usable
     float RwgCaveShare(int32 Denominator) const;                            // P5-2 capacity rule: min(0.25, RwgCaveCapacity / max(1, Denominator)); 0 unless graded usable
