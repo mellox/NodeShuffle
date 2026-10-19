@@ -2083,6 +2083,13 @@ private:
     // Used by SuppressOriginalNodes to hide an original node's paired mesh actor on stream-in.
     TMap<TWeakObjectPtr<AFGResourceNodeBase>, TWeakObjectPtr<AFGNodeMeshActor>> MeshActorCache;
     void RebuildMeshActorCache();
+    // rwg-rockcache-1: the RWG counterpart. Fills the SAME MeshActorCache by 2-D proximity (an RWG original has
+    // no engine link to its rock), every ApplyLayout pass, only when the map mode is Rwg. Defined in
+    // NodeShuffleRwgRockCache.cpp -- read its header for the pairing predicate and the well exclusion.
+    void RebuildRwgRockCache();
+    int32 RwgRockCacheLastPaired = -1;   // RWGROCKCACHE re-print key (paired count of the last printed line)
+    bool bRwgCaptureSkipLogged = false;  // one-shot RWGROCKCACHE-CAPTURE-SKIP line (CaptureOriginalVisualIfNeeded)
+    int32 RwgRockHideCensusLast[6] = { -1, -1, -1, -1, -1, -1 }; // RWGROCKHIDE delta key (SuppressOriginalNodes)
 
     // ============ T64 (docs/TECH-DEBT.md T64): IMMEDIATE ROCK-HIDE AT STREAM-IN ============
     // Defined in NodeShuffleRockStreamInHide.cpp. THE MECHANISM IS MEASURED, NOT ASSUMED -- the trace is

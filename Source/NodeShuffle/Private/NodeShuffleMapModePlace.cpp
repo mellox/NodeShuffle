@@ -454,9 +454,10 @@ void ANodeShuffleSubsystem::RwgSpawnPass(float SpawnRadiusCm, bool& bChangedWorl
 
 void ANodeShuffleSubsystem::RwgEmitPlaceCensus()
 {
-    // Rock census (once per session, first pass): rock hiding is NOT attempted on RWG in P2b (RebuildMeshActorCache
-    // and OrphanRockCleanup are skipped off vanilla); this measures how many cached originals carry a linked mesh
-    // actor so P3 can decide. Population: every non-ours node in VanillaNodeCache at that pass.
+    // Rock census (once per session, first pass): measures how many cached originals carry an engine-linked mesh
+    // actor (mMeshActor). Population: every non-ours node in VanillaNodeCache at that pass. rwg-rockcache-1: RWG rocks
+    // are now paired by 2-D proximity in RebuildRwgRockCache (census RWGROCKCACHE), not by this link; OrphanRockCleanup
+    // stays vanilla-only. This census still reads the engine link only.
     if (RwgRockChecked == 0)
     {
         // RWG P2b review SF5: the P3 rule needs the recorded originals, so a second count keeps only cache keys whose
@@ -474,7 +475,7 @@ void ANodeShuffleSubsystem::RwgEmitPlaceCensus()
             if (bLinked) { ++RwgRockLinked; }
             if (RecordedPaths.Contains(KV.Key)) { ++RecChecked; if (bLinked) { ++RecLinked; } }
         }
-        UE_LOG(LogNodeShuffle, Display, TEXT("PLACECENSUS: rockLinkedAll=%d of %d cached non-ours nodes (deposits, fracking and modded included; rock hiding skipped on RWG this build)"),
+        UE_LOG(LogNodeShuffle, Display, TEXT("PLACECENSUS: rockLinkedAll=%d of %d cached non-ours nodes (deposits, fracking and modded included; engine link only, RWG proximity pairing is RWGROCKCACHE)"),
             RwgRockLinked, RwgRockChecked);
         UE_LOG(LogNodeShuffle, Display, TEXT("PLACECENSUS: rockLinkedRecorded=%d of %d cached nodes whose path is in the hide records; records=%d"),
             RecLinked, RecChecked, OriginalNodeRecord.Num());

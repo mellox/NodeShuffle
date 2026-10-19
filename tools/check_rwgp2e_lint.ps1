@@ -149,7 +149,7 @@ if ((Count $text.subsysh ('UPROPERTY(Save' + 'Game) bool bRwgSeaChecked = false;
 
 # E9
 if ((Count $text.maph ('constexpr int32 RwgSeaRedealPerPass = ' + '64;')) -ne 1 -or (Count $text.maph ('constexpr int32 RwgSeaCheckPerClass = ' + '32;')) -ne 1 -or (Count $text.maph ('constexpr int32 RwgRedealTries = ' + '80;')) -ne 1 -or (Count $text.maph ('constexpr int32 RwgSeaWellDealDraws = ' + '128;')) -ne 1) { $fails += 'E9: RwgSeaRedealPerPass 64 / RwgSeaCheckPerClass 32 / RwgRedealTries 80 / RwgSeaWellDealDraws 128 must be pinned' }
-if ((Count $text.nsmod ('LOADED (2026-10-19-rwg-' + 'repclass-3)')) -ne 1 -or (Count $text.nsmod ('2026-10-19-rwg-' + 'repclass-2')) -ne 0 -or (Count $text.nsmod ('2026-10-18-rwg-' + 'p4c-2')) -ne 0 -or (Count $text.nsmod ('2026-10-18-rwg-' + 'p4c-1')) -ne 0 -or (Count $text.nsmod ('2026-10-18-rwg-' + 'p5-2')) -ne 0) { $fails += 'E9: the marker must be rwg-repclass-3 (rwg-repclass-2 absent) (RWG 0.1.9 accept list, moved from rwg-p4c-2) and the previous markers absent' }
+if ((Count $text.nsmod ('LOADED (2026-10-19-rwg-' + 'rockcache-1)')) -ne 1 -or (Count $text.nsmod ('2026-10-19-rwg-' + 'repclass-3')) -ne 0 -or (Count $text.nsmod ('2026-10-18-rwg-' + 'p4c-2')) -ne 0 -or (Count $text.nsmod ('2026-10-18-rwg-' + 'p4c-1')) -ne 0 -or (Count $text.nsmod ('2026-10-18-rwg-' + 'p5-2')) -ne 0) { $fails += 'E9: the marker must be rwg-repclass-3 (rwg-repclass-2 absent) (RWG 0.1.9 accept list, moved from rwg-p4c-2) and the previous markers absent' }
 
 if ($fails.Count -gt 0) { $fails | ForEach-Object { Write-Host "FAIL $_" }; exit 1 }
 Write-Host "PASS: RWG P2e lint -- E1..E9 hold across $($files.Count) loaded files"

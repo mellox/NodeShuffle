@@ -14,7 +14,7 @@
 #       the bare resource name; the attempt and skipped lines name the class; the skipped line precedes the already-captured return.
 #   C5  Existing lines unchanged: CAPTURE stored, dressed, and the four pre-existing CAPTURE-CHAIN formats.
 #   C6  No field repeats inside any of the five new formats.
-#   C7  Marker rwg-repclass-3 present once (moved by repclass-3), rwg-repclass-2 absent.
+#   C7  Marker rwg-rockcache-1 present once (moved by rockcache-1), rwg-repclass-3 absent.
 # Mutants run in-file. Exit 0 = all hold; 1 = at least one does not; 2 = a pinned FILE is missing.
 
 $ErrorActionPreference = 'Stop'
@@ -123,7 +123,7 @@ function Invoke-CapmatChecks($T) {
         }
     }
     # C7
-    if ((Count $T.nsmod ('LOADED (2026-10-19-rwg-' + 'repclass-3)')) -ne 1 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'repclass-2')) -ne 0) { $f += '(C7) marker must be rwg-repclass-3 with rwg-repclass-2 absent' }
+    if ((Count $T.nsmod ('LOADED (2026-10-19-rwg-' + 'rockcache-1)')) -ne 1 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'repclass-3')) -ne 0) { $f += '(C7) marker must be rwg-rockcache-1 with rwg-repclass-3 absent' }
     return $f
 }
 
@@ -139,7 +139,7 @@ $mutants = @(
     @{ Name = 'M8 CAPTURE-SRC loses an argument'; Key = 'sub'; Expect = 'C2'; Find = 'SrcLoc.X, SrcLoc.Y, SrcLoc.Z, PawnDistM, Smc->GetCustomPrimitiveData().Data.Num());'; Repl = 'SrcLoc.X, SrcLoc.Y, PawnDistM, Smc->GetCustomPrimitiveData().Data.Num());' }
     @{ Name = 'M9 DRESS-MAT applied ignores loaded'; Key = 'sub'; Expect = 'C3'; Find = 'const bool bApplied = Loaded != nullptr && RockMC'; Repl = 'const bool bApplied = RockMC' }
     @{ Name = 'M10 DRESS-MAT for every dress'; Key = 'sub'; Expect = 'C3'; Find = 'if (bCaptured && FNodeShuffleModule::AreDiagnosticsEnabled() && IsValid(RockMC))'; Repl = 'if (FNodeShuffleModule::AreDiagnosticsEnabled() && IsValid(RockMC))' }
-    @{ Name = 'M11 marker reverted'; Key = 'nsmod'; Expect = 'C7'; Find = ('2026-10-19-rwg-' + 'repclass-3'); Repl = ('2026-10-19-rwg-' + 'repclass-2') }
+    @{ Name = 'M11 marker reverted'; Key = 'nsmod'; Expect = 'C7'; Find = ('2026-10-19-rwg-' + 'rockcache-1'); Repl = ('2026-10-19-rwg-' + 'repclass-3') }
     @{ Name = 'M12 CAPTURE stored line edited'; Key = 'sub'; Expect = 'C5'; Find = '%d mat(s), scale=(%.2f,%.2f,%.2f) (persisted)'; Repl = '%d mat(s) scale=(%.2f,%.2f,%.2f) (persisted)' }
     @{ Name = 'M13 CAPTURE-MAT repeats a field'; Key = 'sub'; Expect = 'C6'; Find = 'midScalar=%d"),'; Repl = 'midScalar=%d slot=%d"),' }
     @{ Name = 'M14 CAPTURE-MAT downgraded to Verbose'; Key = 'sub'; Expect = 'C1'; Find = 'UE_LOG(LogNodeShuffle, Display, TEXT("CAPTURE-MAT '; Repl = 'UE_LOG(LogNodeShuffle, Verbose, TEXT("CAPTURE-MAT ' }

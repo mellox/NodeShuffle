@@ -9,6 +9,7 @@
 #include "NodeShuffleTotallyInside.h" // ns-t53-totallyinside: the positive-only containment probe
 #include "NodeShuffleGroundIdentity.h" // ns-t45-verticaldiag: hit-identity + cave-store emitters
 #include "NodeShuffleRepClass.h" // rwg-repclass-1: per-resource node-class ranking + registry fallback + own-class predicate
+#include "NodeShuffleRwgRockCache.h" // rwg-rockcache-1: the shared 8 m rock-owns-node constant
 
 #include "EngineUtils.h"
 #include "TimerManager.h"
@@ -2359,7 +2360,10 @@ void ANodeShuffleSubsystem::ApplyLayout()
     // redesign-1: pair each original node to its own AFGNodeMeshActor so SuppressOriginalNodes can
     // hide the paired mesh actor when an unoccupied original streams in. Rebuilt each pass.
     if (GetMapMode() == ENodeShuffleMapMode::Vanilla) { RebuildMeshActorCache(); } // RWG P2b: no rock pairing off vanilla (P3)
-    else { RwgLogSkipOnce(1, TEXT("rock pairing and orphan-rock cleanup (RebuildMeshActorCache + OrphanRockCleanup)")); }
+    // rwg-rockcache-1: on RWG the same cache is filled by 2-D proximity (NodeShuffleRwgRockCache.cpp), so the hide
+    // loop's paired-rock hide, the T64 stream-in hide and the re-roll restore reach RWG rocks. This is also the
+    // load path: a loaded RWG save reaches ApplyLayout once RwgPipelineMayRun latches (clause stage-immediate).
+    else if (GetMapMode() == ENodeShuffleMapMode::Rwg) { RebuildRwgRockCache(); }
 
     // Restored managed actors have been adopted above. Capture only additional originals;
     // the normal spawn/hide/scanner paths below apply the appended entries this pass.
@@ -2487,6 +2491,7 @@ void ANodeShuffleSubsystem::ApplyLayout()
     RehideVisibleOriginalsPost();
 
     if (GetMapMode() == ENodeShuffleMapMode::Vanilla) { OrphanRockCleanup(); } // RWG P2b: no rock hiding off vanilla
+    else { RwgLogSkipOnce(1, TEXT("orphan-rock cleanup (OrphanRockCleanup; RWG rock pairing runs in RebuildRwgRockCache)")); }
 
     // Once new nodes materialize we KEEP them for the session (far-node despawn was removed long ago).
 
@@ -3099,6 +3104,21 @@ bool ANodeShuffleSubsystem::CaptureOriginalVisualIfNeeded(AFGResourceNodeBase* N
     UStaticMeshComponent* Smc = nullptr;
     const TCHAR* Source = TEXT("paired-mesh-actor");
     AFGNodeMeshActor* MeshActor = FindMeshActorForNode(Node);
+    // rwg-rockcache-1: on RWG every MeshActorCache entry is a 2-D PROXIMITY pairing (RebuildRwgRockCache is the
+    // cache's only writer off vanilla), not an engine link. Before that packet the cache was empty on RWG, so Source 1
+    // never ran there; it is skipped for those pairings so capture on RWG reads exactly the sources it read before.
+    // Vanilla never takes this branch (the map-mode test is false there).
+    if (MeshActor && GetMapMode() == ENodeShuffleMapMode::Rwg)
+    {
+        if (!bRwgCaptureSkipLogged)
+        {
+            bRwgCaptureSkipLogged = true;
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("RWGROCKCACHE-CAPTURE-SKIP first of session: node=%s rock=%s -- capture Source 1 (paired mesh actor) is not read for a proximity pairing; the later sources run as they did while the RWG cache was empty"),
+                *Node->GetName(), *MeshActor->GetName());
+        }
+        MeshActor = nullptr;
+    }
     if (MeshActor)
     {
         UStaticMeshComponent* MaSmc = MeshActor->FindComponentByClass<UStaticMeshComponent>();
@@ -5338,7 +5358,7 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
         return;
     }
     constexpr float SuppressPlayerRange = 30000.0f; // 300 m: backstop's rock-near-player gate only
-    constexpr float RockOwnRange = 800.0f;          // 8 m: a rock sits ON its node
+    constexpr float RockOwnRange = NodeShuffleRock::RockOwnRangeCm; // 8 m: a rock sits ON its node (shared with RebuildRwgRockCache)
 
     // redesign-1: every recorded original is an UNOCCUPIED node we want GONE (vanilla AND modded).
     // The only protection is live occupancy (a miner the player built) — checked per node.
@@ -5741,6 +5761,21 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
     int32 InstancedRockNamedNearPlayer = 0;   // DENOMINATOR: visible ISM rock-named components near a player
     int32 InstancedResidualAtOriginals = 0;   // of those, with an origin within RockOwnRange of an original
     int32 RocksHiddenNearAlreadyReported = 0; // backstop hits on a record the cache route reported THIS pass
+    // rwg-rockcache-1: BACKSTOP ATTRIBUTION, RWG ONLY (Vanilla never builds the set and never counts). Each backstop
+    // hit is classified by its component's OWNER against this pass's MeshActorCache values (RebuildRwgRockCache's
+    // proximity pairings): a cache-paired rock whose actor is already hidden, a cache-paired rock whose actor is not,
+    // or a rock the cache did not pair (the straggler population this backstop remains the route for). The
+    // backstop's own predicate and action are unchanged; this only counts.
+    const bool bRwgRockAttrib = GetMapMode() == ENodeShuffleMapMode::Rwg;
+    int32 BackstopHitsCachePairedHidden = 0, BackstopHitsCachePairedVisible = 0, BackstopHitsNotCachePaired = 0;
+    TSet<const AActor*> RwgCachePairedRocks;
+    if (bRwgRockAttrib && bRunBackstop)
+    {
+        for (const TPair<TWeakObjectPtr<AFGResourceNodeBase>, TWeakObjectPtr<AFGNodeMeshActor>>& KV : MeshActorCache)
+        {
+            if (const AFGNodeMeshActor* PairedRock = KV.Value.Get()) { RwgCachePairedRocks.Add(PairedRock); }
+        }
+    }
     if (bRunBackstop)
     {
     LastRockBackstopSeconds = NowSeconds;
@@ -5801,6 +5836,14 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
             Smc->SetVisibility(false, true);
             Smc->SetCollisionEnabled(ECollisionEnabled::NoCollision);
             RocksHidden++;
+            if (bRwgRockAttrib)
+            {
+                if (RockOwner && RwgCachePairedRocks.Contains(RockOwner))
+                {
+                    if (RockOwner->IsHidden()) { ++BackstopHitsCachePairedHidden; } else { ++BackstopHitsCachePairedVisible; }
+                }
+                else { ++BackstopHitsNotCachePaired; }
+            }
             // T4, THE SECOND OBSERVATION ROUTE. On this save it is the ONLY one that fires: the
             // mesh-actor cache pairs ~6% of streamed ordinary nodes, so a watched record's
             // AFGNodeMeshActor mostly never becomes resolvable and the watch sweep never reports.
@@ -5980,6 +6023,28 @@ void ANodeShuffleSubsystem::SuppressOriginalNodes()
                 bRunBackstop ? TEXT("RAN") : TEXT("did not run"), RocksHidden,
                 RocksHiddenNearWatched, RocksHiddenNearAlreadyReported,
                 InstancedResidualAtOriginals, InstancedRockNamedNearPlayer, RockOwnRange);
+        }
+    }
+
+    // rwg-rockcache-1: RWG HIDE-PASS ROCK CENSUS. RWG only, so the Vanilla log is unchanged. Delta-gated on its own
+    // fields (the idiom of the two lines above). rocksHiddenWithNode is the node-hide loop's same-statement rock hide
+    // (the counter ROCKHIDE-CENSUS prints as NODE-HIDE-LOOP ROUTE); the three backstop fields partition backstopHits.
+    if (bRwgRockAttrib)
+    {
+        const int32 RwgHide[6] = { NodesHidden, MeshResolvedAtHide, RocksHidden,
+            BackstopHitsCachePairedHidden, BackstopHitsCachePairedVisible, BackstopHitsNotCachePaired };
+        bool bRwgHideChanged = false;
+        for (int32 i = 0; i < 6; i++)
+        {
+            if (RwgHide[i] != RwgRockHideCensusLast[i]) { bRwgHideChanged = true; RwgRockHideCensusLast[i] = RwgHide[i]; }
+        }
+        if (bRwgHideChanged)
+        {
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("RWGROCKHIDE hide-pass=%d nodesHidden=%d rocksHiddenWithNode=%d cacheEntries=%d backstop=%s backstopHits=%d backstopHitsCachePairedAlreadyHidden=%d backstopHitsCachePairedVisible=%d backstopHitsNotCachePaired=%d"),
+                MeshHidePass, NodesHidden, MeshResolvedAtHide, MeshActorCache.Num(),
+                bRunBackstop ? TEXT("ran") : TEXT("idle"), RocksHidden,
+                BackstopHitsCachePairedHidden, BackstopHitsCachePairedVisible, BackstopHitsNotCachePaired);
         }
     }
 

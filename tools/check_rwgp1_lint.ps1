@@ -42,7 +42,7 @@
 #   R16 Cave learning, the vanilla depth floor and the redeal cave branch are gated to vanilla at their sites.
 # RWG P2b-2 (2026-10-17 cold review fixes): R9 clause B also needs t >= RwgApplyFallbackSeconds and the saved-records
 #   floor (MF1), and its counter resets on any change (M16); R15 pins the API agreement test BEFORE RaycastSettle (MF2);
-#   R16 also pins rock pairing/hiding to vanilla (M17) and IsPointInWater's off-vanilla cached route (SF3).
+#   R16 also pins the VANILLA rock-pairing/orphan gates byte-identical (M17; the RWG pairing branch after it is check_rockcache_lint K1) and IsPointInWater's off-vanilla cached route (SF3).
 #   R17 The byte-signature gate refuses after the export refusal and before calls are allowed; the ground query
 #       makes no RWG call unless the binding is usable.
 #
