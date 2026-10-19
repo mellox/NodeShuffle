@@ -2944,14 +2944,34 @@ bool ANodeShuffleSubsystem::CaptureOriginalVisualIfNeeded(AFGResourceNodeBase* N
     if (!ResClass || !ResClass->IsChildOf(UFGResourceDescriptor::StaticClass())) { return false; }
     const FString ShortName = ResClass->GetName();
     if (FNodeShuffleNodeAssets::FindVisual(FName(*ShortName)) != nullptr) { return false; } // authored covers it
-    if (FindCapturedVisual(ShortName) != nullptr) { return false; }                          // already captured
+    // capmat-1 (2026-10-19, diagnostics only): the decision chain is keyed per (resource, NODE CLASS), not per
+    // resource, so a second class carrying the same resource (e.g. a mod's own node class beside RWG's
+    // BP_ResourceNode_C) is listed too. The key is evaluated BEFORE the already-captured return so a class first
+    // seen after the capture landed (or after a save-loaded capture) still prints one line naming it.
+    const FString ChainKey = ShortName + TEXT("|") + Node->GetClass()->GetName();
+    const bool bAlreadyCaptured = FindCapturedVisual(ShortName) != nullptr;
+    if (bAlreadyCaptured)
+    {
+        if (FNodeShuffleModule::AreDiagnosticsEnabled() && !CaptureChainLogged.Contains(ChainKey))
+        {
+            CaptureChainLogged.Add(ChainKey);
+            UE_LOG(LogNodeShuffle, Display, TEXT("CAPTURE-CHAIN %s: nodeClass=%s node=%s skipped (FindCapturedVisual returned a capture for this resource)"),
+                *ShortName, *Node->GetClass()->GetName(), *Node->GetName());
+        }
+        return false; // already captured
+    }
     // dirtdress-1 (cold review): this resource burned its CaptureGiveUpPasses retry budget this
     // session with nothing capturable — terminal, not pending, so its originals steady-mark normally.
     if (CaptureTerminalThisSession.Contains(ShortName)) { return false; }
 
     const bool bDiagChain = FNodeShuffleModule::AreDiagnosticsEnabled()
-        && !CaptureChainLogged.Contains(ShortName); // decision chain once per resource per session
-    if (bDiagChain) { CaptureChainLogged.Add(ShortName); }
+        && !CaptureChainLogged.Contains(ChainKey); // decision chain once per (resource, node class) per session
+    if (bDiagChain)
+    {
+        CaptureChainLogged.Add(ChainKey);
+        UE_LOG(LogNodeShuffle, Display, TEXT("CAPTURE-CHAIN %s: nodeClass=%s node=%s attempt (first for this resource and node class this session)"),
+            *ShortName, *Node->GetClass()->GetName(), *Node->GetName());
+    }
 
     // ---- Source 1 (existing, unchanged for thorium/lead): the node's paired AFGNodeMeshActor. ----
     UStaticMeshComponent* Smc = nullptr;
@@ -3086,9 +3106,23 @@ bool ANodeShuffleSubsystem::CaptureOriginalVisualIfNeeded(AFGResourceNodeBase* N
     FNodeShuffleCapturedVisual Cap;
     Cap.ResourceClassName = ShortName;
     Cap.MeshPath = Smc->GetStaticMesh()->GetPathName();
+    // capmat-1 (diagnostics only): per-slot provenance of what the capture READ, before the MID unwrap.
+    struct FCapMatDiag { FString Path; FString MidParent; bool bIsMid; bool bOverride; bool bMeshDefault; };
+    TArray<FCapMatDiag> CapMatDiag;
     for (int32 i = 0; i < Smc->GetNumMaterials(); i++)
     {
         UMaterialInterface* Mat = Smc->GetMaterial(i);
+        {
+            UMaterialInterface* const RawMat = Mat;
+            const UMaterialInstanceDynamic* const RawMid = Cast<UMaterialInstanceDynamic>(RawMat);
+            // override: the component's override array holds a non-null entry for this slot.
+            const bool bOverride = Smc->OverrideMaterials.IsValidIndex(i) && Smc->OverrideMaterials[i] != nullptr;
+            // meshDefault: the read pointer equals the static mesh asset's own material for this slot.
+            const bool bMeshDefault = RawMat == Smc->GetStaticMesh()->GetMaterial(i);
+            CapMatDiag.Add({ RawMat ? RawMat->GetPathName() : FString(TEXT("null")),
+                             RawMid ? (RawMid->Parent ? RawMid->Parent->GetPathName() : FString(TEXT("null"))) : FString(TEXT("-")),
+                             RawMid != nullptr, bOverride, bMeshDefault });
+        }
         // A dynamic instance's path is transient — persist its PARENT asset path instead.
         if (const UMaterialInstanceDynamic* Mid = Cast<UMaterialInstanceDynamic>(Mat))
         {
@@ -3105,6 +3139,39 @@ bool ANodeShuffleSubsystem::CaptureOriginalVisualIfNeeded(AFGResourceNodeBase* N
         TEXT("CAPTURE: stored visual for %s from '%s' (source=%s) — mesh '%s', %d mat(s), scale=(%.2f,%.2f,%.2f) (persisted)"),
         *ShortName, *Node->GetName(), Source, *Cap.MeshPath, Cap.MaterialPaths.Num(),
         Cap.MeshScale.X, Cap.MeshScale.Y, Cap.MeshScale.Z);
+    // capmat-1 (2026-10-19, diagnostics only, Display behind EnableDiagnostics like ROCK-CENTER): WHAT the capture
+    // read and FROM WHERE. Field definitions live in the handoff, not in a legend. srcAgeS = world time minus the
+    // source component OWNER's CreationTime (both seconds); srcLoc = the component's world location; pawnDistM =
+    // metres from srcLoc to the nearest player pawn, -1 when no controller has a pawn.
+    if (FNodeShuffleModule::AreDiagnosticsEnabled())
+    {
+        const AActor* SrcActor = Smc->GetOwner();
+        const UWorld* World = GetWorld();
+        const FVector SrcLoc = Smc->GetComponentLocation();
+        double NearestPawnDistSq = -1.0;
+        if (World)
+        {
+            for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+            {
+                const APlayerController* Pc = It->Get();
+                const APawn* Pawn = Pc ? Pc->GetPawn() : nullptr;
+                if (!Pawn) { continue; }
+                const double DSq = FVector::DistSquared(Pawn->GetActorLocation(), SrcLoc);
+                if (NearestPawnDistSq < 0.0 || DSq < NearestPawnDistSq) { NearestPawnDistSq = DSq; }
+            }
+        }
+        const float SrcAgeS = (World && SrcActor) ? static_cast<float>(World->GetTimeSeconds() - SrcActor->CreationTime) : -1.0f;
+        const float PawnDistM = NearestPawnDistSq < 0.0 ? -1.0f : static_cast<float>(FMath::Sqrt(NearestPawnDistSq) / 100.0);
+        UE_LOG(LogNodeShuffle, Display, TEXT("CAPTURE-SRC res=%s srcClass=%s srcComp=%s srcAgeS=%.1f srcLoc=%.0f/%.0f/%.0f pawnDistM=%.0f"),
+            *ShortName, SrcActor ? *SrcActor->GetClass()->GetName() : TEXT("null"), *Smc->GetName(), SrcAgeS,
+            SrcLoc.X, SrcLoc.Y, SrcLoc.Z, PawnDistM);
+        for (int32 Slot = 0; Slot < CapMatDiag.Num(); Slot++)
+        {
+            const FCapMatDiag& D = CapMatDiag[Slot];
+            UE_LOG(LogNodeShuffle, Display, TEXT("CAPTURE-MAT res=%s slot=%d path=%s isMID=%d midParent=%s override=%d meshDefault=%d"),
+                *ShortName, Slot, *D.Path, D.bIsMid ? 1 : 0, *D.MidParent, D.bOverride ? 1 : 0, D.bMeshDefault ? 1 : 0);
+        }
+    }
     // dirtdress-1 (cold review): success wipes the retry budget — including a pending report an
     // earlier original of this resource filed THIS pass (a later original delivered the mesh).
     CapturePendingPasses.Remove(ShortName);
@@ -3293,6 +3360,22 @@ void ANodeShuffleSubsystem::SpawnVisualRockForNode(AFGResourceNode* Node, UClass
             *Node->GetName(), *ResourceClass->GetName(),
             *NodeOrigin.ToCompactString(), *RockCenter.ToCompactString(),
             *(RockCenter - NodeOrigin).ToCompactString());
+    }
+    // capmat-1 (2026-10-19, diagnostics only): for a CAPTURED dress, one line per captured slot. loaded = the resolved
+    // capture holds a live material for the slot; path = the PERSISTED capture path for the slot ('null' when absent
+    // or empty); applied = the slot was loaded AND RockMesh->GetMaterial(slot) after DressRock is that same object.
+    if (bCaptured && FNodeShuffleModule::AreDiagnosticsEnabled() && IsValid(RockMC))
+    {
+        const FNodeShuffleCapturedVisual* Persisted = FindCapturedVisual(ResourceClass->GetName());
+        for (int32 Slot = 0; Slot < MatPtrs.Num(); Slot++)
+        {
+            UMaterialInterface* const Loaded = MatPtrs[Slot];
+            const bool bHasPath = Persisted && Persisted->MaterialPaths.IsValidIndex(Slot) && !Persisted->MaterialPaths[Slot].IsEmpty();
+            const bool bApplied = Loaded != nullptr && RockMC->GetMaterial(Slot) == Loaded;
+            UE_LOG(LogNodeShuffle, Display, TEXT("DRESS-MAT res=%s slot=%d loaded=%d path=%s applied=%d"),
+                *ResourceClass->GetName(), Slot, Loaded ? 1 : 0,
+                bHasPath ? *Persisted->MaterialPaths[Slot] : TEXT("null"), bApplied ? 1 : 0);
+        }
     }
 
     if (bQuartz) { SpawnedRockQuartz++; } else { SpawnedRockVanilla++; }
