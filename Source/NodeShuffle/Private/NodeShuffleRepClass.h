@@ -47,6 +47,7 @@ namespace NodeShuffleRepClass
         int32 Loaded = 0;
         int32 Failed = 0;
         int32 Rejected = 0; // loaded but abstract / not a node / refused / CDO resource differs
+        int32 FreshLoads = 0; // sync LoadObject calls for this resource; cap= bounds these only
         FString Matched;
         double Ms = 0.0;
     };
@@ -56,6 +57,9 @@ namespace NodeShuffleRepClass
     int32 RepClassRank(const FString& ClassPath, const FString& ResourcePath);
     bool RepClassShouldReplace(const FString& ExistingClassPath, const FString& NewClassPath, const FString& ResourcePath);
     bool IsOwnNodeClass(const FString& ClassPath, const FString& ResourcePath);
+    // rwg-repclass-3 (cold review F7): IsOwnNodeClass AND NodeClass's CDO resource == ResourcePath; fail-OPEN on a null
+    // CDO resource (dress sites only choose native vs captured look). Used at the three dress sites.
+    bool IsOwnNodeClassForResource(const UClass* NodeClass, const FString& ClassPath, const FString& ResourcePath);
     const TCHAR* RepClassRankName(int32 Rank);
 
     // One GetDerivedClassNames({/Script/FactoryGame.FGResourceNode}) call. Never loads anything.

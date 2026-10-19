@@ -46,6 +46,9 @@ namespace NodeShuffleRepClass
         return RepClassRank(ClassPath, ResourcePath) == 2;
     }
 
+    // rwg-repclass-3 (cold review F7): own-mount AND the class's CDO resource is this resource (fail-open on a null CDO resource).
+    bool IsOwnNodeClassForResource(const UClass* NodeClass, const FString& ClassPath, const FString& ResourcePath) { if (!IsOwnNodeClass(ClassPath, ResourcePath)) { return false; } const AFGResourceNodeBase* Cdo = (NodeClass && NodeClass->IsChildOf(AFGResourceNodeBase::StaticClass())) ? NodeClass->GetDefaultObject<AFGResourceNodeBase>() : nullptr; const UClass* CdoRes = Cdo ? Cdo->GetResourceClass().Get() : nullptr; return !CdoRes || CdoRes->GetPathName() == ResourcePath; }
+
     const TCHAR* RepClassRankName(int32 Rank)
     {
         return Rank == 2 ? TEXT("own-mount") : (Rank == 1 ? TEXT("non-generic") : TEXT("generic"));
@@ -66,7 +69,7 @@ namespace NodeShuffleRepClass
         {
             const FString S = P.ToString();
             if (S.StartsWith(TEXT("/Game/"))) { Out.BaseGameBp++; continue; }
-            if (S.StartsWith(TEXT("/Script/"))) { continue; } // natives are always loaded; the live scan already saw any instance
+            if (S.StartsWith(TEXT("/Script/"))) { continue; } // /Script/ natives skipped: this fallback loads Blueprint classes only; a resident native class is not a seen instance, so a native-only node class with no instance this roll is not found here
             Out.CandidatePaths.Add(S);
         }
         Out.CandidatePaths.Sort(); // deterministic load order within the cap
@@ -83,15 +86,9 @@ namespace NodeShuffleRepClass
             if (ResRoot.IsEmpty() || NodeShuffleMountRoot(Path) != ResRoot) { continue; }
             Out.MountFiltered++;
             if (RefusedClasses.Contains(Path)) { Out.Rejected++; continue; }
-            if (Out.Loaded + Out.Failed >= RegistryLoadCap) { continue; } // cap: counted in mountFiltered, never loaded
             UClass* Cls = nullptr;
             if (UClass** Cached = LoadCache.Find(Path)) { Cls = *Cached; }
-            else
-            {
-                Cls = FindObject<UClass>(nullptr, *Path);
-                if (!Cls) { Cls = LoadObject<UClass>(nullptr, *Path, nullptr, LOAD_NoWarn | LOAD_Quiet); }
-                LoadCache.Add(Path, Cls);
-            }
+            else { Cls = FindObject<UClass>(nullptr, *Path); if (!Cls) { if (Out.FreshLoads >= RegistryLoadCap) { continue; } Out.FreshLoads++; Cls = LoadObject<UClass>(nullptr, *Path, nullptr, LOAD_NoWarn | LOAD_Quiet); } LoadCache.Add(Path, Cls); }
             if (!Cls) { Out.Failed++; continue; }
             Out.Loaded++;
             if (Cls->HasAnyClassFlags(CLASS_Abstract) || !Cls->IsChildOf(AFGResourceNodeBase::StaticClass())) { Out.Rejected++; continue; }

@@ -778,9 +778,8 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     // one only when RepClassShouldReplace (strictly higher RepClassRank: own-mount 2 > non-generic 1 > generic 0;
     // see NodeShuffleRepClass.h). Ties keep the first seen, and a base-game (/Game/) resource ranks every class 0,
     // so for it -- and for any resource with exactly one observed class -- this is the pre-change first-seen
-    // latch. ORDERING: NodeClassByResource is local to this function and read only by the Phase-2 stamp loop
-    // below; every LatchByResource call and the registry fallback sit textually before that loop
-    // (tools/check_repclass_lint.ps1 R2), so a replacement can never land after a copy was stamped.
+    // latch. ORDERING: NodeClassByResource is local to this function; the Phase-2 stamp loop and the conversion
+    // restamp read it, and every write sits textually before the stamp loop (lint R2).
     const auto LatchByResource = [](const FString& ResourcePath, const FString& ClassPath,
         TMap<FString, FString>& Map, TMap<FString, NodeShuffleRepClass::FStat>& Stats)
     {
@@ -1576,7 +1575,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
             if (!Latched || NodeShuffleRepClass::RepClassRank(*Latched, KV.Key) < 2) { RegistryWanted.Add(KV.Key); }
         }
         RegistryWanted.Sort();
-        if (RegistryWanted.Num() > 0)
+        if (RegistryWanted.Num() > 0 || FNodeShuffleModule::AreDiagnosticsEnabled())
         {
             NodeShuffleRepClass::FRegistryQuery RegQuery;
             NodeShuffleRepClass::QueryDerivedNodeClasses(RegQuery);
@@ -1584,6 +1583,8 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                 TEXT("REPCLASS-REGISTRY-QUERY resources=%d derived=%d baseGameBp=%d modCandidates=%d cap=%d ms=%.1f"),
                 RegistryWanted.Num(), RegQuery.Derived, RegQuery.BaseGameBp, RegQuery.CandidatePaths.Num(),
                 NodeShuffleRepClass::RegistryLoadCap, RegQuery.Ms);
+            // rwg-repclass-3 (cold review F4): registry coverage of the own-mount classes the live latch already holds.
+            if (FNodeShuffleModule::AreDiagnosticsEnabled()) { int32 OwnLatched = 0, OwnInReg = 0; for (const TPair<FString, FString>& KV : NodeClassByResource) { if (NodeShuffleRepClass::RepClassRank(KV.Value, KV.Key) < 2) { continue; } OwnLatched++; if (RegQuery.CandidatePaths.Contains(KV.Value)) { OwnInReg++; } } UE_LOG(LogNodeShuffle, Display, TEXT("REPCLASS-REGISTRY-CONTROL ownMountLatched=%d ownMountInRegistry=%d"), OwnLatched, OwnInReg); }
             TMap<FString, UClass*> RegLoadCache;
             for (const FString& Res : RegistryWanted)
             {
@@ -1772,7 +1773,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                 if (!NodeShuffleRepClass::IsGenericNodeClassPath(E.AssignedResourceClassPath))
                 {
                     const FString* OwnByRes = NodeClassByResource.Find(E.AssignedResourceClassPath);
-                    const bool bOwnAvailable = OwnByRes && NodeShuffleRepClass::IsOwnNodeClass(*OwnByRes, E.AssignedResourceClassPath);
+                    const UClass* OwnCls = OwnByRes ? FindObject<UClass>(nullptr, **OwnByRes) : nullptr; const bool bOwnAvailable = OwnByRes && NodeShuffleRepClass::IsOwnNodeClass(*OwnByRes, E.AssignedResourceClassPath) && OwnCls && OwnCls->IsChildOf(AFGResourceNode::StaticClass()) && !OwnCls->HasAnyClassFlags(CLASS_Abstract);
                     TPair<int32, int32>& PerRes = ConvRestampByRes.FindOrAdd(E.AssignedResourceClassPath, TPair<int32, int32>(0, 0));
                     if (bOwnAvailable) { ConvOwnClassAvailable++; }
                     if (bOwnAvailable && *OwnByRes != E.NodeClassPath)
@@ -1782,7 +1783,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                         PerRes.Key++;
                         if (FNodeShuffleModule::AreDiagnosticsEnabled())
                         {
-                            UE_LOG(LogNodeShuffle, Display, TEXT("RESTAMP node=%s from=%s to=%s res=%s"),
+                            UE_LOG(LogNodeShuffle, Display, TEXT("RESTAMP slot=%s from=%s to=%s res=%s"),
                                 *FPackageName::ObjectPathToObjectName(E.VanillaNodePath),
                                 *FPackageName::ObjectPathToObjectName(E.NodeClassPath),
                                 *FPackageName::ObjectPathToObjectName(*OwnByRes),
@@ -3324,7 +3325,7 @@ void ANodeShuffleSubsystem::RedressSpawnedOfResource(const FString& ResourceClas
             ANodeShuffleResourceNode* LiveLegacy = LiveComp ? nullptr : Cast<ANodeShuffleResourceNode>(*Live);
             // rwg-repclass-1 (c): an own-class node (spawn/adopt branches) keeps its native visual here too.
             UStaticMeshComponent* const LiveRock = LiveComp ? LiveComp->RockMesh : (LiveLegacy ? LiveLegacy->RockMesh : nullptr);
-            if (NodeShuffleRepClass::IsOwnNodeClass(ResolveSpawnNodeClassPath(Entry), Entry.AssignedResourceClassPath)
+            if (NodeShuffleRepClass::IsOwnNodeClassForResource((*Live)->GetClass(), ResolveSpawnNodeClassPath(Entry), Entry.AssignedResourceClassPath)
                 && NodeHasOwnVisual(*Live, LiveRock))
             {
                 if (FNodeShuffleModule::AreDiagnosticsEnabled() && !OwnClassDressLogged.Contains(Entry.EntryGuid))
@@ -3841,6 +3842,8 @@ bool ANodeShuffleSubsystem::FinalizeAdoptedNode(AFGResourceNode* Node, int32 Ent
 
     // Restored nodes lost the (unserialized) interaction box — re-assert it (no-op for real native boxes).
     EnsureNodeUseBox(Node);
+    // rwg-repclass-3 (cold review F5): purity readback after reload (mod-BP BeginPlay may rewrite a restored purity).
+    if (FNodeShuffleModule::AreDiagnosticsEnabled() && !bVanillaOrigin) { UE_LOG(LogNodeShuffle, Display, TEXT("REPCLASS-PURITY node=%s class=%s assigned=%d readBack=%d restamped=%d"), *Node->GetName(), *Node->GetClass()->GetName(), (int32)E.AssignedPurity.GetValue(), (int32)Node->GetResourcePurity(), E.RepClassSpawnPath.IsEmpty() ? 0 : 1); }
 
     // Vanilla-origin: re-assert placement gates so the Mk1 hologram snaps. Modded: keep native rules
     // (e.g. the Alkali node's mCanPlacePortableMiner=false that rejects normal miners).
@@ -4554,7 +4557,7 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
                 ModdedVisualRebuilt.Add(Entry.EntryGuid);
             }
             // rwg-repclass-1 (c): own-class node (see the spawn branch) keeps its native visual -- no hide, no dress.
-            const bool bOwnClassAdopt = NodeShuffleRepClass::IsOwnNodeClass(ResolveSpawnNodeClassPath(Entry), Entry.AssignedResourceClassPath);
+            const bool bOwnClassAdopt = NodeShuffleRepClass::IsOwnNodeClassForResource((*Existing)->GetClass(), ResolveSpawnNodeClassPath(Entry), Entry.AssignedResourceClassPath);
             const bool bOwnClassAdoptVisual = bOwnClassAdopt && NodeHasOwnVisual(*Existing, RockMC);
             if (bOwnClassAdopt && FNodeShuffleModule::AreDiagnosticsEnabled() && !OwnClassDressLogged.Contains(Entry.EntryGuid))
             {
@@ -5110,7 +5113,7 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
         // rwg-repclass-1 (c): a node spawned from the assigned resource's OWN class (non-generic, same mount root as
         // the resource; NodeShuffleRepClass::IsOwnNodeClass) keeps its native visual -- no hide, no captured dress --
         // provided it renders one after spawn (NodeHasOwnVisual). Otherwise the pre-change branches below run.
-        const bool bOwnClass = NodeShuffleRepClass::IsOwnNodeClass(ResolvedNodeClassPath, Entry.AssignedResourceClassPath);
+        const bool bOwnClass = NodeShuffleRepClass::IsOwnNodeClassForResource(SpawnClass, ResolvedNodeClassPath, Entry.AssignedResourceClassPath);
         const bool bOwnClassVisual = bOwnClass && NodeHasOwnVisual(Node, Comp ? Comp->RockMesh : nullptr);
         if (bOwnClass && bSpawnDiag)
         {
@@ -7958,7 +7961,8 @@ void ANodeShuffleSubsystem::LogHereCensus() const
         // diagnose a dead spot without a second launch.
         if (SpawnParkedThisSession.Contains(E.EntryGuid)) { Flags += TEXT("|SPAWN-PARKED"); }
         if (!E.RepClassSpawnPath.IsEmpty()) { Flags += TEXT("|RESTAMPED"); } // rwg-repclass-2
-        if (ResolveSpawnNodeClassPath(E) != E.NodeClassPath) { Flags += TEXT("|CLASS-SUBBED"); }
+        if (ResolveSpawnNodeClassPath(E) != PreSubstituteSpawnPath(E)) { Flags += TEXT("|CLASS-SUBBED"); } // session refusal substitute only; a restamp alone prints |RESTAMPED
+        if (E.RepClassSpawnPath.IsEmpty() && !E.SpawnNodeClassPath.IsEmpty()) { Flags += TEXT("|BASE-REP"); }
         UE_LOG(LogNodeShuffle, Display,
             TEXT("HERE: entry %s dist=%.0fm dz=%+.0fm [%s] at %s"),
             *ShortName(E.AssignedResourceClassPath), FMath::Sqrt(D2) / 100.0f,
