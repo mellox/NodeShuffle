@@ -17,6 +17,8 @@
 #       no repeated field; the Vanilla FIX B line keeps its exact text and RWG prints the claim-free variant.
 #   G7  Marker rwg-deal-1 present once, rwg-density-2 absent.
 #   G8  deck-substitute Rung 3 skips restamped entries on RWG only.
+#   G9  Re-roll rebuild: on RWG the rebuilt slot form, FormByResource and the representative latch read the ORIGINAL resource's
+#       descriptor form (RebuildForm), never the saved card form; RWGDEAL-REROLL census 2/2.
 # Mutants run in-file. Exit 0 = all hold; 1 = at least one does not; 2 = a pinned FILE is missing.
 
 $ErrorActionPreference = 'Stop'
@@ -119,6 +121,10 @@ function Invoke-RwgdealChecks($T) {
     if ((Count $T.nsmod ('LOADED (2026-10-19-rwg-' + 'deal-1)')) -ne 1 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'density-2')) -ne 0) { $f += '(G7) marker must be rwg-deal-1 with rwg-density-2 absent' }
     # G8
     if (-not (Ordered $s @('// Rung 3: scan the layout', 'if (GetMapMode() == ENodeShuffleMapMode::Rwg && !E.RepClassSpawnPath.IsEmpty()) { continue; }', 'if (!E.NodeClassPath.StartsWith(TEXT("/Game/"))) { continue; }'))) { $f += '(G8) Rung 3 must skip restamped entries on RWG before reading NodeClassPath' }
+    # G9
+    if (-not (Ordered $s @('uint8 RebuildForm = Old.ResourceForm;', 'if (GetMapMode() == ENodeShuffleMapMode::Rwg)', 'if (UClass* OrigRC = LoadClassByPath(Old.OriginalResourceClassPath))', '== EResourceForm::RF_LIQUID)', '? FormLiquid : FormSolid;', 'E.ResourceForm = RebuildForm;', 'RebuildForm != 0 ? RebuildForm : FormSolid;', 'if (RebuildForm == FormLiquid)', 'LatchRepresentative(Old.NodeClassPath, SpawnableLiquidNodeClassPath'))) { $f += '(G9) re-roll rebuild must derive the slot form from the original resource on RWG and use it for the entry, FormByResource and the latch' }
+    if ((Count $s ('Old.' + 'ResourceForm')) -ne 2) { $f += '(G9) Old.ResourceForm may be read only as the RebuildForm default and the restored-count compare' }
+    $f += Check-Log $T 'sub' 'G9' 'RWGDEAL-REROLL ' 'RWGDEAL-REROLL rebuilt=%d slotFormRestoredFromOriginal=%d' 2
     return $f
 }
 
@@ -141,6 +147,9 @@ $mutants = @(
     @{ Name = 'A15 RWG FIX B line keeps the false claim'; Key = 'sub'; Expect = 'G6'; Find = '(rwg: form follows the card)"),'; Repl = ('(no liquid card on a solid slot by ' + 'construction)"),') }
     @{ Name = 'A16 marker reverted'; Key = 'nsmod'; Expect = 'G7'; Find = ('2026-10-19-rwg-' + 'deal-1'); Repl = ('2026-10-19-rwg-' + 'density-2') }
     @{ Name = 'A17 Rung 3 reads restamped entries'; Key = 'sub'; Expect = 'G8'; Find = 'if (GetMapMode() == ENodeShuffleMapMode::Rwg && !E.RepClassSpawnPath.IsEmpty()) { continue; }'; Repl = '' }
+    @{ Name = 'A19 rebuild entry form from the saved card'; Key = 'sub'; Expect = 'G9'; Find = 'E.ResourceForm = RebuildForm;'; Repl = ('E.ResourceForm = Old.' + 'ResourceForm;') }
+    @{ Name = 'A20 rebuild latch from the saved card form'; Key = 'sub'; Expect = 'G9'; Find = '                if (RebuildForm == FormLiquid)'; Repl = ('                if (Old.' + 'ResourceForm == FormLiquid)') }
+    @{ Name = 'A21 rebuild form not derived on RWG'; Key = 'sub'; Expect = 'G9'; Find = 'if (UClass* OrigRC = LoadClassByPath(Old.OriginalResourceClassPath))'; Repl = 'if (UClass* OrigRC = nullptr)' }
     @{ Name = 'A18 registry fallback after the kind table'; Key = 'sub'; Expect = 'G4'; Find = '    // rwg-repclass-1 (b) REGISTRY FALLBACK'; Repl = '    // moved REGISTRY' }
 )
 $mutantFails = @(); $caught = 0
@@ -157,5 +166,5 @@ if ($all.Count -gt 0) {
     Write-Host "RWGDEAL LINT: FAIL -- $($all.Count) problem(s). Mutants caught $caught/$($mutants.Count)."
     exit 1
 }
-Write-Host "PASS: RWGDEAL lint -- G1..G8 hold across $($text.Count) loaded files; mutants caught $caught/$($mutants.Count)."
+Write-Host "PASS: RWGDEAL lint -- G1..G9 hold across $($text.Count) loaded files; mutants caught $caught/$($mutants.Count)."
 exit 0

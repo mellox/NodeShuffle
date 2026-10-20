@@ -802,6 +802,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     };
     int32 VanillaCount = 0;
     int32 ZombiesDropped = 0; // rehide-1: pre-fix un-anchorable runtime-foreign records dropped at rebuild (§5)
+    int32 RwgRebuildFormRestored = 0; // rwg-deal-1: RWG re-roll entries whose rebuilt slot form != the saved (card) form
 
     TArray<FNodeShuffleEntry> NewLayout;
 
@@ -856,6 +857,20 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                 continue;
             }
 
+            // rwg-deal-1: on RWG the card decides the form, so a converted original's ResourceForm is its last CARD's
+            // form, not its slot's. The rebuilt slot, FormByResource and the representative latch below must use the
+            // ORIGINAL resource's form (descriptor form; gas -> FormSolid, the capture convention). Vanilla keeps
+            // the saved form (equal there by construction: FIX B never changes an existing slot's form).
+            uint8 RebuildForm = Old.ResourceForm;
+            if (GetMapMode() == ENodeShuffleMapMode::Rwg)
+            {
+                if (UClass* OrigRC = LoadClassByPath(Old.OriginalResourceClassPath))
+                {
+                    RebuildForm = (UFGItemDescriptor::GetForm(TSubclassOf<UFGItemDescriptor>(OrigRC)) == EResourceForm::RF_LIQUID)
+                        ? FormLiquid : FormSolid;
+                }
+                if (RebuildForm != Old.ResourceForm) { RwgRebuildFormRestored++; }
+            }
             FNodeShuffleEntry E;
             E.EntryGuid = FGuid::NewGuid();
             E.bIsNewNode = false;                 // re-enters the pool as an original; conversion re-runs below
@@ -870,7 +885,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
             E.OriginalPurity = Old.OriginalPurity;
             E.AssignedResourceClassPath = Old.OriginalResourceClassPath;
             E.AssignedPurity = Old.OriginalPurity;
-            E.ResourceForm = Old.ResourceForm;
+            E.ResourceForm = RebuildForm;
             E.bPinned = bOccupied;
             E.bActive = true;
             E.NodeClassPath = Old.NodeClassPath;
@@ -890,7 +905,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
             VanillaLocations.Add(Old.Location);
             VanillaResourceCounts.FindOrAdd(Old.OriginalResourceClassPath)++;
             FormByResource.FindOrAdd(Old.OriginalResourceClassPath) =
-                Old.ResourceForm != 0 ? Old.ResourceForm : FormSolid;
+                RebuildForm != 0 ? RebuildForm : FormSolid;
             if (Old.OriginalPurity != RP_MAX)
             {
                 PurityDeckSource.Add(Old.OriginalPurity);
@@ -899,7 +914,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
             // must not re-arm a class the mod stack already proved unspawnable this session.
             if (!Old.NodeClassPath.IsEmpty() && !SpawnRefusedClassSubstitute.Contains(Old.NodeClassPath))
             {
-                if (Old.ResourceForm == FormLiquid)
+                if (RebuildForm == FormLiquid)
                 {
                     LatchRepresentative(Old.NodeClassPath, SpawnableLiquidNodeClassPath, SpawnableVanillaLiquidNodeClassPath);
                 }
@@ -917,6 +932,11 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
         UE_LOG(LogNodeShuffle, Display,
             TEXT("Re-roll pool (redesign-6): rebuilt %d original entries from the FULL saved layout (pinned + all relocated), %d resource kinds — no collapse (rehide-1: %d pre-fix un-anchorable zombie(s) dropped)"),
             VanillaCount, VanillaResourceCounts.Num(), ZombiesDropped);
+        if (GetMapMode() == ENodeShuffleMapMode::Rwg)
+        {
+            UE_LOG(LogNodeShuffle, Display, TEXT("RWGDEAL-REROLL rebuilt=%d slotFormRestoredFromOriginal=%d"),
+                VanillaCount, RwgRebuildFormRestored);
+        }
 
         // EXPERIMENTAL-FORM augment into the reroll (generic — covers oil AND gas):
         // the saved Layout was captured when experimental forms were excluded
