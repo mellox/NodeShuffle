@@ -394,7 +394,7 @@ void ANodeShuffleSubsystem::RwgSpawnPass(float SpawnRadiusCm, bool& bChangedWorl
     Cands.Sort([](const TPair<double, int32>& A, const TPair<double, int32>& B) { return A.Key < B.Key; });
     const int32 N = FMath::Min(Cands.Num(), NodeShuffleMapMode::RwgMaxSpawnAttemptsPerPass);
     int32 K = 0;
-    for (; K + RwgPcSteepRingRuns < N; ++K) // rwg-steep-1: each local ring run spends one more slot of this attempt budget
+    for (; K < N && K + RwgPcSteepRingRuns < NodeShuffleMapMode::RwgMaxSpawnAttemptsPerPass; ++K) // rwg-steep-1: each local ring run spends one more slot of the attempt budget
     {
         FNodeShuffleEntry& E = Layout[Cands[K].Value];
         ++RwgPcAttempted;

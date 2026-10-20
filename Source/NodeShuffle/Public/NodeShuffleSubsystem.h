@@ -1151,7 +1151,8 @@ private:
     int32 RwgWrRejectedVoid = 0, RwgWrRejectedKillbox = 0, RwgWrDealtBelowKillbox = 0; // WELLROLL (per well roll)
     int32 RwgKbPasses = 0, RwgKbSettleRefused = 0, RwgKbSettleSamples = 0;
     TSet<FGuid> RwgKillboxRefused;                     // session: below the killbox but pinned/occupied (re-checked next session)
-    // ---- RWG density / stuck census (2026-10-19, rwg-density-1): DIAGNOSTICS ONLY, gates nothing. NodeShuffleMapModeDensity.cpp; every
+    // ---- RWG density / stuck census (2026-10-19, rwg-density-1): DIAGNOSTICS ONLY, gates nothing -- EXCEPT RwgDensityLandSample, which
+    // rwg-steep-1 (2026-10-19) also uses as the local redraw ring's land test (NodeShuffleMapModeSteep.cpp). NodeShuffleMapModeDensity.cpp; every
     // caller is behind an Rwg map-mode test (RollLayout, RwgSpawnPass, LogHereCensus), so none of these runs on vanilla.
     void RwgDensityOnRoll();                                        // RWGDENSITY trigger=roll + clears the stuck tracker (new layout guids)
     void RwgEmitDensityCensus(const TCHAR* Trigger);                // RWGDENSITY: 10 x 10 grid of active entries / land samples

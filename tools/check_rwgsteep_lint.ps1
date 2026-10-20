@@ -115,7 +115,7 @@ function Invoke-RwgsteepChecks($T) {
     if ((Count $p 'RwgSteepEmitSession();') -ne 1 -or -not (Ordered $p @('if ((RwgPcPasses % 12) == 1)', 'RWGHIDECHECK: pass=', 'RwgSteepEmitSession();'))) { $f += '(S6) RWGSTEEPSUM must be emitted from the 12th-pass census block' }
     # S7 budget
     if ((Count $s '++RwgPcSteepRingRuns;') -ne 1) { $f += '(S7) every ring run must count one RwgPcSteepRingRuns' }
-    if ((Count $p 'for (; K + RwgPcSteepRingRuns < N; ++K)') -ne 1 -or (Count $p 'RwgPcBudgetSkipped += Cands.Num() - K;') -ne 1) { $f += '(S7) the spawn loop must charge ring runs against the attempt cap and count unattempted candidates' }
+    if ((Count $p 'for (; K < N && K + RwgPcSteepRingRuns < NodeShuffleMapMode::RwgMaxSpawnAttemptsPerPass; ++K)') -ne 1 -or (Count $p 'RwgPcBudgetSkipped += Cands.Num() - K;') -ne 1) { $f += '(S7) the spawn loop must charge ring runs against the attempt cap and count unattempted candidates' }
     # S8 scope
     if ((Count ($s + $p) 'bRwgSteepArmed = true;') -ne 1 -or (Count $s 'bRwgSteepArmed = true;') -ne 1) { $f += '(S8) the ring is armed in exactly one place (RwgSteepNoteUnplaceable)' }
     if ((Count $p 'bOutWaterNoLand = false; bRwgSteepArmed = false;') -ne 1) { $f += '(S8) RwgResolveAtSpawn must clear the arm on entry' }
@@ -146,7 +146,7 @@ $mutants = @(
     @{ Name = 'B14 PLACECENSUS drops a steep field'; Key = 'place'; Expect = 'S6'; Find = ' steepMapwide=%d steepOccludedMapwide=%d"),'; Repl = ' steepOccludedMapwide=%d"),' }
     @{ Name = 'B15 RWGSTEEPSUM arity'; Key = 'steep'; Expect = 'S6'; Find = 'RwgSteepRingRadiusCm / 100.f, RwgSteepRingCandidates);'; Repl = 'RwgSteepRingRadiusCm / 100.f);' }
     @{ Name = 'B16 steep counters never zeroed'; Key = 'place'; Expect = 'S6'; Find = 'RwgPcSteepRing = RwgPcSteepMapwide = RwgPcSteepOccluded = RwgPcSteepRingRuns = 0;'; Repl = '' }
-    @{ Name = 'B17 ring not charged to the budget'; Key = 'place'; Expect = 'S7'; Find = 'for (; K + RwgPcSteepRingRuns < N; ++K)'; Repl = 'for (; K < N; ++K)' }
+    @{ Name = 'B17 ring not charged to the budget'; Key = 'place'; Expect = 'S7'; Find = 'for (; K < N && K + RwgPcSteepRingRuns < NodeShuffleMapMode::RwgMaxSpawnAttemptsPerPass; ++K)'; Repl = 'for (; K < N; ++K)' }
     @{ Name = 'B18 arm never cleared by the consumer'; Key = 'steep'; Expect = 'S8'; Find = "    if (!bRwgSteepArmed) { return false; }`n    bRwgSteepArmed = false;"; Repl = '    if (!bRwgSteepArmed) { return false; }' }
     @{ Name = 'B19 ring shares the map-wide stream'; Key = 'steep'; Expect = 'S8'; Find = '^ (SavedSeed * 131) ^ ((SaltP ? *SaltP : 0) * 104729) ^ 0x2C1B3C6D);'; Repl = ('^ (SavedSeed * 31) ^ ((SaltP ? *SaltP : 0) * ' + '7919));') }
     @{ Name = 'B20 resolver no longer clears the arm'; Key = 'place'; Expect = 'S8'; Find = 'bOutWaterNoLand = false; bRwgSteepArmed = false;'; Repl = 'bOutWaterNoLand = false;' }
