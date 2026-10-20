@@ -308,7 +308,7 @@ if (-not $ra) { $fails += 'R15: RwgResolveAtSpawn body not found' } else {
     $rt = [regex]::Matches($ra, 'return ' + 'true;')
     if ($rs -lt 0) { $fails += 'R15: resolver v3 must settle through the terrain-only RaycastSettle' }
     elseif ($nf -lt $rs -or $fw -lt $nf) { $fails += 'R15: the failed-settle return must follow the settle and precede the terrain flag write' }
-    elseif ($ra.Substring($nf, 160) -notmatch ('\{\s*if \(!bOutWaterNoLand\) \{ \+\+RwgPcNoTerrainDefer; \}\s*return ' + 'false;\s*\}')) { $fails += 'R15: a failed terrain settle must return false (defer / redeal), never spawn at the API Z' }
+    elseif ($ra.Substring($nf, [Math]::Min(360, $ra.Length - $nf)) -notmatch ('\{\s*if \(!bOutWaterNoLand\) \{ \+\+RwgPcNoTerrainDefer; \} else \{ RwgSteepNoteUnplaceable\(Q, Entry\); \}[^\n]*\s*return ' + 'false;\s*\}')) { $fails += 'R15: a failed terrain settle must return false (defer / redeal; rwg-steep-1 re-probe hook on the unplaceable branch only), never spawn at the API Z' }
     elseif ($rt.Count -ne 1 -or $rt[0].Index -lt $fw) { $fails += 'R15: the only return-true in the resolver must follow the settled-on-terrain flag write' }
     if ($ra.Contains('FMath::Abs(HitLoc.Z - Api' + 'Z0)')) { $fails += 'R15: the P2b agreement-then-API-Z rule is back' }
 }

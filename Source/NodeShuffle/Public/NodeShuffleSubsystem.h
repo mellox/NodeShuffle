@@ -1100,6 +1100,24 @@ private:
     int32 RwgRockPasses = 0;
     TSet<FGuid> RwgRockRefused;                   // session: occluded but pinned/occupied (re-checked next session)
     TMap<FString, int32> RwgWellResettleSalt;     // session: resettle redeals per core path (salts the deal stream)
+    // ---- rwg-steep-1 (2026-10-19): spawn-time steep hit -> LOCAL redraw ring before the map-wide API redeal. NodeShuffleMapModeSteep.cpp.
+    // Armed only by RwgResolveAtSpawn (an unplaceable settle whose re-probed primary hit is steep terrain or a solid stop), consumed and
+    // cleared by the very next TryRedealRwgEntry for the SAME entry guid; every other redeal caller sees it clear (map-wide, unchanged).
+    void RwgSteepNoteUnplaceable(const NodeShuffleMapMode::FRwgGroundQuery& Q, const FNodeShuffleEntry& Entry);
+    bool RwgSteepTryRing(const NodeShuffleMapMode::FRwgGroundQuery& Q, FNodeShuffleEntry& Entry, float SpacingCm); // true = moved by the ring
+    bool RwgLocalRedraw(const NodeShuffleMapMode::FRwgGroundQuery& Q, FNodeShuffleEntry& Entry, float SpacingCm,
+                        int32& OutTried, int32& OutPassed, int32& OutRejLand, int32& OutRejSpacing, int32& OutRejTrace);
+    void RwgSteepEmitSession();                   // RWGSTEEPSUM: session totals (12th-pass census block)
+    bool bRwgSteepArmed = false;
+    bool bRwgSteepOccluded = false;               // the re-probed primary stopped on a SOLID mesh (class 4)
+    FGuid RwgSteepGuid;
+    FVector RwgSteepLoc = FVector::ZeroVector;
+    double RwgSteepNormalRiseRun = -1.0, RwgSteepApiRiseRun = 0.0;
+    FString RwgSteepHitMesh;
+    int32 RwgPcSteepRing = 0, RwgPcSteepMapwide = 0, RwgPcSteepOccluded = 0, RwgPcSteepRingRuns = 0; // PLACECENSUS per pass
+    int32 RwgSteepSessEvents = 0, RwgSteepSessRing = 0, RwgSteepSessMapwide = 0, RwgSteepSessOccluded = 0; // session
+    int32 RwgSteepSessRingTried = 0, RwgSteepSessRingPassed = 0, RwgSteepSessReprobeWater = 0, RwgSteepSessReprobeOther = 0;
+    int32 RwgSteepSessGuidMismatch = 0, RwgSteepSessLastPrinted = -1;
     // Coordinator addendum (water diagnostics, measured only, gates nothing): ROLLCENSUS / WELLROLL splits + bounded samples.
     void RwgNoteWaterSample(const NodeShuffleMapMode::FRwgGroundQuery& Q, const FVector& P, bool bVolumeWet, const TCHAR* Caller);
     int32 RwgRcWaterZBelow0 = 0, RwgRcWaterZAtOrAbove0 = 0, RwgRcDealtBelowZ0 = 0; // per roll (GenerateRwgLocations)

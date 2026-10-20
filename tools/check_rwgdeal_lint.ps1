@@ -118,7 +118,7 @@ function Invoke-RwgdealChecks($T) {
     $f += Check-Log $T 'sub' 'G6' 'RWGDEAL-STAMP ' 'RWGDEAL-STAMP newFormRep=%d convFormChanged=%d convFormRestamped=%d convFormOwnClass=%d convFormKept=%d' 5
     if ((Count $s ('(no liquid card on a solid slot by ' + 'construction)"),')) -ne 1 -or (Count $s '(rwg: form follows the card)"),') -ne 1 -or -not (Ordered $s @('        if (bRwgDeal)', '(rwg: form follows the card)"),', '        else', ('(no liquid card on a solid slot by ' + 'construction)"),')))) { $f += '(G6) FIX B line: Vanilla keeps its exact text in the else branch; RWG prints the claim-free variant' }
     # G7
-    if ((Count $T.nsmod ('LOADED (2026-10-19-rwg-' + 'deal-1)')) -ne 1 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'density-2')) -ne 0) { $f += '(G7) marker must be rwg-deal-1 with rwg-density-2 absent' }
+    if ((Count $T.nsmod ('LOADED (2026-10-19-rwg-' + 'steep-1)')) -ne 1 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'deal-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'density-2')) -ne 0) { $f += '(G7) marker must be rwg-steep-1 (rwg-deal-1 absent) with rwg-density-2 absent' }
     # G8
     if (-not (Ordered $s @('// Rung 3: scan the layout', 'if (GetMapMode() == ENodeShuffleMapMode::Rwg && !E.RepClassSpawnPath.IsEmpty()) { continue; }', 'if (!E.NodeClassPath.StartsWith(TEXT("/Game/"))) { continue; }'))) { $f += '(G8) Rung 3 must skip restamped entries on RWG before reading NodeClassPath' }
     # G9
@@ -145,7 +145,7 @@ $mutants = @(
     @{ Name = 'A13 RWGDEAL drops an argument'; Key = 'deal'; Expect = 'G6'; Find = 'Out.SolidToLiquid, Out.LiquidToSolid, Out.VanillaOnlyFallbacks);'; Repl = 'Out.SolidToLiquid, Out.LiquidToSolid);' }
     @{ Name = 'A14 RWGDEAL-RES drops look'; Key = 'deal'; Expect = 'G6'; Find = ' ownClass=%d look=%d"),'; Repl = ' ownClass=%d"),' }
     @{ Name = 'A15 RWG FIX B line keeps the false claim'; Key = 'sub'; Expect = 'G6'; Find = '(rwg: form follows the card)"),'; Repl = ('(no liquid card on a solid slot by ' + 'construction)"),') }
-    @{ Name = 'A16 marker reverted'; Key = 'nsmod'; Expect = 'G7'; Find = ('2026-10-19-rwg-' + 'deal-1'); Repl = ('2026-10-19-rwg-' + 'density-2') }
+    @{ Name = 'A16 marker reverted'; Key = 'nsmod'; Expect = 'G7'; Find = ('2026-10-19-rwg-' + 'steep-1'); Repl = ('2026-10-19-rwg-' + 'density-2') }
     @{ Name = 'A17 Rung 3 reads restamped entries'; Key = 'sub'; Expect = 'G8'; Find = 'if (GetMapMode() == ENodeShuffleMapMode::Rwg && !E.RepClassSpawnPath.IsEmpty()) { continue; }'; Repl = '' }
     @{ Name = 'A19 rebuild entry form from the saved card'; Key = 'sub'; Expect = 'G9'; Find = 'E.ResourceForm = RebuildForm;'; Repl = ('E.ResourceForm = Old.' + 'ResourceForm;') }
     @{ Name = 'A20 rebuild latch from the saved card form'; Key = 'sub'; Expect = 'G9'; Find = '                if (RebuildForm == FormLiquid)'; Repl = ('                if (Old.' + 'ResourceForm == FormLiquid)') }

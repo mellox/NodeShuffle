@@ -256,6 +256,7 @@ bool ANodeShuffleSubsystem::TryRedealRwgEntry(FNodeShuffleEntry& Entry, float Sp
     const NodeShuffleMapMode::FRwgGroundQuery Q(GetWorld(), RwgGenerator.Get());
     if (!Q.IsUsable()) { return false; }
     if (RwgWaterVolumes.Num() == 0) { RwgBuildWaterVolumeCache(); }
+    if (RwgSteepTryRing(Q, Entry, SpacingCm)) { bOutMoved = true; return true; } // rwg-steep-1: steep spawn hit -> local ring first; no pass (or not armed) -> the map-wide draw below, unchanged
     // Same salted per-entry stream as the vanilla redeal; no cave branch off vanilla.
     int32& Salt = RedealAttempts.FindOrAdd(Entry.EntryGuid);
     Salt++;
@@ -289,7 +290,7 @@ bool ANodeShuffleSubsystem::TryRedealRwgEntry(FNodeShuffleEntry& Entry, float Sp
 bool ANodeShuffleSubsystem::RwgResolveAtSpawn(FNodeShuffleEntry& Entry, bool& bOutApiUsed, bool& bOutWaterNoLand)
 {
     bOutApiUsed = false;
-    bOutWaterNoLand = false;
+    bOutWaterNoLand = false; bRwgSteepArmed = false; // rwg-steep-1: armed below only for THIS resolve's redeal
     const NodeShuffleMapMode::FRwgGroundQuery Q(GetWorld(), RwgGenerator.Get());
     if (!Q.IsUsable()) { if (Entry.bRwgCave) { bOutApiUsed = true; ++RwgPcCaveDeferred; return false; } ++RwgPcFallback; return false; } // P5-2 re-review: a cave defer is not a fallback
     bOutApiUsed = true;
@@ -326,7 +327,7 @@ bool ANodeShuffleSubsystem::RwgResolveAtSpawn(FNodeShuffleEntry& Entry, bool& bO
     }
     if (!bSettled)
     {
-        if (!bOutWaterNoLand) { ++RwgPcNoTerrainDefer; }
+        if (!bOutWaterNoLand) { ++RwgPcNoTerrainDefer; } else { RwgSteepNoteUnplaceable(Q, Entry); } // rwg-steep-1: re-probe the primary, arm the ring (NodeShuffleMapModeSteep.cpp)
         return false;
     }
     if (RwgProbeSkipped > 0) { ++RwgPcSkippedToTerrain; }
@@ -392,7 +393,8 @@ void ANodeShuffleSubsystem::RwgSpawnPass(float SpawnRadiusCm, bool& bChangedWorl
     }
     Cands.Sort([](const TPair<double, int32>& A, const TPair<double, int32>& B) { return A.Key < B.Key; });
     const int32 N = FMath::Min(Cands.Num(), NodeShuffleMapMode::RwgMaxSpawnAttemptsPerPass);
-    for (int32 K = 0; K < N; ++K)
+    int32 K = 0;
+    for (; K + RwgPcSteepRingRuns < N; ++K) // rwg-steep-1: each local ring run spends one more slot of this attempt budget
     {
         FNodeShuffleEntry& E = Layout[Cands[K].Value];
         ++RwgPcAttempted;
@@ -402,7 +404,7 @@ void ANodeShuffleSubsystem::RwgSpawnPass(float SpawnRadiusCm, bool& bChangedWorl
         if (Now && IsValid(*Now)) { ++RwgPcSpawned; }
         RwgStuckAfterAttempt(E); // rwg-density-1: per-entry failed-attempt count (reads only)
     }
-    RwgPcBudgetSkipped += Cands.Num() - N;
+    RwgPcBudgetSkipped += Cands.Num() - K;
     ++RwgPcPasses;
     RwgResettlePass(); // RWG P2c: entries placed at the API Z by builds <= rwg-p4-2 (NodeShuffleMapModeResettle.cpp)
     RwgRockOcclusionPass(); // RWG P2d: placed entries under a SOLID mesh are redealt (NodeShuffleMapModeRock.cpp)
@@ -438,17 +440,19 @@ void ANodeShuffleSubsystem::RwgSpawnPass(float SpawnRadiusCm, bool& bChangedWorl
         }
         UE_LOG(LogNodeShuffle, Display, TEXT("RWGHIDECHECK: pass=%d sampled=%d resolvedByPath=%d identityOk=%d occupied=%d hidden=%d records=%d"),
             RwgPcPasses, Sampled, Resolved, IdentityOk, Occupied, Hidden, Records);
+        RwgSteepEmitSession(); // rwg-steep-1: RWGSTEEPSUM session totals (first pass, then 12th passes when changed)
     }
     if (RwgPcSpawned > 0 || (RwgPcPasses % 12) == 1) // bounded: a pass that spawned, else once a minute
     {
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("PLACECENSUS: pass=%d attempted=%d spawned=%d notSpawned=%d deferredSettle=%d waterLockedNew=%d apiRedealCalls=%d budgetSkipped=%d farNoAttempt=%d liveReasserted=%d spawnTraceHit=%d spawnTraceMiss=%d spawnTraceFar=%d farTerrain=%d farCanopy=%d farWater=%d farOther=%d farSolid=%d rejectedRock=%d settledOnTerrain=%d noTerrainDefer=%d spawnSettlesWithAnySkip=%d terrainOnlyCapHitsAllCallers=%d fallbackNoApi=%d attemptRadiusM=%.0f spawnRadiusM=%.0f layoutEntries=%d caveSettleTried=%d caveSettled=%d caveDeferred=%d caveEscaped=%d caveFar=%d caveSolid=%d caveWater=%d caveRedealCave=%d caveRedealSurface=%d insideCaveChecked=%d settledInsideCave=%d settledInsideCaveSurfaceEntry=%d"),
+            TEXT("PLACECENSUS: pass=%d attempted=%d spawned=%d notSpawned=%d deferredSettle=%d waterLockedNew=%d apiRedealCalls=%d budgetSkipped=%d farNoAttempt=%d liveReasserted=%d spawnTraceHit=%d spawnTraceMiss=%d spawnTraceFar=%d farTerrain=%d farCanopy=%d farWater=%d farOther=%d farSolid=%d rejectedRock=%d settledOnTerrain=%d noTerrainDefer=%d spawnSettlesWithAnySkip=%d terrainOnlyCapHitsAllCallers=%d fallbackNoApi=%d attemptRadiusM=%.0f spawnRadiusM=%.0f layoutEntries=%d caveSettleTried=%d caveSettled=%d caveDeferred=%d caveEscaped=%d caveFar=%d caveSolid=%d caveWater=%d caveRedealCave=%d caveRedealSurface=%d insideCaveChecked=%d settledInsideCave=%d settledInsideCaveSurfaceEntry=%d steepRing=%d steepMapwide=%d steepOccludedMapwide=%d"),
             RwgPcPasses, RwgPcAttempted, RwgPcSpawned, RwgPcAttempted - RwgPcSpawned, DeferredThisPass - DeferredBefore,
             WaterLockedThisSession.Num() - WaterLockedBefore, RwgPcRedealApi, RwgPcBudgetSkipped, RwgPcFarNoAttempt, RwgPcLive,
             RwgPcTraceHit, RwgPcTraceMiss, RwgPcTraceFar, RwgPcFarTerrain, RwgPcFarCanopy, RwgPcFarWater, RwgPcFarOther, RwgPcFarSolid, RwgPcRejectedRock,
             RwgPcSettledTerrain, RwgPcNoTerrainDefer, RwgPcSkippedToTerrain, RwgProbeCapHits,
             RwgPcFallback, AttemptRadiusCm / 100.f, SpawnRadiusCm / 100.f, Layout.Num(), RwgPcCaveSettleTried, RwgPcCaveSettled, RwgPcCaveDeferred, RwgPcCaveEscaped,
-            RwgPcCaveFar, RwgPcCaveSolid, RwgPcCaveWater, RwgPcCaveRedealCave, RwgPcCaveRedealSurface, RwgPcInsideCaveChecked, RwgPcSettledInsideCave, RwgPcSettledInsideCaveSurfaceEntry);
+            RwgPcCaveFar, RwgPcCaveSolid, RwgPcCaveWater, RwgPcCaveRedealCave, RwgPcCaveRedealSurface, RwgPcInsideCaveChecked, RwgPcSettledInsideCave, RwgPcSettledInsideCaveSurfaceEntry,
+            RwgPcSteepRing, RwgPcSteepMapwide, RwgPcSteepOccluded);
         RwgEmitDzCensus(); // RWG P2c: session apiToTerrainDz distribution by band, emitted with PLACECENSUS
     }
     RwgDensityPassHook(Pawns, AttemptRadiusCm); // rwg-density-1: RWGDENSITY on load (first pass, after RwgSeaRedealPass) + RWGSTUCK every 12th pass
@@ -488,6 +492,7 @@ void ANodeShuffleSubsystem::RwgEmitPlaceCensus()
     RwgPcTraceHit = RwgPcTraceMiss = RwgPcTraceFar = RwgPcFallback = RwgPcRedealApi = 0;
     RwgPcFarTerrain = RwgPcFarCanopy = RwgPcFarWater = RwgPcFarOther = 0;
     RwgPcFarSolid = RwgPcRejectedRock = 0; // RWG P2d
+    RwgPcSteepRing = RwgPcSteepMapwide = RwgPcSteepOccluded = RwgPcSteepRingRuns = 0; // rwg-steep-1
     RwgPcSettledTerrain = RwgPcNoTerrainDefer = RwgPcSkippedToTerrain = 0;
     RwgProbeCapHits = 0;
     RwgPcCaveSettleTried = RwgPcCaveSettled = RwgPcCaveDeferred = RwgPcCaveEscaped = RwgPcCaveFar = RwgPcCaveSolid = RwgPcCaveWater = 0; // RWG P5

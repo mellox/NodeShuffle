@@ -150,7 +150,7 @@ function Invoke-RepclassChecks($T) {
     }
     if ((Count $s ('rep-class byResource ' + 'CONFLICT')) -ne 0 -or (Count $s ('NodeClassByResource' + 'ConflictLogged')) -ne 0) { $f += '(R6) the first-seen CONFLICT line and its set must be gone' }
     # R7
-    if ((Count $T.nsmod ('LOADED (2026-10-19-rwg-' + 'deal-1)')) -ne 1 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'density-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'rockcache-2')) -ne 0) { $f += '(R7) marker must be rwg-density-2 with rwg-rockcache-2 absent' }
+    if ((Count $T.nsmod ('LOADED (2026-10-19-rwg-' + 'steep-1)')) -ne 1 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'deal-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'density-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'rockcache-2')) -ne 0) { $f += '(R7) marker must be rwg-density-2 with rwg-rockcache-2 absent' }
     if ((Count $s '#include "NodeShuffleRepClass.h"') -ne 1) { $f += '(R7) subsystem must include NodeShuffleRepClass.h' }
     # R8 restamp (rwg-repclass-2)
     if ((Count $s ('RepClassSpawnPath =' + ' ')) -ne 2 -or (Count $s 'E.RepClassSpawnPath = *OwnByRes;') -ne 1 -or (Count $s 'E.RepClassSpawnPath = FormRep;') -ne 1 -or (Count $s 'E.RepClassSpawnPath.Reset();') -ne 1) { $f += '(R8) RepClassSpawnPath is written only by the conversion restamp (rank-2 assignment + rwg-deal-1 form-restamp assignment, one reset)' }
@@ -192,7 +192,7 @@ $mutants = @(
     @{ Name = 'M17 DRESS-SKIP reason becomes a cause sentence'; Key = 'sub'; Expect = 'R5'; Find = 'reason=ownClass"),'; Repl = 'reason=the mod already dressed it"),' }
     @{ Name = 'M18 DRESS-SKIP ungated at spawn'; Key = 'sub'; Expect = 'R5'; Find = 'if (bOwnClass && bSpawnDiag)'; Repl = 'if (bOwnClass)' }
     @{ Name = 'M19 REPCLASS repeats a field'; Key = 'sub'; Expect = 'R6'; Find = ' replacedFirstSeen=%d source=%s"),'; Repl = ' replacedFirstSeen=%d source=%s seen=%d"),' }
-    @{ Name = 'M20 marker reverted'; Key = 'nsmod'; Expect = 'R7'; Find = ('2026-10-19-rwg-' + 'deal-1'); Repl = ('2026-10-19-rwg-' + 'rockcache-2') }
+    @{ Name = 'M20 marker reverted'; Key = 'nsmod'; Expect = 'R7'; Find = ('2026-10-19-rwg-' + 'steep-1'); Repl = ('2026-10-19-rwg-' + 'rockcache-2') }
     @{ Name = 'M21 trap ii: rebuild carries the restamp'; Key = 'sub'; Expect = 'R8'; Find = '            E.SpawnNodeClassPath = Old.SpawnNodeClassPath;'; Repl = ('            E.SpawnNodeClassPath = Old.SpawnNodeClassPath; E.RepClassSpawnPath = Old.' + 'RepClassSpawnPath;') }
     @{ Name = 'M22 trap ii: re-roll latch learns the copy class'; Key = 'sub'; Expect = 'R8'; Find = 'LatchByResource(Old.OriginalResourceClassPath, Old.NodeClassPath, NodeClassByResource, RepClassStats);'; Repl = ('LatchByResource(Old.OriginalResourceClassPath, PreSubstituteSpawnPath(' + 'Old), NodeClassByResource, RepClassStats);') }
     @{ Name = 'M23 trap i: restamp writes the original class'; Key = 'sub'; Expect = 'R8'; Find = 'E.RepClassSpawnPath = *OwnByRes;'; Repl = 'E.RepClassSpawnPath = *OwnByRes; E.NodeClassPath = *OwnByRes;' }
