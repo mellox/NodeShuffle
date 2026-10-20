@@ -1118,6 +1118,7 @@ private:
     int32 RwgSteepSessEvents = 0, RwgSteepSessRing = 0, RwgSteepSessMapwide = 0, RwgSteepSessOccluded = 0; // session
     int32 RwgSteepSessRingTried = 0, RwgSteepSessRingPassed = 0, RwgSteepSessReprobeWater = 0, RwgSteepSessReprobeOther = 0;
     int32 RwgSteepSessGuidMismatch = 0, RwgSteepSessLastPrinted = -1;
+    int32 RwgSteepSessPassedFromOriginZ = 0;      // rwg-steep-2: ring passes that also pass when re-traced from the origin's API Z (RWGSTEEPSUM)
     // Coordinator addendum (water diagnostics, measured only, gates nothing): ROLLCENSUS / WELLROLL splits + bounded samples.
     void RwgNoteWaterSample(const NodeShuffleMapMode::FRwgGroundQuery& Q, const FVector& P, bool bVolumeWet, const TCHAR* Caller);
     int32 RwgRcWaterZBelow0 = 0, RwgRcWaterZAtOrAbove0 = 0, RwgRcDealtBelowZ0 = 0; // per roll (GenerateRwgLocations)

@@ -9,16 +9,19 @@
 #   G3  Merged-deck draw: solid + liquid appended into one deck, shuffled inside Deal(), uniform draw in [Cursor, End) with bounded
 #       rejection; an existing slot rejects a Dealable card of the other form ONLY when no spawn class exists for that form.
 #   G4  No-class-no-look rule: Dealable = generic || rank-2 own class || look; a non-Dealable card goes only to an existing slot of
-#       its own form; the kind table reads the rank-2 predicate and ResourceHasAuthoredLook.
+#       its own form; the kind table reads the rank-2 predicate and ResourceHasAuthoredLook. F1: the kind table and the Phase-2 RWG
+#       gate also require the own class loaded, an AFGResourceNode and not abstract (as the conversion restamp does); the registry
+#       fallback (anchored on its MatchByRegistry call, not a comment) runs before the kind table.
 #   G5  Form follows the card: ResourceForm := card form for every dealt slot; FormChanged recorded; the conversion FORM RESTAMP writes
 #       the form representative into RepClassSpawnPath (after the rank-2 restamp); Phase-2 sends an RWG modded card without a
 #       rank-2 class to the form representative BEFORE the resource-keyed stamp.
 #   G6  Census: RWGDEAL (10 %d), RWGDEAL-RES, RWGDEAL-SLOTS, RWGDEAL-STAMP exact formats, Display, specifier count == argument count,
 #       no repeated field; the Vanilla FIX B line keeps its exact text and RWG prints the claim-free variant.
-#   G7  Marker rwg-deal-1 present once, rwg-density-2 absent.
-#   G8  deck-substitute Rung 3 skips restamped entries on RWG only.
+#   G7  Marker rwg-steep-2 present once; rwg-steep-1, rwg-deal-1 and rwg-density-2 absent.
+#   G8  deck-substitute Rung 3 reads the class the entry spawns (PreSubstituteSpawnPath) on RWG, NodeClassPath on Vanilla (F7).
 #   G9  Re-roll rebuild: on RWG the rebuilt slot form, FormByResource and the representative latch read the ORIGINAL resource's
-#       descriptor form (RebuildForm), never the saved card form; RWGDEAL-REROLL census 2/2.
+#       descriptor form (RebuildForm), never the saved card form; a class that does not load is counted (originalLoadNull);
+#       RWGDEAL-REROLL census 3/3.
 # Mutants run in-file. Exit 0 = all hold; 1 = at least one does not; 2 = a pinned FILE is missing.
 
 $ErrorActionPreference = 'Stop'
@@ -105,26 +108,27 @@ function Invoke-RwgdealChecks($T) {
     # G4
     if ((Count $h 'bool Dealable() const { return bGeneric || bOwnClass || bLook; }') -ne 1) { $f += '(G4) Dealable must be generic || own class || look' }
     if (-not (Ordered $d @('else if (!K.Dealable())', 'bOk = !bNew && K.Form == SlotForm;', 'if (!bOk) { bRuleRejected = true; }'))) { $f += '(G4) a no-class-no-look card goes only to an existing slot of its own form' }
-    if (-not (Ordered $s @('K.Form = CardFormOf(Kind);', 'K.bGeneric = NodeShuffleRepClass::IsGenericNodeClassPath(Kind);', 'K.bOwnClass = Latched && NodeShuffleRepClass::IsOwnNodeClass(*Latched, Kind);', 'K.bLook = ResourceHasAuthoredLook(LoadClassByPath(Kind));'))) { $f += '(G4) kind table must read form, generic, rank-2 own class and authored look' }
-    if (-not (Ordered $s @('    // rwg-repclass-1 (b) REGISTRY FALLBACK', 'TEXT("REPCLASS res=', 'K.bOwnClass = Latched'))) { $f += '(G4) the registry fallback must run before the kind table reads the rank-2 class' }
+    if (-not (Ordered $s @('K.Form = CardFormOf(Kind);', 'K.bGeneric = NodeShuffleRepClass::IsGenericNodeClassPath(Kind);', 'const UClass* LatchedCls = Latched ? FindObject<UClass>(nullptr, **Latched) : nullptr;', "K.bOwnClass = Latched && NodeShuffleRepClass::IsOwnNodeClass(*Latched, Kind)`n                && LatchedCls && LatchedCls->IsChildOf(AFGResourceNode::StaticClass()) && !LatchedCls->HasAnyClassFlags(CLASS_Abstract);", 'K.bLook = ResourceHasAuthoredLook(LoadClassByPath(Kind));'))) { $f += '(G4) kind table must read form, generic, rank-2 own class (loaded, AFGResourceNode, not abstract) and authored look' }
+    if ((Count $s 'if (!RwgLatched || !NodeShuffleRepClass::IsOwnNodeClass(*RwgLatched, E.AssignedResourceClassPath) || !RwgLatchedCls || !RwgLatchedCls->IsChildOf(AFGResourceNode::StaticClass()) || RwgLatchedCls->HasAnyClassFlags(CLASS_Abstract))') -ne 1 -or -not (Ordered $s @('const UClass* RwgLatchedCls = RwgLatched ? FindObject<UClass>(nullptr, **RwgLatched) : nullptr;', 'if (!RwgLatched || !NodeShuffleRepClass::IsOwnNodeClass(*RwgLatched, E.AssignedResourceClassPath) || !RwgLatchedCls || !RwgLatchedCls->IsChildOf(AFGResourceNode::StaticClass()) || RwgLatchedCls->HasAnyClassFlags(CLASS_Abstract))', '++RwgNewFormRepStamps;'))) { $f += '(G4) Phase-2 RWG gate: an own class that is not loaded, not an AFGResourceNode or abstract takes the form representative' }
+    if ((Count $s 'NodeShuffleRepClass::MatchByRegistry(Res, RegQuery') -ne 1 -or -not (Ordered $s @('NodeShuffleRepClass::MatchByRegistry(Res, RegQuery', 'TEXT("REPCLASS res=', 'K.bOwnClass = Latched'))) { $f += '(G4) the registry fallback must run before the kind table reads the rank-2 class' }
     # G5
     if ((Count $d 'E.ResourceForm = K.Form; // form follows the card') -ne 1 -or (Count $d 'Out.FormChanged.Add(E.EntryGuid);') -ne 1) { $f += '(G5) ResourceForm must follow the card and form changes must be recorded' }
     if (-not (Ordered $s @('else { ConvKept++; PerRes.Value++; }', 'if (bRwgDeal && RwgDeal.FormChanged.Contains(E.EntryGuid))', 'const FString& FormRep = (E.ResourceForm == FormLiquid) ? SpawnableLiquidNodeClassPath : SpawnableNodeClassPath;', 'if (!E.RepClassSpawnPath.IsEmpty()) { RwgConvFormOwnClass++; }', 'E.RepClassSpawnPath = FormRep;', 'Converted++;'))) { $f += '(G5) conversion FORM RESTAMP must follow the rank-2 restamp and write the form representative' }
     if (-not (Ordered $s @('    int32 RwgNewFormRepStamps = 0;', 'if (bRwgDeal && !NodeShuffleRepClass::IsGenericNodeClassPath(E.AssignedResourceClassPath))', '? SpawnableLiquidNodeClassPath : SpawnableNodeClassPath;', '++RwgNewFormRepStamps;', 'continue;', 'if (const FString* ByResource = NodeClassByResource.Find(E.AssignedResourceClassPath))'))) { $f += '(G5) Phase-2: an RWG modded card without a rank-2 class takes the form representative before the resource-keyed stamp' }
     # G6
-    $f += Check-Log $T 'deal' 'G6' 'RWGDEAL: ' 'RWGDEAL: activeSlots=%d cards=%d dealt=%d vanillaCards=%d moddedCards=%d undealtCards=%d slotsLeftInactiveNoCard=%d formChangedSolidToLiquid=%d liquidToSolid=%d vanillaOnlyFallbacks=%d' 10
-    $f += Check-Log $T 'deal' 'G6' 'RWGDEAL-RES ' 'RWGDEAL-RES res=%s cards=%d dealt=%d ownClass=%d look=%d' 5
+    $f += Check-Log $T 'deal' 'G6' 'RWGDEAL: ' 'RWGDEAL: activeSlots=%d cards=%d dealt=%d vanillaCards=%d moddedCards=%d undealtCards=%d slotsLeftInactiveNoCard=%d formChangedSolidToLiquid=%d liquidToSolid=%d noClassNoLookRejectSlots=%d' 10
+    $f += Check-Log $T 'deal' 'G6' 'RWGDEAL-RES ' 'RWGDEAL-RES res=%s cards=%d dealt=%d dealable=%d ownClass=%d look=%d' 6
     $f += Check-Log $T 'deal' 'G6' 'RWGDEAL-SLOTS ' 'RWGDEAL-SLOTS existingSlots=%d newSlots=%d existingKeptNoCard=%d reserveForced=%d formChangeNoRepRejects=%d' 5
     $f += Check-Log $T 'sub' 'G6' 'RWGDEAL-STAMP ' 'RWGDEAL-STAMP newFormRep=%d convFormChanged=%d convFormRestamped=%d convFormOwnClass=%d convFormKept=%d' 5
     if ((Count $s ('(no liquid card on a solid slot by ' + 'construction)"),')) -ne 1 -or (Count $s '(rwg: form follows the card)"),') -ne 1 -or -not (Ordered $s @('        if (bRwgDeal)', '(rwg: form follows the card)"),', '        else', ('(no liquid card on a solid slot by ' + 'construction)"),')))) { $f += '(G6) FIX B line: Vanilla keeps its exact text in the else branch; RWG prints the claim-free variant' }
     # G7
-    if ((Count $T.nsmod ('LOADED (2026-10-19-rwg-' + 'steep-1)')) -ne 1 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'deal-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'density-2')) -ne 0) { $f += '(G7) marker must be rwg-steep-1 (rwg-deal-1 absent) with rwg-density-2 absent' }
+    if ((Count $T.nsmod ('LOADED (2026-10-19-rwg-' + 'steep-2)')) -ne 1 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'deal-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'density-2')) -ne 0) { $f += '(G7) marker must be rwg-steep-2 (rwg-steep-1 and rwg-deal-1 absent) with rwg-density-2 absent' }
     # G8
-    if (-not (Ordered $s @('// Rung 3: scan the layout', 'if (GetMapMode() == ENodeShuffleMapMode::Rwg && !E.RepClassSpawnPath.IsEmpty()) { continue; }', 'if (!E.NodeClassPath.StartsWith(TEXT("/Game/"))) { continue; }'))) { $f += '(G8) Rung 3 must skip restamped entries on RWG before reading NodeClassPath' }
+    if (-not (Ordered $s @('// Rung 3: scan the layout', 'const FString& Cand = (GetMapMode() == ENodeShuffleMapMode::Rwg) ? PreSubstituteSpawnPath(E) : E.NodeClassPath;', 'if (!Cand.StartsWith(TEXT("/Game/"))) { continue; }', 'if (!IsEligible(Cand)) { continue; }', 'return Cand;', '// Rung 4 (SOLID ONLY)'))) { $f += '(G8) Rung 3 must read the class the entry spawns (PreSubstituteSpawnPath) on RWG and NodeClassPath on Vanilla' }
     # G9
-    if (-not (Ordered $s @('uint8 RebuildForm = Old.ResourceForm;', 'if (GetMapMode() == ENodeShuffleMapMode::Rwg)', 'if (UClass* OrigRC = LoadClassByPath(Old.OriginalResourceClassPath))', '== EResourceForm::RF_LIQUID)', '? FormLiquid : FormSolid;', 'E.ResourceForm = RebuildForm;', 'RebuildForm != 0 ? RebuildForm : FormSolid;', 'if (RebuildForm == FormLiquid)', 'LatchRepresentative(Old.NodeClassPath, SpawnableLiquidNodeClassPath'))) { $f += '(G9) re-roll rebuild must derive the slot form from the original resource on RWG and use it for the entry, FormByResource and the latch' }
+    if (-not (Ordered $s @('uint8 RebuildForm = Old.ResourceForm;', 'if (GetMapMode() == ENodeShuffleMapMode::Rwg)', 'if (UClass* OrigRC = LoadClassByPath(Old.OriginalResourceClassPath))', '== EResourceForm::RF_LIQUID)', '? FormLiquid : FormSolid;', 'else { RwgRebuildFormLoadNull++; }', 'E.ResourceForm = RebuildForm;', 'RebuildForm != 0 ? RebuildForm : FormSolid;', 'if (RebuildForm == FormLiquid)', 'LatchRepresentative(Old.NodeClassPath, SpawnableLiquidNodeClassPath'))) { $f += '(G9) re-roll rebuild must derive the slot form from the original resource on RWG and use it for the entry, FormByResource and the latch' }
     if ((Count $s ('Old.' + 'ResourceForm')) -ne 2) { $f += '(G9) Old.ResourceForm may be read only as the RebuildForm default and the restored-count compare' }
-    $f += Check-Log $T 'sub' 'G9' 'RWGDEAL-REROLL ' 'RWGDEAL-REROLL rebuilt=%d slotFormRestoredFromOriginal=%d' 2
+    $f += Check-Log $T 'sub' 'G9' 'RWGDEAL-REROLL ' 'RWGDEAL-REROLL rebuilt=%d slotFormRestoredFromOriginal=%d originalLoadNull=%d' 3
     return $f
 }
 
@@ -138,25 +142,29 @@ $mutants = @(
     @{ Name = 'A6 existing slots form-matched again'; Key = 'deal'; Expect = 'G3'; Find = 'else if (!bNew && K.Form != SlotForm && !HaveRep(K.Form))'; Repl = 'else if (!bNew && K.Form != SlotForm)' }
     @{ Name = 'A7 drop the no-class-no-look rule'; Key = 'deal'; Expect = 'G4'; Find = 'bOk = !bNew && K.Form == SlotForm;'; Repl = 'bOk = true;' }
     @{ Name = 'A8 Dealable ignores the look'; Key = 'dealh'; Expect = 'G4'; Find = 'return bGeneric || bOwnClass || bLook;'; Repl = 'return bGeneric || bOwnClass;' }
-    @{ Name = 'A9 any latched class counts as own'; Key = 'sub'; Expect = 'G4'; Find = 'K.bOwnClass = Latched && NodeShuffleRepClass::IsOwnNodeClass(*Latched, Kind);'; Repl = 'K.bOwnClass = Latched != nullptr;' }
+    @{ Name = 'A9 any latched class counts as own'; Key = 'sub'; Expect = 'G4'; Find = "K.bOwnClass = Latched && NodeShuffleRepClass::IsOwnNodeClass(*Latched, Kind)`n                && LatchedCls && LatchedCls->IsChildOf(AFGResourceNode::StaticClass()) && !LatchedCls->HasAnyClassFlags(CLASS_Abstract);"; Repl = 'K.bOwnClass = Latched != nullptr;' }
+    @{ Name = 'A22 kind table drops the loaded/type test'; Key = 'sub'; Expect = 'G4'; Find = "K.bOwnClass = Latched && NodeShuffleRepClass::IsOwnNodeClass(*Latched, Kind)`n                && LatchedCls && LatchedCls->IsChildOf(AFGResourceNode::StaticClass()) && !LatchedCls->HasAnyClassFlags(CLASS_Abstract);"; Repl = 'K.bOwnClass = Latched && NodeShuffleRepClass::IsOwnNodeClass(*Latched, Kind);' }
+    @{ Name = 'A23 Phase-2 drops the loaded/type test'; Key = 'sub'; Expect = 'G4'; Find = 'if (!RwgLatched || !NodeShuffleRepClass::IsOwnNodeClass(*RwgLatched, E.AssignedResourceClassPath) || !RwgLatchedCls || !RwgLatchedCls->IsChildOf(AFGResourceNode::StaticClass()) || RwgLatchedCls->HasAnyClassFlags(CLASS_Abstract))'; Repl = 'if (!RwgLatched || !NodeShuffleRepClass::IsOwnNodeClass(*RwgLatched, E.AssignedResourceClassPath))' }
     @{ Name = 'A10 revert form-follows-card'; Key = 'deal'; Expect = 'G5'; Find = 'E.ResourceForm = K.Form; // form follows the card'; Repl = '' }
     @{ Name = 'A11 drop the conversion form restamp'; Key = 'sub'; Expect = 'G5'; Find = 'E.RepClassSpawnPath = FormRep;'; Repl = '' }
     @{ Name = 'A12 drop the Phase-2 RWG gate'; Key = 'sub'; Expect = 'G5'; Find = 'if (bRwgDeal && !NodeShuffleRepClass::IsGenericNodeClassPath(E.AssignedResourceClassPath))'; Repl = 'if (false)' }
     @{ Name = 'A13 RWGDEAL drops an argument'; Key = 'deal'; Expect = 'G6'; Find = 'Out.SolidToLiquid, Out.LiquidToSolid, Out.VanillaOnlyFallbacks);'; Repl = 'Out.SolidToLiquid, Out.LiquidToSolid);' }
     @{ Name = 'A14 RWGDEAL-RES drops look'; Key = 'deal'; Expect = 'G6'; Find = ' ownClass=%d look=%d"),'; Repl = ' ownClass=%d"),' }
     @{ Name = 'A15 RWG FIX B line keeps the false claim'; Key = 'sub'; Expect = 'G6'; Find = '(rwg: form follows the card)"),'; Repl = ('(no liquid card on a solid slot by ' + 'construction)"),') }
-    @{ Name = 'A16 marker reverted'; Key = 'nsmod'; Expect = 'G7'; Find = ('2026-10-19-rwg-' + 'steep-1'); Repl = ('2026-10-19-rwg-' + 'density-2') }
-    @{ Name = 'A17 Rung 3 reads restamped entries'; Key = 'sub'; Expect = 'G8'; Find = 'if (GetMapMode() == ENodeShuffleMapMode::Rwg && !E.RepClassSpawnPath.IsEmpty()) { continue; }'; Repl = '' }
+    @{ Name = 'A16 marker reverted'; Key = 'nsmod'; Expect = 'G7'; Find = ('2026-10-19-rwg-' + 'steep-2'); Repl = ('2026-10-19-rwg-' + 'density-2') }
+    @{ Name = 'A17 Rung 3 reads NodeClassPath on RWG'; Key = 'sub'; Expect = 'G8'; Find = '? PreSubstituteSpawnPath(E) : E.NodeClassPath;'; Repl = '? E.NodeClassPath : E.NodeClassPath;' }
     @{ Name = 'A19 rebuild entry form from the saved card'; Key = 'sub'; Expect = 'G9'; Find = 'E.ResourceForm = RebuildForm;'; Repl = ('E.ResourceForm = Old.' + 'ResourceForm;') }
     @{ Name = 'A20 rebuild latch from the saved card form'; Key = 'sub'; Expect = 'G9'; Find = '                if (RebuildForm == FormLiquid)'; Repl = ('                if (Old.' + 'ResourceForm == FormLiquid)') }
     @{ Name = 'A21 rebuild form not derived on RWG'; Key = 'sub'; Expect = 'G9'; Find = 'if (UClass* OrigRC = LoadClassByPath(Old.OriginalResourceClassPath))'; Repl = 'if (UClass* OrigRC = nullptr)' }
-    @{ Name = 'A18 registry fallback after the kind table'; Key = 'sub'; Expect = 'G4'; Find = '    // rwg-repclass-1 (b) REGISTRY FALLBACK'; Repl = '    // moved REGISTRY' }
+    @{ Name = 'A24 load-null rebuild uncounted'; Key = 'sub'; Expect = 'G9'; Find = 'else { RwgRebuildFormLoadNull++; }'; Repl = '' }
+    @{ Name = 'A18 registry fallback after the kind table'; Key = 'sub'; Expect = 'G4'; Find = 'NodeShuffleRepClass::MatchByRegistry(Res, RegQuery'; Repl = 'NodeShuffleRepClass::MatchByRegistryMovedOut(Res, RegQuery'; Find2 = 'K.bLook = ResourceHasAuthoredLook(LoadClassByPath(Kind));'; Repl2 = 'K.bLook = ResourceHasAuthoredLook(LoadClassByPath(Kind)); NodeShuffleRepClass::MatchByRegistry(Res, RegQuery' }
 )
 $mutantFails = @(); $caught = 0
 foreach ($m in $mutants) {
     $mut = @{}; foreach ($k in $text.Keys) { $mut[$k] = $text[$k] }
     if (-not $mut[$m.Key].Contains($m.Find)) { $mutantFails += "FAIL(mutation): '$($m.Name)' cannot be applied -- anchor absent from '$($m.Key)' (a mutant that does not mutate is a vacuous pass)"; continue }
     $mut[$m.Key] = $mut[$m.Key].Replace($m.Find, $m.Repl)
+    if ($m.Find2) { if (-not $mut[$m.Key].Contains($m.Find2)) { $mutantFails += "FAIL(mutation): '$($m.Name)' second anchor absent"; continue }; $mut[$m.Key] = $mut[$m.Key].Replace($m.Find2, $m.Repl2) }
     $res = Invoke-RwgdealChecks $mut
     if ($res | Where-Object { $_ -like "*($($m.Expect))*" }) { $caught++ } else { $mutantFails += "FAIL(mutation): '$($m.Name)' was NOT caught by any $($m.Expect) pin" }
 }

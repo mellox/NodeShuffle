@@ -9,11 +9,14 @@
 #   S4  Occluded exception: the re-probe's solid flag is copied into bRwgSteepOccluded; an occluded entry never reaches RwgLocalRedraw.
 #   S5  Slope print: RWGSTEEP exact format (normalRiseRun from the smoothed normal, apiRiseRun from RwgApiSlopeTooSteep), arity.
 #   S6  Censuses: PLACECENSUS ends with steepRing/steepMapwide/steepOccludedMapwide and its specifier count == argument count;
-#       RWGSTEEPSUM exact format + arity; the per-pass steep counters are zeroed with the other PLACECENSUS counters.
+#       RWGSTEEPSUM exact format + arity (13, ringPassedFromOriginZ last); its re-print signature includes guidMismatch; the
+#       ringPassedFromOriginZ discriminator re-traces the passing XY from the ORIGIN's API Z and only counts; the per-pass steep
+#       counters are zeroed with the other PLACECENSUS counters.
 #   S7  Budget: every ring run increments RwgPcSteepRingRuns and the spawn loop charges it against the attempt cap.
 #   S8  Scope: armed in one place, cleared at every RwgResolveAtSpawn and read-and-cleared by RwgSteepTryRing; the re-probe hook runs
-#       only on the unplaceable branch; the ring stream is separate from the map-wide stream.
-#   S9  Marker rwg-steep-1 present once, rwg-deal-1 absent; no marker string in the new file.
+#       only on the unplaceable branch; the ring stream is separate from the map-wide stream and only READS the map-wide salt
+#       (RedealAttempts.Find); RwgSpawnPass clears the arm after every EnsureNewNodeSpawned; a non-finite candidate Z is a land reject.
+#   S9  Marker rwg-steep-2 present once, rwg-steep-1 and rwg-deal-1 absent; no marker string in the new file.
 # Mutants run in-file. Exit 0 = all hold; 1 = at least one does not; 2 = a pinned FILE is missing.
 
 $ErrorActionPreference = 'Stop'
@@ -110,7 +113,9 @@ function Invoke-RwgsteepChecks($T) {
         if ((Spec-Count $pc[0].Fmt) -ne $pc[0].Args.Count -or $pc[0].Args.Count -ne 42) { $f += "(S6) PLACECENSUS arity: $(Spec-Count $pc[0].Fmt) specifier(s) vs $($pc[0].Args.Count) argument(s) (want 42)" }
         if (($pc[0].Args | Select-Object -Last 3) -join ',' -ne 'RwgPcSteepRing,RwgPcSteepMapwide,RwgPcSteepOccluded') { $f += '(S6) the last three PLACECENSUS arguments must be the steep counters in field order' }
     }
-    $f += Check-Log $T 'steep' 'S6' 'RWGSTEEPSUM: ' 'RWGSTEEPSUM: pass=%d steepEvents=%d ring=%d mapwide=%d occludedMapwide=%d ringCandidatesTried=%d ringCandidatesPassed=%d reprobeWater=%d reprobeNoHitOrNotSteep=%d guidMismatch=%d ringRadiusM=%.0f ringCap=%d' 12
+    $f += Check-Log $T 'steep' 'S6' 'RWGSTEEPSUM: ' 'RWGSTEEPSUM: pass=%d steepEvents=%d ring=%d mapwide=%d occludedMapwide=%d ringCandidatesTried=%d ringCandidatesPassed=%d reprobeWater=%d reprobeNoHitOrNotSteep=%d guidMismatch=%d ringRadiusM=%.0f ringCap=%d ringPassedFromOriginZ=%d' 13
+    if ((Count $s 'const int32 Sig = RwgSteepSessEvents + RwgSteepSessReprobeWater + RwgSteepSessReprobeOther + RwgSteepSessGuidMismatch; if (RwgSteepSessLastPrinted == Sig) { return; } RwgSteepSessLastPrinted = Sig;') -ne 1) { $f += '(S6) the RWGSTEEPSUM re-print signature must include guidMismatch' }
+    if ((Count $s 'RaycastGroundAt(C, O.Z, nullptr, nullptr, L0, R0, bW0, false, &bS0, nullptr, nullptr, true) && !bW0 && !bS0) { ++RwgSteepSessPassedFromOriginZ; }') -ne 1 -or -not (Ordered $s @('RaycastGroundAt(C, O.Z, nullptr, nullptr, L0, R0, bW0, false, &bS0, nullptr, nullptr, true) && !bW0 && !bS0) { ++RwgSteepSessPassedFromOriginZ; }', '++OutPassed;'))) { $f += '(S6) the ringPassedFromOriginZ discriminator must re-trace from the origin API Z before the pass is counted' }
     if ((Count $p 'RwgPcSteepRing = RwgPcSteepMapwide = RwgPcSteepOccluded = RwgPcSteepRingRuns = 0;') -ne 1) { $f += '(S6) the per-pass steep counters must be zeroed with the PLACECENSUS counters' }
     if ((Count $p 'RwgSteepEmitSession();') -ne 1 -or -not (Ordered $p @('if ((RwgPcPasses % 12) == 1)', 'RWGHIDECHECK: pass=', 'RwgSteepEmitSession();'))) { $f += '(S6) RWGSTEEPSUM must be emitted from the 12th-pass census block' }
     # S7 budget
@@ -121,9 +126,12 @@ function Invoke-RwgsteepChecks($T) {
     if ((Count $p 'bOutWaterNoLand = false; bRwgSteepArmed = false;') -ne 1) { $f += '(S8) RwgResolveAtSpawn must clear the arm on entry' }
     if (-not (Ordered $s @('if (!bRwgSteepArmed) { return false; }', 'bRwgSteepArmed = false;', 'if (RwgSteepGuid != Entry.EntryGuid)'))) { $f += '(S8) RwgSteepTryRing must read-and-clear the arm and match the entry guid' }
     if ((Count $p 'RwgSteepNoteUnplaceable(') -ne 1 -or (Count $p 'if (!bOutWaterNoLand) { ++RwgPcNoTerrainDefer; } else { RwgSteepNoteUnplaceable(Q, Entry); }') -ne 1) { $f += '(S8) the re-probe hook runs only on the unplaceable branch of the failed settle' }
+    if ((Count $s 'const int32* SaltP = RedealAttempts.Find(Entry.EntryGuid);') -ne 1 -or (Count $s ('RedealAttempts.' + 'FindOrAdd')) -ne 0) { $f += '(S8) the ring must read the map-wide salt without writing it (RedealAttempts.Find only)' }
+    if ((Count $p 'bRwgSteepArmed = false; // rwg-steep-1: an arm never outlives the attempt that set it (a redeal that returned at !Q.IsUsable() did not consume it)') -ne 1 -or (Count $p 'EnsureNewNodeSpawned(E, bChangedWorld); bRwgSteepArmed = false; }') -ne 1) { $f += '(S8) RwgSpawnPass must clear the arm after each EnsureNewNodeSpawned' }
+    if ((Count $s 'if (!FMath::IsFinite(C.Z)) { ++OutRejLand; continue; }') -ne 1 -or -not (Ordered $s @('const FVector C(X, Y, Q.SurfaceZ(X, Y));', 'if (!FMath::IsFinite(C.Z)) { ++OutRejLand; continue; }', 'bool bTooClose = false;'))) { $f += '(S8) a non-finite candidate Z must be a land reject before spacing and the trace' }
     if ((Count $s ('Salt * ' + '7919')) -ne 0 -or (Count $s '^ (SavedSeed * 131) ^ ((SaltP ? *SaltP : 0) * 104729) ^ 0x2C1B3C6D);') -ne 1) { $f += '(S8) the ring must draw from its own stream, never the map-wide one' }
     # S9 marker
-    if ((Count $T.nsmod ('LOADED (2026-10-19-rwg-' + 'steep-1)')) -ne 1 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'deal-1')) -ne 0) { $f += '(S9) marker must be rwg-steep-1 with rwg-deal-1 absent' }
+    if ((Count $T.nsmod ('LOADED (2026-10-19-rwg-' + 'steep-2)')) -ne 1 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'deal-1')) -ne 0) { $f += '(S9) marker must be rwg-steep-2 with rwg-steep-1 and rwg-deal-1 absent' }
     if ($s.Contains('LOADED' + ' (')) { $f += '(S9) no build-marker string in the new file' }
     return $f
 }
@@ -144,13 +152,18 @@ $mutants = @(
     @{ Name = 'B12 slope from the raw hit'; Key = 'steep'; Expect = 'S5'; Find = 'RwgSteepRiseRunOf(Normal);'; Repl = 'RwgSteepRiseRunOf(Hit.ImpactNormal);' }
     @{ Name = 'B13 PLACECENSUS drops a steep argument'; Key = 'place'; Expect = 'S6'; Find = 'RwgPcSteepRing, RwgPcSteepMapwide, RwgPcSteepOccluded);'; Repl = 'RwgPcSteepRing, RwgPcSteepMapwide);' }
     @{ Name = 'B14 PLACECENSUS drops a steep field'; Key = 'place'; Expect = 'S6'; Find = ' steepMapwide=%d steepOccludedMapwide=%d"),'; Repl = ' steepOccludedMapwide=%d"),' }
-    @{ Name = 'B15 RWGSTEEPSUM arity'; Key = 'steep'; Expect = 'S6'; Find = 'RwgSteepRingRadiusCm / 100.f, RwgSteepRingCandidates);'; Repl = 'RwgSteepRingRadiusCm / 100.f);' }
+    @{ Name = 'B15 RWGSTEEPSUM arity'; Key = 'steep'; Expect = 'S6'; Find = 'RwgSteepRingCandidates, RwgSteepSessPassedFromOriginZ);'; Repl = 'RwgSteepRingCandidates);' }
     @{ Name = 'B16 steep counters never zeroed'; Key = 'place'; Expect = 'S6'; Find = 'RwgPcSteepRing = RwgPcSteepMapwide = RwgPcSteepOccluded = RwgPcSteepRingRuns = 0;'; Repl = '' }
     @{ Name = 'B17 ring not charged to the budget'; Key = 'place'; Expect = 'S7'; Find = 'for (; K < N && K + RwgPcSteepRingRuns < NodeShuffleMapMode::RwgMaxSpawnAttemptsPerPass; ++K)'; Repl = 'for (; K < N; ++K)' }
     @{ Name = 'B18 arm never cleared by the consumer'; Key = 'steep'; Expect = 'S8'; Find = "    if (!bRwgSteepArmed) { return false; }`n    bRwgSteepArmed = false;"; Repl = '    if (!bRwgSteepArmed) { return false; }' }
     @{ Name = 'B19 ring shares the map-wide stream'; Key = 'steep'; Expect = 'S8'; Find = '^ (SavedSeed * 131) ^ ((SaltP ? *SaltP : 0) * 104729) ^ 0x2C1B3C6D);'; Repl = ('^ (SavedSeed * 31) ^ ((SaltP ? *SaltP : 0) * ' + '7919));') }
     @{ Name = 'B20 resolver no longer clears the arm'; Key = 'place'; Expect = 'S8'; Find = 'bOutWaterNoLand = false; bRwgSteepArmed = false;'; Repl = 'bOutWaterNoLand = false;' }
-    @{ Name = 'B21 marker reverted'; Key = 'nsmod'; Expect = 'S9'; Find = ('2026-10-19-rwg-' + 'steep-1'); Repl = ('2026-10-19-rwg-' + 'deal-1') }
+    @{ Name = 'B22 ring writes the map-wide salt'; Key = 'steep'; Expect = 'S8'; Find = 'const int32* SaltP = RedealAttempts.Find(Entry.EntryGuid);'; Repl = ('const int32* SaltP = &++RedealAttempts.' + 'FindOrAdd(Entry.EntryGuid);') }
+    @{ Name = 'B23 attempt loop keeps a stale arm'; Key = 'place'; Expect = 'S8'; Find = "`n        bRwgSteepArmed = false; // rwg-steep-1: an arm never outlives the attempt that set it (a redeal that returned at !Q.IsUsable() did not consume it)"; Repl = '' }
+    @{ Name = 'B24 RWGSTEEPSUM signature ignores guidMismatch'; Key = 'steep'; Expect = 'S6'; Find = ' + RwgSteepSessGuidMismatch; if (RwgSteepSessLastPrinted == Sig)'; Repl = '; if (RwgSteepSessLastPrinted == Sig)' }
+    @{ Name = 'B25 non-finite candidate Z traced'; Key = 'steep'; Expect = 'S8'; Find = 'if (!FMath::IsFinite(C.Z)) { ++OutRejLand; continue; }'; Repl = '' }
+    @{ Name = 'B26 discriminator traces from the candidate Z'; Key = 'steep'; Expect = 'S6'; Find = 'RaycastGroundAt(C, O.Z, nullptr'; Repl = 'RaycastGroundAt(C, C.Z, nullptr' }
+    @{ Name = 'B21 marker reverted'; Key = 'nsmod'; Expect = 'S9'; Find = ('2026-10-19-rwg-' + 'steep-2'); Repl = ('2026-10-19-rwg-' + 'deal-1') }
 )
 $mutantFails = @(); $caught = 0
 foreach ($m in $mutants) {

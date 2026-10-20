@@ -132,7 +132,7 @@ namespace NodeShuffleRwgDeal
         }
 
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("RWGDEAL: activeSlots=%d cards=%d dealt=%d vanillaCards=%d moddedCards=%d undealtCards=%d slotsLeftInactiveNoCard=%d formChangedSolidToLiquid=%d liquidToSolid=%d vanillaOnlyFallbacks=%d"),
+            TEXT("RWGDEAL: activeSlots=%d cards=%d dealt=%d vanillaCards=%d moddedCards=%d undealtCards=%d slotsLeftInactiveNoCard=%d formChangedSolidToLiquid=%d liquidToSolid=%d noClassNoLookRejectSlots=%d"),
             Out.ActiveSlots, Out.Cards, Out.Dealt, Out.VanillaCards, Out.ModdedCards, Out.Cards - Out.Dealt,
             Out.SlotsLeftInactiveNoCard, Out.SolidToLiquid, Out.LiquidToSolid, Out.VanillaOnlyFallbacks);
         UE_LOG(LogNodeShuffle, Display,
@@ -145,8 +145,8 @@ namespace NodeShuffleRwgDeal
         {
             const TPair<int32, int32>& C = PerRes.FindChecked(Res);
             const FKindInfo K = KindOf(Res);
-            UE_LOG(LogNodeShuffle, Display, TEXT("RWGDEAL-RES res=%s cards=%d dealt=%d ownClass=%d look=%d"),
-                *FPackageName::ObjectPathToObjectName(Res), C.Key, C.Value, K.bOwnClass ? 1 : 0, K.bLook ? 1 : 0);
+            UE_LOG(LogNodeShuffle, Display, TEXT("RWGDEAL-RES res=%s cards=%d dealt=%d dealable=%d ownClass=%d look=%d"),
+                *FPackageName::ObjectPathToObjectName(Res), C.Key, C.Value, K.Dealable() ? 1 : 0, K.bOwnClass ? 1 : 0, K.bLook ? 1 : 0);
         }
     }
 }

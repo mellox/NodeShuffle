@@ -113,6 +113,7 @@ bool ANodeShuffleSubsystem::RwgLocalRedraw(const NodeShuffleMapMode::FRwgGroundQ
         const double X = O.X + R * FMath::Cos(A), Y = O.Y + R * FMath::Sin(A);
         if (!RwgDensityLandSample(Q, X, Y)) { ++OutRejLand; continue; } // the deal's chain: Outside -> RwgRejectV3 -> RwgApiSlopeTooSteep
         const FVector C(X, Y, Q.SurfaceZ(X, Y));
+        if (!FMath::IsFinite(C.Z)) { ++OutRejLand; continue; } // non-finite API surface: not a land sample
         // Spacing: the same two loops TryRedealRwgEntry runs (live layout, then the hidden originals' anchors).
         bool bTooClose = false;
         for (const FNodeShuffleEntry& Other : Layout)
@@ -131,6 +132,9 @@ bool ANodeShuffleSubsystem::RwgLocalRedraw(const NodeShuffleMapMode::FRwgGroundQ
             ++OutRejTrace;
             continue;
         }
+        // rwg-steep-2 discriminator (diagnostics, gates nothing): the same XY re-traced from the ORIGIN's API Z, the settle spiral's
+        // window. RWGSTEEPSUM ringPassedFromOriginZ counts the ring passes that also pass from that window.
+        { FVector L0; FRotator R0 = Entry.Rotation; bool bW0 = false, bS0 = false; if (RaycastGroundAt(C, O.Z, nullptr, nullptr, L0, R0, bW0, false, &bS0, nullptr, nullptr, true) && !bW0 && !bS0) { ++RwgSteepSessPassedFromOriginZ; } }
         ++OutPassed;
         // The map-wide redeal's move, field for field: XY + API Z, a fresh yaw, back to the surface pool, unsettled (the next spawn
         // attempt runs the full RwgResolveAtSpawn there: killbox, dZ, insideCave censuses as for any redealt entry).
@@ -146,10 +150,9 @@ bool ANodeShuffleSubsystem::RwgLocalRedraw(const NodeShuffleMapMode::FRwgGroundQ
 void ANodeShuffleSubsystem::RwgSteepEmitSession()
 {
     // Session totals, printed on the first pass (the zero denominator) and then on 12th passes only when they changed.
-    if (RwgSteepSessLastPrinted == RwgSteepSessEvents + RwgSteepSessReprobeWater + RwgSteepSessReprobeOther) { return; }
-    RwgSteepSessLastPrinted = RwgSteepSessEvents + RwgSteepSessReprobeWater + RwgSteepSessReprobeOther;
+    const int32 Sig = RwgSteepSessEvents + RwgSteepSessReprobeWater + RwgSteepSessReprobeOther + RwgSteepSessGuidMismatch; if (RwgSteepSessLastPrinted == Sig) { return; } RwgSteepSessLastPrinted = Sig;
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("RWGSTEEPSUM: pass=%d steepEvents=%d ring=%d mapwide=%d occludedMapwide=%d ringCandidatesTried=%d ringCandidatesPassed=%d reprobeWater=%d reprobeNoHitOrNotSteep=%d guidMismatch=%d ringRadiusM=%.0f ringCap=%d"),
+        TEXT("RWGSTEEPSUM: pass=%d steepEvents=%d ring=%d mapwide=%d occludedMapwide=%d ringCandidatesTried=%d ringCandidatesPassed=%d reprobeWater=%d reprobeNoHitOrNotSteep=%d guidMismatch=%d ringRadiusM=%.0f ringCap=%d ringPassedFromOriginZ=%d"),
         RwgPcPasses, RwgSteepSessEvents, RwgSteepSessRing, RwgSteepSessMapwide, RwgSteepSessOccluded, RwgSteepSessRingTried, RwgSteepSessRingPassed,
-        RwgSteepSessReprobeWater, RwgSteepSessReprobeOther, RwgSteepSessGuidMismatch, RwgSteepRingRadiusCm / 100.f, RwgSteepRingCandidates);
+        RwgSteepSessReprobeWater, RwgSteepSessReprobeOther, RwgSteepSessGuidMismatch, RwgSteepRingRadiusCm / 100.f, RwgSteepRingCandidates, RwgSteepSessPassedFromOriginZ);
 }

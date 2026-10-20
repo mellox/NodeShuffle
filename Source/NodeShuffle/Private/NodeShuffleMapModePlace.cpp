@@ -382,7 +382,7 @@ void ANodeShuffleSubsystem::RwgSpawnPass(float SpawnRadiusCm, bool& bChangedWorl
         if (Live && IsValid(*Live))
         {
             // Live actors keep the vanilla per-pass re-assert chain, uncapped, at the vanilla radius.
-            if (IsLocationNearAnyPlayer(E.Location, SpawnRadiusCm)) { ++RwgPcLive; EnsureNewNodeSpawned(E, bChangedWorld); }
+            if (IsLocationNearAnyPlayer(E.Location, SpawnRadiusCm)) { ++RwgPcLive; EnsureNewNodeSpawned(E, bChangedWorld); bRwgSteepArmed = false; }
             continue;
         }
         if (!IsLocationNearAnyPlayer(E.Location, SpawnRadiusCm)) { continue; }
@@ -400,6 +400,7 @@ void ANodeShuffleSubsystem::RwgSpawnPass(float SpawnRadiusCm, bool& bChangedWorl
         ++RwgPcAttempted;
         RwgStuckBeforeAttempt(E); // rwg-density-1: RWGSTUCK snapshot (diagnostics only, NodeShuffleMapModeDensity.cpp)
         EnsureNewNodeSpawned(E, bChangedWorld);
+        bRwgSteepArmed = false; // rwg-steep-1: an arm never outlives the attempt that set it (a redeal that returned at !Q.IsUsable() did not consume it)
         AFGResourceNode* const* Now = SpawnedNodes.Find(E.EntryGuid);
         if (Now && IsValid(*Now)) { ++RwgPcSpawned; }
         RwgStuckAfterAttempt(E); // rwg-density-1: per-entry failed-attempt count (reads only)

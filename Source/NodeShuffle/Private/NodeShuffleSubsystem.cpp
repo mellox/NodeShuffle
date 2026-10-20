@@ -803,6 +803,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     int32 VanillaCount = 0;
     int32 ZombiesDropped = 0; // rehide-1: pre-fix un-anchorable runtime-foreign records dropped at rebuild (§5)
     int32 RwgRebuildFormRestored = 0; // rwg-deal-1: RWG re-roll entries whose rebuilt slot form != the saved (card) form
+    int32 RwgRebuildFormLoadNull = 0; // rwg-deal-1 F5: RWG re-roll entries whose original resource class did not load (form stays the saved card form)
 
     TArray<FNodeShuffleEntry> NewLayout;
 
@@ -869,6 +870,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                     RebuildForm = (UFGItemDescriptor::GetForm(TSubclassOf<UFGItemDescriptor>(OrigRC)) == EResourceForm::RF_LIQUID)
                         ? FormLiquid : FormSolid;
                 }
+                else { RwgRebuildFormLoadNull++; }
                 if (RebuildForm != Old.ResourceForm) { RwgRebuildFormRestored++; }
             }
             FNodeShuffleEntry E;
@@ -934,8 +936,8 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
             VanillaCount, VanillaResourceCounts.Num(), ZombiesDropped);
         if (GetMapMode() == ENodeShuffleMapMode::Rwg)
         {
-            UE_LOG(LogNodeShuffle, Display, TEXT("RWGDEAL-REROLL rebuilt=%d slotFormRestoredFromOriginal=%d"),
-                VanillaCount, RwgRebuildFormRestored);
+            UE_LOG(LogNodeShuffle, Display, TEXT("RWGDEAL-REROLL rebuilt=%d slotFormRestoredFromOriginal=%d originalLoadNull=%d"),
+                VanillaCount, RwgRebuildFormRestored, RwgRebuildFormLoadNull);
         }
 
         // EXPERIMENTAL-FORM augment into the reroll (generic — covers oil AND gas):
@@ -1565,7 +1567,11 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
             K.Form = CardFormOf(Kind);
             K.bGeneric = NodeShuffleRepClass::IsGenericNodeClassPath(Kind);
             const FString* Latched = NodeClassByResource.Find(Kind);
-            K.bOwnClass = Latched && NodeShuffleRepClass::IsOwnNodeClass(*Latched, Kind);
+            // rwg-deal-1 F1 (2026-10-19): the own class must also be loaded, an AFGResourceNode and not abstract -- the same test
+            // as the conversion restamp (bOwnAvailable) and NodeShuffleLateNodes.cpp, so a Base-only class never makes a card Dealable.
+            const UClass* LatchedCls = Latched ? FindObject<UClass>(nullptr, **Latched) : nullptr;
+            K.bOwnClass = Latched && NodeShuffleRepClass::IsOwnNodeClass(*Latched, Kind)
+                && LatchedCls && LatchedCls->IsChildOf(AFGResourceNode::StaticClass()) && !LatchedCls->HasAnyClassFlags(CLASS_Abstract);
             K.bLook = ResourceHasAuthoredLook(LoadClassByPath(Kind));
             RwgKinds.Add(Kind, K);
         }
@@ -1726,7 +1732,9 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
         if (bRwgDeal && !NodeShuffleRepClass::IsGenericNodeClassPath(E.AssignedResourceClassPath))
         {
             const FString* RwgLatched = NodeClassByResource.Find(E.AssignedResourceClassPath);
-            if (!RwgLatched || !NodeShuffleRepClass::IsOwnNodeClass(*RwgLatched, E.AssignedResourceClassPath))
+            // rwg-deal-1 F1 (2026-10-19): an own class that is not loaded / not an AFGResourceNode / abstract takes the form representative.
+            const UClass* RwgLatchedCls = RwgLatched ? FindObject<UClass>(nullptr, **RwgLatched) : nullptr;
+            if (!RwgLatched || !NodeShuffleRepClass::IsOwnNodeClass(*RwgLatched, E.AssignedResourceClassPath) || !RwgLatchedCls || !RwgLatchedCls->IsChildOf(AFGResourceNode::StaticClass()) || RwgLatchedCls->HasAnyClassFlags(CLASS_Abstract))
             {
                 E.NodeClassPath = (E.ResourceForm == FormLiquid && !SpawnableLiquidNodeClassPath.IsEmpty())
                     ? SpawnableLiquidNodeClassPath : SpawnableNodeClassPath;
@@ -4780,7 +4788,7 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
         bool bSettled = (GetMapMode() == ENodeShuffleMapMode::Rwg) ? RwgResolveAtSpawn(Entry, bRwgApiUsed, bWaterNoLand) : false;
         if (!bRwgApiUsed) { bSettled = RaycastSettle(Entry, nullptr, nullptr, &bWaterNoLand); }
         // playtest-fixes-1 / steepfix-1 (unplaceable redeal): a hit that is water OR too steep, with
-        // no flat land within the 300 m spiral, is DEFINITIVE (the ground is there, it just can't
+        // no flat land within the spiral (16 probes, at most 160 m), is DEFINITIVE (the ground is there, it just can't
         // host a mineable node) — re-deal the entry instead of retrying the same spot every 5 s.
         if (!bSettled && bWaterNoLand)
         {
@@ -7373,9 +7381,7 @@ bool ANodeShuffleSubsystem::RaycastSettle(FNodeShuffleEntry& Entry, const AActor
         if (!WaterDeferLoggedThisSession.Contains(Entry.EntryGuid))
         {
             WaterDeferLoggedThisSession.Add(Entry.EntryGuid);
-            UE_LOG(LogNodeShuffle, Verbose, TEXT("Land-check: deferred %s (no placeable ground within %.0f m of the %s hit)"),
-                *Entry.EntryGuid.ToString(), LandRelocationMaxRadiusCm / 100.0f,
-                bWater ? TEXT("water") : TEXT("cliff"));
+            UE_LOG(LogNodeShuffle, Verbose, TEXT("Land-check: deferred %s (no placeable ground at %d spiral probes out to %.0f m of the %s hit)"), *Entry.EntryGuid.ToString(), LandRelocationTries, FMath::Min(LandRelocationMaxRadiusCm, LandRelocationStepCm * FMath::Sqrt(static_cast<float>(LandRelocationTries))) / 100.0f, bWater ? TEXT("water") : TEXT("cliff"));
         }
     }
 
@@ -7703,16 +7709,17 @@ FString ANodeShuffleSubsystem::PickSubstituteClass(const FString& RefusedPath, c
     for (const FNodeShuffleEntry& E : Layout)
     {
         if (!E.bIsNewNode || !E.bActive || E.ResourceForm != Form) { continue; }
-        // rwg-deal-1: on RWG a form restamp decouples ResourceForm from NodeClassPath (the original's class); skip it.
-        if (GetMapMode() == ENodeShuffleMapMode::Rwg && !E.RepClassSpawnPath.IsEmpty()) { continue; }
-        if (!E.NodeClassPath.StartsWith(TEXT("/Game/"))) { continue; }
-        if (!IsEligible(E.NodeClassPath)) { continue; }
+        // rwg-deal-1 F7 (2026-10-19): on RWG a restamp decouples ResourceForm from NodeClassPath (the original's class), so RWG reads
+        // the class the entry actually spawns (PreSubstituteSpawnPath); Vanilla reads NodeClassPath as before.
+        const FString& Cand = (GetMapMode() == ENodeShuffleMapMode::Rwg) ? PreSubstituteSpawnPath(E) : E.NodeClassPath;
+        if (!Cand.StartsWith(TEXT("/Game/"))) { continue; }
+        if (!IsEligible(Cand)) { continue; }
         if (bDiag)
         {
             UE_LOG(LogNodeShuffle, Verbose, TEXT("deck-substitute: %s -> %s (source=layout-scan)"),
-                *RefusedLabel, *FPackageName::ObjectPathToObjectName(E.NodeClassPath));
+                *RefusedLabel, *FPackageName::ObjectPathToObjectName(Cand));
         }
-        return E.NodeClassPath;
+        return Cand;
     }
 
     // Rung 4 (SOLID ONLY): our own C++ fallback class — always spawnable, ships its own UseBox +

@@ -116,7 +116,7 @@ function Invoke-DensityChecks($T) {
     if ([regex]::IsMatch($T.den, 'Key\s*(<|>=|>|<=)\s*[2-9](?![0-9])')) { $f += '(D4) no literal threshold compare on a failed-attempt count' }
     # D5
     $spawn = Body $T.place 'void ANodeShuffleSubsystem::RwgSpawnPass('
-    if ((Count $spawn "        RwgStuckBeforeAttempt(E); // rwg-density-1: RWGSTUCK snapshot (diagnostics only, NodeShuffleMapModeDensity.cpp)`n        EnsureNewNodeSpawned(E, bChangedWorld);`n        AFGResourceNode* const* Now = SpawnedNodes.Find(E.EntryGuid);`n        if (Now && IsValid(*Now)) { ++RwgPcSpawned; }`n        RwgStuckAfterAttempt(E);") -ne 1) { $f += '(D5) the snapshot/note must bracket the attempt loop EnsureNewNodeSpawned' }
+    if ((Count $spawn "        RwgStuckBeforeAttempt(E); // rwg-density-1: RWGSTUCK snapshot (diagnostics only, NodeShuffleMapModeDensity.cpp)`n        EnsureNewNodeSpawned(E, bChangedWorld);`n        bRwgSteepArmed = false; // rwg-steep-1: an arm never outlives the attempt that set it (a redeal that returned at !Q.IsUsable() did not consume it)`n        AFGResourceNode* const* Now = SpawnedNodes.Find(E.EntryGuid);`n        if (Now && IsValid(*Now)) { ++RwgPcSpawned; }`n        RwgStuckAfterAttempt(E);") -ne 1) { $f += '(D5) the snapshot/note must bracket the attempt loop EnsureNewNodeSpawned' }
     if ((Count $T.place 'RwgStuckBeforeAttempt(') -ne 1 -or (Count $T.place 'RwgStuckAfterAttempt(') -ne 1) { $f += '(D5) one snapshot and one note call site' }
     if ((Count $spawn "RwgDensityPassHook(Pawns, AttemptRadiusCm); // rwg-density-1: RWGDENSITY on load (first pass, after RwgSeaRedealPass) + RWGSTUCK every 12th pass`n    RwgEmitPlaceCensus();") -ne 1) { $f += '(D5) the pass hook must run directly before RwgEmitPlaceCensus' }
     if (-not (Ordered $spawn @('RwgSeaRedealPass();', 'RwgKillboxResettlePass();', 'RwgDensityPassHook('))) { $f += '(D5) the pass hook must run after RwgSeaRedealPass and the pass work' }
@@ -134,7 +134,7 @@ function Invoke-DensityChecks($T) {
     $roll = Body $T.den 'void ANodeShuffleSubsystem::RwgDensityOnRoll('
     if (-not (Ordered $roll @('RwgStuckTracker.Reset();', 'RwgEmitDensityCensus(TEXT("roll"));'))) { $f += '(D7) the roll trigger must clear the stuck tracker then print' }
     # D8
-    if ((Count $T.nsmod ('LOADED (2026-10-19-rwg-' + 'steep-1)')) -ne 1 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'deal-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'density-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'density-1')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'rockcache-2')) -ne 0) { $f += '(D8) marker must be rwg-density-2 with rwg-density-1 and rwg-rockcache-2 absent' }
+    if ((Count $T.nsmod ('LOADED (2026-10-19-rwg-' + 'steep-2)')) -ne 1 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'deal-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'density-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'density-1')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'rockcache-2')) -ne 0) { $f += '(D8) marker must be rwg-steep-2 with rwg-steep-1, rwg-deal-1, rwg-density-2, rwg-density-1 and rwg-rockcache-2 absent' }
     # D9
     if ((Count $T.den ('constexpr int32 RwgDensityGridN = ' + '10;')) -ne 1 -or (Count $T.den ('constexpr int32 RwgDensitySubSample = ' + '8;')) -ne 1) { $f += '(D9) grid constants must be 10 cells per side and an 8 x 8 sub-sample' }
     # D10
@@ -183,7 +183,7 @@ $mutants = @(
     @{ Name = 'Y17 diagnostic redeals an entry'; Key = 'den'; Expect = 'D6'; Find = '        ++StuckMap;'; Repl = ('        ++StuckMap; TryRedeal' + 'WaterLockedEntry(Layout[I]);') }
     @{ Name = 'Y18 load latch dropped (prints every pass)'; Key = 'den'; Expect = 'D7'; Find = "{`n    bRwgDensityEmitted = true;`n"; Repl = "{`n" }
     @{ Name = 'Y19 roll keeps the old tracker'; Key = 'den'; Expect = 'D7'; Find = '    RwgStuckTracker.Reset();'; Repl = '' }
-    @{ Name = 'Y20 marker reverted'; Key = 'nsmod'; Expect = 'D8'; Find = ('2026-10-19-rwg-' + 'steep-1'); Repl = ('2026-10-19-rwg-' + 'density-1') }
+    @{ Name = 'Y20 marker reverted'; Key = 'nsmod'; Expect = 'D8'; Find = ('2026-10-19-rwg-' + 'steep-2'); Repl = ('2026-10-19-rwg-' + 'density-1') }
     @{ Name = 'Y21 sub-sample shrunk to 4'; Key = 'den'; Expect = 'D9'; Find = ('constexpr int32 RwgDensitySubSample = ' + '8;'); Repl = ('constexpr int32 RwgDensitySubSample = ' + '4;') }
     @{ Name = 'Y22 HERE-LAND loses an argument'; Key = 'den'; Expect = 'D1'; Find = 'bRwgKillboxKnown ? 1 : 0, (FPlatformTime::Seconds() - T0) * 1000.0);'; Repl = 'bRwgKillboxKnown ? 1 : 0);' }
     @{ Name = 'Y23 HERE-LAND lattice spacing doubled'; Key = 'den'; Expect = 'D10'; Find = 'constexpr double Step = 10000.0;'; Repl = 'constexpr double Step = 20000.0;' }
