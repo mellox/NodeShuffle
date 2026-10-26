@@ -101,7 +101,7 @@ void NodeShuffleRwgGate::QueueRefusalNotice(const FString& SemVer, int32 Build, 
     // spots are picked. NOT CLAIMED: why the bytes differ, when it will be fixed, that any node is misplaced.
     Queue(TEXT("refused"), FString::Printf(
         TEXT("NODE SHUFFLE - Random World Generator %s (build %d) not verified\n\n")
-        TEXT("Node Shuffle checked the RWG functions it uses and refused them: %s (%s).\n")
+        TEXT("Node Shuffle could not verify the RWG functions it uses: %s (%s).\n")
         TEXT("Node placement on this world uses the fallback this session: terrain traces only, with no water, void, killbox or\n")
         TEXT("cave checks from RWG. The log line RWGHEIGHTAPI-REFUSED has the details."),
         *SemVer, Build, *Status, Detail.IsEmpty() ? TEXT("no detail") : *Detail));
@@ -110,8 +110,9 @@ void NodeShuffleRwgGate::QueueRefusalNotice(const FString& SemVer, int32 Build, 
 void NodeShuffleRwgGate::QueueUnlistedVerifiedNotice(const FString& SemVer, int32 Build, const FString& Accepted)
 {
     // MEASURED: SemVer/Build from the .uplugin; "not on the tested list" = the accept-list walk matched no entry; "all 16
-    // functions matched" = this run's 11 HeightApi masks + 5 cave masks returned no pinned-byte mismatch (that is the only path
-    // that queues this body). "height API is in use" -- MEASURED: callsAllowed=1. The last sentence is a request, not a claim.
+    // functions matched" = this run resolved all 16 exports (bAllSixteenResolved) and the 11 HeightApi + 5 cave masks returned no
+    // pinned-byte mismatch -- that is the only path that queues this body. "height API is in use" -- MEASURED: callsAllowed=1. The
+    // last sentence is a request, not a claim.
     Queue(TEXT("unlistedVerified"), FString::Printf(
         TEXT("NODE SHUFFLE - Random World Generator %s (build %d) is not on the tested list\n\n")
         TEXT("Tested versions: %s. All 16 RWG functions Node Shuffle uses matched their expected signatures on this build, so the\n")
@@ -142,7 +143,7 @@ void NodeShuffleRwgGate::TickNotice(UWorld* World)
     if (FNodeShuffleModule::PostChatNotice(World, N.Body, TEXT("RWGGATE")))
     {
         N.PostedWorld = World;
-        UE_LOG(LogNodeShuffle, Warning, TEXT("RWGGATENOTICE: posted kind=%s attempt=%d world=%s (delivery to chat history measured by CHATNOTICE[RWGGATE]; on-screen visibility is not measured by any log line)"),
+        UE_LOG(LogNodeShuffle, Warning, TEXT("RWGGATENOTICE: posted kind=%s attempt=%d world=%s (CHATNOTICE[RWGGATE] logs the broadcast CALL only; chat-history delivery is not measured and on-screen visibility is not measured by any log line)"),
             *N.Kind, N.Attempts, *World->GetName());
         return;
     }

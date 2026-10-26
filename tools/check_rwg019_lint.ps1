@@ -18,7 +18,8 @@
 #   V5  Marker rwg-0-1-12-1 present once; rwg-steep-2 and the earlier markers absent; no marker string in the new notice files.
 #   V6  Unlisted trial: `if (!bVersion)` no longer returns (it logs RWGHEIGHTAPI-UNLISTED at Warning and sets unlistedTrial);
 #       WarnSigRefused counts optional refusals; the verdict block sits between RWGVOIDBIND-OFF and `A.Hmod = H`, refuses on
-#       OptionalSigBad > 0 OR CaveSigBad > 0 with a return, and only then logs signatureVerifiedUnlisted; the final status is the
+#       OptionalSigBad > 0 OR CaveSigBad > 0 OR any of the 16 exports missing, with a return, and only then logs
+#       signatureVerifiedUnlisted; the final status is the
 #       ternary on bUnlisted; the cave half's five masks + five names are token-identical to NodeShuffleMapModeCave.cpp's.
 #   V7  Notice: QueueRefusalNotice is called in all three refusal statements (exportMissing, required signatureMismatch, unlisted
 #       verdict) and QueueUnlistedVerifiedNotice in the verified branch; TickNotice runs in RwgLogHeightApi BEFORE the callsAllowed
@@ -131,13 +132,14 @@ function Invoke-019Checks($T) {
         if ($iU -lt 0) { $f += '(V6) the unlisted label must log RWGHEIGHTAPI-UNLISTED at Warning and set unlistedTrial, not refuse' }
         elseif ($b.Substring($iU, $b.IndexOf("`n", $iU) - $iU) -match ('ret' + 'urn;')) { $f += '(V6) the unlisted label statement must not return: the trial runs the signature check' }
         if ((Count $b 'const bool bUnlisted = !bVersion;') -ne 1) { $f += '(V6) bUnlisted must be the negation of the accept-list walk' }
+        if ((Count $b 'const bool bAllSixteenResolved = A.GMin && A.GMax && A.InSea && A.VoidAt && A.KillboxTop && CaveMissing.IsEmpty();') -ne 1) { $f += '(V6) the trial must require all five optional exports and all five cave exports resolved' }
         if ((Count $b ('if (!bRequired) { ++' + 'OptionalSigBad; }')) -ne 1 -or (Count $b 'int32 OptionalSigBad = 0;') -ne 1) { $f += '(V6) WarnSigRefused must count optional refusals into OptionalSigBad' }
         $iOff = $b.IndexOf('TEXT("RWGVOIDBIND-OFF:'); $iV = $b.IndexOf('if (bUnlisted)'); $iC = $b.IndexOf('NodeShuffleRwgGate::CheckCaveSignatures(H, CaveMissing, CaveBad);')
-        $iRef = $b.IndexOf('if (OptionalSigBad > 0 || CaveSigBad > 0)'); $iVer = $b.IndexOf('TEXT("RWGHEIGHTAPI-UNLISTED: status=signatureVerifiedUnlisted '); $iH = $b.IndexOf('A.Hmod = H;')
+        $iRef = $b.IndexOf('if (OptionalSigBad > 0 || CaveSigBad > 0 || !bAllSixteenResolved)'); $iVer = $b.IndexOf('TEXT("RWGHEIGHTAPI-UNLISTED: status=signatureVerifiedUnlisted '); $iH = $b.IndexOf('A.Hmod = H;')
         if ($iOff -lt 0 -or $iV -lt $iOff -or $iC -lt $iV -or $iRef -lt $iC -or $iVer -lt $iRef -or $iH -lt $iVer) { $f += '(V6) the unlisted verdict (cave check, strict refusal, then the verified line) must sit between RWGVOIDBIND-OFF and A.Hmod = H' }
         if ($iRef -ge 0 -and $iVer -gt $iRef) {
             $blk = $b.Substring($iRef, $iVer - $iRef)
-            if (-not ($blk.Contains('A.Status = TEXT("signatureMismatch");') -and $blk.Contains('NodeShuffleRwgGate::QueueRefusalNotice(A.SemVer, A.Build, A.Status,') -and $blk -match ('\n\s*ret' + 'urn;\n'))) { $f += '(V6) the strict unlisted refusal must set signatureMismatch, queue the notice and return' }
+            if (-not ($blk.Contains('A.Status = (OptionalSigBad > 0 || CaveSigBad > 0) ? TEXT("signatureMismatch") : TEXT("exportMissing");') -and $blk.Contains('NodeShuffleRwgGate::QueueRefusalNotice(A.SemVer, A.Build, A.Status,') -and $blk -match ('\n\s*ret' + 'urn;\n'))) { $f += '(V6) the strict unlisted refusal must set signatureMismatch or exportMissing, queue the notice and return' }
         }
         if ((Count $b ('A.Status = bUnlisted ? TEXT("signatureVerifiedUnlisted") : TEXT("bo' + 'und");')) -ne 1) { $f += '(V6) the usable status must be signatureVerifiedUnlisted on an unlisted build and bound otherwise' }
         if ((Count $b 'A.bUsable = true;') -ne 1) { $f += '(V6) A.bUsable must be set true at exactly one site' }
@@ -201,8 +203,10 @@ $mutants = @(
     @{ Name = 'M20 SigOutside ModRM wildcarded with its disp8'; Key = 'hapi'; Expect = 'V2'; Find = '0xF2,0x0F,0x10,0x41,-1,0x0F,0x54,0xCB };'; Repl = '0xF2,0x0F,0x10,-1,-1,0x0F,0x54,0xCB };' }
     @{ Name = 'M21 unlisted trial Warning downgraded to Display'; Key = 'hapi'; Expect = 'V3'; Find = 'UE_LOG(LogNodeShuffle, Warning, TEXT("RWGHEIGHTAPI-UNLISTED: status=unlistedTrial'; Repl = 'UE_LOG(LogNodeShuffle, Display, TEXT("RWGHEIGHTAPI-UNLISTED: status=unlistedTrial' }
     @{ Name = 'M22 optional refusals no longer counted'; Key = 'hapi'; Expect = 'V6'; Find = 'if (!bRequired) { ++OptionalSigBad; }'; Repl = '' }
-    @{ Name = 'M23 strict refusal softened to AND'; Key = 'hapi'; Expect = 'V6'; Find = 'if (OptionalSigBad > 0 || CaveSigBad > 0)'; Repl = 'if (OptionalSigBad > 0 && CaveSigBad > 0)' }
-    @{ Name = 'M24 strict refusal falls through (return removed)'; Key = 'hapi'; Expect = 'V6'; Find = "NodeShuffleRwgGate::QueueRefusalNotice(A.SemVer, A.Build, A.Status, FString::Printf(TEXT(`"mismatched: %s %s`"), *SigBad, *CaveBad));`n                return;"; Repl = "NodeShuffleRwgGate::QueueRefusalNotice(A.SemVer, A.Build, A.Status, FString::Printf(TEXT(`"mismatched: %s %s`"), *SigBad, *CaveBad));" }
+    @{ Name = 'M23 strict refusal softened to AND'; Key = 'hapi'; Expect = 'V6'; Find = 'if (OptionalSigBad > 0 || CaveSigBad > 0 || !bAllSixteenResolved)'; Repl = 'if (OptionalSigBad > 0 && CaveSigBad > 0 && !bAllSixteenResolved)' }
+    @{ Name = 'M38 missing exports no longer refuse an unlisted build'; Key = 'hapi'; Expect = 'V6'; Find = 'if (OptionalSigBad > 0 || CaveSigBad > 0 || !bAllSixteenResolved)'; Repl = 'if (OptionalSigBad > 0 || CaveSigBad > 0)' }
+    @{ Name = 'M39 resolved test drops the cave exports'; Key = 'hapi'; Expect = 'V6'; Find = 'A.InSea && A.VoidAt && A.KillboxTop && CaveMissing.IsEmpty();'; Repl = 'A.InSea && A.VoidAt && A.KillboxTop;' }
+    @{ Name = 'M24 strict refusal falls through (return removed)'; Key = 'hapi'; Expect = 'V6'; Find = "*A.Missing, *CaveMissing));`n                return;"; Repl = "*A.Missing, *CaveMissing));" }
     @{ Name = 'M25 usable status always bound'; Key = 'hapi'; Expect = 'V6'; Find = 'A.Status = bUnlisted ? TEXT("signatureVerifiedUnlisted") : TEXT("bound");'; Repl = 'A.Status = TEXT("bound");' }
     @{ Name = 'M26 cave mask drifted in the gate copy'; Key = 'gate'; Expect = 'V6'; Find = 'const int16 SigNum[] = { 0x8B,0x41,0x08,0xC3 };'; Repl = 'const int16 SigNum[] = { 0x8B,0x41,-1,0xC3 };' }
     @{ Name = 'M27 cave check skips IsInsideAt'; Key = 'gate'; Expect = 'V6'; Find = '    Check(SymInside, SigInside, UE_ARRAY_COUNT(SigInside), TEXT("IsInsideAt"));' + "`n"; Repl = '' }

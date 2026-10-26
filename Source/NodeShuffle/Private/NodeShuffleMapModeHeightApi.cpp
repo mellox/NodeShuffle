@@ -169,9 +169,9 @@ namespace
         }
         // RWG 0.1.12 (2026-10-26): an UNLISTED label is TRIED, not refused (user decision, _team/NodeShuffle-state.md 2026-10-26). The
         // trial is STRICT: every one of the 16 bound functions (11 here + the 5 cave masks, NodeShuffleRwgGate::CheckCaveSignatures)
-        // must match its mask -- an OPTIONAL export's mismatch, which a listed build merely drops, refuses an unlisted one. A missing
-        // optional export is not a mismatch (it stays off, as on a listed build). The trial start is logged at Warning so a log reader
-        // sees the unverified label before the verdict; the verdict line follows the signature checks.
+        // must resolve AND match its mask -- an OPTIONAL export's mismatch or absence, which a listed build merely drops, refuses an
+        // unlisted one (so the "all 16 matched" the notice then states is a measurement). The trial start is logged at Warning so a log
+        // reader sees the unverified label before the verdict; the verdict line follows the signature checks.
         const bool bUnlisted = !bVersion;
         if (!bVersion) { A.Status = TEXT("unlistedTrial"); UE_LOG(LogNodeShuffle, Warning, TEXT("RWGHEIGHTAPI-UNLISTED: status=unlistedTrial semVer='%s' build=%d accepted='%s' uplugin='%s'; the full 16-function signature check decides callsAllowed"), *A.SemVer, A.Build, *RwgAcceptedList(), *A.Uplugin); }
         if (A.Required != 6) { A.Status = TEXT("exportMissing"); UE_LOG(LogNodeShuffle, Warning, TEXT("RWGHEIGHTAPI-REFUSED: status=exportMissing semVer='%s' build=%d matchedEntry='%s' requiredResolved=%d of 6 missing='%s' callsAllowed=0"), *A.SemVer, A.Build, *A.Matched, A.Required, *A.Missing); NodeShuffleRwgGate::QueueRefusalNotice(A.SemVer, A.Build, A.Status, FString::Printf(TEXT("missing: %s"), *A.Missing)); return; }
@@ -282,23 +282,25 @@ namespace
         UE_LOG(LogNodeShuffle, Display, TEXT("RWGVOIDBIND: voidAtStatus=%s killboxTopStatus=%s optional=1 voidCountDisp=0x%X killboxTopDisps=0x%X/0x%X; the void term counts only after RWGVOIDCHECK grades it, the killbox floor reads the damage volumes first"),
             *A.VoidStatus, *A.KillboxStatus, VoidDisp, KillboxDispA, KillboxDispB);
         if (!A.VoidAt) { UE_LOG(LogNodeShuffle, Warning, TEXT("RWGVOIDBIND-OFF: voidAtStatus=%s; the void term is off this session (the killbox floor still applies when measured)"), *A.VoidStatus); }
-        // RWG 0.1.12: the unlisted trial's VERDICT. Strict: any optional mismatch above, or any of the five cave masks mismatching,
-        // refuses the whole API (a listed build reaches this point with the mismatched optional merely dropped). The cave bind in
-        // NodeShuffleMapModeCave.cpp re-checks the same five masks lazily; its verdict is then consistent with this one.
+        // RWG 0.1.12: the unlisted trial's VERDICT. Strict: any optional mismatch above, any of the five cave masks mismatching, or any of
+        // the 16 exports MISSING refuses the whole API (a listed build reaches this point with a mismatched or absent optional merely
+        // dropped). The cave bind in NodeShuffleMapModeCave.cpp re-checks the same five masks lazily; its verdict is then consistent.
         if (bUnlisted)
         {
             FString CaveMissing, CaveBad;
             const int32 CaveSigBad = NodeShuffleRwgGate::CheckCaveSignatures(H, CaveMissing, CaveBad);
-            if (OptionalSigBad > 0 || CaveSigBad > 0)
+            // With OptionalSigBad == 0 a null optional pointer means the export was MISSING (a mismatch also nulls it, but is counted).
+            const bool bAllSixteenResolved = A.GMin && A.GMax && A.InSea && A.VoidAt && A.KillboxTop && CaveMissing.IsEmpty();
+            if (OptionalSigBad > 0 || CaveSigBad > 0 || !bAllSixteenResolved)
             {
-                A.Status = TEXT("signatureMismatch");
-                UE_LOG(LogNodeShuffle, Warning, TEXT("RWGHEIGHTAPI-REFUSED: status=signatureMismatch semVer='%s' build=%d matchedEntry='%s' accepted='%s' optionalMismatched=%d mismatched='%s' caveMismatched='%s' caveMissing='%s' callsAllowed=0"),
-                    *A.SemVer, A.Build, *A.Matched, *RwgAcceptedList(), OptionalSigBad, *SigBad, *CaveBad, *CaveMissing);
-                NodeShuffleRwgGate::QueueRefusalNotice(A.SemVer, A.Build, A.Status, FString::Printf(TEXT("mismatched: %s %s"), *SigBad, *CaveBad));
+                A.Status = (OptionalSigBad > 0 || CaveSigBad > 0) ? TEXT("signatureMismatch") : TEXT("exportMissing");
+                UE_LOG(LogNodeShuffle, Warning, TEXT("RWGHEIGHTAPI-REFUSED: status=%s semVer='%s' build=%d matchedEntry='%s' accepted='%s' optionalMismatched=%d mismatched='%s' caveMismatched='%s' caveMissing='%s' allSixteenResolved=%d callsAllowed=0"),
+                    *A.Status, *A.SemVer, A.Build, *A.Matched, *RwgAcceptedList(), OptionalSigBad, *SigBad, *CaveBad, *CaveMissing, bAllSixteenResolved ? 1 : 0);
+                NodeShuffleRwgGate::QueueRefusalNotice(A.SemVer, A.Build, A.Status, FString::Printf(TEXT("mismatched: %s %s; missing: %s %s"), *SigBad, *CaveBad, *A.Missing, *CaveMissing));
                 return;
             }
-            UE_LOG(LogNodeShuffle, Warning, TEXT("RWGHEIGHTAPI-UNLISTED: status=signatureVerifiedUnlisted semVer='%s' build=%d accepted='%s' heightApiChecked=11 caveChecked=5 optionalResolved=%d of 2 caveMissing='%s' callsAllowed=1"),
-                *A.SemVer, A.Build, *RwgAcceptedList(), A.Optional, *CaveMissing);
+            UE_LOG(LogNodeShuffle, Warning, TEXT("RWGHEIGHTAPI-UNLISTED: status=signatureVerifiedUnlisted semVer='%s' build=%d accepted='%s' heightApiChecked=11 caveChecked=5 allSixteenResolved=1 callsAllowed=1"),
+                *A.SemVer, A.Build, *RwgAcceptedList());
             NodeShuffleRwgGate::QueueUnlistedVerifiedNotice(A.SemVer, A.Build, RwgAcceptedList());
         }
         A.Hmod = H; // RWG P5: published only on the path that also sets bUsable
