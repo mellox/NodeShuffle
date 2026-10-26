@@ -3,7 +3,7 @@
 # LOADS and PINS every source file the P2f packet touched. Anchors are site-unique (function bodies or full statements); needles
 # naming a forbidden or pinned literal are BUILT BY CONCATENATION so this file cannot match itself.
 #   F1  HeightApi: VoidAt + GetKillboxTop bound OPTIONAL -- typed, resolved only after the required-signature refusal and before
-#       A.bUsable = true, byte-signature checked (VoidAt in full; GetKillboxTop with its two disp32 wildcarded since RWG 0.1.9; mismatch nulls it), status logged; the query's VoidAt runs our outside test first.
+#       A.bUsable = true, byte-signature checked (VoidAt with its void-count disp32 wildcarded since RWG 0.1.12, GetKillboxTop with its two disp32 wildcarded since RWG 0.1.9; opcode/ModRM/imm8 pinned; mismatch nulls it), status logged; the query's VoidAt runs our outside test first.
 #   F2  RwgRejectV3 = RwgWetV2 first, then the GRADED VoidAt term (bit 8), then bBelowKillbox (bit 16, killbox top + margin, only while
 #       known); its body compares nothing against a zero literal.
 #   F3  Consumers go through v3: RwgDealOneSpot (water / void / killbox counted separately, still exactly 3 rejects), both RwgResolveAtSpawn
@@ -69,7 +69,7 @@ if ($tb -lt 0) { $fails += 'F1: TryBind not found' } else {
     $iKc = $t.IndexOf('else if (!SigOk(reinterpret_cast<const void*>(A.KillboxTop), SigKillboxTop, UE_ARRAY_COUNT(SigKillboxTop))) { A.KillboxTop = ' + 'nullptr;')
     $iUse = $t.IndexOf('A.bUsable = ' + 'true;')
     if ($iSig -lt 0 -or $iV -lt $iSig -or $iVc -lt $iV -or $iK -lt $iVc -or $iKc -lt $iK -or $iUse -lt $iKc) { $fails += 'F1: VoidAt / GetKillboxTop must resolve after the required-signature refusal, each signature-checked (mismatch nulls it), all before A.bUsable = true' }
-    if ((Count $t ('static const int16 SigVoidAt[] = { 0x40,0x53,0x48,0x83,0xEC,0x30,0x48,0x83,0xB9,0xE8,0x02,0x00,0x00,0x00,0x0F,0x28,0xE2,0x0F,0x28,0xC1,0x48,0x8B,0xD9,0x0F,' + '0x84 };')) -ne 1) { $fails += 'F1: SigVoidAt must be the 25 build-705 bytes' }
+    if ((Count $t ('static const int16 SigVoidAt[] = { 0x40,0x53,0x48,0x83,0xEC,0x30,0x48,0x83,0xB9,-1,-1,-1,-1,0x00,0x0F,0x28,0xE2,0x0F,0x28,0xC1,0x48,0x8B,0xD9,0x0F,' + '0x84 };')) -ne 1) { $fails += 'F1: SigVoidAt must be the 25 build-705 bytes' }
     if ((Count $t ('static const int16 SigKillboxTop[] = { 0x48,0x8B,0x81,-1,-1,-1,-1,0x48,0x89,0x02,0x83,0xB9,-1,-1,-1,-1,0x00,0x0F,0x9F,0xC0,' + '0xC3 };')) -ne 1) { $fails += 'F1: SigKillboxTop must be the 21 build-705 bytes with exactly its two disp32 member displacements wildcarded (RWG 0.1.9)' }
     if ((Count $t ('::GetProc' + 'Address(H, SymVoidAt)')) -ne 1 -or (Count $t ('::GetProc' + 'Address(H, SymKillboxTop)')) -ne 1) { $fails += 'F1: each optional export must be resolved at exactly one site' }
 }
@@ -182,7 +182,7 @@ if (-not $rl -or -not $rl.Contains("    E.bRwgRockChecked = false;`n    E.bRwgVo
 # F9
 if ((Count $text.subsysh ('UPROPERTY(Save' + 'Game) bool bRwgVoidChecked = false;')) -ne 2) { $fails += 'F9: bRwgVoidChecked must be a SaveGame property on exactly the two entry structs' }
 if ((Count $text.maph ('constexpr double RwgVoidPlateauCm = -3000.' + '0;')) -ne 1 -or (Count $text.maph ('constexpr int32 RwgVoidCheckPerClass = ' + '32;')) -ne 1 -or (Count $text.maph ('constexpr double RwgKillboxMarginCm = 1000.' + '0;')) -ne 1 -or (Count $text.maph ('constexpr int32 RwgKillboxResettlePerPass = ' + '16;')) -ne 1 -or (Count $text.maph ('constexpr double RwgVoidRingCm = 1500.' + '0;')) -ne 1) { $fails += 'F9: RwgVoidPlateauCm -3000 / RwgVoidCheckPerClass 32 / RwgKillboxMarginCm 1000 / RwgKillboxResettlePerPass 16 / RwgVoidRingCm 1500 must be pinned' }
-if ((Count $text.nsmod ('LOADED (2026-10-19-rwg-' + 'steep-2)')) -ne 1 -or (Count $text.nsmod ('2026-10-19-rwg-' + 'steep-1)')) -ne 0 -or (Count $text.nsmod ('2026-10-19-rwg-' + 'deal-1)')) -ne 0 -or (Count $text.nsmod ('2026-10-19-rwg-' + 'density-2)')) -ne 0 -or (Count $text.nsmod ('2026-10-19-rwg-' + 'rockcache-2')) -ne 0 -or (Count $text.nsmod ('2026-10-18-rwg-' + 'p4c-2')) -ne 0 -or (Count $text.nsmod ('2026-10-18-rwg-' + 'p4c-1')) -ne 0 -or (Count $text.nsmod ('2026-10-18-rwg-' + 'p5-2')) -ne 0) { $fails += 'F9: the marker must be rwg-repclass-3 (rwg-repclass-2 absent) (RWG 0.1.9 accept list, moved from rwg-p4c-2) and the previous markers absent' }
+if ((Count $text.nsmod ('LOADED (2026-10-26-rwg-' + '0-1-12-1)')) -ne 1 -or (Count $text.nsmod ('2026-10-19-rwg-' + 'steep-2)')) -ne 0 -or (Count $text.nsmod ('2026-10-19-rwg-' + 'steep-1)')) -ne 0 -or (Count $text.nsmod ('2026-10-19-rwg-' + 'deal-1)')) -ne 0 -or (Count $text.nsmod ('2026-10-19-rwg-' + 'density-2)')) -ne 0 -or (Count $text.nsmod ('2026-10-19-rwg-' + 'rockcache-2')) -ne 0 -or (Count $text.nsmod ('2026-10-18-rwg-' + 'p4c-2')) -ne 0 -or (Count $text.nsmod ('2026-10-18-rwg-' + 'p4c-1')) -ne 0 -or (Count $text.nsmod ('2026-10-18-rwg-' + 'p5-2')) -ne 0) { $fails += 'F9: the marker must be rwg-repclass-3 (rwg-repclass-2 absent) (RWG 0.1.9 accept list, moved from rwg-p4c-2) and the previous markers absent' }
 
 # F10
 $allowed = @(('else if (Z > 0.0 && CN < ' + 'PerClass)'), ('const auto Plausible = [](double Z) { return FMath::IsFinite(Z) && Z < 0.' + '0 && Z > -200000.0; };'))

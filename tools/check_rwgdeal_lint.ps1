@@ -17,7 +17,7 @@
 #       rank-2 class to the form representative BEFORE the resource-keyed stamp.
 #   G6  Census: RWGDEAL (10 %d), RWGDEAL-RES, RWGDEAL-SLOTS, RWGDEAL-STAMP exact formats, Display, specifier count == argument count,
 #       no repeated field; the Vanilla FIX B line keeps its exact text and RWG prints the claim-free variant.
-#   G7  Marker rwg-steep-2 present once; rwg-steep-1, rwg-deal-1 and rwg-density-2 absent.
+#   G7  Marker rwg-0-1-12-1 present once; rwg-steep-2, rwg-steep-1, rwg-deal-1 and rwg-density-2 absent.
 #   G8  deck-substitute Rung 3 reads the class the entry spawns (PreSubstituteSpawnPath) on RWG, NodeClassPath on Vanilla (F7).
 #   G9  Re-roll rebuild: on RWG the rebuilt slot form, FormByResource and the representative latch read the ORIGINAL resource's
 #       descriptor form (RebuildForm), never the saved card form; a class that does not load is counted (originalLoadNull);
@@ -122,7 +122,7 @@ function Invoke-RwgdealChecks($T) {
     $f += Check-Log $T 'sub' 'G6' 'RWGDEAL-STAMP ' 'RWGDEAL-STAMP newFormRep=%d convFormChanged=%d convFormRestamped=%d convFormOwnClass=%d convFormKept=%d' 5
     if ((Count $s ('(no liquid card on a solid slot by ' + 'construction)"),')) -ne 1 -or (Count $s '(rwg: form follows the card)"),') -ne 1 -or -not (Ordered $s @('        if (bRwgDeal)', '(rwg: form follows the card)"),', '        else', ('(no liquid card on a solid slot by ' + 'construction)"),')))) { $f += '(G6) FIX B line: Vanilla keeps its exact text in the else branch; RWG prints the claim-free variant' }
     # G7
-    if ((Count $T.nsmod ('LOADED (2026-10-19-rwg-' + 'steep-2)')) -ne 1 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'deal-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'density-2')) -ne 0) { $f += '(G7) marker must be rwg-steep-2 (rwg-steep-1 and rwg-deal-1 absent) with rwg-density-2 absent' }
+    if ((Count $T.nsmod ('LOADED (2026-10-26-rwg-' + '0-1-12-1)')) -ne 1 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'deal-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'density-2')) -ne 0) { $f += '(G7) marker must be rwg-steep-2 (rwg-steep-1 and rwg-deal-1 absent) with rwg-density-2 absent' }
     # G8
     if (-not (Ordered $s @('// Rung 3: scan the layout', 'const FString& Cand = (GetMapMode() == ENodeShuffleMapMode::Rwg) ? PreSubstituteSpawnPath(E) : E.NodeClassPath;', 'if (!Cand.StartsWith(TEXT("/Game/"))) { continue; }', 'if (!IsEligible(Cand)) { continue; }', 'return Cand;', '// Rung 4 (SOLID ONLY)'))) { $f += '(G8) Rung 3 must read the class the entry spawns (PreSubstituteSpawnPath) on RWG and NodeClassPath on Vanilla' }
     # G9
@@ -151,7 +151,7 @@ $mutants = @(
     @{ Name = 'A13 RWGDEAL drops an argument'; Key = 'deal'; Expect = 'G6'; Find = 'Out.SolidToLiquid, Out.LiquidToSolid, Out.VanillaOnlyFallbacks);'; Repl = 'Out.SolidToLiquid, Out.LiquidToSolid);' }
     @{ Name = 'A14 RWGDEAL-RES drops look'; Key = 'deal'; Expect = 'G6'; Find = ' ownClass=%d look=%d"),'; Repl = ' ownClass=%d"),' }
     @{ Name = 'A15 RWG FIX B line keeps the false claim'; Key = 'sub'; Expect = 'G6'; Find = '(rwg: form follows the card)"),'; Repl = ('(no liquid card on a solid slot by ' + 'construction)"),') }
-    @{ Name = 'A16 marker reverted'; Key = 'nsmod'; Expect = 'G7'; Find = ('2026-10-19-rwg-' + 'steep-2'); Repl = ('2026-10-19-rwg-' + 'density-2') }
+    @{ Name = 'A16 marker reverted'; Key = 'nsmod'; Expect = 'G7'; Find = ('2026-10-26-rwg-' + '0-1-12-1'); Repl = ('2026-10-19-rwg-' + 'steep-2') }
     @{ Name = 'A17 Rung 3 reads NodeClassPath on RWG'; Key = 'sub'; Expect = 'G8'; Find = '? PreSubstituteSpawnPath(E) : E.NodeClassPath;'; Repl = '? E.NodeClassPath : E.NodeClassPath;' }
     @{ Name = 'A19 rebuild entry form from the saved card'; Key = 'sub'; Expect = 'G9'; Find = 'E.ResourceForm = RebuildForm;'; Repl = ('E.ResourceForm = Old.' + 'ResourceForm;') }
     @{ Name = 'A20 rebuild latch from the saved card form'; Key = 'sub'; Expect = 'G9'; Find = '                if (RebuildForm == FormLiquid)'; Repl = ('                if (Old.' + 'ResourceForm == FormLiquid)') }

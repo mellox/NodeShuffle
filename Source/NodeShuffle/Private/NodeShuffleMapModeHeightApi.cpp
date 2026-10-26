@@ -2,11 +2,14 @@
 // Brief: _team/nodeshuffle-rwg-p2-spec.md "Addendum 2"; research: _team/rwg-map-persistence-research.md §4/§7.
 // Reached only from RwgLogReprobes (NodeShuffleMapModeR1.cpp), i.e. only off vanilla, only after the v2 latch.
 // It resolves six RWG exports by DECORATED name at runtime (GetModuleHandleW + GetProcAddress, no link
-// dependency, so nothing here enters the import table but KERNEL32), refuses to call unless the RWG .uplugin
-// next to the bound DLL names an accepted build, and compares the API's surface height with a line trace at
-// the same XY. It gates nothing, writes nothing and changes no node: every result is a log line.
+// dependency, so nothing here enters the import table but KERNEL32), calls only after the byte-signature gate
+// below passed (a build the RWG .uplugin names on the accept list keeps the 0.1.9 rules; an UNLISTED build is tried
+// on the full 16-function check -- RWG 0.1.12, 2026-10-26), and compares the API's surface height with a line trace
+// at the same XY. It gates nothing, writes nothing and changes no node: every result is a log line, plus the one
+// in-game notice NodeShuffleRwgGateNotice.cpp posts on a refusal or an unlisted-verified run.
 #include "NodeShuffleSubsystem.h"
 #include "NodeShuffleMapMode.h"
+#include "NodeShuffleRwgGateNotice.h"
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
 #include "Misc/FileHelper.h"
@@ -27,11 +30,14 @@ namespace
     // (dumpbin /EXPORTS + /DISASM on FactoryGameSteam-ProceduralWorld-Win64-Shipping.dll):
     //   0.1.7 build 705, sha256 EE60A003A44A4ABC..., 2026-10-17;
     //   0.1.9 build 745, sha256 93516E7F09E60F27..., 2026-10-18 (_team/test-logs/2026-10-18-rwg-0.1.9-export-diff.md: 14 of 16
-    //   bound prefixes byte-identical; GetField + GetKillboxTop differ ONLY in member displacements, which the masks below wildcard).
-    // SemVersion AND build must both equal ONE entry; anything else is refused, never called. Add an entry only after re-measuring
-    // every bound export on that build AND re-running the RWGHEIGHTAPI census on it.
+    //   bound prefixes byte-identical; GetField + GetKillboxTop differ ONLY in member displacements, which the masks below wildcard);
+    //   0.1.12 build 802, sha256 C8D7BA206B5140E9..., 2026-10-26 (_team/test-logs/2026-10-26-rwg-0.1.12-export-diff.md: 15 of 16
+    //   identical; VoidAt differs ONLY in its void-count member displacement 0x2E8 -> 0x2F0, wildcarded since this entry).
+    // SemVersion AND build must both equal ONE entry to be LISTED. SINCE RWG 0.1.12 (user decision 2026-10-26) an unlisted pair is
+    // not refused on its label: it is TRIED on the full 16-function signature check (TryBind below) and refused on any pinned-byte
+    // mismatch. Add an entry only after re-measuring every bound export on that build AND re-running the RWGHEIGHTAPI census on it.
     struct FRwgAcceptedBuild { const TCHAR* SemVer; int32 Build; };
-    const FRwgAcceptedBuild RwgHeightApiAccepted[] = { { TEXT("0.1.7"), 705 }, { TEXT("0.1.9"), 745 } };
+    const FRwgAcceptedBuild RwgHeightApiAccepted[] = { { TEXT("0.1.7"), 705 }, { TEXT("0.1.9"), 745 }, { TEXT("0.1.12"), 802 } };
     // RWG 0.1.9 (2026-10-18): the accept list as printed by the census and the refusals, e.g. {0.1.7,705} {0.1.9,745}.
     FString RwgAcceptedList()
     {
@@ -161,21 +167,34 @@ namespace
         {
             if (A.Build == E.Build && A.SemVer == E.SemVer) { bVersion = true; A.Matched = FString::Printf(TEXT("{%s,%d}"), E.SemVer, E.Build); break; }
         }
-        if (!bVersion) { A.Status = TEXT("versionMismatch"); UE_LOG(LogNodeShuffle, Warning, TEXT("RWGHEIGHTAPI-REFUSED: status=versionMismatch semVer='%s' build=%d accepted='%s' uplugin='%s' callsAllowed=0"), *A.SemVer, A.Build, *RwgAcceptedList(), *A.Uplugin); return; }
-        if (A.Required != 6) { A.Status = TEXT("exportMissing"); UE_LOG(LogNodeShuffle, Warning, TEXT("RWGHEIGHTAPI-REFUSED: status=exportMissing semVer='%s' build=%d matchedEntry='%s' requiredResolved=%d of 6 missing='%s' callsAllowed=0"), *A.SemVer, A.Build, *A.Matched, A.Required, *A.Missing); return; }
+        // RWG 0.1.12 (2026-10-26): an UNLISTED label is TRIED, not refused (user decision, _team/NodeShuffle-state.md 2026-10-26). The
+        // trial is STRICT: every one of the 16 bound functions (11 here + the 5 cave masks, NodeShuffleRwgGate::CheckCaveSignatures)
+        // must match its mask -- an OPTIONAL export's mismatch, which a listed build merely drops, refuses an unlisted one. A missing
+        // optional export is not a mismatch (it stays off, as on a listed build). The trial start is logged at Warning so a log reader
+        // sees the unverified label before the verdict; the verdict line follows the signature checks.
+        const bool bUnlisted = !bVersion;
+        if (!bVersion) { A.Status = TEXT("unlistedTrial"); UE_LOG(LogNodeShuffle, Warning, TEXT("RWGHEIGHTAPI-UNLISTED: status=unlistedTrial semVer='%s' build=%d accepted='%s' uplugin='%s'; the full 16-function signature check decides callsAllowed"), *A.SemVer, A.Build, *RwgAcceptedList(), *A.Uplugin); }
+        if (A.Required != 6) { A.Status = TEXT("exportMissing"); UE_LOG(LogNodeShuffle, Warning, TEXT("RWGHEIGHTAPI-REFUSED: status=exportMissing semVer='%s' build=%d matchedEntry='%s' requiredResolved=%d of 6 missing='%s' callsAllowed=0"), *A.SemVer, A.Build, *A.Matched, A.Required, *A.Missing); NodeShuffleRwgGate::QueueRefusalNotice(A.SemVer, A.Build, A.Status, FString::Printf(TEXT("missing: %s"), *A.Missing)); return; }
         // RWG P2b BYTE-SIGNATURE GATE (P2a cold review alternative 2): each export's leading bytes must equal the
         // build-705 disassembly (dumpbin /DISASM, 2026-10-17); -1 = wildcard. Mismatch = fail closed.
         // Wildcards: IsOutsideWorld's RIP displacement; SINCE RWG 0.1.9 (2026-10-18) the 4-byte member displacement of GetField
-        // (bytes 3..6 of `mov rax,[rcx+disp32]`) -- measured F40h on build 705, 1008h on build 745. The opcode/ModRM bytes
-        // around it (48 8B 81 / 48 89 02) stay pinned; only the displacement value is not compared.
+        // (bytes 3..6 of `mov rax,[rcx+disp32]`) -- measured F40h on build 705, 1008h on build 745, 10F8h on build 802. The
+        // opcode/ModRM bytes around it (48 8B 81 / 48 89 02) stay pinned; only the displacement value is not compared.
+        // SINCE RWG 0.1.12 (2026-10-26) THE RULE IS APPLIED TO EVERY MEMBER-OFFSET IMMEDIATE IN THESE MASKS: a `[rcx+disp]` operand is
+        // RWG reading its OWN object inside its OWN function, so a moved member never changes how we call it -- only the opcode/ModRM
+        // shape fingerprints the function. Wildcarded here: GetSpliced disp32 @3..6 (0x90 on 705/745/802), GlobalMin/MaxSurfaceCm
+        // disp8 @4 (0x18 / 0x20 on 705/745/802), IsOutsideWorld disp8 @12 (0x08 on 705/745/802). A disp8 wildcard tolerates a move
+        // only below 0x80 -- past it the ModRM byte changes and the mask fails closed, which is the right answer for a layout that
+        // large. GMin and GMax masks are now identical; the runtime plausibility range (GMin < GMax, bounds) is what tells a swap.
+        // NOT a member offset, left pinned: WaterLevelCmAt's `[rax+20h]` / `[rax+8]` are stack home slots off RAX = RSP.
         static const int16 SigGet[] = { 0x48,0x83,0xEC,0x28,0x48,0x85,0xC9 };
-        static const int16 SigField[] = { 0x48,0x8B,0x81,-1,-1,-1,-1,0x48,0x89,0x02 }; // disp32 @3..6: 705 = 0x00000F40, 745 = 0x00001008
-        static const int16 SigSpliced[] = { 0x48,0x8B,0x81,0x90,0x00,0x00,0x00,0xC3 };
+        static const int16 SigField[] = { 0x48,0x8B,0x81,-1,-1,-1,-1,0x48,0x89,0x02 }; // disp32 @3..6: 705 = 0x00000F40, 745 = 0x00001008, 802 = 0x000010F8
+        static const int16 SigSpliced[] = { 0x48,0x8B,0x81,-1,-1,-1,-1,0xC3 }; // disp32 @3..6: 705 = 0x90, 745 = 0x90, 802 = 0x90
         static const int16 SigSurface[] = { 0x40,0x53,0x48,0x83,0xEC,0x40,0x0F,0x29,0x74,0x24,0x30,0x48,0x8B,0xD9 };
-        static const int16 SigOutside[] = { 0xF2,0x0F,0x10,0x1D,-1,-1,-1,-1,0xF2,0x0F,0x10,0x41,0x08,0x0F,0x54,0xCB };
+        static const int16 SigOutside[] = { 0xF2,0x0F,0x10,0x1D,-1,-1,-1,-1,0xF2,0x0F,0x10,0x41,-1,0x0F,0x54,0xCB }; // RIP disp32 @4..7; disp8 @12: 705 = 0x08, 745 = 0x08, 802 = 0x08
         static const int16 SigWater[] = { 0x48,0x8B,0xC4,0x44,0x89,0x48,0x20,0x48,0x89,0x48,0x08 };
-        static const int16 SigGMin[] = { 0xF2,0x0F,0x10,0x41,0x18,0xC3 };
-        static const int16 SigGMax[] = { 0xF2,0x0F,0x10,0x41,0x20,0xC3 };
+        static const int16 SigGMin[] = { 0xF2,0x0F,0x10,0x41,-1,0xC3 }; // disp8 @4: 705 = 0x18, 745 = 0x18, 802 = 0x18
+        static const int16 SigGMax[] = { 0xF2,0x0F,0x10,0x41,-1,0xC3 }; // disp8 @4: 705 = 0x20, 745 = 0x20, 802 = 0x20
         // RWG 0.1.9: SigOk also records the index of the first PINNED byte that differed (LastSigDiff; -1 = every pinned byte matched)
         // so each signature refusal can print it.
         int32 LastSigDiff = -1;
@@ -186,9 +205,12 @@ namespace
             for (int32 I = 0; I < N; ++I) { if (Sig[I] >= 0 && B[I] != static_cast<uint8>(Sig[I])) { LastSigDiff = I; return false; } }
             return true;
         };
-        // RWG 0.1.9: one Warning per refused export (required or optional), measured values only.
-        const auto WarnSigRefused = [&A, &LastSigDiff](const TCHAR* Name, bool bRequired)
+        // RWG 0.1.9: one Warning per refused export (required or optional), measured values only. RWG 0.1.12: it also counts the
+        // optional refusals, which decide the unlisted trial below (a listed build only drops the export).
+        int32 OptionalSigBad = 0;
+        const auto WarnSigRefused = [&A, &LastSigDiff, &OptionalSigBad](const TCHAR* Name, bool bRequired)
         {
+            if (!bRequired) { ++OptionalSigBad; }
             UE_LOG(LogNodeShuffle, Warning, TEXT("RWGSIGREFUSED: export=%s required=%d firstDiffByte=%d semVer='%s' build=%d matchedEntry='%s'"),
                 Name, bRequired ? 1 : 0, LastSigDiff, *A.SemVer, A.Build, *A.Matched);
         };
@@ -207,11 +229,15 @@ namespace
         if (A.GMin && !SigOk(A.GMin, SigGMin, UE_ARRAY_COUNT(SigGMin))) { A.GMin = nullptr; SigBad += FString::Printf(TEXT(" GlobalMinSurfaceCm@+%d(optional,dropped)"), LastSigDiff); WarnSigRefused(TEXT("GlobalMinSurfaceCm"), false); }
         if (A.GMax && !SigOk(A.GMax, SigGMax, UE_ARRAY_COUNT(SigGMax))) { A.GMax = nullptr; SigBad += FString::Printf(TEXT(" GlobalMaxSurfaceCm@+%d(optional,dropped)"), LastSigDiff); WarnSigRefused(TEXT("GlobalMaxSurfaceCm"), false); }
         // RWG 0.1.9: the member displacement GetField actually carries (bytes 3..6, little-endian) -- read, never compared.
-        uint32 FieldDisp = 0;
+        // RWG 0.1.12: the other wildcarded member offsets read the same way (GetSpliced disp32 @3; GMin/GMax/IsOutsideWorld disp8).
+        uint32 FieldDisp = 0, SplicedDisp = 0;
         FMemory::Memcpy(&FieldDisp, static_cast<const uint8*>(reinterpret_cast<const void*>(A.GetField)) + 3, sizeof(FieldDisp));
-        UE_LOG(LogNodeShuffle, Display, TEXT("RWGHEIGHTAPI: signature check mismatched='%s' matchedEntry='%s' optionalResolved=%d getFieldDisp=0x%X (empty list = every resolved export matched its mask; the GetField value is its bytes 3..6 read as a little-endian uint32, a displacement only while GetField is absent from the list; each item is the export and the offset of its first differing pinned byte)"),
-            *SigBad, *A.Matched, A.Optional, FieldDisp);
-        if (bRequiredSigBad) { UE_LOG(LogNodeShuffle, Warning, TEXT("RWGHEIGHTAPI-REFUSED: status=signatureMismatch semVer='%s' build=%d matchedEntry='%s' accepted='%s' mismatched='%s' callsAllowed=0"), *A.SemVer, A.Build, *A.Matched, *RwgAcceptedList(), *SigBad); }
+        FMemory::Memcpy(&SplicedDisp, static_cast<const uint8*>(reinterpret_cast<const void*>(A.GetSpliced)) + 3, sizeof(SplicedDisp));
+        const uint32 GMinDisp = A.GMin ? reinterpret_cast<const uint8*>(A.GMin)[4] : 0, GMaxDisp = A.GMax ? reinterpret_cast<const uint8*>(A.GMax)[4] : 0;
+        const uint32 OutsideDisp = reinterpret_cast<const uint8*>(A.Outside)[12];
+        UE_LOG(LogNodeShuffle, Display, TEXT("RWGHEIGHTAPI: signature check mismatched='%s' matchedEntry='%s' optionalResolved=%d getFieldDisp=0x%X getSplicedDisp=0x%X gMinDisp=0x%X gMaxDisp=0x%X isOutsideWorldDisp=0x%X (empty list = every resolved export matched its mask; each Disp value is that export's wildcarded member-offset bytes read back, a displacement only while the export is absent from the list, 0 = optional export missing; each item is the export and the offset of its first differing pinned byte)"),
+            *SigBad, *A.Matched, A.Optional, FieldDisp, SplicedDisp, GMinDisp, GMaxDisp, OutsideDisp);
+        if (bRequiredSigBad) { UE_LOG(LogNodeShuffle, Warning, TEXT("RWGHEIGHTAPI-REFUSED: status=signatureMismatch semVer='%s' build=%d matchedEntry='%s' accepted='%s' mismatched='%s' callsAllowed=0"), *A.SemVer, A.Build, *A.Matched, *RwgAcceptedList(), *SigBad); NodeShuffleRwgGate::QueueRefusalNotice(A.SemVer, A.Build, TEXT("signatureMismatch"), FString::Printf(TEXT("mismatched: %s"), *SigBad)); }
         if (bRequiredSigBad) { A.Status = TEXT("signatureMismatch"); return; }
         // RWG P2e (2026-10-18): InSeaVolume, OPTIONAL like GMin/GMax -- resolved only after the version, export and required-signature
         // gates passed; a missing export or a byte mismatch leaves it null and the old water predicate stays in place. Build-705
@@ -228,15 +254,21 @@ namespace
         // signature gates, before A.bUsable = true); missing or byte-mismatched = null, its term stays off. Build-705 disassembly (dumpbin
         // /DISASM, 2026-10-18): VoidAt = this RCX, X XMM1, Y XMM2, returns false when the void count [+0x2E8] is 0 and on a negative or
         // >= N sample index (its own bounds check); GetKillboxTop = mov rax,[rcx+0C58h] / mov [rdx],rax / cmp dword [rcx+0C48h],0 / setg al.
-        // SigVoidAt is pinned in full (its +0x2E8 displacement included). SINCE RWG 0.1.9 (2026-10-18) SigKillboxTop wildcards exactly
+        // SINCE RWG 0.1.12 (2026-10-26) SigVoidAt wildcards exactly the 4-byte void-count member displacement (bytes 9..12 of
+        // `cmp qword [rcx+disp32],0`): measured 2E8h on builds 705 and 745, 2F0h on build 802 (the one pinned byte 0.1.12 moved,
+        // _team/test-logs/2026-10-26-rwg-0.1.12-export-diff.md). Its opcode/ModRM (48 83 B9) and the cmp imm8 (byte 13) stay pinned.
+        // SINCE RWG 0.1.9 (2026-10-18) SigKillboxTop wildcards exactly
         // its two 4-byte member displacements (bytes 3..6 of `mov rax,[rcx+disp32]`, bytes 12..15 of `cmp dword [rcx+disp32],0`):
-        // measured C58h/C48h on build 705, C60h/C50h on build 745. Opcode/ModRM bytes, the cmp imm8 (byte 16) and setg/ret stay pinned.
-        static const int16 SigVoidAt[] = { 0x40,0x53,0x48,0x83,0xEC,0x30,0x48,0x83,0xB9,0xE8,0x02,0x00,0x00,0x00,0x0F,0x28,0xE2,0x0F,0x28,0xC1,0x48,0x8B,0xD9,0x0F,0x84 };
-        static const int16 SigKillboxTop[] = { 0x48,0x8B,0x81,-1,-1,-1,-1,0x48,0x89,0x02,0x83,0xB9,-1,-1,-1,-1,0x00,0x0F,0x9F,0xC0,0xC3 }; // disp32 @3..6: 705 = 0xC58, 745 = 0xC60; disp32 @12..15: 705 = 0xC48, 745 = 0xC50
+        // measured C58h/C48h on build 705, C60h/C50h on build 745, D50h/D40h on build 802. Opcode/ModRM bytes, the cmp imm8 (byte 16)
+        // and setg/ret stay pinned.
+        static const int16 SigVoidAt[] = { 0x40,0x53,0x48,0x83,0xEC,0x30,0x48,0x83,0xB9,-1,-1,-1,-1,0x00,0x0F,0x28,0xE2,0x0F,0x28,0xC1,0x48,0x8B,0xD9,0x0F,0x84 }; // disp32 @9..12: 705 = 0x2E8, 745 = 0x2E8, 802 = 0x2F0
+        static const int16 SigKillboxTop[] = { 0x48,0x8B,0x81,-1,-1,-1,-1,0x48,0x89,0x02,0x83,0xB9,-1,-1,-1,-1,0x00,0x0F,0x9F,0xC0,0xC3 }; // disp32 @3..6: 705 = 0xC58, 745 = 0xC60, 802 = 0xD50; disp32 @12..15: 705 = 0xC48, 745 = 0xC50, 802 = 0xD40
         A.VoidAt = reinterpret_cast<FnVoidAt>(::GetProcAddress(H, SymVoidAt));
         if (!A.VoidAt) { A.VoidStatus = TEXT("exportMissing"); }
         else if (!SigOk(reinterpret_cast<const void*>(A.VoidAt), SigVoidAt, UE_ARRAY_COUNT(SigVoidAt))) { A.VoidAt = nullptr; A.VoidStatus = TEXT("signatureMismatch"); WarnSigRefused(TEXT("VoidAt"), false); }
         else { A.VoidStatus = TEXT("bound"); }
+        uint32 VoidDisp = 0; // RWG 0.1.12: the void-count displacement VoidAt carries (bytes 9..12, read, never compared); 0 = export missing
+        if (A.VoidAt) { FMemory::Memcpy(&VoidDisp, reinterpret_cast<const uint8*>(A.VoidAt) + 9, sizeof(VoidDisp)); }
         A.KillboxTop = reinterpret_cast<FnKillboxTop>(::GetProcAddress(H, SymKillboxTop));
         uint32 KillboxDispA = 0, KillboxDispB = 0; // RWG 0.1.9: the two displacements the export carries (read, never compared); 0 = export missing
         if (A.KillboxTop)
@@ -247,12 +279,31 @@ namespace
         if (!A.KillboxTop) { A.KillboxStatus = TEXT("exportMissing"); }
         else if (!SigOk(reinterpret_cast<const void*>(A.KillboxTop), SigKillboxTop, UE_ARRAY_COUNT(SigKillboxTop))) { A.KillboxTop = nullptr; A.KillboxStatus = TEXT("signatureMismatch"); WarnSigRefused(TEXT("GetKillboxTop"), false); }
         else { A.KillboxStatus = TEXT("bound"); }
-        UE_LOG(LogNodeShuffle, Display, TEXT("RWGVOIDBIND: voidAtStatus=%s killboxTopStatus=%s optional=1 killboxTopDisps=0x%X/0x%X; the void term counts only after RWGVOIDCHECK grades it, the killbox floor reads the damage volumes first"),
-            *A.VoidStatus, *A.KillboxStatus, KillboxDispA, KillboxDispB);
+        UE_LOG(LogNodeShuffle, Display, TEXT("RWGVOIDBIND: voidAtStatus=%s killboxTopStatus=%s optional=1 voidCountDisp=0x%X killboxTopDisps=0x%X/0x%X; the void term counts only after RWGVOIDCHECK grades it, the killbox floor reads the damage volumes first"),
+            *A.VoidStatus, *A.KillboxStatus, VoidDisp, KillboxDispA, KillboxDispB);
         if (!A.VoidAt) { UE_LOG(LogNodeShuffle, Warning, TEXT("RWGVOIDBIND-OFF: voidAtStatus=%s; the void term is off this session (the killbox floor still applies when measured)"), *A.VoidStatus); }
+        // RWG 0.1.12: the unlisted trial's VERDICT. Strict: any optional mismatch above, or any of the five cave masks mismatching,
+        // refuses the whole API (a listed build reaches this point with the mismatched optional merely dropped). The cave bind in
+        // NodeShuffleMapModeCave.cpp re-checks the same five masks lazily; its verdict is then consistent with this one.
+        if (bUnlisted)
+        {
+            FString CaveMissing, CaveBad;
+            const int32 CaveSigBad = NodeShuffleRwgGate::CheckCaveSignatures(H, CaveMissing, CaveBad);
+            if (OptionalSigBad > 0 || CaveSigBad > 0)
+            {
+                A.Status = TEXT("signatureMismatch");
+                UE_LOG(LogNodeShuffle, Warning, TEXT("RWGHEIGHTAPI-REFUSED: status=signatureMismatch semVer='%s' build=%d matchedEntry='%s' accepted='%s' optionalMismatched=%d mismatched='%s' caveMismatched='%s' caveMissing='%s' callsAllowed=0"),
+                    *A.SemVer, A.Build, *A.Matched, *RwgAcceptedList(), OptionalSigBad, *SigBad, *CaveBad, *CaveMissing);
+                NodeShuffleRwgGate::QueueRefusalNotice(A.SemVer, A.Build, A.Status, FString::Printf(TEXT("mismatched: %s %s"), *SigBad, *CaveBad));
+                return;
+            }
+            UE_LOG(LogNodeShuffle, Warning, TEXT("RWGHEIGHTAPI-UNLISTED: status=signatureVerifiedUnlisted semVer='%s' build=%d accepted='%s' heightApiChecked=11 caveChecked=5 optionalResolved=%d of 2 caveMissing='%s' callsAllowed=1"),
+                *A.SemVer, A.Build, *RwgAcceptedList(), A.Optional, *CaveMissing);
+            NodeShuffleRwgGate::QueueUnlistedVerifiedNotice(A.SemVer, A.Build, RwgAcceptedList());
+        }
         A.Hmod = H; // RWG P5: published only on the path that also sets bUsable
         A.bUsable = true;
-        A.Status = TEXT("bound");
+        A.Status = bUnlisted ? TEXT("signatureVerifiedUnlisted") : TEXT("bound");
 #else
         A.Status = TEXT("notWindows");
 #endif
@@ -288,6 +339,7 @@ void ANodeShuffleSubsystem::RwgLogHeightApi(bool bFull)
 {
     FRwgHeightApi& A = Api();
     if (!A.bTried) { TryBind(A); }
+    NodeShuffleRwgGate::TickNotice(GetWorld()); // RWG 0.1.12: drain the refusal / unlisted-verified notice; runs before the callsAllowed guard so a refused bind still posts
     if (bFull)
     {
         UE_LOG(LogNodeShuffle, Display,
