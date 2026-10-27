@@ -40,6 +40,7 @@ namespace NodeShuffleRwgDeal
         int32 Cards = 0;            // cards of this class in the deal decks
         int32 Orig[3] = {0, 0, 0};  // captured originals of this class, by purity (Impure, Normal, Pure)
         int32 Dealt = 0;            // dealt slots holding this class's card
+        int32 NewDealt = 0;         // of those, new-location slots (they draw whatever RandomizePurity is)
         int32 Drawn[3] = {0, 0, 0}; // dealt slots whose purity was taken from a deck (RandomizePurity or a new node)
         int32 Assigned[3] = {0, 0, 0}; // every dealt slot's final AssignedPurity (drawn or kept)
         int32 FallbackDrawn = 0;    // drawn slots whose purity came from the map-wide source
@@ -54,7 +55,7 @@ namespace NodeShuffleRwgDeal
         TMap<FString, FPurityCensus> Census;
     };
 
-    // Groups Layout's originals (!bIsNewNode, non-empty OriginalResourceClassPath, OriginalPurity != RP_MAX) by
+    // Groups Layout's originals (!bIsNewNode, non-empty OriginalResourceClassPath, OriginalPurity is Impure, Normal or Pure) by
     // OriginalResourceClassPath for every card class in the two piles, shuffles each class's source with Rng in sorted
     // class order, then shuffles MapSourceIn into Out.MapSource only when at least one card class has no source.
     void BuildPurityDecks(const TArray<FNodeShuffleEntry>& Layout, const TArray<TEnumAsByte<EResourcePurity>>& MapSourceIn,
@@ -63,8 +64,9 @@ namespace NodeShuffleRwgDeal
     // class cursor advances; the drawn purity is written only when bRandomizePurity || E.bIsNewNode (else the slot
     // keeps the purity it was captured with). Records the census.
     void ApplyPurity(FNodeShuffleEntry& E, bool bRandomizePurity, FPurityDecks& D);
-    // PURITYCENSUS: one Display line per card class plus one totals line whose res is ALL. DealName is "rwg" or "vanilla".
-    void LogPurityCensus(const FPurityDecks& D, const TCHAR* DealName);
+    // PURITYCENSUS: one Display line per card class plus one totals line whose res is ALL. DealName is "rwg" or "vanilla";
+    // bRandomizePurity is printed so the drawn counts can be read from the line alone.
+    void LogPurityCensus(const FPurityDecks& D, const TCHAR* DealName, bool bRandomizePurity);
 
     struct FInputs
     {

@@ -11,7 +11,7 @@ namespace NodeShuffleRwgDeal
         int32 PurityBin(const TEnumAsByte<EResourcePurity> P)
         {
             const int32 V = (int32)P.GetValue();
-            return (V >= 0 && V < 3) ? V : 1; // RP_MAX never reaches a deck; count anything out of range as Normal
+            return (V >= 0 && V < 3) ? V : 1; // sources hold only Impure/Normal/Pure (BuildPurityDecks filter); anything else would count as Normal
         }
         void ShuffleSource(TArray<TEnumAsByte<EResourcePurity>>& Src, FRandomStream& Rng)
         {
@@ -32,7 +32,7 @@ namespace NodeShuffleRwgDeal
         TMap<FString, TArray<TEnumAsByte<EResourcePurity>>> Sources; // capture order; shuffled below
         for (const FNodeShuffleEntry& E : Layout)
         {
-            if (E.bIsNewNode || E.OriginalResourceClassPath.IsEmpty() || E.OriginalPurity == RP_MAX) { continue; }
+            if (E.bIsNewNode || E.OriginalResourceClassPath.IsEmpty() || (int32)E.OriginalPurity.GetValue() > 2) { continue; } // only Impure/Normal/Pure enter a deck (RP_MAX and any out-of-range byte stay out)
             FPurityCensus* C = Out.Census.Find(E.OriginalResourceClassPath);
             if (!C) { continue; } // not a card class this roll (gas, or no cards left after pinning)
             C->Orig[PurityBin(E.OriginalPurity)]++;
@@ -58,6 +58,7 @@ namespace NodeShuffleRwgDeal
     {
         FPurityCensus& C = D.Census.FindOrAdd(E.AssignedResourceClassPath);
         C.Dealt++;
+        if (E.bIsNewNode) { C.NewDealt++; }
         TEnumAsByte<EResourcePurity> Draw = RP_MAX;
         bool bFromMap = false;
         if (const TArray<TEnumAsByte<EResourcePurity>>* Src = D.ByClass.Find(E.AssignedResourceClassPath))
@@ -81,14 +82,14 @@ namespace NodeShuffleRwgDeal
         C.Assigned[PurityBin(E.AssignedPurity)]++;
     }
 
-    void LogPurityCensus(const FPurityDecks& D, const TCHAR* DealName)
+    void LogPurityCensus(const FPurityDecks& D, const TCHAR* DealName, bool bRandomizePurity)
     {
-        const auto Emit = [DealName](const FString& Res, const FPurityCensus& C)
+        const auto Emit = [DealName, bRandomizePurity](const FString& Res, const FPurityCensus& C)
         {
             UE_LOG(LogNodeShuffle, Display,
-                TEXT("PURITYCENSUS: deal=%s res=%s cards=%d origImpure=%d origNormal=%d origPure=%d dealt=%d drawnImpure=%d drawnNormal=%d drawnPure=%d assignedImpure=%d assignedNormal=%d assignedPure=%d fallbackToMapDeck=%d"),
+                TEXT("PURITYCENSUS: deal=%s res=%s cards=%d origImpure=%d origNormal=%d origPure=%d dealt=%d drawnImpure=%d drawnNormal=%d drawnPure=%d assignedImpure=%d assignedNormal=%d assignedPure=%d randomize=%d newDealt=%d fallbackToMapDeck=%d"),
                 DealName, *Res, C.Cards, C.Orig[0], C.Orig[1], C.Orig[2], C.Dealt, C.Drawn[0], C.Drawn[1], C.Drawn[2],
-                C.Assigned[0], C.Assigned[1], C.Assigned[2], C.FallbackDrawn);
+                C.Assigned[0], C.Assigned[1], C.Assigned[2], bRandomizePurity ? 1 : 0, C.NewDealt, C.FallbackDrawn);
         };
         FPurityCensus Total;
         for (const FString& Class : D.Classes)
@@ -96,7 +97,7 @@ namespace NodeShuffleRwgDeal
             const FPurityCensus* C = D.Census.Find(Class);
             if (!C) { continue; }
             Emit(FPackageName::ObjectPathToObjectName(Class), *C);
-            Total.Cards += C->Cards; Total.Dealt += C->Dealt; Total.FallbackDrawn += C->FallbackDrawn;
+            Total.Cards += C->Cards; Total.Dealt += C->Dealt; Total.NewDealt += C->NewDealt; Total.FallbackDrawn += C->FallbackDrawn;
             for (int32 b = 0; b < 3; b++) { Total.Orig[b] += C->Orig[b]; Total.Drawn[b] += C->Drawn[b]; Total.Assigned[b] += C->Assigned[b]; }
         }
         Emit(TEXT("ALL"), Total);

@@ -174,7 +174,7 @@ void UNodeShuffleConfig::PostInitProperties()
 
     AddBool(TEXT("RandomizePurity"), true,
         TEXT("Randomize Purity"),
-        TEXT("Shuffle node purities too (dealt from the vanilla purity distribution, so overall purity balance is preserved). Applied when the layout is rolled."));
+        TEXT("Shuffle node purities too. Each dealt node's purity is drawn from the purities of that resource's original nodes on this map. Applied when the layout is rolled."));
 
     // T68 (audit §5.8): 'Allow Vanilla Nodes To Disappear' is GONE, hard-wired to its shipped default
     // (ON = vanilla entries take part in the active-percent roll like everything else). Its name and

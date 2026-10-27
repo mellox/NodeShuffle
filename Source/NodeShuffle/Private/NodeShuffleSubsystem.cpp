@@ -1529,8 +1529,8 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     for (int32 i = LiquidDeck.Num() - 1; i > 0; i--) { LiquidDeck.Swap(i, Rng.RandRange(0, i)); }
 
     // rwg-purity-1 (2026-10-26, user decision): PER-CLASS purity decks, shared by both deals below. Each card class
-    // draws from its own originals' purities (shuffled: a sample, not a capture-order prefix), so RWG's per-ore /
-    // geyser / mod purity settings carry through per resource; a class with no original purity on record draws from
+    // draws from its own originals' purities (shuffled: a sample, not a capture-order prefix), so each card class keeps the purity
+    // distribution its captured originals had; a class with no original purity on record draws from
     // the map-wide multiset (PURITYCENSUS fallbackToMapDeck). Replaces the single map-wide deck + shared cursor.
     // RNG: this call is the only purity RNG use (one shuffle per class, sorted order); seeds re-roll differently from
     // this commit on, on Vanilla and RWG alike. Contract: NodeShuffleRwgDeal.h.
@@ -1665,7 +1665,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
         E.ResourceForm = CardFormOf(Card);
         NodeShuffleRwgDeal::ApplyPurity(E, Config.RandomizePurity, PurityDecks); // rwg-purity-1: per-class draw, same call as Deal()
     }
-    NodeShuffleRwgDeal::LogPurityCensus(PurityDecks, bRwgDeal ? TEXT("rwg") : TEXT("vanilla")); // once per roll, after either deal
+    NodeShuffleRwgDeal::LogPurityCensus(PurityDecks, bRwgDeal ? TEXT("rwg") : TEXT("vanilla"), Config.RandomizePurity); // once per roll, after either deal
 
     // FIX B verification summary: by construction NO liquid card ever lands on a
     // solid slot (existing-solid slots draw only from SolidDeck; existing-liquid

@@ -78,7 +78,7 @@ and have no switches of their own (see **Resource wells** below).
 | New Node Locations | 100 | How many extra locations to generate (0–300). |
 | Minimum Active Nodes Per Resource | 5 | Completability floor for vanilla resources. |
 | Minimum Active Nodes Per Modded Resource | 2 | Same floor for resources added by other mods (0 = no floor). |
-| Randomize Purity | on | Shuffle purities, dealt from the vanilla distribution (overall balance preserved). |
+| Randomize Purity | on | Shuffle node purities too. Each dealt node's purity is drawn from the purities of that resource's original nodes on this map. Applied when the layout is rolled. |
 | Starter Nodes Near Spawn | on | New game only: place a small starter set (2 Iron, 2 Limestone, 1 Copper, Pure) near spawn. |
 | Starter Node Radius (m) | 200 | How far from spawn the starter nodes may sit. |
 | Spawn-On-Discovery Radius (m) | 600 | New nodes materialize once you come within this range and the terrain has streamed in. |

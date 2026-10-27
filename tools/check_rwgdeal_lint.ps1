@@ -29,7 +29,7 @@
 #       map-wide source only when a class has none; ApplyPurity draws by the card's class, falls back to the map-wide source and
 #       counts it, writes only when RandomizePurity or a new node; BOTH deals call ApplyPurity (symmetry) and nothing else writes
 #       AssignedPurity in them; the map-wide prefix deck and the shared purity cursor are gone; one PURITYCENSUS call after either
-#       deal, exact 14-field format.
+#       deal, exact 16-field format (rwg-purity-1 review R5 added randomize and newDealt).
 # Mutants run in-file. Exit 0 = all hold; 1 = at least one does not; 2 = a pinned FILE is missing.
 
 $ErrorActionPreference = 'Stop'
@@ -141,17 +141,17 @@ function Invoke-RwgdealChecks($T) {
     if ((Count $s ('Old.' + 'ResourceForm')) -ne 2) { $f += '(G9) Old.ResourceForm may be read only as the RebuildForm default and the restored-count compare' }
     $f += Check-Log $T 'sub' 'G9' 'RWGDEAL-REROLL ' 'RWGDEAL-REROLL rebuilt=%d slotFormRestoredFromOriginal=%d originalLoadNull=%d' 3
     # G10 (rwg-purity-1)
-    if (-not (Ordered $d @('void ShuffleSource(TArray<TEnumAsByte<EResourcePurity>>& Src, FRandomStream& Rng)', 'for (int32 i = Src.Num() - 1; i > 0; i--) { Src.Swap(i, Rng.RandRange(0, i)); }', 'void BuildPurityDecks(', 'Out.Classes.Sort();', 'if (E.bIsNewNode || E.OriginalResourceClassPath.IsEmpty() || E.OriginalPurity == RP_MAX) { continue; }', 'Sources.FindOrAdd(E.OriginalResourceClassPath).Add(E.OriginalPurity);', 'for (const FString& Class : Out.Classes)', 'ShuffleSource(*Src, Rng);', 'Out.ByClass.Add(Class, MoveTemp(*Src));', '        if (bNeedMap)', 'ShuffleSource(Out.MapSource, Rng);', 'void ApplyPurity('))) { $f += '(G10) BuildPurityDecks: originals grouped by class, classes sorted, each class source shuffled, map-wide source shuffled only when needed' }
+    if (-not (Ordered $d @('void ShuffleSource(TArray<TEnumAsByte<EResourcePurity>>& Src, FRandomStream& Rng)', 'for (int32 i = Src.Num() - 1; i > 0; i--) { Src.Swap(i, Rng.RandRange(0, i)); }', 'void BuildPurityDecks(', 'Out.Classes.Sort();', 'if (E.bIsNewNode || E.OriginalResourceClassPath.IsEmpty() || (int32)E.OriginalPurity.GetValue() > 2) { continue; }', 'Sources.FindOrAdd(E.OriginalResourceClassPath).Add(E.OriginalPurity);', 'for (const FString& Class : Out.Classes)', 'ShuffleSource(*Src, Rng);', 'Out.ByClass.Add(Class, MoveTemp(*Src));', '        if (bNeedMap)', 'ShuffleSource(Out.MapSource, Rng);', 'void ApplyPurity('))) { $f += '(G10) BuildPurityDecks: originals grouped by class, classes sorted, each class source shuffled, map-wide source shuffled only when needed' }
     $nRand = Count $d 'Rng.RandRange('; $nShuf = Count $d 'ShuffleSource('
     if ($nRand -ne 3 -or $nShuf -ne 3) { $f += "(G10) RNG in the deal file must be exactly ShuffleSource, the merged-deck shuffle and the deal draw (found $nRand RandRange, $nShuf ShuffleSource)" }
-    if (-not (Ordered $d @('void ApplyPurity(', 'D.ByClass.Find(E.AssignedResourceClassPath)', 'Draw = (*Src)[Cur % Src->Num()];', 'Cur++;', 'else if (D.MapSource.Num() > 0)', 'D.MapCursor++;', 'bFromMap = true;', 'if ((bRandomizePurity || E.bIsNewNode) && Draw != RP_MAX)', 'E.AssignedPurity = Draw;', 'if (bFromMap) { C.FallbackDrawn++; }', 'C.Assigned[PurityBin(E.AssignedPurity)]++;', 'void LogPurityCensus('))) { $f += '(G10) ApplyPurity: draw by the card class, map-wide fallback counted, written only for RandomizePurity or a new node' }
-    if ((Count $d 'ApplyPurity(E, In.bRandomizePurity, *In.Purity);') -ne 1 -or (Count $d 'AssignedPurity =') -ne 1) { $f += '(G10) Deal() must take purity only through ApplyPurity (one AssignedPurity write in the deal file)' }
+    if (-not (Ordered $d @('void ApplyPurity(', 'C.Dealt++;', 'if (E.bIsNewNode) { C.NewDealt++; }', 'D.ByClass.Find(E.AssignedResourceClassPath)', 'Draw = (*Src)[Cur % Src->Num()];', 'Cur++;', 'else if (D.MapSource.Num() > 0)', 'D.MapCursor++;', 'bFromMap = true;', 'if ((bRandomizePurity || E.bIsNewNode) && Draw != RP_MAX)', 'E.AssignedPurity = Draw;', 'if (bFromMap) { C.FallbackDrawn++; }', 'C.Assigned[PurityBin(E.AssignedPurity)]++;', 'void LogPurityCensus('))) { $f += '(G10) ApplyPurity: draw by the card class, map-wide fallback counted, written only for RandomizePurity or a new node' }
+    if ((Count $d 'ApplyPurity(E, In.bRandomizePurity, *In.Purity);') -ne 1 -or (Count $d 'AssignedPurity = ') -ne 1) { $f += '(G10) Deal() must take purity only through ApplyPurity (one AssignedPurity write in the deal file)' }
     $v0 = $s.IndexOf('    else // Vanilla map:'); $v1 = $s.IndexOf('    // FIX B verification summary:')
     if ($v0 -lt 0 -or $v1 -lt $v0) { $f += '(G10) Vanilla deal / FIX B summary anchors missing' }
     else { $vb = $s.Substring($v0, $v1 - $v0); if ((Count $vb 'NodeShuffleRwgDeal::ApplyPurity(E, Config.RandomizePurity, PurityDecks);') -ne 1 -or (Count $vb 'AssignedPurity =') -ne 0) { $f += '(G10) the Vanilla deal must take purity only through ApplyPurity (symmetry with Deal())' } }
-    if ((Count $s 'NodeShuffleRwgDeal::LogPurityCensus(PurityDecks, bRwgDeal ? TEXT("rwg") : TEXT("vanilla"));') -ne 1 -or -not (Ordered $s @('NodeShuffleRwgDeal::ApplyPurity(E, Config.RandomizePurity, PurityDecks);', "    }`n    NodeShuffleRwgDeal::LogPurityCensus(PurityDecks, bRwgDeal ? TEXT(`"rwg`") : TEXT(`"vanilla`"));", '    // FIX B verification summary:')) -or (Count $d 'LogPurityCensus(*') -ne 0) { $f += '(G10) one PURITYCENSUS call, after the Vanilla loop (outside if/else), covering both deals' }
+    if ((Count $s 'NodeShuffleRwgDeal::LogPurityCensus(PurityDecks, bRwgDeal ? TEXT("rwg") : TEXT("vanilla"), Config.RandomizePurity);') -ne 1 -or -not (Ordered $s @('NodeShuffleRwgDeal::ApplyPurity(E, Config.RandomizePurity, PurityDecks);', "    }`n    NodeShuffleRwgDeal::LogPurityCensus(PurityDecks, bRwgDeal ? TEXT(`"rwg`") : TEXT(`"vanilla`"), Config.RandomizePurity);", '    // FIX B verification summary:')) -or (Count $d 'LogPurityCensus(*') -ne 0) { $f += '(G10) one PURITYCENSUS call, after the Vanilla loop (outside if/else), covering both deals' }
     if ((Count $s ('PurityDeckSource[i % ' + 'PurityDeckSource.Num()]')) -ne 0 -or (Count $s ('Purity' + 'Idx')) -ne 0 -or (Count $d ('Purity' + 'Idx')) -ne 0 -or (Count $h ('PurityDeck' + ' =')) -ne 0) { $f += '(G10) the map-wide prefix deck and the shared purity cursor must be gone' }
-    $f += Check-Log $T 'deal' 'G10' 'PURITYCENSUS: ' 'PURITYCENSUS: deal=%s res=%s cards=%d origImpure=%d origNormal=%d origPure=%d dealt=%d drawnImpure=%d drawnNormal=%d drawnPure=%d assignedImpure=%d assignedNormal=%d assignedPure=%d fallbackToMapDeck=%d' 14
+    $f += Check-Log $T 'deal' 'G10' 'PURITYCENSUS: ' 'PURITYCENSUS: deal=%s res=%s cards=%d origImpure=%d origNormal=%d origPure=%d dealt=%d drawnImpure=%d drawnNormal=%d drawnPure=%d assignedImpure=%d assignedNormal=%d assignedPure=%d randomize=%d newDealt=%d fallbackToMapDeck=%d' 16
     if ((Count $d 'Emit(TEXT("ALL"), Total);') -ne 1) { $f += '(G10) PURITYCENSUS totals line (res ALL) missing' }
     return $f
 }
@@ -186,16 +186,20 @@ $mutants = @(
     @{ Name = 'B3 Deal skips ApplyPurity'; Key = 'deal'; Expect = 'G10'; Find = 'ApplyPurity(E, In.bRandomizePurity, *In.Purity);'; Repl = '' }
     @{ Name = 'B4 class source not shuffled (capture-order prefix)'; Key = 'deal'; Expect = 'G10'; Find = 'ShuffleSource(*Src, Rng);'; Repl = '' }
     @{ Name = 'B5 extra RNG draw in BuildPurityDecks'; Key = 'deal'; Expect = 'G10'; Find = 'bool bNeedMap = false;'; Repl = 'bool bNeedMap = false; Rng.RandRange(0, 1);' }
-    @{ Name = 'B6 PURITYCENSUS drops an argument'; Key = 'deal'; Expect = 'G10'; Find = 'C.Assigned[0], C.Assigned[1], C.Assigned[2], C.FallbackDrawn);'; Repl = 'C.Assigned[0], C.Assigned[1], C.Assigned[2]);' }
+    @{ Name = 'B6 PURITYCENSUS drops an argument'; Key = 'deal'; Expect = 'G10'; Find = 'bRandomizePurity ? 1 : 0, C.NewDealt, C.FallbackDrawn);'; Repl = 'bRandomizePurity ? 1 : 0, C.NewDealt);' }
     @{ Name = 'B7 fallback draw uncounted'; Key = 'deal'; Expect = 'G10'; Find = 'if (bFromMap) { C.FallbackDrawn++; }'; Repl = '' }
     @{ Name = 'B8 RandomizePurity OFF overwrites originals'; Key = 'deal'; Expect = 'G10'; Find = 'if ((bRandomizePurity || E.bIsNewNode) && Draw != RP_MAX)'; Repl = 'if (Draw != RP_MAX)' }
     @{ Name = 'B9 new nodes feed the class source'; Key = 'deal'; Expect = 'G10'; Find = 'if (E.bIsNewNode || E.OriginalResourceClassPath.IsEmpty()'; Repl = 'if (E.OriginalResourceClassPath.IsEmpty()' }
     @{ Name = 'B10 class order unsorted'; Key = 'deal'; Expect = 'G10'; Find = 'Out.Classes.Sort();'; Repl = '' }
-    @{ Name = 'B11 census call dropped from the Vanilla path'; Key = 'sub'; Expect = 'G10'; Find = 'NodeShuffleRwgDeal::LogPurityCensus(PurityDecks, bRwgDeal ? TEXT("rwg") : TEXT("vanilla"));'; Repl = '' }
+    @{ Name = 'B11 census call dropped from the Vanilla path'; Key = 'sub'; Expect = 'G10'; Find = 'NodeShuffleRwgDeal::LogPurityCensus(PurityDecks, bRwgDeal ? TEXT("rwg") : TEXT("vanilla"), Config.RandomizePurity);'; Repl = '' }
     @{ Name = 'B12 shared purity cursor reintroduced'; Key = 'sub'; Expect = 'G10'; Find = 'int32 SolidIdx = 0, LiquidIdx = 0;'; Repl = ('int32 SolidIdx = 0, LiquidIdx = 0, Purity' + 'Idx = 0;') }
     @{ Name = 'B13 map-wide source always shuffled'; Key = 'deal'; Expect = 'G10'; Find = '        if (bNeedMap)'; Repl = '        if (true)' }
     @{ Name = 'B14 extra RNG draw before the purity build'; Key = 'sub'; Expect = 'G2'; Find = '    NodeShuffleRwgDeal::FPurityDecks PurityDecks;'; Repl = '    NodeShuffleRwgDeal::FPurityDecks PurityDecks; Rng.RandRange(0, 1);' }
     @{ Name = 'B15 Vanilla purity line edited'; Key = 'sub'; Expect = 'G2'; Find = 'NodeShuffleRwgDeal::ApplyPurity(E, Config.RandomizePurity, PurityDecks); // rwg-purity-1'; Repl = 'NodeShuffleRwgDeal::ApplyPurity(E, true, PurityDecks); // rwg-purity-1' }
+    @{ Name = 'B16 R1 filter reverted to RP_MAX only'; Key = 'deal'; Expect = 'G10'; Find = '(int32)E.OriginalPurity.GetValue() > 2) { continue; }'; Repl = 'E.OriginalPurity == RP_MAX) { continue; }' }
+    @{ Name = 'B17 newDealt not counted'; Key = 'deal'; Expect = 'G10'; Find = 'if (E.bIsNewNode) { C.NewDealt++; }'; Repl = '' }
+    @{ Name = 'B18 census drops randomize'; Key = 'deal'; Expect = 'G10'; Find = ' randomize=%d newDealt=%d'; Repl = ' newDealt=%d' }
+    @{ Name = 'B19 census call loses the RandomizePurity argument'; Key = 'sub'; Expect = 'G10'; Find = ', Config.RandomizePurity); // once per roll'; Repl = ', false); // once per roll' }
     @{ Name = 'A18 registry fallback after the kind table'; Key = 'sub'; Expect = 'G4'; Find = 'NodeShuffleRepClass::MatchByRegistry(Res, RegQuery'; Repl = 'NodeShuffleRepClass::MatchByRegistryMovedOut(Res, RegQuery'; Find2 = 'K.bLook = ResourceHasAuthoredLook(LoadClassByPath(Kind));'; Repl2 = 'K.bLook = ResourceHasAuthoredLook(LoadClassByPath(Kind)); NodeShuffleRepClass::MatchByRegistry(Res, RegQuery' }
 )
 $mutantFails = @(); $caught = 0
