@@ -198,7 +198,7 @@ function Invoke-019Checks($T) {
     $posted = [regex]::Match($T.gate, 'TEXT\("RWGGATENOTICE: posted[^"]*"\)').Value
     foreach ($w in @(('is vis' + 'ible'), ('sho' + 'wn on screen'))) { if ($posted -match $w) { $f += "(V7) the posted line must not claim on-screen visibility ('$w'): delivery to chat history is what the emitter measures" } }
     if (-not $posted.Contains('on-screen visibility is not measured')) { $f += '(V7) the posted line must state that on-screen visibility is not measured' }
-    foreach ($body in @('NODE SHUFFLE - Random World Generator %s (build %d) not verified', 'NODE SHUFFLE - Random World Generator %s (build %d) is not on the tested list')) { if ((Count $T.gate $body) -ne 1) { $f += "(V7) notice body heading missing: '$body'" } }
+    foreach ($body in @('NODE SHUFFLE - Random World Generator %s%s not verified', 'NODE SHUFFLE - Random World Generator %s (build %d) is not on the tested list')) { if ((Count $T.gate $body) -ne 1) { $f += "(V7) notice body heading missing: '$body'" } }
     return $f
 }
 
@@ -229,6 +229,7 @@ $mutants = @(
     @{ Name = 'M23 strict refusal softened to AND'; Key = 'hapi'; Expect = 'V6'; Find = 'if (OptionalSigBad > 0 || CaveSigBad > 0 || !bAllSixteenResolved)'; Repl = 'if (OptionalSigBad > 0 && CaveSigBad > 0 && !bAllSixteenResolved)' }
     @{ Name = 'M38 missing exports no longer refuse an unlisted build'; Key = 'hapi'; Expect = 'V6'; Find = 'if (OptionalSigBad > 0 || CaveSigBad > 0 || !bAllSixteenResolved)'; Repl = 'if (OptionalSigBad > 0 || CaveSigBad > 0)' }
     @{ Name = 'M39 resolved test drops the cave exports'; Key = 'hapi'; Expect = 'V6'; Find = 'A.InSea && A.VoidAt && A.KillboxTop && CaveMissing.IsEmpty();'; Repl = 'A.InSea && A.VoidAt && A.KillboxTop;' }
+    @{ Name = 'M43 refusal heading prints the build clause unconditionally'; Key = 'gate'; Expect = 'V7'; Find = 'Random World Generator %s%s not verified'; Repl = 'Random World Generator %s (build %d) not verified' }
     @{ Name = 'M41 modulePathUnread refusal no longer queues the notice'; Key = 'hapi'; Expect = 'V7'; Find = '            NodeShuffleRwgGate::QueueRefusalNotice(TEXT("(version unread)"), 0, A.Status, FString::Printf(TEXT("module path not read: length %d of %d characters"), static_cast<int32>(Len), static_cast<int32>(UE_ARRAY_COUNT(Path))));' + "`n"; Repl = '' }
     @{ Name = 'M42 upluginUnread refusal no longer queues the notice'; Key = 'hapi'; Expect = 'V7'; Find = '            NodeShuffleRwgGate::QueueRefusalNotice(TEXT("(version unread)"), 0, A.Status, FString::Printf(TEXT("uplugin=''%s'' file exists=%d"), *A.Uplugin, UpluginExists));' + "`n"; Repl = '' }
     @{ Name = 'M40 VoidAt not named in the unlisted refusal'; Key = 'hapi'; Expect = 'V6'; Find = '            NameOpt(A.VoidStatus, TEXT("VoidAt"));' + "`n"; Repl = '' }

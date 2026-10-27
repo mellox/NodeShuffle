@@ -95,15 +95,18 @@ int32 NodeShuffleRwgGate::CheckCaveSignatures(void* Hmod, FString& OutMissing, F
 void NodeShuffleRwgGate::QueueRefusalNotice(const FString& SemVer, int32 Build, const FString& Status, const FString& Detail)
 {
     // MEASURED: SemVer/Build are read from the .uplugin beside the bound DLL; Status is the refusal the log prints; Detail is
-    // the measured export list behind it. MEASURED: callsAllowed=0 => A.bUsable false => FRwgGroundQuery unusable (no
+    // the measured export list behind it. MEASURED: the heading prints " (build N)" only when Build > 0, i.e. a build number was
+    // read from the .uplugin; with Build <= 0 (the modulePathUnread / upluginUnread refusals, where nothing was read) the heading
+    // names no build at all -- it does not claim build 0. MEASURED: callsAllowed=0 => A.bUsable false => FRwgGroundQuery unusable (no
     // RWG height-API call) and RwgHeightApiBoundModule null (caves never bind); ROLLCENSUS deal=fallback. NOT CLAIMED: which other NodeShuffle checks
     // (water volumes, killbox actors) still guard the fallback; why the bytes differ.
+    const FString BuildClause = Build > 0 ? FString::Printf(TEXT(" (build %d)"), Build) : FString();
     Queue(TEXT("refused"), FString::Printf(
-        TEXT("NODE SHUFFLE - Random World Generator %s (build %d) not verified\n\n")
+        TEXT("NODE SHUFFLE - Random World Generator %s%s not verified\n\n")
         TEXT("Node Shuffle could not verify the RWG functions it uses: %s (%s).\n")
         TEXT("Node Shuffle will not use RWG's height API (heights, water, void, killbox top, caves) this session; node placement on\n")
         TEXT("this world uses its fallback (line traces). The log line RWGHEIGHTAPI-REFUSED has the details."),
-        *SemVer, Build, *Status, Detail.IsEmpty() ? TEXT("no detail") : *Detail));
+        *SemVer, *BuildClause, *Status, Detail.IsEmpty() ? TEXT("no detail") : *Detail));
 }
 
 void NodeShuffleRwgGate::QueueUnlistedVerifiedNotice(const FString& SemVer, int32 Build, const FString& Accepted)
