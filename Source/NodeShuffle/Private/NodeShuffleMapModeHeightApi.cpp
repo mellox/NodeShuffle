@@ -86,7 +86,7 @@ namespace
         FString Uplugin = TEXT("<none>");
         FString SemVer = TEXT("<unread>");
         int32 Build = -1;
-        FString Matched = TEXT("none");       // RWG 0.1.9: the accept-list entry SemVer+Build matched, {semver,build}; "none" = refused
+        FString Matched = TEXT("none");       // RWG 0.1.9: the accept-list entry SemVer+Build matched, {semver,build}; "none" = not on the list (since RWG 0.1.12 such a build is TRIED -- Status says refused or signatureVerifiedUnlisted)
         int32 Required = 0;
         int32 Optional = 0;
         FString Missing;
@@ -235,7 +235,7 @@ namespace
         FMemory::Memcpy(&SplicedDisp, static_cast<const uint8*>(reinterpret_cast<const void*>(A.GetSpliced)) + 3, sizeof(SplicedDisp));
         const uint32 GMinDisp = A.GMin ? reinterpret_cast<const uint8*>(A.GMin)[4] : 0, GMaxDisp = A.GMax ? reinterpret_cast<const uint8*>(A.GMax)[4] : 0;
         const uint32 OutsideDisp = reinterpret_cast<const uint8*>(A.Outside)[12];
-        UE_LOG(LogNodeShuffle, Display, TEXT("RWGHEIGHTAPI: signature check mismatched='%s' matchedEntry='%s' optionalResolved=%d getFieldDisp=0x%X getSplicedDisp=0x%X gMinDisp=0x%X gMaxDisp=0x%X isOutsideWorldDisp=0x%X (empty list = every resolved export matched its mask; each Disp value is that export's wildcarded member-offset bytes read back, a displacement only while the export is absent from the list, 0 = optional export missing; each item is the export and the offset of its first differing pinned byte)"),
+        UE_LOG(LogNodeShuffle, Display, TEXT("RWGHEIGHTAPI: signature check mismatched='%s' matchedEntry='%s' optionalResolved=%d getFieldDisp=0x%X getSplicedDisp=0x%X gMinDisp=0x%X gMaxDisp=0x%X isOutsideWorldDisp=0x%X (empty list = every resolved export matched its mask; each Disp value is that export's wildcarded member-offset bytes read back, a displacement only while the export is absent from the list, 0 = optional export missing or dropped on a mismatch; each item is the export and the offset of its first differing pinned byte)"),
             *SigBad, *A.Matched, A.Optional, FieldDisp, SplicedDisp, GMinDisp, GMaxDisp, OutsideDisp);
         if (bRequiredSigBad) { UE_LOG(LogNodeShuffle, Warning, TEXT("RWGHEIGHTAPI-REFUSED: status=signatureMismatch semVer='%s' build=%d matchedEntry='%s' accepted='%s' mismatched='%s' callsAllowed=0"), *A.SemVer, A.Build, *A.Matched, *RwgAcceptedList(), *SigBad); NodeShuffleRwgGate::QueueRefusalNotice(A.SemVer, A.Build, TEXT("signatureMismatch"), FString::Printf(TEXT("mismatched: %s"), *SigBad)); }
         if (bRequiredSigBad) { A.Status = TEXT("signatureMismatch"); return; }
@@ -267,7 +267,7 @@ namespace
         if (!A.VoidAt) { A.VoidStatus = TEXT("exportMissing"); }
         else if (!SigOk(reinterpret_cast<const void*>(A.VoidAt), SigVoidAt, UE_ARRAY_COUNT(SigVoidAt))) { A.VoidAt = nullptr; A.VoidStatus = TEXT("signatureMismatch"); WarnSigRefused(TEXT("VoidAt"), false); }
         else { A.VoidStatus = TEXT("bound"); }
-        uint32 VoidDisp = 0; // RWG 0.1.12: the void-count displacement VoidAt carries (bytes 9..12, read, never compared); 0 = export missing
+        uint32 VoidDisp = 0; // RWG 0.1.12: the void-count displacement VoidAt carries (bytes 9..12, read, never compared); 0 = export missing or signature-mismatched
         if (A.VoidAt) { FMemory::Memcpy(&VoidDisp, reinterpret_cast<const uint8*>(A.VoidAt) + 9, sizeof(VoidDisp)); }
         A.KillboxTop = reinterpret_cast<FnKillboxTop>(::GetProcAddress(H, SymKillboxTop));
         uint32 KillboxDispA = 0, KillboxDispB = 0; // RWG 0.1.9: the two displacements the export carries (read, never compared); 0 = export missing
@@ -291,12 +291,24 @@ namespace
             const int32 CaveSigBad = NodeShuffleRwgGate::CheckCaveSignatures(H, CaveMissing, CaveBad);
             // With OptionalSigBad == 0 a null optional pointer means the export was MISSING (a mismatch also nulls it, but is counted).
             const bool bAllSixteenResolved = A.GMin && A.GMax && A.InSea && A.VoidAt && A.KillboxTop && CaveMissing.IsEmpty();
+            // InSeaVolume / VoidAt / GetKillboxTop resolve by raw GetProcAddress: neither SigBad nor A.Missing names them. Name them from the
+            // per-export status their branches above set (signatureMismatch / exportMissing).
+            FString OptBadNames, OptMissingNames;
+            const auto NameOpt = [&OptBadNames, &OptMissingNames](const FString& St, const TCHAR* Name)
+            {
+                if (St != TEXT("signatureMismatch") && St != TEXT("exportMissing")) { return; }
+                FString& Into = (St == TEXT("signatureMismatch")) ? OptBadNames : OptMissingNames;
+                Into += FString::Printf(TEXT("%s%s"), Into.IsEmpty() ? TEXT("") : TEXT(" "), Name);
+            };
+            NameOpt(A.SeaStatus, TEXT("InSeaVolume"));
+            NameOpt(A.VoidStatus, TEXT("VoidAt"));
+            NameOpt(A.KillboxStatus, TEXT("GetKillboxTop"));
             if (OptionalSigBad > 0 || CaveSigBad > 0 || !bAllSixteenResolved)
             {
                 A.Status = (OptionalSigBad > 0 || CaveSigBad > 0) ? TEXT("signatureMismatch") : TEXT("exportMissing");
-                UE_LOG(LogNodeShuffle, Warning, TEXT("RWGHEIGHTAPI-REFUSED: status=%s semVer='%s' build=%d matchedEntry='%s' accepted='%s' optionalMismatched=%d mismatched='%s' caveMismatched='%s' caveMissing='%s' allSixteenResolved=%d callsAllowed=0"),
-                    *A.Status, *A.SemVer, A.Build, *A.Matched, *RwgAcceptedList(), OptionalSigBad, *SigBad, *CaveBad, *CaveMissing, bAllSixteenResolved ? 1 : 0);
-                NodeShuffleRwgGate::QueueRefusalNotice(A.SemVer, A.Build, A.Status, FString::Printf(TEXT("mismatched: %s %s; missing: %s %s"), *SigBad, *CaveBad, *A.Missing, *CaveMissing));
+                UE_LOG(LogNodeShuffle, Warning, TEXT("RWGHEIGHTAPI-REFUSED: status=%s semVer='%s' build=%d matchedEntry='%s' accepted='%s' optionalMismatched=%d optionalMismatchedNames='%s' optionalMissingNames='%s' mismatched='%s' caveMismatched='%s' caveMissing='%s' allSixteenResolved=%d callsAllowed=0"),
+                    *A.Status, *A.SemVer, A.Build, *A.Matched, *RwgAcceptedList(), OptionalSigBad, *OptBadNames, *OptMissingNames, *SigBad, *CaveBad, *CaveMissing, bAllSixteenResolved ? 1 : 0);
+                NodeShuffleRwgGate::QueueRefusalNotice(A.SemVer, A.Build, A.Status, FString::Printf(TEXT("mismatched: %s %s %s; missing: %s %s %s"), *SigBad, *CaveBad, *OptBadNames, *OptMissingNames, *A.Missing, *CaveMissing));
                 return;
             }
             UE_LOG(LogNodeShuffle, Warning, TEXT("RWGHEIGHTAPI-UNLISTED: status=signatureVerifiedUnlisted semVer='%s' build=%d accepted='%s' heightApiChecked=11 caveChecked=5 allSixteenResolved=1 callsAllowed=1"),

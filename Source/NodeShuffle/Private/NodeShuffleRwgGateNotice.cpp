@@ -29,7 +29,7 @@ namespace
     const int16 SigInside[] = { 0x48,0x83,0xEC,0x28,0xF2,0x0F,0x10,0x15,-1,-1,-1,-1,0xE8,-1,-1,-1,-1,0x0F,0x57,0xC9,0x66,0x0F,0x2F,0xC8,0x0F,0x97,0xC0 };
 
     // ---- notice state. Per process, like the gate itself (the RWG DLL never unloads, TryBind runs once).
-    constexpr int32 MaxNoticeAttempts = 12; // ~12 reprobe-window ticks; the same budget the other two notices use
+    constexpr int32 MaxNoticeAttempts = 8; // the drain runs <= 11 times per world (latch + every 60 s while SinceReady <= RwgReprobeWindowTicks = 120), one spent on the hold tick; 8 keeps "abandoned" reachable when a pawn exists by SinceReady = 24, later the window ends first
     struct FRwgGateNotice
     {
         bool bQueued = false;
@@ -95,15 +95,14 @@ int32 NodeShuffleRwgGate::CheckCaveSignatures(void* Hmod, FString& OutMissing, F
 void NodeShuffleRwgGate::QueueRefusalNotice(const FString& SemVer, int32 Build, const FString& Status, const FString& Detail)
 {
     // MEASURED: SemVer/Build are read from the .uplugin beside the bound DLL; Status is the refusal the log prints; Detail is
-    // the measured export list behind it. "node placement uses the fallback" -- MEASURED: callsAllowed=0 leaves FRwgGroundQuery
-    // unusable and every RWG deal/redeal/spawn site takes the trace-and-defer fallback (PLACECENSUS fallbackNoApi > 0; R12/R18:
-    // deal=fallback, no water/void/killbox/cave terms). The resource list on the map still gets shuffled; what changes is HOW
-    // spots are picked. NOT CLAIMED: why the bytes differ, when it will be fixed, that any node is misplaced.
+    // the measured export list behind it. MEASURED: callsAllowed=0 => A.bUsable false => FRwgGroundQuery unusable (no
+    // RWG height-API call) and RwgHeightApiBoundModule null (caves never bind); ROLLCENSUS deal=fallback. NOT CLAIMED: which other NodeShuffle checks
+    // (water volumes, killbox actors) still guard the fallback; why the bytes differ.
     Queue(TEXT("refused"), FString::Printf(
         TEXT("NODE SHUFFLE - Random World Generator %s (build %d) not verified\n\n")
         TEXT("Node Shuffle could not verify the RWG functions it uses: %s (%s).\n")
-        TEXT("Node placement on this world uses the fallback this session: terrain traces only, with no water, void, killbox or\n")
-        TEXT("cave checks from RWG. The log line RWGHEIGHTAPI-REFUSED has the details."),
+        TEXT("Node Shuffle will not use RWG's height API (heights, water, void, killbox top, caves) this session; node placement on\n")
+        TEXT("this world uses its fallback (line traces). The log line RWGHEIGHTAPI-REFUSED has the details."),
         *SemVer, Build, *Status, Detail.IsEmpty() ? TEXT("no detail") : *Detail));
 }
 

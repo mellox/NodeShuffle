@@ -133,6 +133,7 @@ function Invoke-019Checks($T) {
         elseif ($b.Substring($iU, $b.IndexOf("`n", $iU) - $iU) -match ('ret' + 'urn;')) { $f += '(V6) the unlisted label statement must not return: the trial runs the signature check' }
         if ((Count $b 'const bool bUnlisted = !bVersion;') -ne 1) { $f += '(V6) bUnlisted must be the negation of the accept-list walk' }
         if ((Count $b 'const bool bAllSixteenResolved = A.GMin && A.GMax && A.InSea && A.VoidAt && A.KillboxTop && CaveMissing.IsEmpty();') -ne 1) { $f += '(V6) the trial must require all five optional exports and all five cave exports resolved' }
+        if ((Count $b 'NameOpt(A.VoidStatus, TEXT("VoidAt"));') -ne 1 -or (Count $b 'NameOpt(A.SeaStatus, TEXT("InSeaVolume"));') -ne 1 -or (Count $b 'NameOpt(A.KillboxStatus, TEXT("GetKillboxTop"));') -ne 1) { $f += '(V6) the unlisted refusal must name the raw-resolved optionals it refused on' }
         if ((Count $b ('if (!bRequired) { ++' + 'OptionalSigBad; }')) -ne 1 -or (Count $b 'int32 OptionalSigBad = 0;') -ne 1) { $f += '(V6) WarnSigRefused must count optional refusals into OptionalSigBad' }
         $iOff = $b.IndexOf('TEXT("RWGVOIDBIND-OFF:'); $iV = $b.IndexOf('if (bUnlisted)'); $iC = $b.IndexOf('NodeShuffleRwgGate::CheckCaveSignatures(H, CaveMissing, CaveBad);')
         $iRef = $b.IndexOf('if (OptionalSigBad > 0 || CaveSigBad > 0 || !bAllSixteenResolved)'); $iVer = $b.IndexOf('TEXT("RWGHEIGHTAPI-UNLISTED: status=signatureVerifiedUnlisted '); $iH = $b.IndexOf('A.Hmod = H;')
@@ -170,7 +171,7 @@ function Invoke-019Checks($T) {
     if ((Count $T.gate ('if (!PC || !Pawn)')) -ne 1 -or (Count $T.gate 'const APawn* Pawn = PC ? PC->GetPawn() : nullptr;') -ne 1) { $f += '(V7) the drain must hold until a player controller with a pawn exists' }
     if ((Count $T.gate ('if (N.GateTicks < 0)')) -ne 1 -or (Count $T.gate 'N.GateTicks = 0;') -ne 1) { $f += '(V7) the drain must hold one further tick after the pawn appears' }
     if ((Count $T.gate 'if (N.PostedWorld.Get() == World) { return; }') -ne 1 -or (Count $T.gate 'N.PostedWorld = World;') -ne 2) { $f += '(V7) the drain must post once per world: PostedWorld set on delivery AND on abandonment, tested first' }
-    if ((Count $T.gate 'if (N.Attempts >= MaxNoticeAttempts)') -ne 1 -or (Count $T.gate 'constexpr int32 MaxNoticeAttempts = 12;') -ne 1 -or (Count $T.gate ('++' + 'N.Attempts;')) -ne 1) { $f += '(V7) retries must be bounded by MaxNoticeAttempts = 12, counted once per post attempt' }
+    if ((Count $T.gate 'if (N.Attempts >= MaxNoticeAttempts)') -ne 1 -or (Count $T.gate 'constexpr int32 MaxNoticeAttempts = 8;') -ne 1 -or (Count $T.gate ('++' + 'N.Attempts;')) -ne 1) { $f += '(V7) retries must be bounded by MaxNoticeAttempts = 8, counted once per post attempt' }
     if ((Count $T.gate 'if (!N.bQueued || !World) { return; }') -ne 1) { $f += '(V7) the drain must return on the first line when nothing is queued' }
     $posted = [regex]::Match($T.gate, 'TEXT\("RWGGATENOTICE: posted[^"]*"\)').Value
     foreach ($w in @(('is vis' + 'ible'), ('sho' + 'wn on screen'))) { if ($posted -match $w) { $f += "(V7) the posted line must not claim on-screen visibility ('$w'): delivery to chat history is what the emitter measures" } }
@@ -206,6 +207,7 @@ $mutants = @(
     @{ Name = 'M23 strict refusal softened to AND'; Key = 'hapi'; Expect = 'V6'; Find = 'if (OptionalSigBad > 0 || CaveSigBad > 0 || !bAllSixteenResolved)'; Repl = 'if (OptionalSigBad > 0 && CaveSigBad > 0 && !bAllSixteenResolved)' }
     @{ Name = 'M38 missing exports no longer refuse an unlisted build'; Key = 'hapi'; Expect = 'V6'; Find = 'if (OptionalSigBad > 0 || CaveSigBad > 0 || !bAllSixteenResolved)'; Repl = 'if (OptionalSigBad > 0 || CaveSigBad > 0)' }
     @{ Name = 'M39 resolved test drops the cave exports'; Key = 'hapi'; Expect = 'V6'; Find = 'A.InSea && A.VoidAt && A.KillboxTop && CaveMissing.IsEmpty();'; Repl = 'A.InSea && A.VoidAt && A.KillboxTop;' }
+    @{ Name = 'M40 VoidAt not named in the unlisted refusal'; Key = 'hapi'; Expect = 'V6'; Find = '            NameOpt(A.VoidStatus, TEXT("VoidAt"));' + "`n"; Repl = '' }
     @{ Name = 'M24 strict refusal falls through (return removed)'; Key = 'hapi'; Expect = 'V6'; Find = "*A.Missing, *CaveMissing));`n                return;"; Repl = "*A.Missing, *CaveMissing));" }
     @{ Name = 'M25 usable status always bound'; Key = 'hapi'; Expect = 'V6'; Find = 'A.Status = bUnlisted ? TEXT("signatureVerifiedUnlisted") : TEXT("bound");'; Repl = 'A.Status = TEXT("bound");' }
     @{ Name = 'M26 cave mask drifted in the gate copy'; Key = 'gate'; Expect = 'V6'; Find = 'const int16 SigNum[] = { 0x8B,0x41,0x08,0xC3 };'; Repl = 'const int16 SigNum[] = { 0x8B,0x41,-1,0xC3 };' }
