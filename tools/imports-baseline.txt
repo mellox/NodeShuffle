@@ -3,12 +3,12 @@
 # Regenerate / diff: see tools\capture-imports-baseline.ps1, which also explains why this exists
 # alongside check_imports.ps1 (that one asks 'does every import RESOLVE?'; this one records WHICH).
 #
-# CAPTURED AT MARKER : 2026-10-26-rwg-0-1-12-1
-# CAPTURED ON        : 2026-10-26
+# CAPTURED AT MARKER : 2026-10-27-rwg-trace-diag-1
+# CAPTURED ON        : 2026-10-27
 # SOURCE DLL         : C:\Program Files (x86)\Steam\steamapps\common\Satisfactory\FactoryGame\Mods\NodeShuffle\Binaries\Win64\FactoryGameSteam-NodeShuffle-Win64-Shipping.dll
 #
-# TOTAL IMPORTS                  : 847
-# ... of which FactoryGameSteam-* : 794   <-- THIS is the number check_imports.ps1 reports.
+# TOTAL IMPORTS                  : 848
+# ... of which FactoryGameSteam-* : 795   <-- THIS is the number check_imports.ps1 reports.
 #     The remainder are CRT / KERNEL32 imports, which check_imports.ps1 does not verify (they are
 #     guaranteed by the platform, not by the game build) but which are recorded here anyway: a new
 #     one is still a new entry point and should be noticed rather than silently absorbed.
@@ -20,7 +20,7 @@
 #   api-ms-win-crt-string-l1-1-0.dll                  2
 #   FactoryGameSteam-Core-Win64-Shipping.dll        167
 #   FactoryGameSteam-CoreUObject-Win64-Shipping.dll  103
-#   FactoryGameSteam-Engine-Win64-Shipping.dll      322
+#   FactoryGameSteam-Engine-Win64-Shipping.dll      323
 #   FactoryGameSteam-FactoryGame-Win64-Shipping.dll  118
 #   FactoryGameSteam-Json-Win64-Shipping.dll         35
 #   FactoryGameSteam-SML-Win64-Shipping.dll          49
@@ -469,6 +469,7 @@ FactoryGameSteam-Engine-Win64-Shipping.dll	?IsSelectionChild@AActor@@UEBA_NXZ
 FactoryGameSteam-Engine-Win64-Shipping.dll	?IsSelectionParentOfAttachedActors@AActor@@UEBA_NXZ
 FactoryGameSteam-Engine-Win64-Shipping.dll	?IsSupportedForNetworking@AActor@@UEBA_NXZ
 FactoryGameSteam-Engine-Win64-Shipping.dll	?IsSupportedForNetworking@UActorComponent@@UEBA_NXZ
+FactoryGameSteam-Engine-Win64-Shipping.dll	?IsValidBodyInstance@FBodyInstance@@QEBA_NXZ
 FactoryGameSteam-Engine-Win64-Shipping.dll	?K2_DestroyActor@AActor@@UEAAXXZ
 FactoryGameSteam-Engine-Win64-Shipping.dll	?KeepRelativeTransform@FAttachmentTransformRules@@2U1@A
 FactoryGameSteam-Engine-Win64-Shipping.dll	?KeepWorldTransform@FAttachmentTransformRules@@2U1@A
