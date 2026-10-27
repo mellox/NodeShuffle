@@ -4,8 +4,10 @@
 # Needles naming a forbidden or superseded literal are BUILT BY CONCATENATION so this file cannot match itself.
 #   G1  Rwg gate: bRwgDeal := GetMapMode() == Rwg; Deal() has exactly one caller, inside `if (bRwgDeal)`, and the Vanilla loop is
 #       the `else` body.
-#   G2  Vanilla byte-identical: the Vanilla deal loop hashes to the bf071d6 text; the FindVanilla block is pinned verbatim; the only
-#       RNG uses between the liquid-deck shuffle and the Vanilla loop are the purity shuffle and the Deal() call (Vanilla stream intact).
+#   G2  Vanilla deal pinned: the Vanilla deal loop hashes to the rwg-purity-1 text (= bf071d6 with its inline map-wide purity draw
+#       replaced by the shared ApplyPurity call -- a DELIBERATE re-pin, 2026-10-26); the FindVanilla block is pinned verbatim; the
+#       only RNG uses between the liquid-deck shuffle and the Vanilla loop are BuildPurityDecks (per-class purity shuffles) and the
+#       Deal() call (rwg-purity-1 replaced the old map-wide purity shuffle; the per-class shuffles are pinned in G10).
 #   G3  Merged-deck draw: solid + liquid appended into one deck, shuffled inside Deal(), uniform draw in [Cursor, End) with bounded
 #       rejection; an existing slot rejects a Dealable card of the other form ONLY when no spawn class exists for that form.
 #   G4  No-class-no-look rule: Dealable = generic || rank-2 own class || look; a non-Dealable card goes only to an existing slot of
@@ -22,6 +24,12 @@
 #   G9  Re-roll rebuild: on RWG the rebuilt slot form, FormByResource and the representative latch read the ORIGINAL resource's
 #       descriptor form (RebuildForm), never the saved card form; a class that does not load is counted (originalLoadNull);
 #       RWGDEAL-REROLL census 3/3.
+#   G10 rwg-purity-1 per-class purity (spec _team/nodeshuffle-followups/rwg-purity-spec.md): BuildPurityDecks groups the originals
+#       by OriginalResourceClassPath, sorts the classes, shuffles each class's source (the deal file's ONLY extra RNG use) and the
+#       map-wide source only when a class has none; ApplyPurity draws by the card's class, falls back to the map-wide source and
+#       counts it, writes only when RandomizePurity or a new node; BOTH deals call ApplyPurity (symmetry) and nothing else writes
+#       AssignedPurity in them; the map-wide prefix deck and the shared purity cursor are gone; one PURITYCENSUS call after either
+#       deal, exact 14-field format.
 # Mutants run in-file. Exit 0 = all hold; 1 = at least one does not; 2 = a pinned FILE is missing.
 
 $ErrorActionPreference = 'Stop'
@@ -78,7 +86,9 @@ function Check-Log($T, [string]$key, [string]$tag, [string]$prefix, [string]$wan
     $fields = @(Fmt-Fields $l.Fmt); if (($fields | Select-Object -Unique).Count -ne $fields.Count) { $f += "($tag) repeated field in '$prefix'" }
     return $f
 }
-$VanillaLoopSha = '20652f80bfc592fe11541a00508e9528024fb037130eba3f68c9f64204a4b069' # bf071d6 (rwg-density-2) Vanilla deal loop, LF
+# rwg-purity-1 (2026-10-26) Vanilla deal loop, LF. DELIBERATE re-pin: the bf071d6 (rwg-density-2) loop, hash 20652f80...4a4b069,
+# differs only in its last five lines (inline map-wide purity draw + shared cursor) -> one ApplyPurity call.
+$VanillaLoopSha = '91c5fd0eb1fc1d6bea2d85d0610b864e949c20d6016b44ec58510bc689e7d420'
 
 function Invoke-RwgdealChecks($T) {
     $f = @(); $s = $T.sub; $d = $T.deal; $h = $T.dealh
@@ -88,23 +98,24 @@ function Invoke-RwgdealChecks($T) {
     # G2
     $a = $s.IndexOf('    else // Vanilla map:')
     $b = if ($a -ge 0) { $s.IndexOf("    for (FNodeShuffleEntry& E : NewLayout)`n    {`n        if (!E.bActive || E.bPinned)", $a) } else { -1 }
-    $e = if ($b -ge 0) { $s.IndexOf("        PurityIdx++;`n    }`n", $b) } else { -1 }
-    if ($e -lt 0) { $f += '(G2) Vanilla deal loop not found after the else' }
+    $loopEnd = "        NodeShuffleRwgDeal::ApplyPurity(E, Config.RandomizePurity, PurityDecks); // rwg-purity-1: per-class draw, same call as Deal()`n    }`n"
+    $e = if ($b -ge 0) { $s.IndexOf($loopEnd, $b) } else { -1 }
+    if ($e -lt 0) { $f += '(G2) Vanilla deal loop (ending in the shared ApplyPurity call) not found after the else' }
     else {
-        $blk = $s.Substring($b, $e + "        PurityIdx++;`n    }`n".Length - $b)
+        $blk = $s.Substring($b, $e + $loopEnd.Length - $b)
         $sha = [Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($blk))).ToLower()
-        if ($sha -ne $VanillaLoopSha) { $f += "(G2) the Vanilla deal loop changed (sha $sha) -- it must stay byte-identical to bf071d6" }
+        if ($sha -ne $VanillaLoopSha) { $f += "(G2) the Vanilla deal loop changed (sha $sha) -- it must stay identical to the rwg-purity-1 pin" }
     }
     $fv = "            auto FindVanilla = [&](TArray<FString>& Pile, int32& Idx) -> FString`n            {`n                for (int32 j = Idx; j < Pile.Num(); j++)`n                {`n                    if (Pile[j].StartsWith(TEXT(`"/Game/`")))`n                    {`n                        Pile.Swap(Idx, j);`n                        return Pile[Idx];`n                    }`n                }`n                return FString();`n            };`n            Card = FindVanilla(SolidDeck, SolidIdx);`n            if (!Card.IsEmpty())`n            {`n                SolidIdx++;`n            }`n            else`n            {`n                Card = FindVanilla(LiquidDeck, LiquidIdx);`n                if (!Card.IsEmpty()) { LiquidIdx++; }`n            }`n            if (Card.IsEmpty())`n            {`n                E.bActive = false; // no vanilla cards of any form left: skip this new node`n                continue;`n            }"
     if ((Count $s $fv) -ne 1) { $f += '(G2) the Vanilla FindVanilla block must be present verbatim, once' }
     $r0 = $s.IndexOf('for (int32 i = LiquidDeck.Num() - 1; i > 0; i--)')
     if ($r0 -lt 0 -or $a -lt $r0) { $f += '(G2) liquid-deck shuffle / Vanilla else anchors missing' }
-    else { $mid = $s.Substring($r0, $a - $r0); if ((Count $mid 'Rng') -ne 3) { $f += "(G2) RNG use between the deck shuffles and the Vanilla loop must be exactly the liquid shuffle, the purity shuffle and the Deal() call (found $(Count $mid 'Rng'))" } }
+    else { $mid = $s.Substring($r0, $a - $r0); if ((Count $mid 'Rng') -ne 3 -or (Count $mid 'NodeShuffleRwgDeal::BuildPurityDecks(NewLayout, PurityDeckSource, SolidDeck, LiquidDeck, Rng, PurityDecks);') -ne 1) { $f += "(G2) RNG use between the deck shuffles and the Vanilla loop must be exactly 3: the liquid shuffle, BuildPurityDecks (per-class purity shuffles, pinned in G10) and the Deal() call (found $(Count $mid 'Rng'))" } }
     # G3
     if (-not (Ordered $d @('Deck.Append(*In.SolidDeck);', 'Deck.Append(*In.LiquidDeck);', 'for (int32 i = Deck.Num() - 1; i > 0; i--) { Deck.Swap(i, Rng.RandRange(0, i)); }'))) { $f += '(G3) Deal() must append both piles into one deck and shuffle it' }
     if (-not (Ordered $d @('int32 End = Deck.Num();', 'while (Cursor < End)', 'const int32 j = Rng.RandRange(Cursor, End - 1);', 'if (bOk) { Deck.Swap(Cursor, j); Card = Deck[Cursor]; Cursor++; break; }', 'Deck.Swap(j, End - 1);', 'End--;'))) { $f += '(G3) uniform draw in [Cursor, End) with bounded rejection' }
     if ((Count $d 'else if (!bNew && K.Form != SlotForm && !HaveRep(K.Form))') -ne 1 -or (Count $d 'SolidIdx') -ne 0 -or (Count $d 'LiquidIdx') -ne 0) { $f += '(G3) an existing slot may reject the other form only when no spawn class exists for it; no per-pile cursors' }
-    if (-not (Ordered $s @('In.SolidDeck = &SolidDeck;', 'In.LiquidDeck = &LiquidDeck;', 'In.PurityDeck = &PurityDeck;'))) { $f += '(G3) both piles and the purity deck must reach Deal()' }
+    if (-not (Ordered $s @('In.SolidDeck = &SolidDeck;', 'In.LiquidDeck = &LiquidDeck;', 'In.Purity = &PurityDecks;'))) { $f += '(G3) both piles and the per-class purity decks must reach Deal()' }
     # G4
     if ((Count $h 'bool Dealable() const { return bGeneric || bOwnClass || bLook; }') -ne 1) { $f += '(G4) Dealable must be generic || own class || look' }
     if (-not (Ordered $d @('else if (!K.Dealable())', 'bOk = !bNew && K.Form == SlotForm;', 'if (!bOk) { bRuleRejected = true; }'))) { $f += '(G4) a no-class-no-look card goes only to an existing slot of its own form' }
@@ -129,6 +140,19 @@ function Invoke-RwgdealChecks($T) {
     if (-not (Ordered $s @('uint8 RebuildForm = Old.ResourceForm;', 'if (GetMapMode() == ENodeShuffleMapMode::Rwg)', 'if (UClass* OrigRC = LoadClassByPath(Old.OriginalResourceClassPath))', '== EResourceForm::RF_LIQUID)', '? FormLiquid : FormSolid;', 'else { RwgRebuildFormLoadNull++; }', 'E.ResourceForm = RebuildForm;', 'RebuildForm != 0 ? RebuildForm : FormSolid;', 'if (RebuildForm == FormLiquid)', 'LatchRepresentative(Old.NodeClassPath, SpawnableLiquidNodeClassPath'))) { $f += '(G9) re-roll rebuild must derive the slot form from the original resource on RWG and use it for the entry, FormByResource and the latch' }
     if ((Count $s ('Old.' + 'ResourceForm')) -ne 2) { $f += '(G9) Old.ResourceForm may be read only as the RebuildForm default and the restored-count compare' }
     $f += Check-Log $T 'sub' 'G9' 'RWGDEAL-REROLL ' 'RWGDEAL-REROLL rebuilt=%d slotFormRestoredFromOriginal=%d originalLoadNull=%d' 3
+    # G10 (rwg-purity-1)
+    if (-not (Ordered $d @('void ShuffleSource(TArray<TEnumAsByte<EResourcePurity>>& Src, FRandomStream& Rng)', 'for (int32 i = Src.Num() - 1; i > 0; i--) { Src.Swap(i, Rng.RandRange(0, i)); }', 'void BuildPurityDecks(', 'Out.Classes.Sort();', 'if (E.bIsNewNode || E.OriginalResourceClassPath.IsEmpty() || E.OriginalPurity == RP_MAX) { continue; }', 'Sources.FindOrAdd(E.OriginalResourceClassPath).Add(E.OriginalPurity);', 'for (const FString& Class : Out.Classes)', 'ShuffleSource(*Src, Rng);', 'Out.ByClass.Add(Class, MoveTemp(*Src));', '        if (bNeedMap)', 'ShuffleSource(Out.MapSource, Rng);', 'void ApplyPurity('))) { $f += '(G10) BuildPurityDecks: originals grouped by class, classes sorted, each class source shuffled, map-wide source shuffled only when needed' }
+    $nRand = Count $d 'Rng.RandRange('; $nShuf = Count $d 'ShuffleSource('
+    if ($nRand -ne 3 -or $nShuf -ne 3) { $f += "(G10) RNG in the deal file must be exactly ShuffleSource, the merged-deck shuffle and the deal draw (found $nRand RandRange, $nShuf ShuffleSource)" }
+    if (-not (Ordered $d @('void ApplyPurity(', 'D.ByClass.Find(E.AssignedResourceClassPath)', 'Draw = (*Src)[Cur % Src->Num()];', 'Cur++;', 'else if (D.MapSource.Num() > 0)', 'D.MapCursor++;', 'bFromMap = true;', 'if ((bRandomizePurity || E.bIsNewNode) && Draw != RP_MAX)', 'E.AssignedPurity = Draw;', 'if (bFromMap) { C.FallbackDrawn++; }', 'C.Assigned[PurityBin(E.AssignedPurity)]++;', 'void LogPurityCensus('))) { $f += '(G10) ApplyPurity: draw by the card class, map-wide fallback counted, written only for RandomizePurity or a new node' }
+    if ((Count $d 'ApplyPurity(E, In.bRandomizePurity, *In.Purity);') -ne 1 -or (Count $d 'AssignedPurity =') -ne 1) { $f += '(G10) Deal() must take purity only through ApplyPurity (one AssignedPurity write in the deal file)' }
+    $v0 = $s.IndexOf('    else // Vanilla map:'); $v1 = $s.IndexOf('    // FIX B verification summary:')
+    if ($v0 -lt 0 -or $v1 -lt $v0) { $f += '(G10) Vanilla deal / FIX B summary anchors missing' }
+    else { $vb = $s.Substring($v0, $v1 - $v0); if ((Count $vb 'NodeShuffleRwgDeal::ApplyPurity(E, Config.RandomizePurity, PurityDecks);') -ne 1 -or (Count $vb 'AssignedPurity =') -ne 0) { $f += '(G10) the Vanilla deal must take purity only through ApplyPurity (symmetry with Deal())' } }
+    if ((Count $s 'NodeShuffleRwgDeal::LogPurityCensus(PurityDecks, bRwgDeal ? TEXT("rwg") : TEXT("vanilla"));') -ne 1 -or -not (Ordered $s @('NodeShuffleRwgDeal::ApplyPurity(E, Config.RandomizePurity, PurityDecks);', "    }`n    NodeShuffleRwgDeal::LogPurityCensus(PurityDecks, bRwgDeal ? TEXT(`"rwg`") : TEXT(`"vanilla`"));", '    // FIX B verification summary:')) -or (Count $d 'LogPurityCensus(*') -ne 0) { $f += '(G10) one PURITYCENSUS call, after the Vanilla loop (outside if/else), covering both deals' }
+    if ((Count $s ('PurityDeckSource[i % ' + 'PurityDeckSource.Num()]')) -ne 0 -or (Count $s ('Purity' + 'Idx')) -ne 0 -or (Count $d ('Purity' + 'Idx')) -ne 0 -or (Count $h ('PurityDeck' + ' =')) -ne 0) { $f += '(G10) the map-wide prefix deck and the shared purity cursor must be gone' }
+    $f += Check-Log $T 'deal' 'G10' 'PURITYCENSUS: ' 'PURITYCENSUS: deal=%s res=%s cards=%d origImpure=%d origNormal=%d origPure=%d dealt=%d drawnImpure=%d drawnNormal=%d drawnPure=%d assignedImpure=%d assignedNormal=%d assignedPure=%d fallbackToMapDeck=%d' 14
+    if ((Count $d 'Emit(TEXT("ALL"), Total);') -ne 1) { $f += '(G10) PURITYCENSUS totals line (res ALL) missing' }
     return $f
 }
 
@@ -157,6 +181,21 @@ $mutants = @(
     @{ Name = 'A20 rebuild latch from the saved card form'; Key = 'sub'; Expect = 'G9'; Find = '                if (RebuildForm == FormLiquid)'; Repl = ('                if (Old.' + 'ResourceForm == FormLiquid)') }
     @{ Name = 'A21 rebuild form not derived on RWG'; Key = 'sub'; Expect = 'G9'; Find = 'if (UClass* OrigRC = LoadClassByPath(Old.OriginalResourceClassPath))'; Repl = 'if (UClass* OrigRC = nullptr)' }
     @{ Name = 'A24 load-null rebuild uncounted'; Key = 'sub'; Expect = 'G9'; Find = 'else { RwgRebuildFormLoadNull++; }'; Repl = '' }
+    @{ Name = 'B1 Deal draws map-wide, not by class'; Key = 'deal'; Expect = 'G10'; Find = 'D.ByClass.Find(E.AssignedResourceClassPath)'; Repl = 'D.ByClass.Find(FString())' }
+    @{ Name = 'B2 Vanilla keeps its own purity rule'; Key = 'sub'; Expect = 'G10'; Find = 'NodeShuffleRwgDeal::ApplyPurity(E, Config.RandomizePurity, PurityDecks); // rwg-purity-1'; Repl = 'if (Config.RandomizePurity || E.bIsNewNode) { E.AssignedPurity = RP_Pure; } // rwg-purity-1' }
+    @{ Name = 'B3 Deal skips ApplyPurity'; Key = 'deal'; Expect = 'G10'; Find = 'ApplyPurity(E, In.bRandomizePurity, *In.Purity);'; Repl = '' }
+    @{ Name = 'B4 class source not shuffled (capture-order prefix)'; Key = 'deal'; Expect = 'G10'; Find = 'ShuffleSource(*Src, Rng);'; Repl = '' }
+    @{ Name = 'B5 extra RNG draw in BuildPurityDecks'; Key = 'deal'; Expect = 'G10'; Find = 'bool bNeedMap = false;'; Repl = 'bool bNeedMap = false; Rng.RandRange(0, 1);' }
+    @{ Name = 'B6 PURITYCENSUS drops an argument'; Key = 'deal'; Expect = 'G10'; Find = 'C.Assigned[0], C.Assigned[1], C.Assigned[2], C.FallbackDrawn);'; Repl = 'C.Assigned[0], C.Assigned[1], C.Assigned[2]);' }
+    @{ Name = 'B7 fallback draw uncounted'; Key = 'deal'; Expect = 'G10'; Find = 'if (bFromMap) { C.FallbackDrawn++; }'; Repl = '' }
+    @{ Name = 'B8 RandomizePurity OFF overwrites originals'; Key = 'deal'; Expect = 'G10'; Find = 'if ((bRandomizePurity || E.bIsNewNode) && Draw != RP_MAX)'; Repl = 'if (Draw != RP_MAX)' }
+    @{ Name = 'B9 new nodes feed the class source'; Key = 'deal'; Expect = 'G10'; Find = 'if (E.bIsNewNode || E.OriginalResourceClassPath.IsEmpty()'; Repl = 'if (E.OriginalResourceClassPath.IsEmpty()' }
+    @{ Name = 'B10 class order unsorted'; Key = 'deal'; Expect = 'G10'; Find = 'Out.Classes.Sort();'; Repl = '' }
+    @{ Name = 'B11 census call dropped from the Vanilla path'; Key = 'sub'; Expect = 'G10'; Find = 'NodeShuffleRwgDeal::LogPurityCensus(PurityDecks, bRwgDeal ? TEXT("rwg") : TEXT("vanilla"));'; Repl = '' }
+    @{ Name = 'B12 shared purity cursor reintroduced'; Key = 'sub'; Expect = 'G10'; Find = 'int32 SolidIdx = 0, LiquidIdx = 0;'; Repl = ('int32 SolidIdx = 0, LiquidIdx = 0, Purity' + 'Idx = 0;') }
+    @{ Name = 'B13 map-wide source always shuffled'; Key = 'deal'; Expect = 'G10'; Find = '        if (bNeedMap)'; Repl = '        if (true)' }
+    @{ Name = 'B14 extra RNG draw before the purity build'; Key = 'sub'; Expect = 'G2'; Find = '    NodeShuffleRwgDeal::FPurityDecks PurityDecks;'; Repl = '    NodeShuffleRwgDeal::FPurityDecks PurityDecks; Rng.RandRange(0, 1);' }
+    @{ Name = 'B15 Vanilla purity line edited'; Key = 'sub'; Expect = 'G2'; Find = 'NodeShuffleRwgDeal::ApplyPurity(E, Config.RandomizePurity, PurityDecks); // rwg-purity-1'; Repl = 'NodeShuffleRwgDeal::ApplyPurity(E, true, PurityDecks); // rwg-purity-1' }
     @{ Name = 'A18 registry fallback after the kind table'; Key = 'sub'; Expect = 'G4'; Find = 'NodeShuffleRepClass::MatchByRegistry(Res, RegQuery'; Repl = 'NodeShuffleRepClass::MatchByRegistryMovedOut(Res, RegQuery'; Find2 = 'K.bLook = ResourceHasAuthoredLook(LoadClassByPath(Kind));'; Repl2 = 'K.bLook = ResourceHasAuthoredLook(LoadClassByPath(Kind)); NodeShuffleRepClass::MatchByRegistry(Res, RegQuery' }
 )
 $mutantFails = @(); $caught = 0
@@ -174,5 +213,5 @@ if ($all.Count -gt 0) {
     Write-Host "RWGDEAL LINT: FAIL -- $($all.Count) problem(s). Mutants caught $caught/$($mutants.Count)."
     exit 1
 }
-Write-Host "PASS: RWGDEAL lint -- G1..G9 hold across $($text.Count) loaded files; mutants caught $caught/$($mutants.Count)."
+Write-Host "PASS: RWGDEAL lint -- G1..G10 hold across $($text.Count) loaded files; mutants caught $caught/$($mutants.Count)."
 exit 0

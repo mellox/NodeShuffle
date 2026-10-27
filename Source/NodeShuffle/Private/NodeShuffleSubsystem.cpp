@@ -1528,20 +1528,17 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     for (int32 i = SolidDeck.Num() - 1; i > 0; i--)  { SolidDeck.Swap(i, Rng.RandRange(0, i)); }
     for (int32 i = LiquidDeck.Num() - 1; i > 0; i--) { LiquidDeck.Swap(i, Rng.RandRange(0, i)); }
 
-    // Purity deck: vanilla purity multiset, sized to the FULL card count (both piles).
-    const int32 TotalCards = SolidDeck.Num() + LiquidDeck.Num();
-    TArray<TEnumAsByte<EResourcePurity>> PurityDeck;
-    for (int32 i = 0; i < TotalCards; i++)
-    {
-        PurityDeck.Add(PurityDeckSource[i % PurityDeckSource.Num()]);
-    }
-    for (int32 i = PurityDeck.Num() - 1; i > 0; i--)
-    {
-        PurityDeck.Swap(i, Rng.RandRange(0, i));
-    }
+    // rwg-purity-1 (2026-10-26, user decision): PER-CLASS purity decks, shared by both deals below. Each card class
+    // draws from its own originals' purities (shuffled: a sample, not a capture-order prefix), so RWG's per-ore /
+    // geyser / mod purity settings carry through per resource; a class with no original purity on record draws from
+    // the map-wide multiset (PURITYCENSUS fallbackToMapDeck). Replaces the single map-wide deck + shared cursor.
+    // RNG: this call is the only purity RNG use (one shuffle per class, sorted order); seeds re-roll differently from
+    // this commit on, on Vanilla and RWG alike. Contract: NodeShuffleRwgDeal.h.
+    NodeShuffleRwgDeal::FPurityDecks PurityDecks;
+    NodeShuffleRwgDeal::BuildPurityDecks(NewLayout, PurityDeckSource, SolidDeck, LiquidDeck, Rng, PurityDecks);
 
-    // Per-pile draw cursors + a shared purity cursor.
-    int32 SolidIdx = 0, LiquidIdx = 0, PurityIdx = 0;
+    // Per-pile draw cursors (purity cursors are per class, inside PurityDecks).
+    int32 SolidIdx = 0, LiquidIdx = 0;
     const auto DrawSolid = [&]() -> FString
     {
         return SolidIdx < SolidDeck.Num() ? SolidDeck[SolidIdx] : FString();
@@ -1578,7 +1575,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
         NodeShuffleRwgDeal::FInputs In;
         In.SolidDeck = &SolidDeck;
         In.LiquidDeck = &LiquidDeck;
-        In.PurityDeck = &PurityDeck;
+        In.Purity = &PurityDecks;
         In.Kinds = &RwgKinds;
         In.IsGas = [&](const FString& Path) { return IsGasResourcePath(Path); };
         In.bRandomizePurity = Config.RandomizePurity;
@@ -1588,7 +1585,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
         In.FormLiquid = FormLiquid;
         NodeShuffleRwgDeal::Deal(NewLayout, In, Rng, RwgDeal);
     }
-    else // Vanilla map: the FIX B kind-split deal below, byte-identical to rwg-density-2 (check_rwgdeal_lint pins it).
+    else // Vanilla map: the FIX B kind-split deal below, identical to rwg-density-2 except the purity draw (rwg-purity-1: ApplyPurity, the RWG deal's rule; check_rwgdeal_lint pins it).
     for (FNodeShuffleEntry& E : NewLayout)
     {
         if (!E.bActive || E.bPinned)
@@ -1666,12 +1663,9 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
         // Record the slot's resulting form on the entry. For existing nodes this
         // matches the node we retype; for new nodes it drives the node-class stamp.
         E.ResourceForm = CardFormOf(Card);
-        if (Config.RandomizePurity || E.bIsNewNode)
-        {
-            E.AssignedPurity = PurityDeck[PurityIdx % PurityDeck.Num()];
-        }
-        PurityIdx++;
+        NodeShuffleRwgDeal::ApplyPurity(E, Config.RandomizePurity, PurityDecks); // rwg-purity-1: per-class draw, same call as Deal()
     }
+    NodeShuffleRwgDeal::LogPurityCensus(PurityDecks, bRwgDeal ? TEXT("rwg") : TEXT("vanilla")); // once per roll, after either deal
 
     // FIX B verification summary: by construction NO liquid card ever lands on a
     // solid slot (existing-solid slots draw only from SolidDeck; existing-liquid

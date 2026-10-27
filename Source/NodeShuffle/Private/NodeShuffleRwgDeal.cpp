@@ -6,9 +6,105 @@
 // RollLayout's `if (bRwgDeal)` branch; Vanilla maps keep the FIX B deal untouched.
 namespace NodeShuffleRwgDeal
 {
+    namespace
+    {
+        int32 PurityBin(const TEnumAsByte<EResourcePurity> P)
+        {
+            const int32 V = (int32)P.GetValue();
+            return (V >= 0 && V < 3) ? V : 1; // RP_MAX never reaches a deck; count anything out of range as Normal
+        }
+        void ShuffleSource(TArray<TEnumAsByte<EResourcePurity>>& Src, FRandomStream& Rng)
+        {
+            for (int32 i = Src.Num() - 1; i > 0; i--) { Src.Swap(i, Rng.RandRange(0, i)); }
+        }
+    }
+
+    // rwg-purity-1 (2026-10-26). Contract in NodeShuffleRwgDeal.h. The ONLY RNG use is ShuffleSource, called once per
+    // card class that has originals (sorted class order) and once for the map-wide source when a class has none.
+    void BuildPurityDecks(const TArray<FNodeShuffleEntry>& Layout, const TArray<TEnumAsByte<EResourcePurity>>& MapSourceIn,
+        const TArray<FString>& SolidDeck, const TArray<FString>& LiquidDeck, FRandomStream& Rng, FPurityDecks& Out)
+    {
+        for (const FString& Card : SolidDeck)  { Out.Census.FindOrAdd(Card).Cards++; }
+        for (const FString& Card : LiquidDeck) { Out.Census.FindOrAdd(Card).Cards++; }
+        Out.Census.GetKeys(Out.Classes);
+        Out.Classes.Sort();
+
+        TMap<FString, TArray<TEnumAsByte<EResourcePurity>>> Sources; // capture order; shuffled below
+        for (const FNodeShuffleEntry& E : Layout)
+        {
+            if (E.bIsNewNode || E.OriginalResourceClassPath.IsEmpty() || E.OriginalPurity == RP_MAX) { continue; }
+            FPurityCensus* C = Out.Census.Find(E.OriginalResourceClassPath);
+            if (!C) { continue; } // not a card class this roll (gas, or no cards left after pinning)
+            C->Orig[PurityBin(E.OriginalPurity)]++;
+            Sources.FindOrAdd(E.OriginalResourceClassPath).Add(E.OriginalPurity);
+        }
+
+        bool bNeedMap = false;
+        for (const FString& Class : Out.Classes)
+        {
+            TArray<TEnumAsByte<EResourcePurity>>* Src = Sources.Find(Class);
+            if (!Src || Src->Num() == 0) { bNeedMap = true; continue; }
+            ShuffleSource(*Src, Rng);
+            Out.ByClass.Add(Class, MoveTemp(*Src));
+        }
+        if (bNeedMap)
+        {
+            Out.MapSource = MapSourceIn;
+            ShuffleSource(Out.MapSource, Rng);
+        }
+    }
+
+    void ApplyPurity(FNodeShuffleEntry& E, bool bRandomizePurity, FPurityDecks& D)
+    {
+        FPurityCensus& C = D.Census.FindOrAdd(E.AssignedResourceClassPath);
+        C.Dealt++;
+        TEnumAsByte<EResourcePurity> Draw = RP_MAX;
+        bool bFromMap = false;
+        if (const TArray<TEnumAsByte<EResourcePurity>>* Src = D.ByClass.Find(E.AssignedResourceClassPath))
+        {
+            int32& Cur = D.Cursor.FindOrAdd(E.AssignedResourceClassPath);
+            Draw = (*Src)[Cur % Src->Num()];
+            Cur++;
+        }
+        else if (D.MapSource.Num() > 0)
+        {
+            Draw = D.MapSource[D.MapCursor % D.MapSource.Num()];
+            D.MapCursor++;
+            bFromMap = true;
+        }
+        if ((bRandomizePurity || E.bIsNewNode) && Draw != RP_MAX)
+        {
+            E.AssignedPurity = Draw;
+            C.Drawn[PurityBin(Draw)]++;
+            if (bFromMap) { C.FallbackDrawn++; }
+        }
+        C.Assigned[PurityBin(E.AssignedPurity)]++;
+    }
+
+    void LogPurityCensus(const FPurityDecks& D, const TCHAR* DealName)
+    {
+        const auto Emit = [DealName](const FString& Res, const FPurityCensus& C)
+        {
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("PURITYCENSUS: deal=%s res=%s cards=%d origImpure=%d origNormal=%d origPure=%d dealt=%d drawnImpure=%d drawnNormal=%d drawnPure=%d assignedImpure=%d assignedNormal=%d assignedPure=%d fallbackToMapDeck=%d"),
+                DealName, *Res, C.Cards, C.Orig[0], C.Orig[1], C.Orig[2], C.Dealt, C.Drawn[0], C.Drawn[1], C.Drawn[2],
+                C.Assigned[0], C.Assigned[1], C.Assigned[2], C.FallbackDrawn);
+        };
+        FPurityCensus Total;
+        for (const FString& Class : D.Classes)
+        {
+            const FPurityCensus* C = D.Census.Find(Class);
+            if (!C) { continue; }
+            Emit(FPackageName::ObjectPathToObjectName(Class), *C);
+            Total.Cards += C->Cards; Total.Dealt += C->Dealt; Total.FallbackDrawn += C->FallbackDrawn;
+            for (int32 b = 0; b < 3; b++) { Total.Orig[b] += C->Orig[b]; Total.Drawn[b] += C->Drawn[b]; Total.Assigned[b] += C->Assigned[b]; }
+        }
+        Emit(TEXT("ALL"), Total);
+    }
+
     void Deal(TArray<FNodeShuffleEntry>& Layout, const FInputs& In, FRandomStream& Rng, FResult& Out)
     {
-        check(In.SolidDeck && In.LiquidDeck && In.PurityDeck && In.Kinds);
+        check(In.SolidDeck && In.LiquidDeck && In.Purity && In.Kinds);
         const TMap<FString, FKindInfo>& Kinds = *In.Kinds;
         const auto KindOf = [&](const FString& Card) -> FKindInfo
         {
@@ -47,7 +143,7 @@ namespace NodeShuffleRwgDeal
         }
         const auto HaveRep = [&](uint8 Form) -> bool { return Form == In.FormLiquid ? In.bHaveLiquidRep : In.bHaveSolidRep; };
 
-        int32 Cursor = 0, PurityIdx = 0;
+        int32 Cursor = 0;
         for (FNodeShuffleEntry& E : Layout)
         {
             if (!IsSlot(E)) { continue; }
@@ -121,12 +217,7 @@ namespace NodeShuffleRwgDeal
                 if (K.Form == In.FormLiquid) { Out.SolidToLiquid++; } else { Out.LiquidToSolid++; }
             }
             E.ResourceForm = K.Form; // form follows the card
-            const TArray<TEnumAsByte<EResourcePurity>>& PD = *In.PurityDeck;
-            if ((In.bRandomizePurity || E.bIsNewNode) && PD.Num() > 0)
-            {
-                E.AssignedPurity = PD[PurityIdx % PD.Num()];
-            }
-            PurityIdx++;
+            ApplyPurity(E, In.bRandomizePurity, *In.Purity); // rwg-purity-1: per-class draw, same call as the Vanilla deal
             Out.Dealt++;
             PerRes.FindOrAdd(Card, TPair<int32, int32>(0, 0)).Value++;
         }
