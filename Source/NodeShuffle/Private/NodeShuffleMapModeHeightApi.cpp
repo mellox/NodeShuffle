@@ -144,10 +144,10 @@ namespace
         if (Len == 0 || Len >= UE_ARRAY_COUNT(Path))
         {
             // RWG 0.1.12 D2 (2026-10-26): the RWG DLL IS loaded here (GetModuleHandleW found it), so this is a refusal the player must hear about,
-            // not the silent "RWG absent" case. Measured only: the module name matched, the returned path length, and the buffer size.
+            // not the silent "RWG absent" case. Measured only: the module name matched, GetModuleFileNameW's return value, and the buffer size.
             A.Status = TEXT("modulePathUnread");
-            UE_LOG(LogNodeShuffle, Warning, TEXT("RWGHEIGHTAPI-REFUSED: status=modulePathUnread module='%s' pathLen=%d pathBufferChars=%d callsAllowed=0"), *A.Module, static_cast<int32>(Len), static_cast<int32>(UE_ARRAY_COUNT(Path)));
-            NodeShuffleRwgGate::QueueRefusalNotice(TEXT("(version unread)"), 0, A.Status, FString::Printf(TEXT("module path not read: length %d of %d characters"), static_cast<int32>(Len), static_cast<int32>(UE_ARRAY_COUNT(Path))));
+            UE_LOG(LogNodeShuffle, Warning, TEXT("RWGHEIGHTAPI-REFUSED: status=modulePathUnread module='%s' getModuleFileNameReturned=%d bufferChars=%d callsAllowed=0"), *A.Module, static_cast<int32>(Len), static_cast<int32>(UE_ARRAY_COUNT(Path)));
+            NodeShuffleRwgGate::QueueRefusalNotice(TEXT("(version unread)"), 0, A.Status, FString::Printf(TEXT("module path rejected: GetModuleFileNameW returned %d for a %d-character buffer"), static_cast<int32>(Len), static_cast<int32>(UE_ARRAY_COUNT(Path))));
             return;
         }
         A.Uplugin = FPaths::Combine(FPaths::GetPath(FPaths::GetPath(FPaths::GetPath(FString(Path)))), TEXT("RandomWorldGenerator.uplugin"));
@@ -159,7 +159,7 @@ namespace
             A.Status = TEXT("upluginUnread");
             const int32 UpluginExists = FPaths::FileExists(A.Uplugin) ? 1 : 0;
             UE_LOG(LogNodeShuffle, Warning, TEXT("RWGHEIGHTAPI-REFUSED: status=upluginUnread module='%s' uplugin='%s' upluginFileExists=%d callsAllowed=0"), *A.Module, *A.Uplugin, UpluginExists);
-            NodeShuffleRwgGate::QueueRefusalNotice(TEXT("(version unread)"), 0, A.Status, FString::Printf(TEXT("uplugin='%s' file exists=%d"), *A.Uplugin, UpluginExists));
+            NodeShuffleRwgGate::QueueRefusalNotice(TEXT("(version unread)"), 0, A.Status, FString::Printf(TEXT("RandomWorldGenerator.uplugin for the loaded RWG DLL was not read; file exists=%d"), UpluginExists));
             return;
         }
         A.Build = JsonInt(Json, TEXT("PWBuildNumber"));

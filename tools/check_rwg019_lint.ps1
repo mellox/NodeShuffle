@@ -160,26 +160,9 @@ function Invoke-019Checks($T) {
     if ((Count $T.hapi 'NodeShuffleRwgGate::QueueRefusalNotice(') -ne 5) { $f += '(V7) every refusal statement (exportMissing, required signatureMismatch, unlisted verdict, modulePathUnread, upluginUnread) must queue the refusal notice: expected 5 call sites' }
     # D2 (2026-10-26): the two DLL-loaded-but-unread refusals. Each pin anchors on the status assignment, the Warning line, the notice call and the return being ADJACENT,
     # with the call's own unique arguments (unread version, build 0), so a sibling refusal's call cannot satisfy it.
-    if (-not ($T.hapi -match ('A\.Status = TEXT\("modulePathUnread"\);
-[^
-]*UE_LOG\(LogNodeShuffle, Warning, TEXT\("RWGHEIGHTAPI-REFUSED: status=modulePathUnread [^
-]*callsAllowed=0"[^
-]*
-[^
-]*NodeShuffleRwgGate::QueueRefusalNotice\(TEXT\("\(version unread\)"\), 0, A\.Status, [^
-]*
-\s*ret' + 'urn;'))) { $f += '(V7) the modulePathUnread refusal must set the status, log RWGHEIGHTAPI-REFUSED at Warning, queue the notice (version unread, build 0) and return, adjacent' }
-    if (-not ($T.hapi -match ('A\.Status = TEXT\("upluginUnread"\);
-[^
-]*
-[^
-]*UE_LOG\(LogNodeShuffle, Warning, TEXT\("RWGHEIGHTAPI-REFUSED: status=upluginUnread [^
-]*callsAllowed=0"[^
-]*
-[^
-]*NodeShuffleRwgGate::QueueRefusalNotice\(TEXT\("\(version unread\)"\), 0, A\.Status, [^
-]*
-\s*ret' + 'urn;'))) { $f += '(V7) the upluginUnread refusal must set the status, log RWGHEIGHTAPI-REFUSED at Warning, queue the notice (version unread, build 0) and return, adjacent' }
+    if (-not ($T.hapi -match ('A\.Status = TEXT\("modulePathUnread"\);\n[^\n]*UE_LOG\(LogNodeShuffle, Warning, TEXT\("RWGHEIGHTAPI-REFUSED: status=modulePathUnread [^\n]*callsAllowed=0"[^\n]*\n[^\n]*NodeShuffleRwgGate::QueueRefusalNotice\(TEXT\("\(version unread\)"\), 0, A\.Status, [^\n]*\n\s*ret' + 'urn;'))) { $f += '(V7) the modulePathUnread refusal must set the status, log RWGHEIGHTAPI-REFUSED at Warning, queue the notice (version unread, build 0) and return, adjacent' }
+    if (-not ($T.hapi -match ('A\.Status = TEXT\("upluginUnread"\);\n[^\n]*\n[^\n]*UE_LOG\(LogNodeShuffle, Warning, TEXT\("RWGHEIGHTAPI-REFUSED: status=upluginUnread [^\n]*callsAllowed=0"[^\n]*\n[^\n]*NodeShuffleRwgGate::QueueRefusalNotice\(TEXT\("\(version unread\)"\), 0, A\.Status, [^\n]*\n\s*ret' + 'urn;'))) { $f += '(V7) the upluginUnread refusal must set the status, log RWGHEIGHTAPI-REFUSED at Warning, queue the notice (version unread, build 0) and return, adjacent' }
+    if ((Count $T.gate 'const FString BuildClause = Build > 0 ? FString::Printf(TEXT(" (build %d)"), Build) : FString();') -ne 2 -or (Count $T.gate '*SemVer, *BuildClause, *Status,') -ne 1 -or (Count $T.gate '*SemVer, *BuildClause, *Accepted));') -ne 1) { $f += '(V7) the refusal heading and the unlisted-verified heading must each print the build clause only when Build > 0 (one declaration each), as their second argument' }
     if (-not ($T.hapi -match ('status=exportMissing[^\n]*NodeShuffleRwgGate::QueueRefusalNotice\(A\.SemVer, A\.Build, A\.Status, [^\n]*ret' + 'urn; \}'))) { $f += '(V7) the exportMissing refusal statement must queue the notice before its return' }
     if (-not ($T.hapi -match ('status=signatureMismatch semVer=[^\n]*NodeShuffleRwgGate::QueueRefusalNotice\(A\.SemVer, A\.Build, TEXT\("signatureMismatch"\),'))) { $f += '(V7) the required signatureMismatch refusal statement must queue the notice' }
     if ((Count $T.hapi 'NodeShuffleRwgGate::QueueUnlistedVerifiedNotice(A.SemVer, A.Build, RwgAcceptedList());') -ne 1) { $f += '(V7) the verified-unlisted branch must queue its notice exactly once' }
@@ -198,7 +181,7 @@ function Invoke-019Checks($T) {
     $posted = [regex]::Match($T.gate, 'TEXT\("RWGGATENOTICE: posted[^"]*"\)').Value
     foreach ($w in @(('is vis' + 'ible'), ('sho' + 'wn on screen'))) { if ($posted -match $w) { $f += "(V7) the posted line must not claim on-screen visibility ('$w'): delivery to chat history is what the emitter measures" } }
     if (-not $posted.Contains('on-screen visibility is not measured')) { $f += '(V7) the posted line must state that on-screen visibility is not measured' }
-    foreach ($body in @('NODE SHUFFLE - Random World Generator %s%s not verified', 'NODE SHUFFLE - Random World Generator %s (build %d) is not on the tested list')) { if ((Count $T.gate $body) -ne 1) { $f += "(V7) notice body heading missing: '$body'" } }
+    foreach ($body in @('NODE SHUFFLE - Random World Generator %s%s not verified', 'NODE SHUFFLE - Random World Generator %s%s is not on the tested list')) { if ((Count $T.gate $body) -ne 1) { $f += "(V7) notice body heading missing: '$body'" } }
     return $f
 }
 
@@ -230,8 +213,11 @@ $mutants = @(
     @{ Name = 'M38 missing exports no longer refuse an unlisted build'; Key = 'hapi'; Expect = 'V6'; Find = 'if (OptionalSigBad > 0 || CaveSigBad > 0 || !bAllSixteenResolved)'; Repl = 'if (OptionalSigBad > 0 || CaveSigBad > 0)' }
     @{ Name = 'M39 resolved test drops the cave exports'; Key = 'hapi'; Expect = 'V6'; Find = 'A.InSea && A.VoidAt && A.KillboxTop && CaveMissing.IsEmpty();'; Repl = 'A.InSea && A.VoidAt && A.KillboxTop;' }
     @{ Name = 'M43 refusal heading prints the build clause unconditionally'; Key = 'gate'; Expect = 'V7'; Find = 'Random World Generator %s%s not verified'; Repl = 'Random World Generator %s (build %d) not verified' }
-    @{ Name = 'M41 modulePathUnread refusal no longer queues the notice'; Key = 'hapi'; Expect = 'V7'; Find = '            NodeShuffleRwgGate::QueueRefusalNotice(TEXT("(version unread)"), 0, A.Status, FString::Printf(TEXT("module path not read: length %d of %d characters"), static_cast<int32>(Len), static_cast<int32>(UE_ARRAY_COUNT(Path))));' + "`n"; Repl = '' }
-    @{ Name = 'M42 upluginUnread refusal no longer queues the notice'; Key = 'hapi'; Expect = 'V7'; Find = '            NodeShuffleRwgGate::QueueRefusalNotice(TEXT("(version unread)"), 0, A.Status, FString::Printf(TEXT("uplugin=''%s'' file exists=%d"), *A.Uplugin, UpluginExists));' + "`n"; Repl = '' }
+    @{ Name = 'M44 refusal build clause printed for any build'; Key = 'gate'; Expect = 'V7'; Find = 'const FString BuildClause = Build > 0 ?'; Repl = 'const FString BuildClause = true ?' }
+    @{ Name = 'M45 refusal heading drops the build clause'; Key = 'gate'; Expect = 'V7'; Find = '*SemVer, *BuildClause, *Status,'; Repl = '*SemVer, TEXT(""), *Status,' }
+    @{ Name = 'M46 unlisted-verified heading prints the build unconditionally'; Key = 'gate'; Expect = 'V7'; Find = 'Random World Generator %s%s is not on the tested list'; Repl = 'Random World Generator %s (build %d) is not on the tested list' }
+    @{ Name = 'M41 modulePathUnread refusal no longer queues the notice'; Key = 'hapi'; Expect = 'V7'; Find = '            NodeShuffleRwgGate::QueueRefusalNotice(TEXT("(version unread)"), 0, A.Status, FString::Printf(TEXT("module path rejected: GetModuleFileNameW returned %d for a %d-character buffer"), static_cast<int32>(Len), static_cast<int32>(UE_ARRAY_COUNT(Path))));' + "`n"; Repl = '' }
+    @{ Name = 'M42 upluginUnread refusal no longer queues the notice'; Key = 'hapi'; Expect = 'V7'; Find = '            NodeShuffleRwgGate::QueueRefusalNotice(TEXT("(version unread)"), 0, A.Status, FString::Printf(TEXT("RandomWorldGenerator.uplugin for the loaded RWG DLL was not read; file exists=%d"), UpluginExists));' + "`n"; Repl = '' }
     @{ Name = 'M40 VoidAt not named in the unlisted refusal'; Key = 'hapi'; Expect = 'V6'; Find = '            NameOpt(A.VoidStatus, TEXT("VoidAt"));' + "`n"; Repl = '' }
     @{ Name = 'M24 strict refusal falls through (return removed)'; Key = 'hapi'; Expect = 'V6'; Find = "*A.Missing, *CaveMissing));`n                return;"; Repl = "*A.Missing, *CaveMissing));" }
     @{ Name = 'M25 usable status always bound'; Key = 'hapi'; Expect = 'V6'; Find = 'A.Status = bUnlisted ? TEXT("signatureVerifiedUnlisted") : TEXT("bound");'; Repl = 'A.Status = TEXT("bound");' }
