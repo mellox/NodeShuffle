@@ -131,7 +131,7 @@ function Invoke-RwgsteepChecks($T) {
     if ((Count $s 'if (!FMath::IsFinite(C.Z)) { ++OutRejLand; continue; }') -ne 1 -or -not (Ordered $s @('const FVector C(X, Y, Q.SurfaceZ(X, Y));', 'if (!FMath::IsFinite(C.Z)) { ++OutRejLand; continue; }', 'bool bTooClose = false;'))) { $f += '(S8) a non-finite candidate Z must be a land reject before spacing and the trace' }
     if ((Count $s ('Salt * ' + '7919')) -ne 0 -or (Count $s '^ (SavedSeed * 131) ^ ((SaltP ? *SaltP : 0) * 104729) ^ 0x2C1B3C6D);') -ne 1) { $f += '(S8) the ring must draw from its own stream, never the map-wide one' }
     # S9 marker
-    if ((Count $T.nsmod ('LOADED (2026-10-26-rwg-' + '0-1-12-1)')) -ne 1 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'deal-1')) -ne 0) { $f += '(S9) marker must be rwg-steep-2 with rwg-steep-1 and rwg-deal-1 absent' }
+    if ((Count $T.nsmod ('LOADED (2026-10-26-rwg-' + '0-1-12-2)')) -ne 1 -or (Count $T.nsmod ('2026-10-26-rwg-' + '0-1-12-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'deal-1')) -ne 0) { $f += '(S9) marker must be rwg-steep-2 with rwg-steep-1 and rwg-deal-1 absent' }
     if ($s.Contains('LOADED' + ' (')) { $f += '(S9) no build-marker string in the new file' }
     return $f
 }
@@ -163,7 +163,7 @@ $mutants = @(
     @{ Name = 'B24 RWGSTEEPSUM signature ignores guidMismatch'; Key = 'steep'; Expect = 'S6'; Find = ' + RwgSteepSessGuidMismatch; if (RwgSteepSessLastPrinted == Sig)'; Repl = '; if (RwgSteepSessLastPrinted == Sig)' }
     @{ Name = 'B25 non-finite candidate Z traced'; Key = 'steep'; Expect = 'S8'; Find = 'if (!FMath::IsFinite(C.Z)) { ++OutRejLand; continue; }'; Repl = '' }
     @{ Name = 'B26 discriminator traces from the candidate Z'; Key = 'steep'; Expect = 'S6'; Find = 'RaycastGroundAt(C, O.Z, nullptr'; Repl = 'RaycastGroundAt(C, C.Z, nullptr' }
-    @{ Name = 'B21 marker reverted'; Key = 'nsmod'; Expect = 'S9'; Find = ('2026-10-26-rwg-' + '0-1-12-1'); Repl = ('2026-10-19-rwg-' + 'steep-2') }
+    @{ Name = 'B21 marker reverted'; Key = 'nsmod'; Expect = 'S9'; Find = ('2026-10-26-rwg-' + '0-1-12-2'); Repl = ('2026-10-26-rwg-' + '0-1-12-1') }
 )
 $mutantFails = @(); $caught = 0
 foreach ($m in $mutants) {

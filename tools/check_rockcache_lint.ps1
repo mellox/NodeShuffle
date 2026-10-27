@@ -140,7 +140,7 @@ function Invoke-RockcacheChecks($T) {
     if ((Count $T.sub "if (bRwgRockAttrib)`n    {`n        const int32 RwgHide[6]") -ne 1) { $f += '(K7) RWGROCKHIDE must be behind the Rwg flag' }
     if ((Count $T.sub "            if (bRwgRockAttrib)`n            {`n                if (RockOwner && RwgCachePairedRocks.Contains(RockOwner))") -ne 1) { $f += '(K7) backstop hit attribution must be behind the Rwg flag' }
     # K8
-    if ((Count $T.nsmod ('LOADED (2026-10-26-rwg-' + '0-1-12-1)')) -ne 1 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'deal-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'density-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'rockcache-2')) -ne 0) { $f += '(K8) marker must be rwg-density-2 with rwg-rockcache-2 absent' }
+    if ((Count $T.nsmod ('LOADED (2026-10-26-rwg-' + '0-1-12-2)')) -ne 1 -or (Count $T.nsmod ('2026-10-26-rwg-' + '0-1-12-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'deal-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'density-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'rockcache-2')) -ne 0) { $f += '(K8) marker must be rwg-density-2 with rwg-rockcache-2 absent' }
     if ((Count $T.rcc ('if (D >= Range' + 'Sq) { continue; }')) -ne 1) { $f += '(K2) the 8 m pairing range test must be present once' }
     if ((Count $T.rcc ('if (!IsNodeRockMeshName(MeshName, TArray<FString>())) { ++Shape' + 'Rejected; continue; }')) -ne 1) { $f += '(K3) rocks must pass IsNodeRockMeshName' }
     if ((Count $T.sub (("        MeshActor = " + "nullptr;") + "`n    }`n    if (MeshActor)`n    {`n        UStaticMeshComponent* MaSmc")) -ne 1) { $f += '(K7) the Rwg capture skip must null MeshActor before Source 1 reads it' }
@@ -171,7 +171,7 @@ $mutants = @(
     @{ Name = 'X19 8 m range test dropped'; Key = 'rcc'; Expect = 'K2'; Find = ('if (D >= Range' + 'Sq) { continue; }'); Repl = '' }
     @{ Name = 'X20 rock-name test dropped'; Key = 'rcc'; Expect = 'K3'; Find = ('if (!IsNodeRockMeshName(MeshName, TArray<FString>())) { ++Shape' + 'Rejected; continue; }'); Repl = '' }
     @{ Name = 'X21 capture skip de-fanged'; Key = 'sub'; Expect = 'K7'; Find = (("        MeshActor = " + "nullptr;") + "`n"); Repl = '' }
-    @{ Name = 'X16 marker reverted'; Key = 'nsmod'; Expect = 'K8'; Find = ('2026-10-26-rwg-' + '0-1-12-1'); Repl = ('2026-10-19-rwg-' + 'steep-2') }
+    @{ Name = 'X16 marker reverted'; Key = 'nsmod'; Expect = 'K8'; Find = ('2026-10-26-rwg-' + '0-1-12-2'); Repl = ('2026-10-26-rwg-' + '0-1-12-1') }
 )
 $caught = 0
 $mutantFails = @()

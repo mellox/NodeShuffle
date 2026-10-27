@@ -15,7 +15,7 @@
 #       pinned byte before returning false; no refusal format names a cause. The old versionMismatch refusal is GONE.
 #   V4  The bind census prints accepted + matchedEntry; no field repeats in any format this lane wrote or edited (bind census,
 #       signature check, every RWGHEIGHTAPI-REFUSED / -UNLISTED, RWGSIGREFUSED, RWGVOIDBIND, RWGGATE-CAVESIG, RWGGATENOTICE).
-#   V5  Marker rwg-0-1-12-1 present once; rwg-steep-2 and the earlier markers absent; no marker string in the new notice files.
+#   V5  Marker rwg-0-1-12-2 present once; rwg-0-1-12-1, rwg-steep-2 and the earlier markers absent; no marker string in the new notice files.
 #   V6  Unlisted trial: `if (!bVersion)` no longer returns (it logs RWGHEIGHTAPI-UNLISTED at Warning and sets unlistedTrial);
 #       WarnSigRefused counts optional refusals; the verdict block sits between RWGVOIDBIND-OFF and `A.Hmod = H`, refuses on
 #       OptionalSigBad > 0 OR CaveSigBad > 0 OR any of the 16 exports missing, with a return, and only then logs
@@ -121,7 +121,7 @@ function Invoke-019Checks($T) {
     }
     if ($v4n -ne 17) { $f += "(V4) expected 17 scoped formats (bind census, signature check, 5 REFUSED, 2 UNLISTED, RWGSIGREFUSED, RWGVOIDBIND, CAVESIG, 5 GATENOTICE), found $v4n -- the duplicate scan would be vacuous" }
     # V5
-    if ((Count $T.nsmod ('LOADED (2026-10-26-rwg-' + '0-1-12-1)')) -ne 1 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'deal-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'density-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'rockcache-2')) -ne 0 -or (Count $T.nsmod ('2026-10-18-rwg-' + 'p4c-2')) -ne 0) { $f += '(V5) marker must be rwg-0-1-12-1 with rwg-steep-2 and the earlier markers absent' }
+    if ((Count $T.nsmod ('LOADED (2026-10-26-rwg-' + '0-1-12-2)')) -ne 1 -or (Count $T.nsmod ('2026-10-26-rwg-' + '0-1-12-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'deal-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'density-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'rockcache-2')) -ne 0 -or (Count $T.nsmod ('2026-10-18-rwg-' + 'p4c-2')) -ne 0) { $f += '(V5) marker must be rwg-0-1-12-1 with rwg-steep-2 and the earlier markers absent' }
     if ($T.gate.Contains('LOADED' + ' (') -or $T.gateh.Contains('LOADED' + ' (')) { $f += '(V5) no build-marker string in the notice files' }
     # V6 -- the unlisted trial
     $tb = $T.hapi.IndexOf('void TryBind(FRwgHeightApi& A)')
@@ -197,7 +197,7 @@ $mutants = @(
     @{ Name = 'M8 lookup ignores the build number'; Key = 'hapi'; Expect = 'V1'; Find = 'if (A.Build == E.Build && A.SemVer == E.SemVer)'; Repl = 'if (A.SemVer == E.SemVer)' }
     @{ Name = 'M9 GetKillboxTop refusal warning removed'; Key = 'hapi'; Expect = 'V3'; Find = ' WarnSigRefused(TEXT("GetKillboxTop"), false);'; Repl = '' }
     @{ Name = 'M10 SigKillboxTop cmp imm8 wildcarded'; Key = 'hapi'; Expect = 'V2'; Find = '0x83,0xB9,-1,-1,-1,-1,0x00,0x0F'; Repl = '0x83,0xB9,-1,-1,-1,-1,-1,0x0F' }
-    @{ Name = 'M11 marker reverted'; Key = 'nsmod'; Expect = 'V5'; Find = ('2026-10-26-rwg-' + '0-1-12-1'); Repl = ('2026-10-19-rwg-' + 'steep-2') }
+    @{ Name = 'M11 marker reverted'; Key = 'nsmod'; Expect = 'V5'; Find = ('2026-10-26-rwg-' + '0-1-12-2'); Repl = ('2026-10-26-rwg-' + '0-1-12-1') }
     @{ Name = 'M12 745 displacement note dropped from SigField'; Key = 'hapi'; Expect = 'V2'; Find = ', 745 = 0x00001008'; Repl = '' }
     @{ Name = 'M13 census repeats the build field'; Key = 'hapi'; Expect = 'V4'; Find = "matchedEntry='%s' requiredResolved"; Repl = "matchedEntry='%s' build=%d requiredResolved" }
     @{ Name = 'M14 SigVoidAt displacement byte 9 re-pinned (the 0.1.12 move)'; Key = 'hapi'; Expect = 'V2'; Find = '0x48,0x83,0xB9,-1,-1,-1,-1,0x00,0x0F,0x28,0xE2'; Repl = '0x48,0x83,0xB9,0xE8,-1,-1,-1,0x00,0x0F,0x28,0xE2' }
@@ -231,7 +231,7 @@ $mutants = @(
     @{ Name = 'M33 drain no longer waits for a pawn'; Key = 'gate'; Expect = 'V7'; Find = 'if (!PC || !Pawn)'; Repl = 'if (!PC)' }
     @{ Name = 'M34 retries unbounded'; Key = 'gate'; Expect = 'V7'; Find = 'if (N.Attempts >= MaxNoticeAttempts)'; Repl = 'if (false)' }
     @{ Name = 'M35 posted line claims visibility'; Key = 'gate'; Expect = 'V7'; Find = 'on-screen visibility is not measured by any log line'; Repl = 'the notice is visible on screen' }
-    @{ Name = 'M36 notice file carries a marker string'; Key = 'gate'; Expect = 'V5'; Find = '// RWG 0.1.12 gate lane (2026-10-26) -- see'; Repl = '// LOADED (2026-10-26-rwg-0-1-12-1) -- see' }
+    @{ Name = 'M36 notice file carries a marker string'; Key = 'gate'; Expect = 'V5'; Find = '// RWG 0.1.12 gate lane (2026-10-26) -- see'; Repl = '// LOADED (2026-10-26-rwg-0-1-12-2) -- see' }
     @{ Name = 'M37 unlisted verdict moved after A.Hmod'; Key = 'hapi'; Expect = 'V6'; Find = "        A.Hmod = H; // RWG P5: published only on the path that also sets bUsable`n        A.bUsable = true;`n"; Repl = '' }
 )
 $mutantFails = @()
