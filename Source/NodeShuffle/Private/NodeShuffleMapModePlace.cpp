@@ -6,6 +6,7 @@
 #include "NodeShuffleSubsystem.h"
 #include "NodeShuffleMapMode.h"
 #include "NodeShuffleConfig.h"
+#include "NodeShuffleRwgTraceDiag.h" // rwg-trace-diag-1: RWGTRACEMISS / RWGTRACECENSUS (diagnostics only)
 #include "EngineUtils.h"
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
@@ -315,6 +316,7 @@ bool ANodeShuffleSubsystem::RwgResolveAtSpawn(FNodeShuffleEntry& Entry, bool& bO
     RwgProbeSolidHits = 0; // RWG P2d: solid-mesh stops during this one settle (primary or spiral probe)
     const bool bSettled = RaycastSettle(Entry, nullptr, nullptr, &bOutWaterNoLand, /*bTerrainOnly=*/true);
     bRwgProbeArmed = false;
+    NodeShuffleRwgTraceDiag::NoteFirstTrace(GetWorld(), Entry.EntryGuid, Entry.AssignedResourceClassPath, X0, Y0, ApiZ0, Entry.bUnderground, RwgProbeFirstClass, RwgProbeFirstZ, RwgStuckTracker.Find(Entry.EntryGuid), bRwgKillboxKnown ? RwgKillboxTopZ : NodeShuffleMapMode::RwgNaN()); // rwg-trace-diag-1: reads only; extra probes feed RWGTRACEMISS only
     if (RwgProbeSolidHits > 0) { ++RwgPcRejectedRock; } // a probe of this settle met a SOLID mesh: that spot was BLOCKED (spiral / redeal follow)
     // Census of the primary probe's FIRST blocking hit, any component (the P2b hit/far/miss meaning), far split by class.
     if (RwgProbeFirstClass < 0) { ++RwgPcTraceMiss; }
@@ -368,6 +370,7 @@ void ANodeShuffleSubsystem::RwgSpawnPass(float SpawnRadiusCm, bool& bChangedWorl
         const APawn* P = It->Get() ? It->Get()->GetPawn() : nullptr;
         if (P) { Pawns.Add(P->GetActorLocation()); }
     }
+    NodeShuffleRwgTraceDiag::BeginPass(RwgPcPasses + 1, Pawns); // rwg-trace-diag-1: per-pass reset; RwgPcPasses is incremented after the loop, so +1 = PLACECENSUS numbering
     const float AttemptRadiusCm = FMath::Min(SpawnRadiusCm, NodeShuffleMapMode::RwgAttemptRadiusCm);
     const int32 DeferredBefore = DeferredThisPass;
     const int32 WaterLockedBefore = WaterLockedThisSession.Num();
@@ -456,6 +459,7 @@ void ANodeShuffleSubsystem::RwgSpawnPass(float SpawnRadiusCm, bool& bChangedWorl
             RwgPcSteepRing, RwgPcSteepMapwide, RwgPcSteepOccluded);
         RwgEmitDzCensus(); // RWG P2c: session apiToTerrainDz distribution by band, emitted with PLACECENSUS
     }
+    NodeShuffleRwgTraceDiag::EmitPassCensus(RwgPcPasses, RwgPcAttempted, RwgPcSettledTerrain, RwgPcNoTerrainDefer, DeferredThisPass - DeferredBefore); // rwg-trace-diag-1: before RwgEmitPlaceCensus resets the counters
     RwgDensityPassHook(Pawns, AttemptRadiusCm); // rwg-density-1: RWGDENSITY on load (first pass, after RwgSeaRedealPass) + RWGSTUCK every 12th pass
     RwgEmitPlaceCensus();
 }
