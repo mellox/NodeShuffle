@@ -316,7 +316,7 @@ bool ANodeShuffleSubsystem::RwgResolveAtSpawn(FNodeShuffleEntry& Entry, bool& bO
     RwgProbeSolidHits = 0; // RWG P2d: solid-mesh stops during this one settle (primary or spiral probe)
     const bool bSettled = RaycastSettle(Entry, nullptr, nullptr, &bOutWaterNoLand, /*bTerrainOnly=*/true);
     bRwgProbeArmed = false;
-    NodeShuffleRwgTraceDiag::NoteFirstTrace(GetWorld(), Entry.EntryGuid, Entry.AssignedResourceClassPath, X0, Y0, ApiZ0, Entry.bUnderground, RwgProbeFirstClass, RwgProbeFirstZ, RwgStuckTracker.Find(Entry.EntryGuid), bRwgKillboxKnown ? RwgKillboxTopZ : NodeShuffleMapMode::RwgNaN()); // rwg-trace-diag-1: reads only; extra probes feed RWGTRACEMISS only
+    NodeShuffleRwgTraceDiag::NoteFirstTrace(GetWorld(), Entry.EntryGuid, Entry.AssignedResourceClassPath, X0, Y0, ApiZ0, Entry.bUnderground, RwgProbeFirstClass, RwgProbeFirstZ, bSettled, RwgStuckTracker.Find(Entry.EntryGuid), bRwgKillboxKnown ? RwgKillboxTopZ : NodeShuffleMapMode::RwgNaN()); // rwg-trace-diag-1: reads only; extra probes feed RWGTRACEMISS only
     if (RwgProbeSolidHits > 0) { ++RwgPcRejectedRock; } // a probe of this settle met a SOLID mesh: that spot was BLOCKED (spiral / redeal follow)
     // Census of the primary probe's FIRST blocking hit, any component (the P2b hit/far/miss meaning), far split by class.
     if (RwgProbeFirstClass < 0) { ++RwgPcTraceMiss; }
