@@ -21,8 +21,8 @@
 #       OptionalSigBad > 0 OR CaveSigBad > 0 OR any of the 16 exports missing, with a return, and only then logs
 #       signatureVerifiedUnlisted; the final status is the
 #       ternary on bUnlisted; the cave half's five masks + five names are token-identical to NodeShuffleMapModeCave.cpp's.
-#   V7  Notice: QueueRefusalNotice is called in all three refusal statements (exportMissing, required signatureMismatch, unlisted
-#       verdict) and QueueUnlistedVerifiedNotice in the verified branch; TickNotice runs in RwgLogHeightApi BEFORE the callsAllowed
+#   V7  Notice: QueueRefusalNotice is called in all five refusal statements (exportMissing, required signatureMismatch, unlisted
+#       verdict, and the D2 pair modulePathUnread / upluginUnread, each pinned adjacent to its Warning line and return) and QueueUnlistedVerifiedNotice in the verified branch; TickNotice runs in RwgLogHeightApi BEFORE the callsAllowed
 #       guard; the drain posts through FNodeShuffleModule::PostChatNotice with tag RWGGATE, holds for a player pawn, one further
 #       tick, bounded by MaxNoticeAttempts; it posts once per world (PostedWorld); the posted/abandoned lines say what they measured.
 # Mutants run in-file. Exit 0 = all hold; 1 = at least one does not; 2 = a pinned FILE is missing.
@@ -119,7 +119,7 @@ function Invoke-019Checks($T) {
         $dup = (Fmt-Fields $m.Groups[1].Value) | Group-Object | Where-Object { $_.Count -gt 1 }
         if ($dup) { $f += "(V4) repeated field(s) $(($dup | ForEach-Object { $_.Name }) -join ',') in '$($m.Groups[1].Value.Substring(0, [Math]::Min(40, $m.Groups[1].Value.Length)))'" }
     }
-    if ($v4n -ne 15) { $f += "(V4) expected 15 scoped formats (bind census, signature check, 3 REFUSED, 2 UNLISTED, RWGSIGREFUSED, RWGVOIDBIND, CAVESIG, 5 GATENOTICE), found $v4n -- the duplicate scan would be vacuous" }
+    if ($v4n -ne 17) { $f += "(V4) expected 17 scoped formats (bind census, signature check, 5 REFUSED, 2 UNLISTED, RWGSIGREFUSED, RWGVOIDBIND, CAVESIG, 5 GATENOTICE), found $v4n -- the duplicate scan would be vacuous" }
     # V5
     if ((Count $T.nsmod ('LOADED (2026-10-26-rwg-' + '0-1-12-1)')) -ne 1 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'deal-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'density-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'rockcache-2')) -ne 0 -or (Count $T.nsmod ('2026-10-18-rwg-' + 'p4c-2')) -ne 0) { $f += '(V5) marker must be rwg-0-1-12-1 with rwg-steep-2 and the earlier markers absent' }
     if ($T.gate.Contains('LOADED' + ' (') -or $T.gateh.Contains('LOADED' + ' (')) { $f += '(V5) no build-marker string in the notice files' }
@@ -157,7 +157,29 @@ function Invoke-019Checks($T) {
     if ((Count $T.gate 'Check(SymCaves, SigCaves, UE_ARRAY_COUNT(SigCaves), TEXT("CarvedCaves"));') -ne 1 -or (Count $T.gate 'Check(SymInside, SigInside, UE_ARRAY_COUNT(SigInside), TEXT("IsInsideAt"));') -ne 1 -or ([regex]::Matches($T.gate, '(?m)^\s*Check\(Sym[A-Za-z]+, Sig[A-Za-z]+, UE_ARRAY_COUNT\(Sig[A-Za-z]+\), TEXT\("[A-Za-z]+"\)\);')).Count -ne 5) { $f += '(V6) CheckCaveSignatures must check all five cave exports' }
     if ((Count $T.gate ('if (Sig[I] >= 0 && B[I] != static_cast<uint8>(Sig[I]))')) -ne 1 -or (Count $T.gate ('++' + 'Bad;')) -ne 1) { $f += '(V6) the cave check must compare pinned bytes only and count each mismatching export once' }
     # V7 -- the in-game notice
-    if ((Count $T.hapi 'NodeShuffleRwgGate::QueueRefusalNotice(') -ne 3) { $f += '(V7) every refusal statement (exportMissing, required signatureMismatch, unlisted verdict) must queue the refusal notice: expected 3 call sites' }
+    if ((Count $T.hapi 'NodeShuffleRwgGate::QueueRefusalNotice(') -ne 5) { $f += '(V7) every refusal statement (exportMissing, required signatureMismatch, unlisted verdict, modulePathUnread, upluginUnread) must queue the refusal notice: expected 5 call sites' }
+    # D2 (2026-10-26): the two DLL-loaded-but-unread refusals. Each pin anchors on the status assignment, the Warning line, the notice call and the return being ADJACENT,
+    # with the call's own unique arguments (unread version, build 0), so a sibling refusal's call cannot satisfy it.
+    if (-not ($T.hapi -match ('A\.Status = TEXT\("modulePathUnread"\);
+[^
+]*UE_LOG\(LogNodeShuffle, Warning, TEXT\("RWGHEIGHTAPI-REFUSED: status=modulePathUnread [^
+]*callsAllowed=0"[^
+]*
+[^
+]*NodeShuffleRwgGate::QueueRefusalNotice\(TEXT\("\(version unread\)"\), 0, A\.Status, [^
+]*
+\s*ret' + 'urn;'))) { $f += '(V7) the modulePathUnread refusal must set the status, log RWGHEIGHTAPI-REFUSED at Warning, queue the notice (version unread, build 0) and return, adjacent' }
+    if (-not ($T.hapi -match ('A\.Status = TEXT\("upluginUnread"\);
+[^
+]*
+[^
+]*UE_LOG\(LogNodeShuffle, Warning, TEXT\("RWGHEIGHTAPI-REFUSED: status=upluginUnread [^
+]*callsAllowed=0"[^
+]*
+[^
+]*NodeShuffleRwgGate::QueueRefusalNotice\(TEXT\("\(version unread\)"\), 0, A\.Status, [^
+]*
+\s*ret' + 'urn;'))) { $f += '(V7) the upluginUnread refusal must set the status, log RWGHEIGHTAPI-REFUSED at Warning, queue the notice (version unread, build 0) and return, adjacent' }
     if (-not ($T.hapi -match ('status=exportMissing[^\n]*NodeShuffleRwgGate::QueueRefusalNotice\(A\.SemVer, A\.Build, A\.Status, [^\n]*ret' + 'urn; \}'))) { $f += '(V7) the exportMissing refusal statement must queue the notice before its return' }
     if (-not ($T.hapi -match ('status=signatureMismatch semVer=[^\n]*NodeShuffleRwgGate::QueueRefusalNotice\(A\.SemVer, A\.Build, TEXT\("signatureMismatch"\),'))) { $f += '(V7) the required signatureMismatch refusal statement must queue the notice' }
     if ((Count $T.hapi 'NodeShuffleRwgGate::QueueUnlistedVerifiedNotice(A.SemVer, A.Build, RwgAcceptedList());') -ne 1) { $f += '(V7) the verified-unlisted branch must queue its notice exactly once' }
@@ -207,6 +229,8 @@ $mutants = @(
     @{ Name = 'M23 strict refusal softened to AND'; Key = 'hapi'; Expect = 'V6'; Find = 'if (OptionalSigBad > 0 || CaveSigBad > 0 || !bAllSixteenResolved)'; Repl = 'if (OptionalSigBad > 0 && CaveSigBad > 0 && !bAllSixteenResolved)' }
     @{ Name = 'M38 missing exports no longer refuse an unlisted build'; Key = 'hapi'; Expect = 'V6'; Find = 'if (OptionalSigBad > 0 || CaveSigBad > 0 || !bAllSixteenResolved)'; Repl = 'if (OptionalSigBad > 0 || CaveSigBad > 0)' }
     @{ Name = 'M39 resolved test drops the cave exports'; Key = 'hapi'; Expect = 'V6'; Find = 'A.InSea && A.VoidAt && A.KillboxTop && CaveMissing.IsEmpty();'; Repl = 'A.InSea && A.VoidAt && A.KillboxTop;' }
+    @{ Name = 'M41 modulePathUnread refusal no longer queues the notice'; Key = 'hapi'; Expect = 'V7'; Find = '            NodeShuffleRwgGate::QueueRefusalNotice(TEXT("(version unread)"), 0, A.Status, FString::Printf(TEXT("module path not read: length %d of %d characters"), static_cast<int32>(Len), static_cast<int32>(UE_ARRAY_COUNT(Path))));' + "`n"; Repl = '' }
+    @{ Name = 'M42 upluginUnread refusal no longer queues the notice'; Key = 'hapi'; Expect = 'V7'; Find = '            NodeShuffleRwgGate::QueueRefusalNotice(TEXT("(version unread)"), 0, A.Status, FString::Printf(TEXT("uplugin=''%s'' file exists=%d"), *A.Uplugin, UpluginExists));' + "`n"; Repl = '' }
     @{ Name = 'M40 VoidAt not named in the unlisted refusal'; Key = 'hapi'; Expect = 'V6'; Find = '            NameOpt(A.VoidStatus, TEXT("VoidAt"));' + "`n"; Repl = '' }
     @{ Name = 'M24 strict refusal falls through (return removed)'; Key = 'hapi'; Expect = 'V6'; Find = "*A.Missing, *CaveMissing));`n                return;"; Repl = "*A.Missing, *CaveMissing));" }
     @{ Name = 'M25 usable status always bound'; Key = 'hapi'; Expect = 'V6'; Find = 'A.Status = bUnlisted ? TEXT("signatureVerifiedUnlisted") : TEXT("bound");'; Repl = 'A.Status = TEXT("bound");' }

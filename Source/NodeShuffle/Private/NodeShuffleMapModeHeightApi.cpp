@@ -141,10 +141,27 @@ namespace
         // The version gate reads the .uplugin of the DLL actually bound: <plugin>/Binaries/Win64/<dll>.
         WCHAR Path[1024] = {};
         const auto Len = ::GetModuleFileNameW(H, Path, UE_ARRAY_COUNT(Path));
-        if (Len == 0 || Len >= UE_ARRAY_COUNT(Path)) { A.Status = TEXT("modulePathUnread"); return; }
+        if (Len == 0 || Len >= UE_ARRAY_COUNT(Path))
+        {
+            // RWG 0.1.12 D2 (2026-10-26): the RWG DLL IS loaded here (GetModuleHandleW found it), so this is a refusal the player must hear about,
+            // not the silent "RWG absent" case. Measured only: the module name matched, the returned path length, and the buffer size.
+            A.Status = TEXT("modulePathUnread");
+            UE_LOG(LogNodeShuffle, Warning, TEXT("RWGHEIGHTAPI-REFUSED: status=modulePathUnread module='%s' pathLen=%d pathBufferChars=%d callsAllowed=0"), *A.Module, static_cast<int32>(Len), static_cast<int32>(UE_ARRAY_COUNT(Path)));
+            NodeShuffleRwgGate::QueueRefusalNotice(TEXT("(version unread)"), 0, A.Status, FString::Printf(TEXT("module path not read: length %d of %d characters"), static_cast<int32>(Len), static_cast<int32>(UE_ARRAY_COUNT(Path))));
+            return;
+        }
         A.Uplugin = FPaths::Combine(FPaths::GetPath(FPaths::GetPath(FPaths::GetPath(FString(Path)))), TEXT("RandomWorldGenerator.uplugin"));
         FString Json;
-        if (!FFileHelper::LoadFileToString(Json, *A.Uplugin)) { A.Status = TEXT("upluginUnread"); return; }
+        if (!FFileHelper::LoadFileToString(Json, *A.Uplugin))
+        {
+            // RWG 0.1.12 D2 (2026-10-26): same as above -- the DLL is loaded, its .uplugin was not read. Measured only: the path tried and
+            // whether a file exists at it. SemVer/Build are unknown here, so the notice states "(version unread)" and build 0.
+            A.Status = TEXT("upluginUnread");
+            const int32 UpluginExists = FPaths::FileExists(A.Uplugin) ? 1 : 0;
+            UE_LOG(LogNodeShuffle, Warning, TEXT("RWGHEIGHTAPI-REFUSED: status=upluginUnread module='%s' uplugin='%s' upluginFileExists=%d callsAllowed=0"), *A.Module, *A.Uplugin, UpluginExists);
+            NodeShuffleRwgGate::QueueRefusalNotice(TEXT("(version unread)"), 0, A.Status, FString::Printf(TEXT("uplugin='%s' file exists=%d"), *A.Uplugin, UpluginExists));
+            return;
+        }
         A.Build = JsonInt(Json, TEXT("PWBuildNumber"));
         A.SemVer = JsonStr(Json, TEXT("SemVersion"));
         const auto Resolve = [&A, H](const char* Sym, bool bRequired) -> void*
