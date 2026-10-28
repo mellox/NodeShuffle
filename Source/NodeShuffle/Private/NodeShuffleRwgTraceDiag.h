@@ -8,8 +8,10 @@
 // RaycastGroundAt, which teaches the persistent water grid and moves the probe counters) whose results feed only these log lines:
 //   RWGTRACEMISS    a failed first trace (RwgProbeFirstClass < 0, the spawnTraceMiss predicate), rate-limited per entry.
 //   RWGTRACECENSUS  once per RwgSpawnPass that attempted at least one candidate.
-//   RWGTRACECTRL    positive control: the same two wide probes at a first-trace HIT spot, at most once per 12 passes, budget permitting.
-// State is file-static (one world at a time in the shipped game); BeginPass resets it every pass.
+//   RWGTRACECTRL    rwg-trace-diag-2 (2026-10-28): the FIRST first-trace HIT of an entry that has at least one earlier recorded miss at the
+//                   same XY this session (the miss-to-hit transition): the same two wide probes there, budget permitting, with the miss record.
+// State is file-static (one world at a time in the shipped game); BeginPass resets the per-pass tallies every pass. The miss records
+// behind RWGTRACECTRL persist across passes (bounded, oldest evicted) and are cleared when the pass number does not increase.
 // check_rwgtrace_lint.ps1 pins the hooks and hashes the decision code around them against HEAD 65ab5b4.
 #include "CoreMinimal.h"
 

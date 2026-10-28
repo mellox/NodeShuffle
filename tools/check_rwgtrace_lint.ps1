@@ -23,6 +23,16 @@
 #   T11 Dated release TODO above both RWGTRACEMISS/CENSUS logs and both constant blocks; probeMs times the two traces inside the budget branch (R6).
 #   T12 Legend wording (R7 probeEventsThisPass, R9 bounds arithmetic).
 #   (T2/T3/T5 also cover RWGTRACECTRL, the hit-spot positive control of review R1; T4 the settleReturned argument of R5.)
+#   rwg-trace-diag-2 (2026-10-28), also loading NodeShuffleHereUnspawned.cpp (here) and NodeShuffleSubsystem.h (subh):
+#   H1  HERE-NEAREST-UNSPAWNED (3 sites) / HERE-UNSPAWNED-BANDS (1): Display only, only in the new file, field + specifier + argument counts.
+#   H2  Bearing: the new file's ONE Atan2 is Here's well expression byte-for-byte, reached through TurnFromFacing; the reference stays in Subsystem.cpp.
+#   H3  Population and bands: bIsNewNode && bActive, not live; 3000 m radius; band edges 250/500/750/1000/3000 m; 1000 m strict attempt test; tracker read.
+#   H4  Wiring: one RWG-gated call directly above the LogHereDensity line; one header declaration.
+#   B1  RWGTRACECENSUS player-distance bands: one 2-D nearest-pawn distance before the hit/miss split, one band function, hit and miss slots.
+#   C1  RWGTRACECTRL fires at the first hit after a same-XY miss record (no pass-modulo schedule), inside the probe budget; every miss is
+#       recorded before the RWGTRACEMISS schedule return; the record map is bounded with evict-oldest and cleared on a pass-number restart.
+#   W1  The old spawn-on-discovery Verbose line states its predicate, at the same level and gate; the old cause text is gone.
+#   T13 Dated rwg-trace-diag-2 TODO above every new UE_LOG and both new constants.
 #   V5  Marker rwg-trace-diag-1 present once; rwg-0-1-12-2 and the older markers absent (same block as check_rwg019_lint.ps1); no marker string in the diag files.
 # Mutants run in-file. Exit 0 = all hold; 1 = at least one does not; 2 = a pinned FILE is missing.
 param([string]$PrintHashesAt = '')
@@ -39,6 +49,8 @@ $files = [ordered]@{
     hapi  = 'NodeShuffle\Private\NodeShuffleMapModeHeightApi.cpp'
     mmh   = 'NodeShuffle\Public\NodeShuffleMapMode.h'
     nsmod = 'NodeShuffle\Private\NodeShuffle.cpp'
+    here  = 'NodeShuffle\Private\NodeShuffleHereUnspawned.cpp'
+    subh  = 'NodeShuffle\Public\NodeShuffleSubsystem.h'
 }
 $hookRe = '(?m)^[ \t]*' + 'NodeShuffleRwg' + 'TraceDiag::(BeginPass|NoteFirstTrace|EmitPassCensus)\([^;\n]*\);[ \t]*//[ \t]*rwg-trace-diag-1[^\n]*$'
 $spans = @(
@@ -116,10 +128,10 @@ function Invoke-TraceChecks($T) {
         if (([regex]::Matches($T.diag, 'UE_LOG\(LogNodeShuffle, Display,\s*TEXT\("' + $tag + ' ')).Count -ne 1) { $f += "(T2) $tag must be the first TEXT literal of exactly one Display UE_LOG" }
         if ((Count $T.diag ('TEXT("' + $tag)) -ne 1) { $f += "(T2) $tag must appear as a TEXT literal exactly once" }
         if ([regex]::IsMatch($T.diag, 'UE_LOG\(LogNodeShuffle, (Warning|Error|Log|Verbose|Fatal),\s*TEXT\("' + $tag)) { $f += "(T2) $tag must never log above or below Display" }
-        foreach ($k in @('place', 'sub', 'dens', 'hapi', 'nsmod', 'diagh')) { if ($T[$k].Contains('TEXT("' + $tag)) { $f += "(T2) $tag must be emitted only from the diag file (found in $k)" } }
+        foreach ($k in @('place', 'sub', 'dens', 'hapi', 'nsmod', 'diagh', 'here', 'subh')) { if ($T[$k].Contains('TEXT("' + $tag)) { $f += "(T2) $tag must be emitted only from the diag file (found in $k)" } }
     }
     # T3
-    $want = @{ 'RWGTRACEMISS:' = 43; 'RWGTRACECENSUS:' = 17; 'RWGTRACECTRL:' = 14 }
+    $want = @{ 'RWGTRACEMISS:' = 43; 'RWGTRACECENSUS:' = 24; 'RWGTRACECTRL:' = 20 }
     foreach ($tag in $want.Keys) {
         $m = [regex]::Match($T.diag, 'TEXT\("(' + $tag + '[^"]*)"\)')
         if (-not $m.Success) { $f += "(T3) $tag format not found"; continue }
@@ -154,14 +166,16 @@ function Invoke-TraceChecks($T) {
     $blk = if ($iR -ge 0 -and $iE -gt $iR) { $T.diag.Substring($iR, $iE - $iR) } else { '' }
     if ((Count $T.diag 'RwgTraceDiagTrace(World,') -ne 4 -or (Count $blk 'RwgTraceDiagTrace(World,') -ne 2 -or (Count $T.diag 'RwgTraceDiagChunks(World,') -ne 1 -or (Count $blk 'RwgTraceDiagChunks(World,') -ne 1 -or (Count $blk '++S.EventsRun;') -ne 1) { $f += '(T5) every probe call must sit inside the budget branch, which counts the event' }
     if ((Count $T.diag 'const bool bRun = S.EventsRun < RwgTraceDiagMaxEventsPerPass;') -ne 1 -or (Count $T.diag 'World->LineTraceSingleByChannel(') -ne 1) { $f += '(T5) one trace call site, gated by the per-pass event budget' }
-    $ctrlGate = '        if (World && !S.bCtrlDone && (S.Pass % 12) == 1 && S.EventsRun < RwgTraceDiagMaxEventsPerPass)'
+    # rwg-trace-diag-2: the control's gate is the miss-to-hit transition (C1); its two traces sit inside the same per-pass event budget.
+    $ctrlGate = '        if (World && bTransition)'
     $iC = $T.diag.IndexOf($ctrlGate); $iCe = $T.diag.IndexOf('TEXT("RWGTRACECTRL:')
     $cb = if ($iC -ge 0 -and $iCe -gt $iC) { $T.diag.Substring($iC, $iCe - $iC) } else { '' }
-    if ((Count $T.diag $ctrlGate) -ne 1 -or (Count $cb 'RwgTraceDiagTrace(World,') -ne 2 -or (Count $cb 'S.bCtrlDone = true; ++S.EventsRun; S.ExtraTraces += RwgTraceDiagTracesPerEvent;') -ne 1) { $f += '(T5) the control must run once per 12 passes, inside the same event budget, and count its two traces' }
+    $ctrlRun = "            if (bCtrlRun)`n            {`n                ++S.EventsRun; S.ExtraTraces += RwgTraceDiagTracesPerEvent;`n                Down = RwgTraceDiagTrace(World, Fresh, X, Y, RwgTraceDiagWideTopZ, RwgTraceDiagWideBottomZ, CtrlUnset);`n                Up = RwgTraceDiagTrace(World, Fresh, X, Y, RwgTraceDiagWideBottomZ, RwgTraceDiagWideTopZ, CtrlUnset);`n            }`n            else`n            {`n                ++S.EventsSkipped;`n            }"
+    if ((Count $T.diag $ctrlGate) -ne 1 -or (Count $cb 'RwgTraceDiagTrace(World,') -ne 2 -or (Count $cb $ctrlRun) -ne 1 -or (Count $cb 'const bool bCtrlRun = S.EventsRun < RwgTraceDiagMaxEventsPerPass;') -ne 1 -or (Count $cb '++S.EventsRun;') -ne 1) { $f += '(T5) the control must run inside the same event budget, count its two traces, and count a skipped event' }
     $iH = $T.diag.IndexOf('    if (FirstClass >= 0)'); $iM = $T.diag.IndexOf('    ++S.Misses;')
     if ($iC -lt $iH -or $iC -gt $iM) { $f += '(T5) the control must sit in the HIT branch' }
     # T6
-    foreach ($m in [regex]::Matches($T.diag, 'TEXT\("((RWGTRACEMISS|RWGTRACECENSUS):[^"]*)"\)')) {
+    foreach ($m in @([regex]::Matches($T.diag, 'TEXT\("((RWGTRACEMISS|RWGTRACECENSUS|RWGTRACECTRL):[^"]*)"\)')) + @([regex]::Matches($T.here, 'TEXT\("((HERE-NEAREST-UNSPAWNED|HERE-UNSPAWNED-BANDS):[^"]*)"\)'))) {
         foreach ($w in @(('bec' + 'ause'), ('stre' + 'amed'), ('not lo' + 'aded'), ('unlo' + 'aded'), ('no ter' + 'rain'))) { if ($m.Groups[1].Value -match ('(?i)' + $w)) { $f += "(T6) format names a cause ('$w')" } }
     }
     # T7
@@ -184,7 +198,56 @@ function Invoke-TraceChecks($T) {
     # T12
     if ((Count $T.diag 'probeEventsThisPass counts the probe events run so far this pass (this one included only when probesRun is 1).') -ne 1) { $f += '(T12) the probeEventsThisPass legend must say when this event is included' }
     if ((Count $T.diag 'the ceiling is 3x the .key ceiling 120000 cm, the floor lies below 3x the .key floor -60000 cm') -ne 1) { $f += '(T12) the wide-window comment must state the bounds arithmetic correctly' }
+    # H1 (rwg-trace-diag-2, change A)
+    $hereFmts = @(
+        @{ P = 'HERE-NEAREST-UNSPAWNED: entry='; N = 10; Free = 1 }
+        @{ P = 'HERE-NEAREST-UNSPAWNED: none within'; N = 2; Free = 1 }
+        @{ P = 'HERE-NEAREST-UNSPAWNED: no player pawn'; N = 0; Free = 0 }
+        @{ P = 'HERE-UNSPAWNED-BANDS: '; N = 7; Free = 0 }
+    )
+    foreach ($x in $hereFmts) {
+        $m = [regex]::Match($T.here, 'TEXT\("(' + [regex]::Escape($x.P) + '[^"]*)"\)')
+        if (-not $m.Success) { $f += "(H1) format '$($x.P)' not found"; continue }
+        $fmt = $m.Groups[1].Value; $flds = @(Fmt-Fields $fmt)
+        if ($flds | Group-Object | Where-Object { $_.Count -gt 1 }) { $f += "(H1) repeated field in '$($x.P)'" }
+        if ($flds.Count -ne $x.N -or ([regex]::Matches($fmt, '=%')).Count -ne $x.N -or (Specs $fmt) -ne ($x.N + $x.Free)) { $f += "(H1) '$($x.P)' must carry $($x.N) field(s) with one specifier each plus $($x.Free) prose specifier(s)" }
+        $n = Log-Args $T.here $x.P
+        if ($n -ne (Specs $fmt)) { $f += "(H1) '$($x.P)' passes $n argument(s) for $(Specs $fmt) specifier(s)" }
+    }
+    if (([regex]::Matches($T.here, 'UE_LOG\(LogNodeShuffle, Display,\s*TEXT\("HERE-NEAREST-UNSPAWNED: ')).Count -ne 3 -or ([regex]::Matches($T.here, 'UE_LOG\(LogNodeShuffle, Display,\s*TEXT\("HERE-UNSPAWNED-BANDS: ')).Count -ne 1 -or (Count $T.here 'UE_LOG(') -ne 4) { $f += '(H1) the new file must hold exactly 3 Display HERE-NEAREST-UNSPAWNED logs and 1 Display HERE-UNSPAWNED-BANDS log, and no other UE_LOG' }
+    if ([regex]::IsMatch($T.here, 'UE_LOG\(LogNodeShuffle, (Warning|Error|Log|Verbose|Fatal),')) { $f += '(H1) the HERE lines must log at Display' }
+    foreach ($k in @('place', 'sub', 'dens', 'diag', 'diagh', 'hapi', 'nsmod', 'subh')) { foreach ($tg in @('TEXT("HERE-NEAREST-UNSPAWNED', 'TEXT("HERE-UNSPAWNED-BANDS')) { if ($T[$k].Contains($tg)) { $f += "(H1) $tg must be emitted only from the new file (found in $k)" } } }
+    # H2
+    if ((Count $T.here 'return FRotator::NormalizeAxis(FMath::RadiansToDegrees(FMath::Atan2(D.Y, D.X)) - Pawn->GetActorRotation().Yaw);') -ne 1 -or (Count $T.here 'Atan2(') -ne 1 -or (Count $T.here 'const FVector D = Target - P;') -ne 1 -or (Count $T.here 'TurnFromFacing(Nearest->Location));') -ne 1 -or (Count $T.here 'turn %+.0f deg and go') -ne 1) { $f += '(H2) the HERE turn must be Here''s bearing expression, once, reached through TurnFromFacing' }
+    if ((Count $T.sub 'FMath::RadiansToDegrees(FMath::Atan2(D.Y, D.X)) - Pawn->GetActorRotation().Yaw);') -ne 1 -or (Count $T.sub 'from where you are standing and facing, turn %+.0f deg ') -ne 1) { $f += '(H2) Here''s well bearing, the reference the new line mirrors, must still be in NodeShuffleSubsystem.cpp unchanged' }
+    foreach ($bad in @(('Atan2(D.X' + ', D.Y)'), ('.Yaw - FMath::Radians' + 'ToDegrees'), ('D = P' + ' - Target'))) { if ($T.here.Contains($bad)) { $f += '(H2) inverted bearing form present' } }
+    # H3
+    foreach ($n in @('void ANodeShuffleSubsystem::LogHereUnspawned(const FVector& P, const APawn* Pawn) const', 'if (!E.bIsNewNode || !E.bActive) { continue; }', 'AFGResourceNode* const* Live = SpawnedNodes.Find(E.EntryGuid);', 'if (Live && IsValid(*Live)) { continue; }', 'const double D2 = FVector::DistSquared2D(E.Location, P);', 'constexpr double RadiusCm = 300000.0;', 'constexpr int32 NumEdges = 5;', 'const double EdgeCm[NumEdges] = { 25000.0, 50000.0, 75000.0, 100000.0, RadiusCm };', 'while (B < NumEdges && D2 >= FMath::Square(EdgeCm[B])) { ++B; }', 'if (Nearest && NearestD2 < FMath::Square(RadiusCm))', 'const bool bInsideAttempt = NearestD2 < FMath::Square(static_cast<double>(NodeShuffleMapMode::RwgAttemptRadiusCm));', 'const TPair<int32, FString>* T = RwgStuckTracker.Find(Nearest->EntryGuid);', 'const FString Failed = T ? FString::FromInt(T->Key) : FString(TEXT("untracked"));', 'Band[0], Band[1], Band[2], Band[3], Band[4], Band[5], MapWide);')) { if ((Count $T.here $n) -ne 1) { $f += "(H3) population / band statement missing: $($n.Substring(0, [Math]::Min(60, $n.Length)))" } }
+    # H4
+    $hcall = "    if (GetMapMode() == ENodeShuffleMapMode::Rwg) { LogHereUnspawned(P, Pawn); } // rwg-trace-diag-2: HERE-NEAREST-UNSPAWNED + HERE-UNSPAWNED-BANDS (NodeShuffleHereUnspawned.cpp)`n    if (GetMapMode() == ENodeShuffleMapMode::Rwg) { LogHereDensity(P, static_cast<float>(CensusRadiusCm)); }"
+    if ((Count $T.sub $hcall) -ne 1 -or (Count $T.sub 'LogHereUnspawned(') -ne 1 -or (Count $T.subh 'void LogHereUnspawned(const FVector& P, const class APawn* Pawn) const;') -ne 1) { $f += '(H4) one RWG-gated LogHereUnspawned call directly above the HERE-DENSITY call, and one declaration' }
+    foreach ($k in @('place', 'dens', 'diag', 'diagh', 'hapi', 'nsmod')) { if ($T[$k].Contains('LogHereUnspawned(')) { $f += "(H4) LogHereUnspawned must not be called from $k" } }
+    # B1 (change B)
+    $bandHead = "    double Best = TNumericLimits<double>::Max();`n    for (const FVector& P : S.Pawns) { Best = FMath::Min(Best, FVector::DistSquared2D(P, FVector(X, Y, 0.0))); }`n    const double PawnDistM = S.Pawns.Num() > 0 ? FMath::Sqrt(Best) / 100.0 : NodeShuffleMapMode::RwgNaN();`n    const int32 Band = RwgTraceDiagBand(PawnDistM);`n    if (FirstClass >= 0)`n    {`n        ++S.Hits;`n        ++S.BandHits[Band];"
+    if ((Count $T.diag $bandHead) -ne 1 -or (Count $T.diag 'DistSquared2D(P, FVector(X, Y, 0.0))') -ne 1 -or (Count $T.diag '++S.BandHits[') -ne 1 -or (Count $T.diag '++S.BandMisses[') -ne 1) { $f += '(B1) one 2-D nearest-pawn distance before the hit/miss split feeds one band, counted once per hit and once per miss' }
+    foreach ($n in @('constexpr int32 RwgTraceDiagBandSlots = 6;', 'if (FMath::IsNaN(DistM)) { return 5; }', 'return DistM < 250.0 ? 0 : DistM < 500.0 ? 1 : DistM < 750.0 ? 2 : DistM < 1000.0 ? 3 : 4;', 'return FString::Printf(TEXT("%d/%d/%d/%d/%d/%d"), C[0], C[1], C[2], C[3], C[4], C[5]);', 'TEXT("WorldStatic"), *RwgTraceDiagBandString(S.BandHits), *RwgTraceDiagBandString(S.BandMisses),', 'hitsByPawnDistBand=%s missesByPawnDistBand=%s')) { if ((Count $T.diag $n) -ne 1) { $f += "(B1) band statement missing: $($n.Substring(0, [Math]::Min(60, $n.Length)))" } }
+    # C1 (change C)
+    if ($T.diag.Contains('(S.Pass ' + '% 12)') -or $T.diag.Contains('bCtrl' + 'Done')) { $f += '(C1) the control must not run on a pass-modulo schedule' }
+    foreach ($n in @('if (const FRwgMissRecord* Found = GRwgMissRecords.Find(Guid))', 'bTransition = Found->Xcm == RwgTraceDiagCm(X) && Found->Ycm == RwgTraceDiagCm(Y) && Found->Misses >= 1;', 'GRwgMissRecords.Remove(Guid);', 'int64 RwgTraceDiagCm(double V) { return static_cast<int64>(FMath::RoundToDouble(V)); }', 'constexpr int32 RwgTraceDiagMissRecordBound = 256;', 'if (R->Xcm == Xcm && R->Ycm == Ycm) { ++R->Misses; return; }', 'else if (GRwgMissRecords.Num() >= RwgTraceDiagMissRecordBound)', 'for (const TPair<FGuid, FRwgMissRecord>& KV : GRwgMissRecords) { if (KV.Value.Seq < OldestSeq) { OldestSeq = KV.Value.Seq; Oldest = KV.Key; } }', 'GRwgMissRecords.Remove(Oldest);', 'N.Xcm = Xcm; N.Ycm = Ycm; N.FirstMissPass = Pass; N.Misses = 1; N.DistAtFirstMissM = DistM; N.Seq = ++GRwgMissSeq;', 'if (Pass <= GRwgLastPass) { GRwgMissRecords.Reset(); GRwgMissEvicted = GRwgMissXYChanged = 0; }', 'Rec.Misses, Rec.FirstMissPass, S.Pass, Rec.DistAtFirstMissM, PawnDistM);', 'S.CtrlLines, GRwgMissRecords.Num(), RwgTraceDiagMissRecordBound, GRwgMissEvicted, GRwgMissXYChanged);')) { if ((Count $T.diag $n) -ne 1) { $f += "(C1) transition / record statement missing: $($n.Substring(0, [Math]::Min(60, $n.Length)))" } }
+    $noteMiss = "    ++S.Misses;`n    ++S.BandMisses[Band];`n    RwgTraceDiagNoteMiss(Guid, X, Y, S.Pass, PawnDistM);`n    const int32 Prior = Tracker ? Tracker->Key : 0;"
+    if ((Count $T.diag $noteMiss) -ne 1 -or (Count $T.diag 'RwgTraceDiagNoteMiss(') -ne 2) { $f += '(C1) every miss must be recorded, before the RWGTRACEMISS schedule return' }
+    $iF = $T.diag.IndexOf('if (const FRwgMissRecord* Found = GRwgMissRecords.Find(Guid))')
+    if ($iF -lt $iH -or $iF -gt $iC) { $f += '(C1) the record lookup must sit in the HIT branch, before the control gate' }
+    # W1 (change D)
+    if ($T.sub.Contains('no terrain / out of range; further' + ' retries silent')) { $f += '(W1) the old spawn-on-discovery cause text must be gone' }
+    $wl = "                if (FNodeShuffleModule::AreDiagnosticsEnabled())`n                {`n                    UE_LOG(LogNodeShuffle, Verbose,`n                        TEXT(`"Spawn-on-discovery: deferred %s node at %s (the settle call returned false; further retries silent)`"), // rwg-trace-diag-2: states the predicate (!bSettled), not a cause`n                        *ResourceClass->GetName(), *Entry.Location.ToCompactString());"
+    if ((Count $T.sub $wl) -ne 1) { $f += '(W1) the spawn-on-discovery Verbose line must state its predicate, at Verbose, behind AreDiagnosticsEnabled, with its two arguments' }
+    # T13
+    $todo2 = '// TODO(2026-10-28, rwg-trace-diag-2): diagnostic build only -- gate or remove before release.'
+    foreach ($nb in @("$todo2`n    // Player-distance band slots", "$todo2`n    // RWGTRACECTRL miss records", "$todo2`n            UE_LOG(LogNodeShuffle, Display, TEXT(`"RWGTRACECTRL: ")) { if ((Count $T.diag $nb) -ne 1) { $f += "(T13) dated rwg-trace-diag-2 TODO missing above: $($nb.Substring($todo2.Length).Trim().Substring(0, 24))" } }
+    foreach ($nb in @("$todo2`n        UE_LOG(LogNodeShuffle, Display, TEXT(`"HERE-NEAREST-UNSPAWNED: no player pawn", "$todo2`n        UE_LOG(LogNodeShuffle, Display,`n            TEXT(`"HERE-NEAREST-UNSPAWNED: entry=", "$todo2`n        UE_LOG(LogNodeShuffle, Display,`n            TEXT(`"HERE-NEAREST-UNSPAWNED: none within", "$todo2`n    UE_LOG(LogNodeShuffle, Display,`n        TEXT(`"HERE-UNSPAWNED-BANDS: ")) { if ((Count $T.here $nb) -ne 1) { $f += "(T13) dated rwg-trace-diag-2 TODO missing above: $($nb.Substring($todo2.Length).Trim().Substring(0, 24))" } }
     # V5
+    if ($T.here.Contains('LOADED' + ' (')) { $f += '(V5) no build-marker string in the new HERE file' }
     if ((Count $T.nsmod ('LOADED (2026-10-27-rwg-' + 'trace-diag-1)')) -ne 1 -or (Count $T.nsmod ('2026-10-26-rwg-' + '0-1-12-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-26-rwg-' + '0-1-12-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'deal-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'density-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'rockcache-2')) -ne 0 -or (Count $T.nsmod ('2026-10-18-rwg-' + 'p4c-2')) -ne 0) { $f += '(V5) marker must be rwg-0-1-12-1 with rwg-steep-2 and the earlier markers absent' }
     if ($T.diag.Contains('LOADED' + ' (') -or $T.diagh.Contains('LOADED' + ' (')) { $f += '(V5) no build-marker string in the diag files' }
     return $f
@@ -204,7 +267,7 @@ $mutants = @(
     @{ Name = 'M10 schedule loses 48'; Key = 'diag'; Expect = 'T1'; Find = '{ 1, 12, 48 };'; Repl = '{ 1, 12 };' }
     @{ Name = 'M11 marker reverted'; Key = 'nsmod'; Expect = 'V5'; Find = ('2026-10-27-rwg-' + 'trace-diag-1'); Repl = ('2026-10-26-rwg-' + '0-1-12-2') }
     @{ Name = 'M12 miss line raised to Warning'; Key = 'diag'; Expect = 'T2'; Find = "UE_LOG(LogNodeShuffle, Display,`n        TEXT(`"RWGTRACEMISS: "; Repl = "UE_LOG(LogNodeShuffle, Warning,`n        TEXT(`"RWGTRACEMISS: " }
-    @{ Name = 'M13 census repeats a field'; Key = 'diag'; Expect = 'T3'; Find = 'extraTraces=%d channel=%s"'; Repl = 'extraTraces=%d channel=%s attempted=%d"' }
+    @{ Name = 'M13 census repeats a field'; Key = 'diag'; Expect = 'T3'; Find = 'missRecordsXYChanged=%d"'; Repl = 'missRecordsXYChanged=%d attempted=%d"' }
     @{ Name = 'M14 miss line drops an argument'; Key = 'diag'; Expect = 'T3'; Find = 'Ch.PrimsWithBody, Ch.Ms, KillboxTopZ);'; Repl = 'Ch.PrimsWithBody, KillboxTopZ);' }
     @{ Name = 'M15 NoteFirstTrace hook removed'; Key = 'place'; Expect = 'T4'; Find = '    NodeShuffleRwgTraceDiag::NoteFirstTrace('; Repl = '    // NodeShuffleRwgTraceDiag::NoteFirstTrace(' }
     @{ Name = 'M16 a counter reset slipped in before the census'; Key = 'place'; Expect = 'T4'; Find = "    NodeShuffleRwgTraceDiag::EmitPassCensus("; Repl = "    RwgPcAttempted = 0;`n    NodeShuffleRwgTraceDiag::EmitPassCensus(" }
@@ -215,8 +278,37 @@ $mutants = @(
     @{ Name = 'M20 probe through the settle helper'; Key = 'diag'; Expect = 'T7'; Find = '        FHitResult H;'; Repl = '        FHitResult H; // Raycast' + 'GroundAt(' }
     @{ Name = 'M21 mirror drifts'; Key = 'diag'; Expect = 'T8'; Find = 'RwgDecisionDownCm = 40000.0;'; Repl = 'RwgDecisionDownCm = 30000.0;' }
     @{ Name = 'M22 wide window shrunk'; Key = 'diag'; Expect = 'T9'; Find = 'RwgTraceDiagWideTopZ = 360000.0;'; Repl = 'RwgTraceDiagWideTopZ = 120000.0;' }
-    @{ Name = 'M25 control runs every pass'; Key = 'diag'; Expect = 'T5'; Find = '!S.bCtrlDone && (S.Pass % 12) == 1 && '; Repl = '' }
-    @{ Name = 'M26 control outside the event budget'; Key = 'diag'; Expect = 'T5'; Find = 'S.bCtrlDone = true; ++S.EventsRun;'; Repl = 'S.bCtrlDone = true;' }
+    @{ Name = 'M25 control fires on every hit (diag-2 re-target)'; Key = 'diag'; Expect = 'T5'; Find = '        if (World && bTransition)'; Repl = '        if (World)' }
+    @{ Name = 'M26 control outside the event budget (diag-2 re-target)'; Key = 'diag'; Expect = 'T5'; Find = '            if (bCtrlRun)'; Repl = '            if (true)' }
+    @{ Name = 'MC1 transition ignores the XY'; Key = 'diag'; Expect = 'C1'; Find = 'bTransition = Found->Xcm == RwgTraceDiagCm(X) && Found->Ycm == RwgTraceDiagCm(Y) && Found->Misses >= 1;'; Repl = 'bTransition = true;' }
+    @{ Name = 'MC2 pass-modulo schedule back on the control'; Key = 'diag'; Expect = 'C1'; Find = '        if (World && bTransition)'; Repl = ('        if (World && bTransition && (S.Pass ' + '% 12) == 1)') }
+    @{ Name = 'MC3 misses no longer recorded'; Key = 'diag'; Expect = 'C1'; Find = "    RwgTraceDiagNoteMiss(Guid, X, Y, S.Pass, PawnDistM);`n    const int32 Prior"; Repl = '    const int32 Prior' }
+    @{ Name = 'MC4 record bound raised'; Key = 'diag'; Expect = 'C1'; Find = 'RwgTraceDiagMissRecordBound = 256;'; Repl = 'RwgTraceDiagMissRecordBound = 4096;' }
+    @{ Name = 'MC5 eviction dropped'; Key = 'diag'; Expect = 'C1'; Find = "            GRwgMissRecords.Remove(Oldest);`n"; Repl = '' }
+    @{ Name = 'MC6 session reset dropped'; Key = 'diag'; Expect = 'C1'; Find = 'if (Pass <= GRwgLastPass) { GRwgMissRecords.Reset(); GRwgMissEvicted = GRwgMissXYChanged = 0; }'; Repl = '' }
+    @{ Name = 'MC7 record kept after the hit'; Key = 'diag'; Expect = 'C1'; Find = "            GRwgMissRecords.Remove(Guid);`n"; Repl = '' }
+    @{ Name = 'MC8 control line drops a transition argument'; Key = 'diag'; Expect = 'T3'; Find = 'Rec.Misses, Rec.FirstMissPass, S.Pass,'; Repl = 'Rec.Misses, S.Pass,' }
+    @{ Name = 'MC9 control line names a cause'; Key = 'diag'; Expect = 'T6'; Find = 'playerDistNow=%.0f"'; Repl = ('playerDistNow=%.0f (terrain stre' + 'amed in)"') }
+    @{ Name = 'MB1 band edge moved'; Key = 'diag'; Expect = 'B1'; Find = 'DistM < 250.0 ? 0'; Repl = 'DistM < 300.0 ? 0' }
+    @{ Name = 'MB2 hits not banded'; Key = 'diag'; Expect = 'B1'; Find = "        ++S.BandHits[Band];`n"; Repl = '' }
+    @{ Name = 'MB3 band from a 3-D distance'; Key = 'diag'; Expect = 'B1'; Find = 'FVector::DistSquared2D(P, FVector(X, Y, 0.0))'; Repl = 'FVector::DistSquared(P, FVector(X, Y, 0.0))' }
+    @{ Name = 'MB4 census prints the hit bands twice'; Key = 'diag'; Expect = 'B1'; Find = '*RwgTraceDiagBandString(S.BandMisses),'; Repl = '*RwgTraceDiagBandString(S.BandHits),' }
+    @{ Name = 'MB5 no-pawn folded into the first band'; Key = 'diag'; Expect = 'B1'; Find = 'if (FMath::IsNaN(DistM)) { return 5; }'; Repl = 'if (FMath::IsNaN(DistM)) { return 0; }' }
+    @{ Name = 'MH1 HERE bearing re-derived inline'; Key = 'here'; Expect = 'H2'; Find = 'TurnFromFacing(Nearest->Location));'; Repl = 'FRotator::NormalizeAxis(FMath::RadiansToDegrees(FMath::Atan2(D.Y, D.X))));' }
+    @{ Name = 'MH2 HERE bearing inverted'; Key = 'here'; Expect = 'H2'; Find = 'FMath::Atan2(D.Y, D.X)) - Pawn'; Repl = ('FMath::Atan2(D.X' + ', D.Y)) - Pawn') }
+    @{ Name = 'MH3 well reference bearing changed'; Key = 'sub'; Expect = 'H2'; Find = 'FMath::Atan2(D.Y, D.X)) - Pawn->GetActorRotation().Yaw);'; Repl = 'FMath::Atan2(D.Y, D.X)) + Pawn->GetActorRotation().Yaw);' }
+    @{ Name = 'MH4 live entries counted as unspawned'; Key = 'here'; Expect = 'H3'; Find = "        if (Live && IsValid(*Live)) { continue; }`n"; Repl = '' }
+    @{ Name = 'MH5 HERE band edge moved'; Key = 'here'; Expect = 'H3'; Find = '{ 25000.0, 50000.0'; Repl = '{ 30000.0, 50000.0' }
+    @{ Name = 'MH6 inside-attempt tested against 3000 m'; Key = 'here'; Expect = 'H3'; Find = 'static_cast<double>(NodeShuffleMapMode::RwgAttemptRadiusCm)'; Repl = 'RadiusCm' }
+    @{ Name = 'MH7 bands line at Warning'; Key = 'here'; Expect = 'H1'; Find = "UE_LOG(LogNodeShuffle, Display,`n        TEXT(`"HERE-UNSPAWNED-BANDS: "; Repl = "UE_LOG(LogNodeShuffle, Warning,`n        TEXT(`"HERE-UNSPAWNED-BANDS: " }
+    @{ Name = 'MH8 bands line drops an argument'; Key = 'here'; Expect = 'H1'; Find = 'Band[4], Band[5], MapWide);'; Repl = 'Band[4], MapWide);' }
+    @{ Name = 'MH9 HERE call no longer RWG-gated'; Key = 'sub'; Expect = 'H4'; Find = '    if (GetMapMode() == ENodeShuffleMapMode::Rwg) { LogHereUnspawned('; Repl = '    if (true) { LogHereUnspawned(' }
+    @{ Name = 'MH10 TODO dropped above the bands log'; Key = 'here'; Expect = 'T13'; Find = "remove before release.`n    UE_LOG(LogNodeShuffle, Display,`n        TEXT(`"HERE-UNSPAWNED-BANDS: "; Repl = "remove before release.`n`n    UE_LOG(LogNodeShuffle, Display,`n        TEXT(`"HERE-UNSPAWNED-BANDS: " }
+    @{ Name = 'MH11 TODO dropped above the control log'; Key = 'diag'; Expect = 'T13'; Find = "remove before release.`n            UE_LOG(LogNodeShuffle, Display, TEXT(`"RWGTRACECTRL: "; Repl = "remove before release.`n`n            UE_LOG(LogNodeShuffle, Display, TEXT(`"RWGTRACECTRL: " }
+    @{ Name = 'MH12 marker in the HERE file'; Key = 'here'; Expect = 'V5'; Find = '// rwg-trace-diag-2 (2026-10-28) -- DIAGNOSTICS ONLY.'; Repl = '// LOADED (x) -- DIAGNOSTICS ONLY.' }
+    @{ Name = 'MW1 Verbose line back to the cause text'; Key = 'sub'; Expect = 'W1'; Find = '(the settle call returned false; further retries silent)'; Repl = ('(no terrain / out of range; further' + ' retries silent)') }
+    @{ Name = 'MW2 Verbose line ungated'; Key = 'sub'; Expect = 'W1'; Find = "                if (FNodeShuffleModule::AreDiagnosticsEnabled())`n                {`n                    UE_LOG(LogNodeShuffle, Verbose,`n                        TEXT(`"Spawn-on-discovery: deferred"; Repl = "                if (true)`n                {`n                    UE_LOG(LogNodeShuffle, Verbose,`n                        TEXT(`"Spawn-on-discovery: deferred" }
+    @{ Name = 'MW3 Verbose line raised to Display'; Key = 'sub'; Expect = 'W1'; Find = "UE_LOG(LogNodeShuffle, Verbose,`n                        TEXT(`"Spawn-on-discovery: deferred %s node at %s (the settle"; Repl = "UE_LOG(LogNodeShuffle, Display,`n                        TEXT(`"Spawn-on-discovery: deferred %s node at %s (the settle" }
     @{ Name = 'M27 control line at Warning'; Key = 'diag'; Expect = 'T2'; Find = 'UE_LOG(LogNodeShuffle, Display, TEXT("RWGTRACECTRL:'; Repl = 'UE_LOG(LogNodeShuffle, Warning, TEXT("RWGTRACECTRL:' }
     @{ Name = 'M28 control line drops an argument'; Key = 'diag'; Expect = 'T3'; Find = 'Up.Z, (Down.bHit && Up.bHit'; Repl = '(Down.bHit && Up.bHit' }
     @{ Name = 'M29 box union reverted to last box'; Key = 'diag'; Expect = 'T10'; Find = 'R.CollMinZ = R.ContainColliding == 1 ? BC.Min.Z : FMath::Min(R.CollMinZ, BC.Min.Z);'; Repl = 'R.CollMinZ = BC.Min.Z;' }
@@ -251,5 +343,5 @@ if ($all.Count -gt 0) {
     Write-Host "RWG TRACE-DIAG LINT: FAIL -- $($all.Count) problem(s). Mutants caught $caught/$($mutants.Count)."
     exit 1
 }
-Write-Host "PASS: RWG trace-diag lint -- D1..D6, T1..T12, V5 hold across $($text.Count) loaded files; mutants caught $caught/$($mutants.Count)."
+Write-Host "PASS: RWG trace-diag lint -- D1..D6, T1..T13, H1..H4, B1, C1, W1, V5 hold across $($text.Count) loaded files; mutants caught $caught/$($mutants.Count)."
 exit 0

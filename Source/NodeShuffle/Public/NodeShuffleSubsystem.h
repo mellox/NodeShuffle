@@ -1164,6 +1164,7 @@ private:
     void RwgStuckAfterAttempt(const FNodeShuffleEntry& E);          // failed-attempt count + the counters that attempt moved
     int32 RwgStuckCounter(int32 I) const;                           // tracked counter I (names: RwgStuckCounterNames in the .cpp)
     void LogHereDensity(const FVector& P, float HereRadiusCm) const; // HERE-DENSITY line (NodeShuffle.Here on RWG)
+    void LogHereUnspawned(const FVector& P, const class APawn* Pawn) const; // rwg-trace-diag-2: HERE-NEAREST-UNSPAWNED + HERE-UNSPAWNED-BANDS (NodeShuffleHereUnspawned.cpp)
     TMap<FGuid, TPair<int32, FString>> RwgStuckTracker;             // session: entry -> (failed attempt passes since last live, counters moved by the last one)
     TArray<int32> RwgStuckSnap;                                     // counters read by RwgStuckBeforeAttempt
     bool bRwgStuckSnapWaterLocked = false;                          // the attempted entry was already water-locked before the attempt

@@ -4822,7 +4822,7 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
                 if (FNodeShuffleModule::AreDiagnosticsEnabled())
                 {
                     UE_LOG(LogNodeShuffle, Verbose,
-                        TEXT("Spawn-on-discovery: deferred %s node at %s (no terrain / out of range; further retries silent)"),
+                        TEXT("Spawn-on-discovery: deferred %s node at %s (the settle call returned false; further retries silent)"), // rwg-trace-diag-2: states the predicate (!bSettled), not a cause
                         *ResourceClass->GetName(), *Entry.Location.ToCompactString());
                 }
             }
@@ -8219,6 +8219,7 @@ void ANodeShuffleSubsystem::LogHereCensus() const
         }
     }
 
+    if (GetMapMode() == ENodeShuffleMapMode::Rwg) { LogHereUnspawned(P, Pawn); } // rwg-trace-diag-2: HERE-NEAREST-UNSPAWNED + HERE-UNSPAWNED-BANDS (NodeShuffleHereUnspawned.cpp)
     if (GetMapMode() == ENodeShuffleMapMode::Rwg) { LogHereDensity(P, static_cast<float>(CensusRadiusCm)); } // rwg-density-1: HERE-DENSITY
     UE_LOG(LogNodeShuffle, Display, TEXT("HERE: census done — %d layout entries + %d streamed originals within %dm"),
         Shown, OrigShown, CensusRadiusCm / 100);

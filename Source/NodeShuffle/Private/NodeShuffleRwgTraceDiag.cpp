@@ -27,9 +27,20 @@
 //   noTerrainDefer and deferredSettle are this pass's PLACECENSUS counters; firstHitKindsTop3 lists RwgHitClassOf labels of the hits as
 //   label:count; absDz* are the min / lower median / max over this pass's hits of the absolute first-hit Z minus apiSurfaceZ, in metres;
 //   missLines, probeEventsRun, probeEventsSkippedBudget and extraTraces count this pass's RWGTRACEMISS lines, probe events and traces.
-// RWGTRACECTRL legend (positive control, at most once per pass on passes where pass mod 12 is 1, budget permitting): the same two wide
-//   traces at the XY of a first trace that DID hit; firstHitKind / firstHitZ are that decision hit's RwgHitClassOf label and impact Z; down* /
-//   up* as on RWGTRACEMISS; upSameComponentAsDown is 1 when both traces hit the same component. It shows what up* reads on a column known to hit.
+//   rwg-trace-diag-2 (2026-10-28): hitsByPawnDistBand / missesByPawnDistBand split firstTraceHits / firstTraceMisses by the 2-D distance
+//   from the entry XY to the nearest pawn of this pass (Place.cpp's candidate sort key, recomputed here from the same pawn list), as six
+//   slash-separated counts in this order: below 250 m, 250 to 500 m, 500 to 750 m, 750 to 1000 m, 1000 m or more, and no pawn this pass.
+//   Each band includes its lower bound and excludes its upper one; the six counts sum to firstTraceHits (resp. firstTraceMisses).
+//   ctrlLines counts this pass's RWGTRACECTRL lines. missRecordsHeld is the number of entries with a recorded miss and no hit since,
+//   missRecordBound the most it keeps (the oldest record is evicted past it), missRecordsEvicted the evictions this session, and
+//   missRecordsXYChanged the records discarded this session because the entry's next first trace ran at a different XY.
+// RWGTRACECTRL legend: printed at the FIRST first-trace HIT of an entry whose miss record (see above) holds at least one first-trace miss at
+//   the same XY, rounded to whole centimetres; the record is then discarded, so each miss run yields at most one line. probesRun is 1 when
+//   the pass still had probe budget (the same 16-event budget as RWGTRACEMISS; notRun names and nan Z otherwise). The same two wide traces at
+//   that XY; firstHitKind / firstHitZ are that decision hit's RwgHitClassOf label and impact Z; down* / up* as on RWGTRACEMISS;
+//   upSameComponentAsDown is 1 when both traces hit the same component. priorMisses is the record's miss count, firstMissPass the pass of
+//   its first miss, thisPass the pass of this hit; playerDistAtFirstMiss and playerDistNow are the 2-D nearest-pawn distances in metres at
+//   that first miss and at this hit (nan with no pawn).
 #include "NodeShuffleRwgTraceDiag.h"
 #include "NodeShuffle.h"
 #include "NodeShuffleMapMode.h"
@@ -63,18 +74,70 @@ namespace
     // RwgHitClassOf's return values (NodeShuffleMapModeResettle.cpp), in order 0..4; the last slot counts any other value.
     const TCHAR* const RwgFirstClassLabels[] = { TEXT("terrainChunk"), TEXT("canopyOrUnknownMesh"), TEXT("waterSheet"), TEXT("resourceNodeOrNonMesh"), TEXT("solidMesh"), TEXT("otherClassValue") };
     constexpr int32 RwgFirstClassSlots = UE_ARRAY_COUNT(RwgFirstClassLabels);
+    // TODO(2026-10-28, rwg-trace-diag-2): diagnostic build only -- gate or remove before release.
+    // Player-distance band slots of RWGTRACECENSUS: below 250 m, 250-500, 500-750, 750-1000, 1000 m or more, no pawn this pass.
+    constexpr int32 RwgTraceDiagBandSlots = 6;
+    // TODO(2026-10-28, rwg-trace-diag-2): diagnostic build only -- gate or remove before release.
+    // RWGTRACECTRL miss records: at most this many entries are held per process; past it the oldest record is evicted.
+    constexpr int32 RwgTraceDiagMissRecordBound = 256;
 
     struct FRwgTraceDiagPass
     {
         int32 Pass = 0;
         TArray<FVector> Pawns;
         int32 Seen = 0, Hits = 0, Misses = 0, MissLines = 0, EventsRun = 0, EventsSkipped = 0, ExtraTraces = 0;
-        bool bCtrlDone = false;
+        int32 BandHits[RwgTraceDiagBandSlots] = {}, BandMisses[RwgTraceDiagBandSlots] = {};
+        int32 CtrlLines = 0;
         int32 ClassCount[RwgFirstClassSlots] = {};
         TArray<double> AbsDzCm;
     };
     FRwgTraceDiagPass GRwgTraceDiag;
     TWeakObjectPtr<UClass> GRwgChunkClass;
+
+    // Per-entry first-trace miss record (persists across passes; read only by the RWGTRACECTRL trigger and the census counts).
+    struct FRwgMissRecord
+    {
+        int64 Xcm = 0, Ycm = 0;           // the entry XY at the first recorded miss, rounded to whole cm
+        int32 FirstMissPass = 0, Misses = 0;
+        double DistAtFirstMissM = 0.0;    // 2-D nearest-pawn distance at that first miss (nan with no pawn)
+        uint64 Seq = 0;                   // insertion order, for evict-oldest
+    };
+    TMap<FGuid, FRwgMissRecord> GRwgMissRecords;
+    uint64 GRwgMissSeq = 0;
+    int32 GRwgMissEvicted = 0, GRwgMissXYChanged = 0, GRwgLastPass = 0;
+
+    int64 RwgTraceDiagCm(double V) { return static_cast<int64>(FMath::RoundToDouble(V)); }
+
+    int32 RwgTraceDiagBand(double DistM)
+    {
+        if (FMath::IsNaN(DistM)) { return 5; }
+        return DistM < 250.0 ? 0 : DistM < 500.0 ? 1 : DistM < 750.0 ? 2 : DistM < 1000.0 ? 3 : 4;
+    }
+
+    FString RwgTraceDiagBandString(const int32 (&C)[RwgTraceDiagBandSlots])
+    {
+        return FString::Printf(TEXT("%d/%d/%d/%d/%d/%d"), C[0], C[1], C[2], C[3], C[4], C[5]);
+    }
+
+    // Every first-trace miss lands here (not only scheduled ones): the same XY extends the record, a new XY restarts it.
+    void RwgTraceDiagNoteMiss(const FGuid& Guid, double X, double Y, int32 Pass, double DistM)
+    {
+        const int64 Xcm = RwgTraceDiagCm(X), Ycm = RwgTraceDiagCm(Y);
+        if (FRwgMissRecord* R = GRwgMissRecords.Find(Guid))
+        {
+            if (R->Xcm == Xcm && R->Ycm == Ycm) { ++R->Misses; return; }
+            ++GRwgMissXYChanged;
+        }
+        else if (GRwgMissRecords.Num() >= RwgTraceDiagMissRecordBound)
+        {
+            FGuid Oldest; uint64 OldestSeq = TNumericLimits<uint64>::Max();
+            for (const TPair<FGuid, FRwgMissRecord>& KV : GRwgMissRecords) { if (KV.Value.Seq < OldestSeq) { OldestSeq = KV.Value.Seq; Oldest = KV.Key; } }
+            GRwgMissRecords.Remove(Oldest);
+            ++GRwgMissEvicted;
+        }
+        FRwgMissRecord& N = GRwgMissRecords.FindOrAdd(Guid);
+        N.Xcm = Xcm; N.Ycm = Ycm; N.FirstMissPass = Pass; N.Misses = 1; N.DistAtFirstMissM = DistM; N.Seq = ++GRwgMissSeq;
+    }
 
     struct FRwgDiagHit
     {
@@ -163,6 +226,8 @@ namespace
 
 void NodeShuffleRwgTraceDiag::BeginPass(int32 Pass, const TArray<FVector>& Pawns)
 {
+    if (Pass <= GRwgLastPass) { GRwgMissRecords.Reset(); GRwgMissEvicted = GRwgMissXYChanged = 0; } // pass numbering restarted: a new session, so no earlier miss counts
+    GRwgLastPass = Pass;
     GRwgTraceDiag = FRwgTraceDiagPass();
     GRwgTraceDiag.Pass = Pass;
     GRwgTraceDiag.Pawns = Pawns;
@@ -174,30 +239,58 @@ void NodeShuffleRwgTraceDiag::NoteFirstTrace(UWorld* World, const FGuid& Guid, c
     FRwgTraceDiagPass& S = GRwgTraceDiag;
     ++S.Seen;
     const FCollisionQueryParams Fresh(SCENE_QUERY_STAT(NodeShuffleRwgTraceDiag), true); // RaycastGroundAt's complex flag; no ignored actors (RwgResolveAtSpawn passes none)
+    double Best = TNumericLimits<double>::Max();
+    for (const FVector& P : S.Pawns) { Best = FMath::Min(Best, FVector::DistSquared2D(P, FVector(X, Y, 0.0))); }
+    const double PawnDistM = S.Pawns.Num() > 0 ? FMath::Sqrt(Best) / 100.0 : NodeShuffleMapMode::RwgNaN();
+    const int32 Band = RwgTraceDiagBand(PawnDistM);
     if (FirstClass >= 0)
     {
         ++S.Hits;
+        ++S.BandHits[Band];
         ++S.ClassCount[FirstClass < RwgFirstClassSlots - 1 ? FirstClass : RwgFirstClassSlots - 1];
         S.AbsDzCm.Add(FMath::Abs(FirstZ - ApiZ));
-        if (World && !S.bCtrlDone && (S.Pass % 12) == 1 && S.EventsRun < RwgTraceDiagMaxEventsPerPass)
+        FRwgMissRecord Rec;
+        bool bTransition = false;
+        if (const FRwgMissRecord* Found = GRwgMissRecords.Find(Guid))
         {
-            S.bCtrlDone = true; ++S.EventsRun; S.ExtraTraces += RwgTraceDiagTracesPerEvent;
-            const FRwgDiagHit Down = RwgTraceDiagTrace(World, Fresh, X, Y, RwgTraceDiagWideTopZ, RwgTraceDiagWideBottomZ, TEXT("none"));
-            const FRwgDiagHit Up = RwgTraceDiagTrace(World, Fresh, X, Y, RwgTraceDiagWideBottomZ, RwgTraceDiagWideTopZ, TEXT("none"));
-            UE_LOG(LogNodeShuffle, Display, TEXT("RWGTRACECTRL: pass=%d entry=%s x=%.0f y=%.0f apiSurfaceZ=%.0f firstHitKind=%s firstHitZ=%.0f downHitClass=%s downHitComponent=%s downHitZ=%.0f upHitClass=%s upHitComponent=%s upHitZ=%.0f upSameComponentAsDown=%d"),
-                S.Pass, *Guid.ToString().Left(8), X, Y, ApiZ, RwgFirstClassLabels[FirstClass < RwgFirstClassSlots - 1 ? FirstClass : RwgFirstClassSlots - 1], FirstZ,
-                *Down.Cls, *Down.Comp, Down.Z, *Up.Cls, *Up.Comp, Up.Z, (Down.bHit && Up.bHit && Up.C == Down.C) ? 1 : 0);
+            bTransition = Found->Xcm == RwgTraceDiagCm(X) && Found->Ycm == RwgTraceDiagCm(Y) && Found->Misses >= 1;
+            if (!bTransition) { ++GRwgMissXYChanged; }
+            Rec = *Found;
+            GRwgMissRecords.Remove(Guid);
+        }
+        if (World && bTransition)
+        {
+            const bool bCtrlRun = S.EventsRun < RwgTraceDiagMaxEventsPerPass;
+            const TCHAR* const CtrlUnset = bCtrlRun ? TEXT("none") : TEXT("notRun");
+            FRwgDiagHit Down, Up;
+            Down.Cls = Down.Comp = Up.Cls = Up.Comp = CtrlUnset;
+            Down.Z = Up.Z = NodeShuffleMapMode::RwgNaN();
+            if (bCtrlRun)
+            {
+                ++S.EventsRun; S.ExtraTraces += RwgTraceDiagTracesPerEvent;
+                Down = RwgTraceDiagTrace(World, Fresh, X, Y, RwgTraceDiagWideTopZ, RwgTraceDiagWideBottomZ, CtrlUnset);
+                Up = RwgTraceDiagTrace(World, Fresh, X, Y, RwgTraceDiagWideBottomZ, RwgTraceDiagWideTopZ, CtrlUnset);
+            }
+            else
+            {
+                ++S.EventsSkipped;
+            }
+            ++S.CtrlLines;
+            // TODO(2026-10-28, rwg-trace-diag-2): diagnostic build only -- gate or remove before release.
+            UE_LOG(LogNodeShuffle, Display, TEXT("RWGTRACECTRL: pass=%d entry=%s x=%.0f y=%.0f apiSurfaceZ=%.0f firstHitKind=%s firstHitZ=%.0f probesRun=%d downHitClass=%s downHitComponent=%s downHitZ=%.0f upHitClass=%s upHitComponent=%s upHitZ=%.0f upSameComponentAsDown=%d priorMisses=%d firstMissPass=%d thisPass=%d playerDistAtFirstMiss=%.0f playerDistNow=%.0f"),
+                S.Pass, *Guid.ToString().Left(8), X, Y, ApiZ, RwgFirstClassLabels[FirstClass < RwgFirstClassSlots - 1 ? FirstClass : RwgFirstClassSlots - 1], FirstZ, bCtrlRun ? 1 : 0,
+                *Down.Cls, *Down.Comp, Down.Z, *Up.Cls, *Up.Comp, Up.Z, (Down.bHit && Up.bHit && Up.C == Down.C) ? 1 : 0,
+                Rec.Misses, Rec.FirstMissPass, S.Pass, Rec.DistAtFirstMissM, PawnDistM);
         }
         return;
     }
     ++S.Misses;
+    ++S.BandMisses[Band];
+    RwgTraceDiagNoteMiss(Guid, X, Y, S.Pass, PawnDistM);
     const int32 Prior = Tracker ? Tracker->Key : 0;
     const int32 Ordinal = Prior + 1;
     if (!World || !RwgTraceMissOnSchedule(Ordinal)) { return; }
     ++S.MissLines;
-    double Best = TNumericLimits<double>::Max();
-    for (const FVector& P : S.Pawns) { Best = FMath::Min(Best, FVector::DistSquared2D(P, FVector(X, Y, 0.0))); }
-    const double PawnDistM = S.Pawns.Num() > 0 ? FMath::Sqrt(Best) / 100.0 : NodeShuffleMapMode::RwgNaN();
     const double WinTop = ApiZ + (bShortWindow ? RwgDecisionShortUpCm : RwgDecisionUpCm);
     const double WinBottom = ApiZ - (bShortWindow ? RwgDecisionShortDownCm : RwgDecisionDownCm);
     const bool bRun = S.EventsRun < RwgTraceDiagMaxEventsPerPass;
@@ -254,9 +347,10 @@ void NodeShuffleRwgTraceDiag::EmitPassCensus(int32 Pass, int32 Attempted, int32 
         const double MaxM = N > 0 ? S.AbsDzCm.Last() / 100.0 : NodeShuffleMapMode::RwgNaN();
         // TODO(2026-10-27, rwg-trace-diag-1): diagnostic build only -- gate on FNodeShuffleModule::AreDiagnosticsEnabled() or remove before release.
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("RWGTRACECENSUS: pass=%d attempted=%d firstTracesSeen=%d firstTraceHits=%d firstTraceMisses=%d settledOnTerrain=%d noTerrainDefer=%d deferredSettle=%d firstHitKindsTop3=%s absDzMinM=%.1f absDzLowerMedianM=%.1f absDzMaxM=%.1f missLines=%d probeEventsRun=%d probeEventsSkippedBudget=%d extraTraces=%d channel=%s"),
+            TEXT("RWGTRACECENSUS: pass=%d attempted=%d firstTracesSeen=%d firstTraceHits=%d firstTraceMisses=%d settledOnTerrain=%d noTerrainDefer=%d deferredSettle=%d firstHitKindsTop3=%s absDzMinM=%.1f absDzLowerMedianM=%.1f absDzMaxM=%.1f missLines=%d probeEventsRun=%d probeEventsSkippedBudget=%d extraTraces=%d channel=%s hitsByPawnDistBand=%s missesByPawnDistBand=%s ctrlLines=%d missRecordsHeld=%d missRecordBound=%d missRecordsEvicted=%d missRecordsXYChanged=%d"),
             Pass, Attempted, S.Seen, S.Hits, S.Misses, SettledOnTerrain, NoTerrainDefer, DeferredSettle, *Top3, MinM, MedM, MaxM,
-            S.MissLines, S.EventsRun, S.EventsSkipped, S.ExtraTraces, TEXT("WorldStatic"));
+            S.MissLines, S.EventsRun, S.EventsSkipped, S.ExtraTraces, TEXT("WorldStatic"), *RwgTraceDiagBandString(S.BandHits), *RwgTraceDiagBandString(S.BandMisses),
+            S.CtrlLines, GRwgMissRecords.Num(), RwgTraceDiagMissRecordBound, GRwgMissEvicted, GRwgMissXYChanged);
     }
     GRwgTraceDiag = FRwgTraceDiagPass();
 }
