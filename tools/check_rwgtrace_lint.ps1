@@ -33,7 +33,7 @@
 #       recorded before the RWGTRACEMISS schedule return; the record map is bounded with evict-oldest and cleared on a pass-number restart.
 #   W1  The old spawn-on-discovery Verbose line states its predicate, at the same level and gate; the old cause text is gone.
 #   T13 Dated rwg-trace-diag-2 TODO above every new UE_LOG and both new constants.
-#   V5  Marker rwg-trace-diag-2 present once; rwg-trace-diag-1, rwg-0-1-12-2 and the older markers absent (same block as check_rwg019_lint.ps1); no marker string in the diag files.
+#   V5  Marker rwg-layout-dump-1 present once; rwg-trace-diag-2, rwg-trace-diag-1, rwg-0-1-12-2 and the older markers absent (same block as check_rwg019_lint.ps1); no marker string in the diag files.
 # Mutants run in-file. Exit 0 = all hold; 1 = at least one does not; 2 = a pinned FILE is missing.
 param([string]$PrintHashesAt = '')
 
@@ -248,7 +248,7 @@ function Invoke-TraceChecks($T) {
     foreach ($nb in @("$todo2`n        UE_LOG(LogNodeShuffle, Display, TEXT(`"HERE-NEAREST-UNSPAWNED: no player pawn", "$todo2`n        UE_LOG(LogNodeShuffle, Display,`n            TEXT(`"HERE-NEAREST-UNSPAWNED: entry=", "$todo2`n        UE_LOG(LogNodeShuffle, Display,`n            TEXT(`"HERE-NEAREST-UNSPAWNED: none within", "$todo2`n    UE_LOG(LogNodeShuffle, Display,`n        TEXT(`"HERE-UNSPAWNED-BANDS: ")) { if ((Count $T.here $nb) -ne 1) { $f += "(T13) dated rwg-trace-diag-2 TODO missing above: $($nb.Substring($todo2.Length).Trim().Substring(0, 24))" } }
     # V5
     if ($T.here.Contains('LOADED' + ' (')) { $f += '(V5) no build-marker string in the new HERE file' }
-    if ((Count $T.nsmod ('LOADED (2026-10-28-rwg-' + 'trace-diag-2)')) -ne 1 -or (Count $T.nsmod ('2026-10-27-rwg-' + 'trace-diag-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-26-rwg-' + '0-1-12-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-26-rwg-' + '0-1-12-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'deal-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'density-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'rockcache-2')) -ne 0 -or (Count $T.nsmod ('2026-10-18-rwg-' + 'p4c-2')) -ne 0) { $f += '(V5) marker must be rwg-0-1-12-1 with rwg-steep-2 and the earlier markers absent' }
+    if ((Count $T.nsmod ('LOADED (2026-10-29-rwg-' + 'layout-dump-1)')) -ne 1 -or (Count $T.nsmod ('2026-10-28-rwg-' + 'trace-diag-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-27-rwg-' + 'trace-diag-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-26-rwg-' + '0-1-12-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-26-rwg-' + '0-1-12-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'deal-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'density-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'rockcache-2')) -ne 0 -or (Count $T.nsmod ('2026-10-18-rwg-' + 'p4c-2')) -ne 0) { $f += '(V5) marker must be rwg-0-1-12-1 with rwg-steep-2 and the earlier markers absent' }
     if ($T.diag.Contains('LOADED' + ' (') -or $T.diagh.Contains('LOADED' + ' (')) { $f += '(V5) no build-marker string in the diag files' }
     return $f
 }
@@ -265,7 +265,7 @@ $mutants = @(
     @{ Name = 'M8 deferral counter dropped'; Key = 'sub'; Expect = 'D4'; Find = "            DeferredThisPass++;`n"; Repl = '' }
     @{ Name = 'M9 stuck tracker no longer resets on a move'; Key = 'dens'; Expect = 'D5'; Find = '{ T.Key = 0; } else { ++T.Key; }'; Repl = '{ ++T.Key; } else { ++T.Key; }' }
     @{ Name = 'M10 schedule loses 48'; Key = 'diag'; Expect = 'T1'; Find = '{ 1, 12, 48 };'; Repl = '{ 1, 12 };' }
-    @{ Name = 'M11 marker reverted'; Key = 'nsmod'; Expect = 'V5'; Find = ('2026-10-28-rwg-' + 'trace-diag-2'); Repl = ('2026-10-27-rwg-' + 'trace-diag-1') }
+    @{ Name = 'M11 marker reverted'; Key = 'nsmod'; Expect = 'V5'; Find = ('2026-10-29-rwg-' + 'layout-dump-1'); Repl = ('2026-10-28-rwg-' + 'trace-diag-2') }
     @{ Name = 'M12 miss line raised to Warning'; Key = 'diag'; Expect = 'T2'; Find = "UE_LOG(LogNodeShuffle, Display,`n        TEXT(`"RWGTRACEMISS: "; Repl = "UE_LOG(LogNodeShuffle, Warning,`n        TEXT(`"RWGTRACEMISS: " }
     @{ Name = 'M13 census repeats a field'; Key = 'diag'; Expect = 'T3'; Find = 'missRecordsXYChanged=%d"'; Repl = 'missRecordsXYChanged=%d attempted=%d"' }
     @{ Name = 'M14 miss line drops an argument'; Key = 'diag'; Expect = 'T3'; Find = 'Ch.PrimsWithBody, Ch.Ms, KillboxTopZ);'; Repl = 'Ch.PrimsWithBody, KillboxTopZ);' }
