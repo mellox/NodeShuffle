@@ -11,6 +11,7 @@ DerivedDataCache/
 *.sln
 build_nodeshuffle.log
 *.log
+!tools/fixtures/*.log
 graphify-out/
 .claude-flow/
 .ruflo/

@@ -93,18 +93,23 @@ void ANodeShuffleSubsystem::DumpLayout()
 
     const NodeShuffleMapMode::FRwgGroundQuery Q(GetWorld(), RwgGenerator.Get());
     const bool bApi = Q.IsUsable();
+    // The grid reads RwgRejectV3, whose sea / void / killbox graders run, defer (5 s window) or spend a killbox try on their FIRST
+    // call of a session. Sample only once all three have finished, so here they return latched verdicts and the dump never grades.
+    const bool bGradesDone = bRwgSeaCheckDone && bRwgVoidCheckDone && bRwgKillboxDone;
+    const bool bGrid = bApi && bGradesDone;
     const double H = bApi ? Q.HalfExtent() : 0.0;
-    const int32 Cols = bApi ? FMath::CeilToInt32((2.0 * H) / LayoutDumpCellCm) : 0;
+    const int32 Cols = bGrid ? FMath::CeilToInt32((2.0 * H) / LayoutDumpCellCm) : 0;
     const int32 Rows = Cols;
     const int32 GridExpected = Cols * Rows;
 
-    UE_LOG(LogNodeShuffle, Display, TEXT("LAYOUTDUMP-BEGIN: dumpId=%d map=rwg seed=%d layoutEntries=%d surface=%d cave=%d inactive=%d notNew=%d wellCores=%d satellites=%d originals=%d gridCells=%d gridCols=%d gridRows=%d cellCm=%.0f samplesPerCell=%d halfExtentCm=%.0f apiUsable=%d"),
-        DumpId, SavedSeed, Layout.Num(), NSurface, NCave, NInactive, NNotNew, WellLayout.Num(), NSatellites, OriginalNodeRecord.Num(), GridExpected, Cols, Rows, LayoutDumpCellCm, LayoutDumpSubSample * LayoutDumpSubSample, H, bApi ? 1 : 0);
+    UE_LOG(LogNodeShuffle, Display, TEXT("LAYOUTDUMP-BEGIN: dumpId=%d map=rwg seed=%d layoutEntries=%d surface=%d cave=%d inactive=%d notNew=%d wellCores=%d satellites=%d originals=%d gridCells=%d gridCols=%d gridRows=%d cellCm=%.0f samplesPerCell=%d halfExtentCm=%.0f apiUsable=%d gradesDone=%d"),
+        DumpId, SavedSeed, Layout.Num(), NSurface, NCave, NInactive, NNotNew, WellLayout.Num(), NSatellites, OriginalNodeRecord.Num(), GridExpected, Cols, Rows, LayoutDumpCellCm, LayoutDumpSubSample * LayoutDumpSubSample, H, bApi ? 1 : 0, bGradesDone ? 1 : 0);
     UE_LOG(LogNodeShuffle, Display, TEXT("LAYOUTDUMP-LEGEND: Positions are world centimetres. Entry lines give each layout entry's CURRENT saved location, after any redeal or resettle, not the spot first rolled; inactive entries are never spawned and are not dealt spots; notNew counts entries that are original level nodes, not dealt by the mod."));
     UE_LOG(LogNodeShuffle, Display, TEXT("LAYOUTDUMP-LEGEND: Purity is the enum integer (0 impure, 1 normal, 2 pure, 3 unset); live means a spawned actor for the entry is valid in this session right now; rayCasted means the entry was settled by a trace at some earlier time."));
     UE_LOG(LogNodeShuffle, Display, TEXT("LAYOUTDUMP-LEGEND: Well lines come from the separate well layout; their position source names which saved location was printed (placed core, dealt destination, RWG claim, vanilla core, or none). Original lines print the record's true location when set, else its recorded location, and the purity of the layout entry sharing its level path or minus one when no entry matches."));
     UE_LOG(LogNodeShuffle, Display, TEXT("LAYOUTDUMP-LEGEND: Grid lines cover the API deal square in 1000 m cells from its minimum corner; edge cells may extend past it. Each cell samples a centred lattice through the height API only: land counts samples passing the RWG reject predicate at the API surface, dealable counts samples passing the dealer's whole land chain (outside, reject predicate, slope). Spacing and the cave quota are not part of dealable."));
-    UE_LOG(LogNodeShuffle, Display, TEXT("LAYOUTDUMP-LEGEND: The end line repeats every count beside what the begin line announced; countsMatch is one only when all of them agree. The dump runs in a single frame and prints roughly one to three thousand lines."));
+    UE_LOG(LogNodeShuffle, Display, TEXT("LAYOUTDUMP-LEGEND: The end line repeats every count beside what the begin line announced; countsMatch is one only when all of them agree. The dump runs in a single frame; its line count is the sum of the begin line's counts."));
+    UE_LOG(LogNodeShuffle, Display, TEXT("LAYOUTDUMP-LEGEND: Grid lines print only when this session's sea, void and killbox checks have all finished; otherwise the grid count is zero. Latch masks add 1 sea usable, 2 void usable, 4 killbox known, 8 sea checked, 16 void checked, 32 killbox checked."));
 
     // ---- entries ----
     int32 EntriesPrinted = 0;
@@ -113,9 +118,9 @@ void ANodeShuffleSubsystem::DumpLayout()
         const FNodeShuffleEntry& E = Layout[I];
         AFGResourceNode* const* Live = SpawnedNodes.Find(E.EntryGuid);
         const bool bLive = Live && IsValid(*Live);
-        UE_LOG(LogNodeShuffle, Display, TEXT("LAYOUTDUMP-E: i=%d guid=%s res=%s purity=%d x=%.0f y=%.0f z=%.0f cave=%d rayCasted=%d live=%d active=%d newNode=%d"),
+        UE_LOG(LogNodeShuffle, Display, TEXT("LAYOUTDUMP-E: i=%d guid=%s res=%s purity=%d x=%.0f y=%.0f z=%.0f cave=%d rayCasted=%d live=%d active=%d newNode=%d pinned=%d"),
             I, *E.EntryGuid.ToString().Left(8), *LayoutDumpShortName(E.AssignedResourceClassPath), static_cast<int32>(E.AssignedPurity.GetValue()),
-            E.Location.X, E.Location.Y, E.Location.Z, E.bRwgCave ? 1 : 0, E.bRayCasted ? 1 : 0, bLive ? 1 : 0, E.bActive ? 1 : 0, E.bIsNewNode ? 1 : 0);
+            E.Location.X, E.Location.Y, E.Location.Z, E.bRwgCave ? 1 : 0, E.bRayCasted ? 1 : 0, bLive ? 1 : 0, E.bActive ? 1 : 0, E.bIsNewNode ? 1 : 0, E.bPinned ? 1 : 0);
         ++EntriesPrinted;
     }
 
@@ -156,10 +161,10 @@ void ANodeShuffleSubsystem::DumpLayout()
     }
 
     // ---- grid (height API only; no traces) ----
-    const int32 LatchMaskBefore = (bRwgSeaUsable ? 1 : 0) | (bRwgVoidUsable ? 2 : 0) | (bRwgKillboxKnown ? 4 : 0);
+    const int32 LatchMaskBefore = (bRwgSeaUsable ? 1 : 0) | (bRwgVoidUsable ? 2 : 0) | (bRwgKillboxKnown ? 4 : 0) | (bRwgSeaCheckDone ? 8 : 0) | (bRwgVoidCheckDone ? 16 : 0) | (bRwgKillboxDone ? 32 : 0);
     int32 GridPrinted = 0, DealableNotLand = 0;
     const double TG = FPlatformTime::Seconds();
-    if (bApi)
+    if (bGrid)
     {
         if (RwgWaterVolumes.Num() == 0) { RwgBuildWaterVolumeCache(); } // same cache build as RwgEmitDensityCensus
         constexpr int32 S = LayoutDumpSubSample;
@@ -189,7 +194,7 @@ void ANodeShuffleSubsystem::DumpLayout()
         }
     }
     const double GridMs = (FPlatformTime::Seconds() - TG) * 1000.0;
-    const int32 LatchMaskAfter = (bRwgSeaUsable ? 1 : 0) | (bRwgVoidUsable ? 2 : 0) | (bRwgKillboxKnown ? 4 : 0);
+    const int32 LatchMaskAfter = (bRwgSeaUsable ? 1 : 0) | (bRwgVoidUsable ? 2 : 0) | (bRwgKillboxKnown ? 4 : 0) | (bRwgSeaCheckDone ? 8 : 0) | (bRwgVoidCheckDone ? 16 : 0) | (bRwgKillboxDone ? 32 : 0);
 
     const bool bMatch = EntriesPrinted == Layout.Num() && WellsPrinted == WellLayout.Num() && OriginalsPrinted == OriginalNodeRecord.Num() && GridPrinted == GridExpected;
     UE_LOG(LogNodeShuffle, Display, TEXT("LAYOUTDUMP-END: dumpId=%d entriesPrinted=%d entriesExpected=%d wellsPrinted=%d wellsExpected=%d originalsPrinted=%d originalsExpected=%d originalsPurityKnown=%d gridCellsPrinted=%d gridCellsExpected=%d countsMatch=%d dealableNotLand=%d latchMaskBefore=%d latchMaskAfter=%d gridMs=%.0f elapsedMs=%.0f"),

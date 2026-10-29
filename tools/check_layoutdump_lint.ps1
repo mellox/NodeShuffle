@@ -13,6 +13,10 @@
 #   L7  Dated TODO at the registration and at the header declaration.
 #   L8  Registration lives in the dump file only (NodeShuffle.cpp untouched); the RWG early return precedes the first Layout read.
 #   L9  Dealable fraction comes from the shared helper (RwgDensityLandSample); the slope test is never restated in the dump file.
+#   L10 (review F2) The grid is gated on all three grader Done flags: the AND expression, bGrid built from it, the grid loop and
+#       Cols keyed on bGrid (never on bApi alone), BEGIN prints gradesDone, and both latch masks carry the Done bits 8/16/32.
+#   L11 Fixture mirrors source CHARACTER FOR CHARACTER: every fixture line of a class matches its C++ format with each printf spec
+#       read as one non-space token, and the fixture's LEGEND lines equal the C++ legend literals in order.
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $files = [ordered]@{
@@ -93,9 +97,12 @@ function Invoke-LayoutDumpChecks($T, [bool]$RunPy) {
         $fls = [regex]::Matches($T.fx, '(?m)^\[[^\]]*\]\[\s*\d+\]LogNodeShuffle: Display: LAYOUTDUMP-' + $c + ': ([^\n]*)$')
         if (($cf -join ',') -ne ($pf -join ',')) { $f += "(L4) LAYOUTDUMP-${c}: C++ fields [$($cf -join ',')] != .py FIELDS [$($pf -join ',')]" }
         if ($fls.Count -lt 1) { $f += "(L4) LAYOUTDUMP-${c}: no fixture line" }
+        $lit = @([regex]::Split($fmt, '%[-+ #0]*\d*(?:\.\d+)?[dsfiu]') | ForEach-Object { [regex]::Escape($_) })
+        $rxFmt = '^' + ($lit -join '\S+') + '$'
         foreach ($fl in $fls) {
             $ff = Fmt-Fields $fl.Groups[1].Value
             if (($cf -join ',') -ne ($ff -join ',')) { $f += "(L4) LAYOUTDUMP-${c}: C++ fields [$($cf -join ',')] != fixture fields [$($ff -join ',')]" }
+            if ($fl.Groups[1].Value -notmatch $rxFmt) { $f += "(L11) LAYOUTDUMP-${c}: a fixture line does not match the C++ format character for character" }
         }
     }
     # L5
@@ -126,6 +133,20 @@ function Invoke-LayoutDumpChecks($T, [bool]$RunPy) {
     # L9
     if ((Count $D 'const bool bDeal = RwgDensityLandSample(Q, X, Y);') -ne 1) { $f += '(L9) dealable must come from RwgDensityLandSample' }
     if ((Count $D ('RwgApiSlope' + 'TooSteep(')) -ne 0) { $f += '(L9) the slope test must not be restated in the dump file' }
+    # L10 (needles concatenated so this file cannot satisfy them)
+    $gate = 'const bool bGradesDone = bRwgSeaCheckDone' + ' && bRwgVoidCheckDone' + ' && bRwgKillboxDone;'
+    if ((Count $D $gate) -ne 1) { $f += '(L10) bGradesDone must AND all three grader Done flags' }
+    if ((Count $D ('const bool bGrid = bApi' + ' && bGradesDone;')) -ne 1) { $f += '(L10) bGrid must be bApi AND bGradesDone' }
+    if ((Count $D ('if (b' + 'Grid)')) -ne 1 -or (Count $D ('if (b' + 'Api)')) -ne 0) { $f += '(L10) the grid loop must be gated on bGrid, never on bApi alone' }
+    if ((Count $D ('const int32 Cols = b' + 'Grid ? ')) -ne 1) { $f += '(L10) Cols (and so gridCells) must be zero unless bGrid' }
+    if ((Count $D (' gradesDone=%d"),')) -ne 1 -or (Count $D ('H, bApi ? 1 : 0, b' + 'GradesDone ? 1 : 0);')) -ne 1) { $f += '(L10) BEGIN must print gradesDone from bGradesDone' }
+    $done = ' | (bRwgSeaCheckDone ? 8 : 0) | (bRwgVoidCheckDone ? 16 : 0) | (bRwgKillboxDone ? 32 : 0);'
+    if ((Count $D ('const int32 LatchMaskBefore = (bRwgSeaUsable ? 1 : 0) | (bRwgVoidUsable ? 2 : 0) | (bRwgKillboxKnown ? 4 : 0)' + $done)) -ne 1 -or
+        (Count $D ('const int32 LatchMaskAfter = (bRwgSeaUsable ? 1 : 0) | (bRwgVoidUsable ? 2 : 0) | (bRwgKillboxKnown ? 4 : 0)' + $done)) -ne 1) { $f += '(L10) both latch masks must carry the Done bits 8/16/32' }
+    # L11 legend mirror
+    $cl = @([regex]::Matches($D, 'TEXT\("LAYOUTDUMP-LEGEND: ([^"]*)"\)') | ForEach-Object { $_.Groups[1].Value })
+    $fxl = @([regex]::Matches($T.fx, '(?m)^\[[^\]]*\]\[\s*\d+\]LogNodeShuffle: Display: LAYOUTDUMP-LEGEND: ([^\n]*)$') | ForEach-Object { $_.Groups[1].Value })
+    if (($cl -join "`n") -ne ($fxl -join "`n")) { $f += "(L11) fixture LEGEND lines ($($fxl.Count)) differ from the C++ legend literals ($($cl.Count))" }
     return $f
 }
 
@@ -144,6 +165,20 @@ $mutants = @(
     @{ Name = 'M11 command also registered in NodeShuffle.cpp'; Key = 'nsmod'; Expect = 'L8'; Find = 'LOADED ('; Repl = 'DumpLayout LOADED (' }
     @{ Name = 'M12 slope restated'; Key = 'dump'; Expect = 'L9'; Find = 'const bool bDeal = RwgDensityLandSample(Q, X, Y);'; Repl = ('double RR = 0.0; const bool bDeal = bLand && !RwgApiSlope' + 'TooSteep(Q, X, Y, RR);') }
     @{ Name = 'M13 fixture stays parseable but .py FIELDS lose BEGIN order'; Key = 'py'; Expect = 'L4'; Find = "'dumpId', 'map', 'seed'"; Repl = "'dumpId', 'seed', 'map'" }
+    # Review fixes (F2/F3/F6) -- anchored on context unique to the E / BEGIN line (W also prints a pinned field).
+    @{ Name = 'M14 E format drops pinned'; Key = 'dump'; Expect = 'L4'; Find = 'newNode=%d pinned=%d"'; Repl = 'newNode=%d"' }
+    @{ Name = 'M15 BEGIN format drops gradesDone'; Key = 'dump'; Expect = 'L4'; Find = 'apiUsable=%d gradesDone=%d"'; Repl = 'apiUsable=%d"' }
+    @{ Name = 'M16 grid gate reduced to bApi'; Key = 'dump'; Expect = 'L10'; Find = ('const bool bGrid = bApi' + ' && bGradesDone;'); Repl = 'const bool bGrid = bApi;' }
+    @{ Name = 'M17 grader AND loses the killbox term'; Key = 'dump'; Expect = 'L10'; Find = (' && bRwgVoidCheckDone' + ' && bRwgKillboxDone;'); Repl = ' && bRwgVoidCheckDone;' }
+    @{ Name = 'M18 grid loop keyed on bApi again'; Key = 'dump'; Expect = 'L10'; Find = ('if (b' + 'Grid)'); Repl = ('if (b' + 'Api)') }
+    @{ Name = 'M19 latch masks lose the Done bits'; Key = 'dump'; Expect = 'L10'; Find = ' | (bRwgKillboxDone ? 32 : 0);'; Repl = ';' }
+    @{ Name = 'M20 fixture E line drifts from the format (extra literal)'; Key = 'fx'; Expect = 'L11'; Find = 'LAYOUTDUMP-E: i=0 guid='; Repl = 'LAYOUTDUMP-E: i=0 entry guid=' }
+    @{ Name = 'M21 fixture legend drifts from source'; Key = 'fx'; Expect = 'L11'; Find = 'its line count is the sum'; Repl = 'it prints roughly the sum' }
+    @{ Name = 'M22 .py drops the pinned filter from originals-all'; Key = 'py'; Expect = 'L5'; Find = "[(e['x'], e['y']) for e in E if not e['newNode'] and e['pinned']]"; Repl = "[(e['x'], e['y']) for e in E if not e['newNode']]" }
+    @{ Name = 'M22b .py drops the pinned filter from player-findable'; Key = 'py'; Expect = 'L5'; Find = "or (not e['newNode'] and e['pinned'])]"; Repl = "or (not e['newNode'])]" }
+    @{ Name = 'M23 fixture latch mask changes across the grid'; Key = 'fx'; Expect = 'L5'; Find = 'latchMaskAfter=63 '; Repl = 'latchMaskAfter=3 ' }
+    @{ Name = 'M24 fixture dealableNotLand nonzero'; Key = 'fx'; Expect = 'L5'; Find = 'dealableNotLand=0 '; Repl = 'dealableNotLand=2 ' }
+    @{ Name = 'M25 fixture BEGIN says the graders were not done'; Key = 'fx'; Expect = 'L5'; Find = ' apiUsable=1 gradesDone=1'; Repl = ' apiUsable=1 gradesDone=0' }
 )
 $mutantFails = @()
 $caught = 0
@@ -162,5 +197,5 @@ if ($all.Count -gt 0) {
     Write-Host "LAYOUTDUMP LINT: FAIL -- $($all.Count) problem(s). Mutants caught $caught/$($mutants.Count)."
     exit 1
 }
-Write-Host "PASS: LAYOUTDUMP lint -- L1..L9 hold across $($text.Count) loaded files; mutants caught $caught/$($mutants.Count)."
+Write-Host "PASS: LAYOUTDUMP lint -- L1..L11 hold across $($text.Count) loaded files; mutants caught $caught/$($mutants.Count)."
 exit 0

@@ -11,7 +11,9 @@ It parses ONLY the chosen complete block (default: the last one), and exits nonz
 It never prints a statistic on an empty population.
 
 Populations (separately): dealt-surface, dealt-cave, dealt-all (active new layout entries), originals (hidden original
-records, the vanilla reference) and well cores. Distances are 2-D (XY) only.
+records only), originals-all (hidden records + pinned originals left in place), well cores, and player-findable (dealt-all +
+pinned originals + well cores). dealt-cave and player-findable get no verdict: they are not dealt from the dealable-land null.
+Distances are 2-D (XY) only.
 
   python -I tools/layout_spacing.py --log <FactoryGame.log> --out <report.md> [--block 1] [--at X,Y ...]
   python -I tools/layout_spacing.py --selftest
@@ -28,8 +30,8 @@ import sys
 # Field order per line class. tools/check_layoutdump_lint.ps1 pins this tuple against the C++ format strings AND the fixture.
 FIELDS = {
     'BEGIN': ('dumpId', 'map', 'seed', 'layoutEntries', 'surface', 'cave', 'inactive', 'notNew', 'wellCores', 'satellites',
-              'originals', 'gridCells', 'gridCols', 'gridRows', 'cellCm', 'samplesPerCell', 'halfExtentCm', 'apiUsable'),
-    'E': ('i', 'guid', 'res', 'purity', 'x', 'y', 'z', 'cave', 'rayCasted', 'live', 'active', 'newNode'),
+              'originals', 'gridCells', 'gridCols', 'gridRows', 'cellCm', 'samplesPerCell', 'halfExtentCm', 'apiUsable', 'gradesDone'),
+    'E': ('i', 'guid', 'res', 'purity', 'x', 'y', 'z', 'cave', 'rayCasted', 'live', 'active', 'newNode', 'pinned'),
     'W': ('i', 'guid', 'res', 'x', 'y', 'z', 'src', 'satellites', 'placed', 'managed', 'pinned'),
     'O': ('i', 'res', 'purity', 'x', 'y', 'z', 'trueSet', 'modded'),
     'G': ('cx', 'cy', 'xMinCm', 'yMinCm', 'samples', 'land', 'dealable', 'landFrac', 'dealableFrac'),
@@ -112,6 +114,13 @@ def validate(b: dict) -> None:
         raise DumpError('count mismatch (begin, endExpected, endPrinted, parsed): ' + '; '.join(f'{c[0]}={c[1:]}' for c in bad))
     if X['countsMatch'] != 1:
         raise DumpError('END countsMatch is not 1')
+    if B['apiUsable'] != 1 or B['gradesDone'] != 1:
+        raise DumpError(f'BEGIN apiUsable {B["apiUsable"]}, gradesDone {B["gradesDone"]}: the grid was not sampled (gridCells {B["gridCells"]}), '
+                        f'so there is no dealable area to test against; dump again once gradesDone is 1')
+    if X['dealableNotLand'] != 0:
+        raise DumpError(f'END dealableNotLand is {X["dealableNotLand"]}, not 0: samples passed the dealable chain but failed the land reading')
+    if X['latchMaskBefore'] != X['latchMaskAfter']:
+        raise DumpError(f'END latch mask changed across the grid ({X["latchMaskBefore"]} -> {X["latchMaskAfter"]}): refusing a grid read under two predicate states')
     if B['surface'] + B['cave'] + B['inactive'] + B['notNew'] != B['layoutEntries']:
         raise DumpError('BEGIN class counts do not sum to layoutEntries')
     E = b['E']
@@ -221,24 +230,26 @@ def disk_count(h, bucket, x, y, r=DISK_R_CM):
     return n
 
 
-def analyse(name, pts, grid: Grid, at, draws=1000, nn_draws=200, seed=20261029):
+def analyse(name, pts, grid: Grid, at, draws=1000, nn_draws=200, seed=20261029, verdict_ok=True):
     """Return (markdown lines, verdict or None). None = population too small for any statistic."""
     md = [f'### {name}', '']
     n = len(pts)
     if n < 2:
         md += [f'Population has {n} point(s): no statistic computed.', '']
         return md, None
-    inside = [p for p in pts if grid.key_of(*p) is not None]
     counts = {}
-    for p in inside:
+    for p in pts:
         k = grid.key_of(*p)
-        counts[k] = counts.get(k, 0) + 1
-    n_in = len(inside)
+        if k is not None:
+            counts[k] = counts.get(k, 0) + 1
+    n_grid = sum(counts.values())
+    n_zero = sum(v for k, v in counts.items() if grid.cells[k][2] <= 0.0)
+    n_in = n_grid - n_zero  # the points the null redistributes: only cells with dealableFrac > 0 can receive a null point
     d = nn_dists(pts)
     mean_nn = sum(d) / len(d)
     lam = n / grid.area_cm2
     r_ce = mean_nn / (0.5 / math.sqrt(lam))
-    md += [f'N={n} (inside grid {n_in}, outside {n - n_in}); dealable area {grid.area_cm2 / 1e10:.1f} km2 '
+    md += [f'N={n} (in cells with dealableFrac>0 {n_in}, in cells with dealableFrac 0 {n_zero}, outside the grid {n - n_grid}); dealable area {grid.area_cm2 / 1e10:.1f} km2 '
            f'(sum of cell dealableFrac x cell area); density {lam * 1e10:.2f} per km2.', '',
            '| nearest-neighbour (m) | p10 | p50 | p90 | mean |', '|---|---|---|---|---|',
            f'| observed | {quant(d, .1) / 100:.0f} | {quant(d, .5) / 100:.0f} | {quant(d, .9) / 100:.0f} | {mean_nn / 100:.0f} |', '',
@@ -249,11 +260,15 @@ def analyse(name, pts, grid: Grid, at, draws=1000, nn_draws=200, seed=20261029):
     disp, below = cell_stats(grid, counts, n_in)
     rng = random.Random(seed)
     nd, nb = [], []
+    r2 = DISK_R_CM * DISK_R_CM
+    at_null = [[] for _ in at]  # per --at spot: the null's 1 km count at THAT spot, so its own dealable area sets the expectation
     for _ in range(draws):
-        _, c = draw_null(grid, n_in, rng)
+        p, c = draw_null(grid, n_in, rng)
         a, b = cell_stats(grid, c, n_in)
         nd.append(a)
         nb.append(b)
+        for si, (sx, sy) in enumerate(at):
+            at_null[si].append(sum(1 for (px, py) in p if (px - sx) ** 2 + (py - sy) ** 2 < r2))
     nn_null = []
     for _ in range(nn_draws):
         p, _ = draw_null(grid, n_in, rng)
@@ -261,6 +276,8 @@ def analyse(name, pts, grid: Grid, at, draws=1000, nn_draws=200, seed=20261029):
         nn_null.append(sum(dd) / len(dd))
     pd, pb, pn = pct_rank(nd, disp), pct_rank(nb, below), pct_rank(nn_null, mean_nn)
     verdict = 'CLUMPED (over-dispersed vs null)' if pd >= 95.0 else ('MORE REGULAR than null' if pd <= 5.0 else 'CONSISTENT WITH CHANCE')
+    if not verdict_ok:
+        verdict = 'NONE (this population is not dealt from the dealable-land null; read the rows as descriptive only)'
     md += [f'Null: {draws} draws (cell tests) and {nn_draws} draws (NN mean) of {n_in} points; cells chosen with probability '
            f'proportional to dealableFrac, uniform inside the cell; seed {seed}.', '',
            '| statistic | observed | null p5 | null p50 | null p95 | observed percentile |', '|---|---|---|---|---|---|',
@@ -281,25 +298,36 @@ def analyse(name, pts, grid: Grid, at, draws=1000, nn_draws=200, seed=20261029):
                 for j in range(s):
                     cc.append(disk_count(h, bucket, x0 + (i + .5) * CENTRE_STEP_CM, y0 + (j + .5) * CENTRE_STEP_CM))
         md += [f'1 km disks: {len(cc)} centres on a {CENTRE_STEP_CM / 100:.0f} m lattice over dealable cells; centre-count p10/p50/p90 = '
-               f'{quant(cc, .1):.0f}/{quant(cc, .5):.0f}/{quant(cc, .9):.0f}.', '', '| position (cm) | 1 km count | percentile among centres |', '|---|---|---|']
-        for (x, y) in at:
+               f'{quant(cc, .1):.0f}/{quant(cc, .5):.0f}/{quant(cc, .9):.0f}. The centres column is unconditional (a spot on thin dealable land '
+               f'ranks low by construction); the null columns hold the dealable area around that spot fixed (resolution: 1000 m cells, uniform inside).', '',
+               '| position (cm) | 1 km count | percentile among centres | null p5/p50/p95 at this spot | percentile vs null at this spot |',
+               '|---|---|---|---|---|']
+        for si, (x, y) in enumerate(at):
             c = disk_count(h, bucket, x, y)
-            md.append(f'| {x:.0f},{y:.0f} | {c} | {pct_rank(cc, c):.1f} |')
+            z = at_null[si]
+            md.append(f'| {x:.0f},{y:.0f} | {c} | {pct_rank(cc, c):.1f} | {quant(z, .05):.0f}/{quant(z, .5):.0f}/{quant(z, .95):.0f} | {pct_rank(z, c):.1f} |')
         md.append('')
     return md, verdict
+
+
+def populations(b: dict) -> list:
+    """(name, points, verdict_ok) per population. Shared by report() and selftest() so the selftest counts the real filters."""
+    E = b['E']
+    return [
+        ('dealt-surface (active new entries, not cave)', [(e['x'], e['y']) for e in E if e['newNode'] and e['active'] and not e['cave']], True),
+        ('dealt-cave (active new cave entries; dealt from the cave-site list, not the dealable null)', [(e['x'], e['y']) for e in E if e['newNode'] and e['active'] and e['cave']], False),
+        ('dealt-all (active new entries)', [(e['x'], e['y']) for e in E if e['newNode'] and e['active']], True),
+        ('originals (hidden original records only; pinned originals left in place are not recorded)', [(o['x'], o['y']) for o in b['O']], True),
+        ('originals-all (hidden records + pinned originals in place)', [(o['x'], o['y']) for o in b['O']] + [(e['x'], e['y']) for e in E if not e['newNode'] and e['pinned']], True),
+        ('well cores (with a printed position)', [(w['x'], w['y']) for w in b['W'] if w['src'] != 'none'], True),
+        ('player-findable (dealt-all + pinned originals + well cores)', [(e['x'], e['y']) for e in E if (e['newNode'] and e['active']) or (not e['newNode'] and e['pinned'])] + [(w['x'], w['y']) for w in b['W'] if w['src'] != 'none'], False),
+    ]
 
 
 def report(b: dict, at, draws, nn_draws) -> str:
     B, X = b['begin'], b['end']
     grid = Grid(b['G'], B['cellCm'])
-    E = b['E']
-    pops = [
-        ('dealt-surface (active new entries, not cave)', [(e['x'], e['y']) for e in E if e['newNode'] and e['active'] and not e['cave']]),
-        ('dealt-cave (active new cave entries)', [(e['x'], e['y']) for e in E if e['newNode'] and e['active'] and e['cave']]),
-        ('dealt-all (active new entries)', [(e['x'], e['y']) for e in E if e['newNode'] and e['active']]),
-        ('originals (hidden original records, vanilla reference)', [(o['x'], o['y']) for o in b['O']]),
-        ('well cores (with a printed position)', [(w['x'], w['y']) for w in b['W'] if w['src'] != 'none']),
-    ]
+    pops = populations(b)
     md = [f'# LAYOUTDUMP spacing report (dumpId {B["dumpId"]}, seed {B["seed"]})', '',
           f'Layout {B["layoutEntries"]} = surface {B["surface"]} + cave {B["cave"]} + inactive {B["inactive"]} + notNew {B["notNew"]}; '
           f'well cores {B["wellCores"]} (satellites {B["satellites"]}); originals {B["originals"]}; grid {B["gridCols"]}x{B["gridRows"]} '
@@ -308,8 +336,8 @@ def report(b: dict, at, draws, nn_draws) -> str:
           'Read the verdict row per population: an index-of-dispersion percentile at or above 95 against the dealable-weighted null says '
           'the layout is clumpier than chance; between 5 and 95 says the sparse spots are what chance gives. Positions are each entry\'s '
           'CURRENT saved location (after redeals), not the roll-time spot.', '']
-    for name, pts in pops:
-        lines, _ = analyse(name, pts, grid, at, draws, nn_draws)
+    for name, pts, verdict_ok in pops:
+        lines, _ = analyse(name, pts, grid, at, draws, nn_draws, verdict_ok=verdict_ok)
         md += lines
     return '\n'.join(md) + '\n'
 
@@ -335,8 +363,14 @@ def selftest() -> int:
         bl = parse_blocks(text)
         validate(bl[-1])
         b = bl[-1]
-        if (len(b['E']), len(b['W']), len(b['O']), len(b['G'])) != (6, 1, 3, 4):
-            fails.append(f'fixture parsed {(len(b["E"]), len(b["W"]), len(b["O"]), len(b["G"]))} lines, expected (6, 1, 3, 4)')
+        if (len(b['E']), len(b['W']), len(b['O']), len(b['G'])) != (7, 1, 3, 4):
+            fails.append(f'fixture parsed {(len(b["E"]), len(b["W"]), len(b["O"]), len(b["G"]))} lines, expected (7, 1, 3, 4)')
+        # The pinned split: fixture i=5 is a pinned original (in place), i=6 a hidden unconverted one. Dropping the pinned
+        # filter from either population turns 4 into 5 and 6 into 7, so these counts discriminate it.
+        sizes = {name.split(' ')[0]: len(pts) for name, pts, _ in populations(b)}
+        want = {'dealt-surface': 3, 'dealt-cave': 1, 'dealt-all': 4, 'originals': 3, 'originals-all': 4, 'well': 1, 'player-findable': 6}
+        if sizes != want:
+            fails.append(f'fixture population sizes {sizes} != expected {want}')
     except DumpError as e:
         fails.append(f'fixture did not parse: {e}')
     try:
