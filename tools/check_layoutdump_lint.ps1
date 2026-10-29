@@ -173,7 +173,7 @@ $mutants = @(
     @{ Name = 'M18 grid loop keyed on bApi again'; Key = 'dump'; Expect = 'L10'; Find = ('if (b' + 'Grid)'); Repl = ('if (b' + 'Api)') }
     @{ Name = 'M19 latch masks lose the Done bits'; Key = 'dump'; Expect = 'L10'; Find = ' | (bRwgKillboxDone ? 32 : 0);'; Repl = ';' }
     @{ Name = 'M20 fixture E line drifts from the format (extra literal)'; Key = 'fx'; Expect = 'L11'; Find = 'LAYOUTDUMP-E: i=0 guid='; Repl = 'LAYOUTDUMP-E: i=0 entry guid=' }
-    @{ Name = 'M21 fixture legend drifts from source'; Key = 'fx'; Expect = 'L11'; Find = 'its line count is the sum'; Repl = 'it prints roughly the sum' }
+    @{ Name = 'M21 fixture legend drifts from source'; Key = 'fx'; Expect = 'L11'; Find = 'one line per layout entry'; Repl = 'one line per entry' }
     @{ Name = 'M22 .py drops the pinned filter from originals-all'; Key = 'py'; Expect = 'L5'; Find = "[(e['x'], e['y']) for e in E if not e['newNode'] and e['pinned']]"; Repl = "[(e['x'], e['y']) for e in E if not e['newNode']]" }
     @{ Name = 'M22b .py drops the pinned filter from player-findable'; Key = 'py'; Expect = 'L5'; Find = "or (not e['newNode'] and e['pinned'])]"; Repl = "or (not e['newNode'])]" }
     @{ Name = 'M23 fixture latch mask changes across the grid'; Key = 'fx'; Expect = 'L5'; Find = 'latchMaskAfter=63 '; Repl = 'latchMaskAfter=3 ' }

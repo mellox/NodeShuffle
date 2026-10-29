@@ -114,9 +114,13 @@ def validate(b: dict) -> None:
         raise DumpError('count mismatch (begin, endExpected, endPrinted, parsed): ' + '; '.join(f'{c[0]}={c[1:]}' for c in bad))
     if X['countsMatch'] != 1:
         raise DumpError('END countsMatch is not 1')
-    if B['apiUsable'] != 1 or B['gradesDone'] != 1:
-        raise DumpError(f'BEGIN apiUsable {B["apiUsable"]}, gradesDone {B["gradesDone"]}: the grid was not sampled (gridCells {B["gridCells"]}), '
-                        f'so there is no dealable area to test against; dump again once gradesDone is 1')
+    if B['apiUsable'] != 1:
+        raise DumpError(f'BEGIN apiUsable is {B["apiUsable"]}: the height API was not usable, so no grid was sampled (gridCells {B["gridCells"]}) '
+                        f'and there is no dealable area to test against')
+    if B['gradesDone'] != 1:
+        pending = [name for bit, name in ((8, 'sea'), (16, 'void'), (32, 'killbox')) if not X['latchMaskBefore'] & bit]
+        raise DumpError(f'BEGIN gradesDone is {B["gradesDone"]} (Done bit clear in latchMaskBefore {X["latchMaskBefore"]}: {", ".join(pending) or "none"}), '
+                        f'so no grid was sampled (gridCells {B["gridCells"]}); dump again later and check that gradesDone is 1')
     if X['dealableNotLand'] != 0:
         raise DumpError(f'END dealableNotLand is {X["dealableNotLand"]}, not 0: samples passed the dealable chain but failed the land reading')
     if X['latchMaskBefore'] != X['latchMaskAfter']:
@@ -320,19 +324,27 @@ def populations(b: dict) -> list:
         ('originals (hidden original records only; pinned originals left in place are not recorded)', [(o['x'], o['y']) for o in b['O']], True),
         ('originals-all (hidden records + pinned originals in place)', [(o['x'], o['y']) for o in b['O']] + [(e['x'], e['y']) for e in E if not e['newNode'] and e['pinned']], True),
         ('well cores (with a printed position)', [(w['x'], w['y']) for w in b['W'] if w['src'] != 'none'], True),
-        ('player-findable (dealt-all + pinned originals + well cores)', [(e['x'], e['y']) for e in E if (e['newNode'] and e['active']) or (not e['newNode'] and e['pinned'])] + [(w['x'], w['y']) for w in b['W'] if w['src'] != 'none'], False),
+        ('player-findable (layout view: dealt-all + pinned originals + well cores; satellites and uncaptured originals absent)', [(e['x'], e['y']) for e in E if (e['newNode'] and e['active']) or (not e['newNode'] and e['pinned'])] + [(w['x'], w['y']) for w in b['W'] if w['src'] != 'none'], False),
     ]
+
+
+def pinned_near_record(b: dict, r_cm: float = 300.0) -> int:
+    """Pinned originals (E newNode 0, pinned 1) within r_cm in XY of any O line. Each one may be the same node twice in originals-all."""
+    pins = [(e['x'], e['y']) for e in b['E'] if not e['newNode'] and e['pinned']]
+    return sum(1 for (px, py) in pins if any((o['x'] - px) ** 2 + (o['y'] - py) ** 2 < r_cm * r_cm for o in b['O']))
 
 
 def report(b: dict, at, draws, nn_draws) -> str:
     B, X = b['begin'], b['end']
     grid = Grid(b['G'], B['cellCm'])
     pops = populations(b)
+    overlap = pinned_near_record(b)
     md = [f'# LAYOUTDUMP spacing report (dumpId {B["dumpId"]}, seed {B["seed"]})', '',
           f'Layout {B["layoutEntries"]} = surface {B["surface"]} + cave {B["cave"]} + inactive {B["inactive"]} + notNew {B["notNew"]}; '
           f'well cores {B["wellCores"]} (satellites {B["satellites"]}); originals {B["originals"]}; grid {B["gridCols"]}x{B["gridRows"]} '
           f'cells of {B["cellCm"] / 100:.0f} m, {B["samplesPerCell"]} samples each; dealableNotLand {X["dealableNotLand"]}; '
           f'latch mask {X["latchMaskBefore"]} -> {X["latchMaskAfter"]}; gridMs {X["gridMs"]}, elapsedMs {X["elapsedMs"]}.', '',
+          f'Pinned originals within 3 m (XY) of an original record: {overlap} (each may be counted twice in originals-all).', '',
           'Read the verdict row per population: an index-of-dispersion percentile at or above 95 against the dealable-weighted null says '
           'the layout is clumpier than chance; between 5 and 95 says the sparse spots are what chance gives. Positions are each entry\'s '
           'CURRENT saved location (after redeals), not the roll-time spot.', '']
@@ -371,6 +383,22 @@ def selftest() -> int:
         want = {'dealt-surface': 3, 'dealt-cave': 1, 'dealt-all': 4, 'originals': 3, 'originals-all': 4, 'well': 1, 'player-findable': 6}
         if sizes != want:
             fails.append(f'fixture population sizes {sizes} != expected {want}')
+        if pinned_near_record(b) != 0:
+            fails.append('fixture pinned original sits within 3 m of an original record')
+        for mut, needle in ((dict(b['begin'], gradesDone=0), 'gradesDone'), (dict(b['begin'], apiUsable=0), 'apiUsable')):
+            try:
+                validate(dict(b, begin=mut))
+                fails.append(f'BEGIN {needle} 0 was accepted')
+            except DumpError as e:
+                if needle not in str(e):
+                    fails.append(f'BEGIN {needle} 0 refused for another reason: {e}')
+        for key, val in (('dealableNotLand', 2), ('latchMaskAfter', 3)):
+            try:
+                validate(dict(b, end=dict(b['end'], **{key: val})))
+                fails.append(f'END {key} {val} was accepted')
+            except DumpError as e:
+                if key not in str(e) and 'latch mask' not in str(e):
+                    fails.append(f'END {key} {val} refused for another reason: {e}')
     except DumpError as e:
         fails.append(f'fixture did not parse: {e}')
     try:
