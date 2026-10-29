@@ -32,15 +32,13 @@
 //   slash-separated counts in this order: below 250 m, 250 to 500 m, 500 to 750 m, 750 to 1000 m, 1000 m or more, and no pawn this pass.
 //   Each band includes its lower bound and excludes its upper one; the six counts sum to firstTraceHits (resp. firstTraceMisses).
 //   ctrlLines counts this pass's RWGTRACECTRL lines. missRecordsHeld is the number of entries with a recorded miss and no hit since,
-//   missRecordBound the most it keeps (the oldest record is evicted past it), missRecordsEvicted the evictions this session, and
+//   missRecordBound the most it keeps (past it, the record whose latest miss is oldest is evicted), missRecordsEvicted the evictions this session, and
 //   missRecordsXYChanged the records discarded this session because the entry's next first trace ran at a different XY.
 // RWGTRACECTRL legend: printed at the FIRST first-trace HIT of an entry whose miss record (see above) holds at least one first-trace miss at
 //   the same XY, rounded to whole centimetres; the record is then discarded, so each miss run yields at most one line. probesRun is 1 when
 //   the pass still had probe budget (the same 16-event budget as RWGTRACEMISS; notRun names and nan Z otherwise). The same two wide traces at
 //   that XY; firstHitKind / firstHitZ are that decision hit's RwgHitClassOf label and impact Z; down* / up* as on RWGTRACEMISS;
-//   upSameComponentAsDown is 1 when both traces hit the same component. priorMisses is the record's miss count, firstMissPass the pass of
-//   its first miss, thisPass the pass of this hit; playerDistAtFirstMiss and playerDistNow are the 2-D nearest-pawn distances in metres at
-//   that first miss and at this hit (nan with no pawn).
+//   upSameComponentAsDown is 1 when both traces hit the same component. priorMisses is the record's miss count, firstMissPass / lastMissPass the passes of its first and latest miss, thisPass the pass of this hit; playerDistAtFirstMiss, playerDistAtLastMiss and playerDistNow are the 2-D nearest-pawn distances in metres at that first miss, that latest miss and this hit (nan with no pawn).
 #include "NodeShuffleRwgTraceDiag.h"
 #include "NodeShuffle.h"
 #include "NodeShuffleMapMode.h"
@@ -78,7 +76,7 @@ namespace
     // Player-distance band slots of RWGTRACECENSUS: below 250 m, 250-500, 500-750, 750-1000, 1000 m or more, no pawn this pass.
     constexpr int32 RwgTraceDiagBandSlots = 6;
     // TODO(2026-10-28, rwg-trace-diag-2): diagnostic build only -- gate or remove before release.
-    // RWGTRACECTRL miss records: at most this many entries are held per process; past it the oldest record is evicted.
+    // RWGTRACECTRL miss records: at most this many entries are held per process; past it the record whose latest miss is oldest is evicted.
     constexpr int32 RwgTraceDiagMissRecordBound = 256;
 
     struct FRwgTraceDiagPass
@@ -98,9 +96,10 @@ namespace
     struct FRwgMissRecord
     {
         int64 Xcm = 0, Ycm = 0;           // the entry XY at the first recorded miss, rounded to whole cm
-        int32 FirstMissPass = 0, Misses = 0;
+        int32 FirstMissPass = 0, Misses = 0, LastMissPass = 0;
         double DistAtFirstMissM = 0.0;    // 2-D nearest-pawn distance at that first miss (nan with no pawn)
-        uint64 Seq = 0;                   // insertion order, for evict-oldest
+        double DistAtLastMissM = 0.0;     // the same at the latest miss of the run
+        uint64 Seq = 0;                   // order of the latest miss, for evict-least-recently-missed
     };
     TMap<FGuid, FRwgMissRecord> GRwgMissRecords;
     uint64 GRwgMissSeq = 0;
@@ -125,7 +124,7 @@ namespace
         const int64 Xcm = RwgTraceDiagCm(X), Ycm = RwgTraceDiagCm(Y);
         if (FRwgMissRecord* R = GRwgMissRecords.Find(Guid))
         {
-            if (R->Xcm == Xcm && R->Ycm == Ycm) { ++R->Misses; return; }
+            if (R->Xcm == Xcm && R->Ycm == Ycm) { ++R->Misses; R->LastMissPass = Pass; R->DistAtLastMissM = DistM; R->Seq = ++GRwgMissSeq; return; }
             ++GRwgMissXYChanged;
         }
         else if (GRwgMissRecords.Num() >= RwgTraceDiagMissRecordBound)
@@ -137,6 +136,7 @@ namespace
         }
         FRwgMissRecord& N = GRwgMissRecords.FindOrAdd(Guid);
         N.Xcm = Xcm; N.Ycm = Ycm; N.FirstMissPass = Pass; N.Misses = 1; N.DistAtFirstMissM = DistM; N.Seq = ++GRwgMissSeq;
+        N.LastMissPass = Pass; N.DistAtLastMissM = DistM;
     }
 
     struct FRwgDiagHit
@@ -277,10 +277,10 @@ void NodeShuffleRwgTraceDiag::NoteFirstTrace(UWorld* World, const FGuid& Guid, c
             }
             ++S.CtrlLines;
             // TODO(2026-10-28, rwg-trace-diag-2): diagnostic build only -- gate or remove before release.
-            UE_LOG(LogNodeShuffle, Display, TEXT("RWGTRACECTRL: pass=%d entry=%s x=%.0f y=%.0f apiSurfaceZ=%.0f firstHitKind=%s firstHitZ=%.0f probesRun=%d downHitClass=%s downHitComponent=%s downHitZ=%.0f upHitClass=%s upHitComponent=%s upHitZ=%.0f upSameComponentAsDown=%d priorMisses=%d firstMissPass=%d thisPass=%d playerDistAtFirstMiss=%.0f playerDistNow=%.0f"),
+            UE_LOG(LogNodeShuffle, Display, TEXT("RWGTRACECTRL: pass=%d entry=%s x=%.0f y=%.0f apiSurfaceZ=%.0f firstHitKind=%s firstHitZ=%.0f probesRun=%d downHitClass=%s downHitComponent=%s downHitZ=%.0f upHitClass=%s upHitComponent=%s upHitZ=%.0f upSameComponentAsDown=%d priorMisses=%d firstMissPass=%d lastMissPass=%d thisPass=%d playerDistAtFirstMiss=%.0f playerDistAtLastMiss=%.0f playerDistNow=%.0f"),
                 S.Pass, *Guid.ToString().Left(8), X, Y, ApiZ, RwgFirstClassLabels[FirstClass < RwgFirstClassSlots - 1 ? FirstClass : RwgFirstClassSlots - 1], FirstZ, bCtrlRun ? 1 : 0,
                 *Down.Cls, *Down.Comp, Down.Z, *Up.Cls, *Up.Comp, Up.Z, (Down.bHit && Up.bHit && Up.C == Down.C) ? 1 : 0,
-                Rec.Misses, Rec.FirstMissPass, S.Pass, Rec.DistAtFirstMissM, PawnDistM);
+                Rec.Misses, Rec.FirstMissPass, Rec.LastMissPass, S.Pass, Rec.DistAtFirstMissM, Rec.DistAtLastMissM, PawnDistM);
         }
         return;
     }

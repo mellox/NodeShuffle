@@ -6,11 +6,11 @@
 // HERE-NEAREST-UNSPAWNED legend (prose only): entry is the first 8 GUID characters, res the resource class tail, distM the 2-D distance,
 //   dzM the entry's stored Z minus the pawn Z (an unspawned entry stores its deal or API Z, not a settled ground Z), worldDeltaXM /
 //   worldDeltaYM the world-axis delta from the pawn in metres. failedAttemptsAtLoc is RwgStuckTracker's count for the entry (the field of
-//   the same name on RWGSTUCK-ENTRY), or untracked when the tracker holds no row for it. insideAttemptRadius is 1 when the 2-D distance is
-//   strictly below NodeShuffleMapMode::RwgAttemptRadiusCm (RwgEmitStuckCensus's test; a pass attempts within the smaller of that and the
-//   spawn radius). parkedThisSession / dormantThisSession as on RWGSTUCK-ENTRY. The turn is Here's nearest-well bearing expression (pawn
-//   yaw and the world delta, both measured), not a compass word. With no such entry within 3000 m the line says so and prints the
-//   map-wide count and the nearest one's distance (nan when the count is 0).
+//   the same name on RWGSTUCK-ENTRY), or untracked when the tracker holds no row for it. within1000mAttemptCap is 1 when the 2-D distance is strictly below NodeShuffleMapMode::RwgAttemptRadiusCm (1000 m), the cap on the attempt radius (HERE-DENSITY's first radius); a pass attempts only within the smaller of that cap and the configured spawn radius, which PLACECENSUS prints as attemptRadiusM. The nearest pick skips cave-dealt (bRwgCave), dormant and spawn-parked entries (counted map-wide as excludedCaveDormantParkedSettledMapWide); the bands count them.
+//   rwg-trace-diag-2 review round: the same count and skip also cover already-settled entries (bRayCasted), which EnsureNewNodeSpawned
+//   sends straight to the spawn without a first trace. pawnYawDeg is the pawn's actor yaw the turn is computed from. The turn is Here's
+//   nearest-well bearing expression (pawn yaw and the world delta, both measured), not a compass word. With no such entry within 3000 m
+//   the line says so and prints the map-wide count, the excluded count and the nearest non-excluded one's distance (nan when there is none).
 // HERE-UNSPAWNED-BANDS legend: the same population counted by 2-D distance band; each band includes its lower bound and excludes its
 //   upper one; the six band counts sum to unspawnedActiveMapWide.
 #include "NodeShuffleSubsystem.h"
@@ -39,6 +39,7 @@ void ANodeShuffleSubsystem::LogHereUnspawned(const FVector& P, const APawn* Pawn
     const double EdgeCm[NumEdges] = { 25000.0, 50000.0, 75000.0, 100000.0, RadiusCm }; // band upper bounds; past the last one = beyond3000m
     int32 Band[NumEdges + 1] = {};
     int32 MapWide = 0;
+    int32 Excluded = 0;
     const FNodeShuffleEntry* Nearest = nullptr;
     double NearestD2 = TNumericLimits<double>::Max();
     for (const FNodeShuffleEntry& E : Layout)
@@ -48,10 +49,12 @@ void ANodeShuffleSubsystem::LogHereUnspawned(const FVector& P, const APawn* Pawn
         if (Live && IsValid(*Live)) { continue; }
         ++MapWide;
         const double D2 = FVector::DistSquared2D(E.Location, P);
-        if (D2 < NearestD2) { NearestD2 = D2; Nearest = &E; }
         int32 B = 0;
         while (B < NumEdges && D2 >= FMath::Square(EdgeCm[B])) { ++B; }
         ++Band[B];
+        if (E.bRwgCave || DormantThisSession.Contains(E.EntryGuid) || SpawnParkedThisSession.Contains(E.EntryGuid)) { ++Excluded; continue; } // RwgSpawnPass skips dormant/parked; cave entries settle without the first trace
+        if (E.bRayCasted) { ++Excluded; continue; } // review round, fourth set: EnsureNewNodeSpawned skips the settle (and the first trace) for an already-settled entry
+        if (D2 < NearestD2) { NearestD2 = D2; Nearest = &E; }
     }
     if (Nearest && NearestD2 < FMath::Square(RadiusCm))
     {
@@ -61,17 +64,15 @@ void ANodeShuffleSubsystem::LogHereUnspawned(const FVector& P, const APawn* Pawn
         const bool bInsideAttempt = NearestD2 < FMath::Square(static_cast<double>(NodeShuffleMapMode::RwgAttemptRadiusCm));
         // TODO(2026-10-28, rwg-trace-diag-2): diagnostic build only -- gate or remove before release.
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("HERE-NEAREST-UNSPAWNED: entry=%s res=%s distM=%.0f dzM=%+.0f worldDeltaXM=%+.0f worldDeltaYM=%+.0f failedAttemptsAtLoc=%s insideAttemptRadius=%d parkedThisSession=%d dormantThisSession=%d; from where you are standing and facing, turn %+.0f deg and go"),
-            *Nearest->EntryGuid.ToString().Left(8), *Tail(Nearest->AssignedResourceClassPath), FMath::Sqrt(NearestD2) / 100.0, D.Z / 100.0, D.X / 100.0, D.Y / 100.0,
-            *Failed, bInsideAttempt ? 1 : 0, SpawnParkedThisSession.Contains(Nearest->EntryGuid) ? 1 : 0, DormantThisSession.Contains(Nearest->EntryGuid) ? 1 : 0,
-            TurnFromFacing(Nearest->Location));
+            TEXT("HERE-NEAREST-UNSPAWNED: entry=%s res=%s distM=%.0f dzM=%+.0f worldDeltaXM=%+.0f worldDeltaYM=%+.0f pawnYawDeg=%.0f failedAttemptsAtLoc=%s within1000mAttemptCap=%d excludedCaveDormantParkedSettledMapWide=%d; from where you are standing and facing, turn %+.0f deg and go"),
+            *Nearest->EntryGuid.ToString().Left(8), *Tail(Nearest->AssignedResourceClassPath), FMath::Sqrt(NearestD2) / 100.0, D.Z / 100.0, D.X / 100.0, D.Y / 100.0, Pawn->GetActorRotation().Yaw, *Failed, bInsideAttempt ? 1 : 0, Excluded, TurnFromFacing(Nearest->Location));
     }
     else
     {
         // TODO(2026-10-28, rwg-trace-diag-2): diagnostic build only -- gate or remove before release.
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("HERE-NEAREST-UNSPAWNED: none within %.0f m; unspawnedActiveMapWide=%d nearestUnspawnedDistM=%.0f"),
-            RadiusCm / 100.0, MapWide, Nearest ? FMath::Sqrt(NearestD2) / 100.0 : NodeShuffleMapMode::RwgNaN());
+            TEXT("HERE-NEAREST-UNSPAWNED: none within %.0f m outside the cave/dormant/parked/settled set; unspawnedActiveMapWide=%d excludedCaveDormantParkedSettledMapWide=%d nearestNotExcludedDistM=%.0f"),
+            RadiusCm / 100.0, MapWide, Excluded, Nearest ? FMath::Sqrt(NearestD2) / 100.0 : NodeShuffleMapMode::RwgNaN());
     }
     // TODO(2026-10-28, rwg-trace-diag-2): diagnostic build only -- gate or remove before release.
     UE_LOG(LogNodeShuffle, Display,
