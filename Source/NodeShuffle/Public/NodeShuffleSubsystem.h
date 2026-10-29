@@ -3334,4 +3334,8 @@ public:
     // per-world cave file + nearest dealt bRwgCave entry, with distance / dZ / turn bearing. Log-only; one line and return off RWG.
     // Appended after the private tail with its own access specifier because the console lambda in NodeShuffle.cpp calls it.
     void LogNearestCave() const;
+    // rwg-layout-dump-1 (2026-10-29, NodeShuffleLayoutDump.cpp): `NodeShuffle.DumpLayout` -- log-only dump of every layout entry, well
+    // core, hidden original and a 1000 m dealable-fraction grid. Public for the console lambda in its own file. Non-const ONLY because
+    // RwgRejectV3 is (its session latches); it writes no layout field. TODO(2026-10-29, rwg-layout-dump-1): diagnostic, gate or strip.
+    void DumpLayout();
 };
