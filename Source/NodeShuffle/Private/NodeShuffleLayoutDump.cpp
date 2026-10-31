@@ -119,7 +119,7 @@ void ANodeShuffleSubsystem::DumpLayout()
         AFGResourceNode* const* Live = SpawnedNodes.Find(E.EntryGuid);
         const bool bLive = Live && IsValid(*Live);
         UE_LOG(LogNodeShuffle, Display, TEXT("LAYOUTDUMP-E: i=%d guid=%s res=%s purity=%d x=%.0f y=%.0f z=%.0f cave=%d rayCasted=%d live=%d active=%d newNode=%d pinned=%d"),
-            I, *E.EntryGuid.ToString().Left(8), *LayoutDumpShortName(E.AssignedResourceClassPath), static_cast<int32>(E.AssignedPurity.GetValue()),
+            I, *E.EntryGuid.ToString(), *LayoutDumpShortName(E.AssignedResourceClassPath), // rwg-clifftop-1 E3: the full 32-hex guid static_cast<int32>(E.AssignedPurity.GetValue()),
             E.Location.X, E.Location.Y, E.Location.Z, E.bRwgCave ? 1 : 0, E.bRayCasted ? 1 : 0, bLive ? 1 : 0, E.bActive ? 1 : 0, E.bIsNewNode ? 1 : 0, E.bPinned ? 1 : 0);
         ++EntriesPrinted;
     }

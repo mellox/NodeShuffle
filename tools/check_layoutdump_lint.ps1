@@ -105,6 +105,7 @@ function Invoke-LayoutDumpChecks($T, [bool]$RunPy) {
             $ff = Fmt-Fields $fl.Groups[1].Value
             if (($cf -join ',') -ne ($ff -join ',')) { $f += "(L4) LAYOUTDUMP-${c}: C++ fields [$($cf -join ',')] != fixture fields [$($ff -join ',')]" }
             if ($fl.Groups[1].Value -notmatch $rxFmt) { $f += "(L11) LAYOUTDUMP-${c}: a fixture line does not match the C++ format character for character" }
+            if ($c -eq 'E' -and $fl.Groups[1].Value -notmatch '^i=\d+ guid=[0-9A-F]{32} ') { $f += '(L11) LAYOUTDUMP-E: a fixture row does not carry the full 32-hex guid (rwg-clifftop-1 E3)' }
         }
     }
     # L5
@@ -152,6 +153,9 @@ function Invoke-LayoutDumpChecks($T, [bool]$RunPy) {
     $cl = @([regex]::Matches($D, 'TEXT\("LAYOUTDUMP-LEGEND: ([^"]*)"\)') | ForEach-Object { $_.Groups[1].Value })
     $fxl = @([regex]::Matches($T.fx, '(?m)^\[[^\]]*\]\[\s*\d+\]LogNodeShuffle: Display: LAYOUTDUMP-LEGEND: ([^\n]*)$') | ForEach-Object { $_.Groups[1].Value })
     if (($cl -join "`n") -ne ($fxl -join "`n")) { $f += "(L11) fixture LEGEND lines ($($fxl.Count)) differ from the C++ legend literals ($($cl.Count))" }
+    # L11 (rwg-clifftop-1 E3): the E row prints the FULL entry guid; the diff keys on its 8-hex prefix.
+    if ((Count $T.dump 'I, *E.EntryGuid.ToString(), *LayoutDumpShortName(E.AssignedResourceClassPath),') -ne 1) { $f += '(L11) LAYOUTDUMP-E must print the full 32-hex entry guid' }
+    if ((Count $T.diffpy "d.setdefault(row['guid'][:8], []).append(row)") -ne 1) { $f += '(L11) layout_diff.py must key rows on the 8-hex guid prefix' }
     return $f
 }
 
@@ -178,6 +182,9 @@ $mutants = @(
     @{ Name = 'M18 grid loop keyed on bApi again'; Key = 'dump'; Expect = 'L10'; Find = ('if (b' + 'Grid)'); Repl = ('if (b' + 'Api)') }
     @{ Name = 'M19 latch masks lose the Done bits'; Key = 'dump'; Expect = 'L10'; Find = ' | (bRwgKillboxDone ? 32 : 0);'; Repl = ';' }
     @{ Name = 'M20 fixture E line drifts from the format (extra literal)'; Key = 'fx'; Expect = 'L11'; Find = 'LAYOUTDUMP-E: i=0 guid='; Repl = 'LAYOUTDUMP-E: i=0 entry guid=' }
+    @{ Name = 'M22 E row guid clipped again'; Key = 'dump'; Expect = 'L11'; Find = 'I, *E.EntryGuid.ToString(), *LayoutDumpShortName('; Repl = ('I, *E.EntryGuid.ToString()' + '.Left(8), *LayoutDumpShortName(') }
+    @{ Name = 'M23 fixture E row back to 8 hex'; Key = 'fx'; Expect = 'L11'; Find = 'guid=1A2B3C4D000000000000000000000000 '; Repl = 'guid=1A2B3C4D ' }
+    @{ Name = 'M24 diff keys on the full guid'; Key = 'diffpy'; Expect = 'L11'; Find = "d.setdefault(row['guid'][:8], []).append(row)"; Repl = "d.setdefault(row['guid'], []).append(row)" }
     @{ Name = 'M21 fixture legend drifts from source'; Key = 'fx'; Expect = 'L11'; Find = 'one line per layout entry'; Repl = 'one line per entry' }
     @{ Name = 'M22 .py drops the pinned filter from originals-all'; Key = 'py'; Expect = 'L5'; Find = "[(e['x'], e['y']) for e in E if not e['newNode'] and e['pinned']]"; Repl = "[(e['x'], e['y']) for e in E if not e['newNode']]" }
     @{ Name = 'M22b .py drops the pinned filter from player-findable'; Key = 'py'; Expect = 'L5'; Find = "or (not e['newNode'] and e['pinned'])]"; Repl = "or (not e['newNode'])]" }

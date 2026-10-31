@@ -8,7 +8,7 @@
   python -I tools/layout_diff.py --selftest                            # tools/fixtures/layoutdiff_fixture.log; exit 0 or 1
   Exit codes: 0 report written, 1 selftest failure, 2 refused (one line on stderr). Stdlib only.
 
-Keys: entry rows by their printed guid (the first 8 hex digits of the entry guid); well rows by their printed claim-guid
+Keys: entry rows by the first 8 hex digits of their printed guid (dumps up to rwg-layout-dump-1 print 8, rwg-clifftop-1 and later print all 32); well rows by their printed claim-guid
 prefix; original rows carry no guid, so they pair by resource class plus exact printed XYZ. A key printed twice in one block
 is AMBIGUOUS: counted and listed, never paired. Distances are XY only. Spot counts use every entry row (all classes) and
 add one column for active new entries only.
@@ -179,7 +179,7 @@ def diff_keyed(A, B, flags, moved_cm, key, is_well=False):
     ka, kb = {}, {}
     for rows, d in ((A, ka), (B, kb)):
         for row in rows:
-            d.setdefault(row['guid'], []).append(row)
+            d.setdefault(row['guid'][:8], []).append(row)  # rwg-clifftop-1 E3: 8-hex prefix, so an 8-hex dump diffs against a 32-hex one
     dup = {k for d in (ka, kb) for k, v in d.items() if len(v) > 1}
     for side, d in (('A', ka), ('B', kb)):
         for k in sorted(dup):
@@ -416,7 +416,7 @@ def selftest() -> int:
             hit = [ln for ln in md.splitlines() if ln.startswith(f'LAYOUTDIFF-AT: label={label} ')]
             if len(hit) != 1 or not hit[0].endswith(tail):
                 fails.append(f'spot {label}: {hit} does not end with {tail!r}')
-        if ('| 00012345 | Desc_OreIron_C | -30000,-30000,1250 | -30000,-30000,1600 | 0.0 | - |' not in md
+        if ('| 00012345000000000000000000000000 | Desc_OreIron_C | -30000,-30000,1250 | -30000,-30000,1600 | 0.0 | - |' not in md
                 or '| 9ABCDEF0 | Desc_Water_C | 0,0,0 | 300000,-200000,600 | - |' not in md):
             fails.append('Z-only row 00012345 not listed with its from/to, or the src-none well pair printed a distance')
         if 'max 4060.8' not in md:
