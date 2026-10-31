@@ -75,17 +75,17 @@ function Get-Logs([string]$t, [string]$prefix) {
     return $out
 }
 
-$CliffFmt = 'RWGCLIFFTOP: sample=%d via=%s entry=%s at=%.0f/%.0f res=%s hitMesh=%s smoothedRiseRun=%.2f hitZ=%.0f apiZ=%.0f dzCm=%.0f startZ=%.0f startPenetrating=%d normalZ=%.3f smoothedNormalZ=%.3f gateNormalZ=%.3f outerProbesSameMesh=%d/4 accepted=%d rejectReason=%s'
+$CliffFmt = 'RWGCLIFFTOP: sample=%d via=%s entry=%s at=%.0f/%.0f res=%s hitMesh=%s smoothedRiseRun=%.2f hitZ=%.0f apiZ=%.0f dzCm=%.0f startZ=%.0f startPenetrating=%d normalZ=%.3f smoothedNormalZ=%.3f gateNormalZ=%.3f outerProbesSameMesh=%d/4 steepOuterProbes=%d accepted=%d rejectReason=%s'
 
 function Invoke-CliffChecks($T) {
     $f = @(); $c = $T.cliff; $s = $T.sub; $p = $T.place
     # C1 inside-start guard
     if ((Count $c 'const bool bStartPen = Hit.bStartPenetrating;') -ne 1 -or (Count $c 'const bool bNormalUp = Hit.ImpactNormal.Z > 0.0;') -ne 1 -or (Count $c 'const bool bBelowStart = P.Z < TraceStartZ - NodeShuffleMapMode::RwgSolidTopStartMarginCm;') -ne 1) { $f += '(C1) the three inside-start predicates must be measured on the hit against the trace start minus the named margin' }
-    if ((Count $c 'const bool bGuard = !bStartPen && bNormalUp && bBelowStart;') -ne 1 -or (Count $c 'const bool bAccepted = bGuard && bFootprint && bGentle;') -ne 1 -or (Count $c '    if (!bAccepted) { return false; }') -ne 1) { $f += '(C1) the guard must AND all three predicates and gate the accept' }
+    if ((Count $c 'const bool bGuard = !bStartPen && bNormalUp && bBelowStart;') -ne 1 -or (Count $c 'const bool bAccepted = bGuard && bClearAbove && bFootprint && bGentle;') -ne 1 -or (Count $c '    if (!bAccepted) { return false; }') -ne 1) { $f += '(C1) the guard must AND all three predicates and gate the accept' }
     if ((Count $T.mmh 'constexpr double RwgSolidTopStartMarginCm = 100.0;') -ne 1) { $f += '(C1) the inside-start margin must be the named constant (100 cm)' }
     if ((Count $s '&& RwgSolidTopTryAccept(Hit, Start.Z, Params, MinSettleNormalZ, SmoothNormalRingCm, NodeTiltClampDeg, bSkippedWaterSheet, OutLoc, OutRot, bOutWater,') -ne 1) { $f += '(C1/C2) the accept must receive the trace START Z, the terrain gate, the terrain smoothing ring and the tilt clamp' }
     # C2 footprint + gentle + water
-    if ((Count $c 'for (int32 I = 0; I < 4 && World; ++I)') -ne 1 -or (Count $c 'if (bStopped && HitComp && R.GetComponent() == HitComp && R.Item == Hit.Item) { ++SameMesh; Acc += R.ImpactNormal; }') -ne 1 -or (Count $c 'const bool bFootprint = SameMesh == 4;') -ne 1) { $f += '(C2) all 4 outer probes must stop on the SAME component and instance item (mixed footprint fails)' }
+    if ((Count $c 'for (int32 I = 0; I < 4 && World; ++I)') -ne 1 -or (Count $c 'if (bStopped && HitComp && R.GetComponent() == HitComp && R.Item == Hit.Item) { ++SameMesh; Acc += R.ImpactNormal; SameMeshSteep += (R.ImpactNormal.Z < MinNormalZ) ? 1 : 0; }') -ne 1 -or (Count $c 'const bool bFootprint = SameMesh == 4 && SameMeshSteep == 0;') -ne 1) { $f += '(C2) all 4 outer probes must stop on the SAME component and instance item (mixed footprint fails)' }
     if ((Count $c 'if (Cls == 0 || Cls == 4 || (Owner && (Owner->IsA<AFGBuildable>()') -ne 1 -or (Count $c 'RingParams.AddIgnoredComponent(R.GetComponent());') -ne 1) { $f += '(C2) an outer probe must stop on terrain, solid or a buildable and step through skip-class hits only' }
     if ((Count $c 'const bool bGentle = N.Z >= MinNormalZ;') -ne 1 -or (Count $c 'FVector Acc = Hit.ImpactNormal;') -ne 1) { $f += '(C2) the smoothed normal (hit + outer normals) must meet the terrain cliff gate' }
     if ((Count $c 'bOutWater = bSkippedWater || IsPointInWater(OutLoc);') -ne 1) { $f += '(C2) an accepted top must be water-tested (volume + skipped sheet)' }
@@ -127,7 +127,7 @@ function Invoke-CliffChecks($T) {
     if ((Count $s ('StartZ + ' + '20000.f')) -ne 0 -or (Count $s 'bShortTrace ? StartZ + 400.f : StartZ + NodeShuffleMapMode::RwgPrimaryTraceUpCm);') -ne 1) { $f += '(C9) the trace start must use the named constant' }
     # C10 diagnostics
     $cl = @(Get-Logs $c 'RWGCLIFFTOP: ')
-    if ($cl.Count -ne 1 -or $cl[0].Fmt -ne $CliffFmt -or $cl[0].Level -ne 'Display' -or (Spec-Count $cl[0].Fmt) -ne $cl[0].Args.Count -or $cl[0].Args.Count -ne 19) { $f += '(C10) RWGCLIFFTOP format drifted or arity is wrong' }
+    if ($cl.Count -ne 1 -or $cl[0].Fmt -ne $CliffFmt -or $cl[0].Level -ne 'Display' -or (Spec-Count $cl[0].Fmt) -ne $cl[0].Args.Count -or $cl[0].Args.Count -ne 20) { $f += '(C10) RWGCLIFFTOP format drifted or arity is wrong' }
     if ((Count $c 'constexpr int32 RwgCliffTopSampleCap = 8;') -ne 1 -or (Count $c 'if (RwgCliffTopSamples < RwgCliffTopSampleCap && FNodeShuffleModule::AreDiagnosticsEnabled())') -ne 1 -or (Count $p 'RwgPcSolidTopRejFootprint = RwgCliffTopSamples = 0;') -ne 1) { $f += '(C10) RWGCLIFFTOP must be capped per pass and the cap zeroed with the PLACECENSUS counters' }
     foreach ($n in @('settledOnSolidTop=%d', 'solidTopAcceptedProbes=%d', 'solidTopRejectedStartInside=%d', 'solidTopRejectedNormal=%d', 'solidTopRejectedFootprint=%d')) { if ((Count $p $n) -ne 1) { $f += "(C10) PLACECENSUS must carry $n once" } }
     # C11 vanilla
@@ -147,7 +147,7 @@ $mutants = @(
     @{ Name = 'M1 start-penetrating ignored'; Key = 'cliff'; Expect = 'C1'; Find = 'const bool bGuard = !bStartPen && bNormalUp && bBelowStart;'; Repl = 'const bool bGuard = bNormalUp && bBelowStart;' }
     @{ Name = 'M2 margin dropped'; Key = 'cliff'; Expect = 'C1'; Find = 'P.Z < TraceStartZ - NodeShuffleMapMode::RwgSolidTopStartMarginCm;'; Repl = 'P.Z < TraceStartZ;' }
     @{ Name = 'M3 guard against the window origin'; Key = 'sub'; Expect = 'C1'; Find = 'RwgSolidTopTryAccept(Hit, Start.Z,'; Repl = 'RwgSolidTopTryAccept(Hit, StartZ,' }
-    @{ Name = 'M4 footprint averaged'; Key = 'cliff'; Expect = 'C2'; Find = 'const bool bFootprint = SameMesh == 4;'; Repl = 'const bool bFootprint = SameMesh >= 1;' }
+    @{ Name = 'M4 footprint averaged'; Key = 'cliff'; Expect = 'C2'; Find = 'const bool bFootprint = SameMesh == 4 && SameMeshSteep == 0;'; Repl = 'const bool bFootprint = SameMesh >= 1;' }
     @{ Name = 'M5 footprint any component'; Key = 'cliff'; Expect = 'C2'; Find = 'R.GetComponent() == HitComp && R.Item == Hit.Item'; Repl = 'R.GetComponent() != nullptr' }
     @{ Name = 'M6 gentle gate loosened'; Key = 'cliff'; Expect = 'C2'; Find = 'const bool bGentle = N.Z >= MinNormalZ;'; Repl = 'const bool bGentle = N.Z >= 0.0f;' }
     @{ Name = 'M7 wet top accepted'; Key = 'cliff'; Expect = 'C2'; Find = 'bOutWater = bSkippedWater || IsPointInWater(OutLoc);'; Repl = 'bOutWater = false;' }
@@ -164,13 +164,15 @@ $mutants = @(
     @{ Name = 'M18 PLACEDZ merged'; Key = 'place'; Expect = 'C7'; Find = 'if (Entry.bRwgOnSolidTop) { RwgRecordSolidTopDz(Entry.RwgApiToTerrainDzCm); } else { RwgRecordDz(Entry.Location, Entry.RwgApiToTerrainDzCm); }'; Repl = 'RwgRecordDz(Entry.Location, Entry.RwgApiToTerrainDzCm);' }
     @{ Name = 'M19 accepted top counted as rock'; Key = 'cliff'; Expect = 'C8'; Find = '    ++RwgPcSolidTopAccepted;'; Repl = '    ++RwgPcSolidTopAccepted; ++RwgProbeSolidHits;' }
     @{ Name = 'M20 literal start height'; Key = 'sub'; Expect = 'C9'; Find = 'StartZ + NodeShuffleMapMode::RwgPrimaryTraceUpCm);'; Repl = ('StartZ + ' + '20000.f);') }
-    @{ Name = 'M21 RWGCLIFFTOP drops a field'; Key = 'cliff'; Expect = 'C10'; Find = ' outerProbesSameMesh=%d/4 accepted=%d'; Repl = ' accepted=%d' }
+    @{ Name = 'M21 RWGCLIFFTOP drops a field'; Key = 'cliff'; Expect = 'C10'; Find = ' outerProbesSameMesh=%d/4 steepOuterProbes=%d accepted=%d'; Repl = ' accepted=%d' }
     @{ Name = 'M22 RWGCLIFFTOP uncapped'; Key = 'cliff'; Expect = 'C10'; Find = 'if (RwgCliffTopSamples < RwgCliffTopSampleCap && '; Repl = 'if (' }
     @{ Name = 'M23 marker reverted'; Key = 'nsmod'; Expect = 'C12'; Find = ('2026-10-30-rwg-' + 'clifftop-1'); Repl = ('2026-10-29-rwg-' + 'layout-dump-1') }
     @{ Name = 'M25 vanilla solid gate widened'; Key = 'sub'; Expect = 'C11'; Find = 'const bool bSolidBlocks = bTerrainOnly && bOutTooSteep != nullptr;'; Repl = 'const bool bSolidBlocks = bOutTooSteep != nullptr;' }
     @{ Name = 'M26 LayoutDump E purity argument commented out'; Key = 'dump'; Expect = 'C13'; Find = '*LayoutDumpShortName(E.AssignedResourceClassPath), static_cast<int32>(E.AssignedPurity.GetValue()),'; Repl = ('*LayoutDumpShortName(E.AssignedResourceClassPath), ' + '/' + '/ static_cast<int32>(E.AssignedPurity.GetValue()),') }
     @{ Name = 'M27 stuck moved token back to the old name'; Key = 'dens'; Expect = 'C13'; Find = 'Moved += TEXT("unplaceableNew"); }'; Repl = ('Moved += TEXT("water' + 'LockedNew"); }') }
-    @{ Name = 'M24 accept signal set before the gate'; Key = 'cliff'; Expect = 'C4'; Find = '    const bool bAccepted = bGuard && bFootprint && bGentle;'; Repl = ('    const bool bAccepted = bGuard && bFootprint && bGentle; bRwgLastProbeTopAccepted = ' + 'true;') }
+    @{ Name = 'M28 accept drops the rock-window clear test'; Key = 'cliff'; Expect = 'C1'; Find = 'const bool bAccepted = bGuard && bClearAbove && bFootprint && bGentle;'; Repl = 'const bool bAccepted = bGuard && bFootprint && bGentle;' }
+    @{ Name = 'M29 footprint ignores a steep same-mesh probe'; Key = 'cliff'; Expect = 'C2'; Find = 'const bool bFootprint = SameMesh == 4 && SameMeshSteep == 0;'; Repl = 'const bool bFootprint = SameMesh == 4;' }
+    @{ Name = 'M24 accept signal set before the gate'; Key = 'cliff'; Expect = 'C4'; Find = '    const bool bAccepted = bGuard && bClearAbove && bFootprint && bGentle;'; Repl = ('    const bool bAccepted = bGuard && bClearAbove && bFootprint && bGentle; bRwgLastProbeTopAccepted = ' + 'true;') }
 )
 $mutantFails = @(); $caught = 0
 foreach ($m in $mutants) {

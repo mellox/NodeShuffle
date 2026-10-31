@@ -46,12 +46,14 @@ bool ANodeShuffleSubsystem::RwgSolidTopTryAccept(const FHitResult& Hit, double T
     const bool bNormalUp = Hit.ImpactNormal.Z > 0.0;
     const bool bBelowStart = P.Z < TraceStartZ - NodeShuffleMapMode::RwgSolidTopStartMarginCm;
     const bool bGuard = !bStartPen && bNormalUp && bBelowStart;
+    FString AboveMesh; // rwg-clifftop-1 review: the rock pass's own window above P (P + RwgRockOcclusionEndAboveCm .. P + RwgRockOcclusionHeightCm)
+    const bool bClearAbove = RwgRockOcclusionProbe(P, nullptr, AboveMesh) != 1; // must hold no solid, so placement accepts only what the rock pass keeps
     // Footprint + smoothing: 4 outer probes over the terrain path's window (+4 m / -6 m around the hit). Canopy, water sheets and other
     // skip-class hits are stepped through as the terrain-only trace does; terrain, a buildable or a solid mesh stops the probe.
     const UPrimitiveComponent* HitComp = Hit.GetComponent();
     FCollisionQueryParams RingParams = Params;
     FVector Acc = Hit.ImpactNormal;
-    int32 SameMesh = 0;
+    int32 SameMesh = 0, SameMeshSteep = 0; // SameMeshSteep: same-mesh outer probes whose OWN normal fails the gate (a flank or edge face)
     for (int32 I = 0; I < 4 && World; ++I)
     {
         const float Ang = PI * 0.5f * static_cast<float>(I);
@@ -71,9 +73,9 @@ bool ANodeShuffleSubsystem::RwgSolidTopTryAccept(const FHitResult& Hit, double T
             }
             RingParams.AddIgnoredComponent(R.GetComponent());
         }
-        if (bStopped && HitComp && R.GetComponent() == HitComp && R.Item == Hit.Item) { ++SameMesh; Acc += R.ImpactNormal; }
+        if (bStopped && HitComp && R.GetComponent() == HitComp && R.Item == Hit.Item) { ++SameMesh; Acc += R.ImpactNormal; SameMeshSteep += (R.ImpactNormal.Z < MinNormalZ) ? 1 : 0; }
     }
-    const bool bFootprint = SameMesh == 4; // mixed-class footprint fails gentle
+    const bool bFootprint = SameMesh == 4 && SameMeshSteep == 0; // a mixed footprint, or a same-mesh probe on a face steeper than the gate, fails
     const FVector N = Acc.GetSafeNormal(SMALL_NUMBER, FVector::UpVector);
     const bool bGentle = N.Z >= MinNormalZ;
     const TCHAR* Reject = TEXT("none");
@@ -82,9 +84,10 @@ bool ANodeShuffleSubsystem::RwgSolidTopTryAccept(const FHitResult& Hit, double T
         ++RwgPcSolidTopRejStartInside;
         Reject = bStartPen ? TEXT("startPenetrating") : (!bNormalUp ? TEXT("impactNormalNotUp") : TEXT("impactNotBelowStart"));
     }
+    else if (!bClearAbove) { ++RwgPcSolidTopRejStartInside; Reject = TEXT("solidAbove"); }
     else if (!bFootprint) { ++RwgPcSolidTopRejFootprint; Reject = TEXT("footprint"); }
     else if (!bGentle) { ++RwgPcSolidTopRejNormal; Reject = TEXT("normal"); }
-    const bool bAccepted = bGuard && bFootprint && bGentle;
+    const bool bAccepted = bGuard && bClearAbove && bFootprint && bGentle;
     if (RwgCliffTopSamples < RwgCliffTopSampleCap && FNodeShuffleModule::AreDiagnosticsEnabled())
     {
         ++RwgCliffTopSamples;
@@ -95,9 +98,9 @@ bool ANodeShuffleSubsystem::RwgSolidTopTryAccept(const FHitResult& Hit, double T
         const FString MeshName = Mesh ? Mesh->GetName() : (HitComp ? HitComp->GetName() : FString(TEXT("<none>")));
         const double RiseRun = N.Z > 1e-6 ? FMath::Sqrt(N.X * N.X + N.Y * N.Y) / N.Z : 999.0;
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("RWGCLIFFTOP: sample=%d via=%s entry=%s at=%.0f/%.0f res=%s hitMesh=%s smoothedRiseRun=%.2f hitZ=%.0f apiZ=%.0f dzCm=%.0f startZ=%.0f startPenetrating=%d normalZ=%.3f smoothedNormalZ=%.3f gateNormalZ=%.3f outerProbesSameMesh=%d/4 accepted=%d rejectReason=%s"),
+            TEXT("RWGCLIFFTOP: sample=%d via=%s entry=%s at=%.0f/%.0f res=%s hitMesh=%s smoothedRiseRun=%.2f hitZ=%.0f apiZ=%.0f dzCm=%.0f startZ=%.0f startPenetrating=%d normalZ=%.3f smoothedNormalZ=%.3f gateNormalZ=%.3f outerProbesSameMesh=%d/4 steepOuterProbes=%d accepted=%d rejectReason=%s"),
             RwgCliffTopSamples, RwgSolidTopVia, *RwgSolidTopGuid.ToString().Left(8), P.X, P.Y, *RwgCliffTopShort(RwgSolidTopRes), *MeshName, RiseRun, P.Z, ApiZ,
-            P.Z - ApiZ, TraceStartZ, bStartPen ? 1 : 0, Hit.ImpactNormal.Z, N.Z, MinNormalZ, SameMesh, bAccepted ? 1 : 0, Reject);
+            P.Z - ApiZ, TraceStartZ, bStartPen ? 1 : 0, Hit.ImpactNormal.Z, N.Z, MinNormalZ, SameMesh, SameMeshSteep, bAccepted ? 1 : 0, Reject);
     }
     if (!bAccepted) { return false; }
     // Accepted: the terrain path's outputs, from this hit.
