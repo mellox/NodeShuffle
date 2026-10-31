@@ -156,6 +156,7 @@ void ANodeShuffleSubsystem::RwgSettleProvisional(FNodeShuffleEntry& E, bool& bCh
             RwgProvSessMovedXYmMax = FMath::Max(RwgProvSessMovedXYmMax, FVector::Dist2D(FreshAt, ProvAt) / 100.0);
             ++RwgProvSessSettled; ++RwgPcProvSettled;
         }
+        else { ++RwgProvSessSettledNoActor; }
         Outcome = bRespawned ? TEXT("inPlace") : TEXT("settledNoActor");
     }
     else if (bWaterNoLand)
@@ -168,7 +169,7 @@ void ANodeShuffleSubsystem::RwgSettleProvisional(FNodeShuffleEntry& E, bool& bCh
         WaterLockedThisSession.Add(E.EntryGuid);
         const bool bMoved = TryRedealWaterLockedEntry(E);
         bChangedWorld = true;
-        if (bMoved) { ++RwgProvSessRedealt; }
+        if (bMoved) { ++RwgProvSessRedealt; } else { ++RwgProvSessRedealNotMoved; }
         Outcome = !bMoved ? TEXT("redealNotMoved") : (RwgPcSteepRing > RingBefore) ? TEXT("ring") : TEXT("mapwide");
     }
     else
@@ -279,8 +280,11 @@ void ANodeShuffleSubsystem::RwgProvisionalEmitCensus()
         if (!E.bRwgProvisional) { continue; }
         if (IsValid(SpawnedNodes.FindRef(E.EntryGuid))) { ++Live; } else { ++FlagNoActor; }
     }
-    UE_LOG(LogNodeShuffle, Display, TEXT("PROVCENSUS: pass=%d provisional=%d settledFromProvisional=%d redealtFromProvisional=%d deferredProvisional=%d pinnedProvisional=%d dzP50Cm=%.0f dzP90Cm=%.0f dzMaxCm=%.0f movedXYmMax=%.1f spawnedSession=%d refusedSession=%d staleFlagCleared=%d flagNoActor=%d spawnAllAtRoll=%d"),
+    // Legend (re-review V-R3, prose only): the last two fields are session counts of the two settle outcomes that ended with no actor
+    // -- the settle call returned true but the respawn left no valid actor, and the unplaceable branch's redeal call returned false.
+    // They are 1:1 with the PROVSETTLE outcome strings of the same names, which are a sample; these are the census.
+    UE_LOG(LogNodeShuffle, Display, TEXT("PROVCENSUS: pass=%d provisional=%d settledFromProvisional=%d redealtFromProvisional=%d deferredProvisional=%d pinnedProvisional=%d dzP50Cm=%.0f dzP90Cm=%.0f dzMaxCm=%.0f movedXYmMax=%.1f spawnedSession=%d refusedSession=%d staleFlagCleared=%d flagNoActor=%d spawnAllAtRoll=%d settledNoActor=%d redealNotMoved=%d"),
         RwgPcPasses, Live, RwgProvSessSettled, RwgProvSessRedealt, RwgProvSessDeferred, RwgProvSessPinned,
         ProvPercentile(RwgProvSessDzCm, 0.5f), ProvPercentile(RwgProvSessDzCm, 0.9f), ProvPercentile(RwgProvSessDzCm, 1.0f), RwgProvSessMovedXYmMax,
-        RwgProvSessSpawned, RwgProvSessRefused, RwgProvSessStale, FlagNoActor, NodeShuffleMapMode::RwgSpawnAllAtRollOn() ? 1 : 0);
+        RwgProvSessSpawned, RwgProvSessRefused, RwgProvSessStale, FlagNoActor, NodeShuffleMapMode::RwgSpawnAllAtRollOn() ? 1 : 0, RwgProvSessSettledNoActor, RwgProvSessRedealNotMoved);
 }

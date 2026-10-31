@@ -1149,6 +1149,7 @@ private:
     void RwgProvisionalEmitCensus();                                       // PROVCENSUS (12th passes)
     int32 RwgPcProvSpawned = 0, RwgPcProvSettled = 0;                      // PLACECENSUS per pass (reset by RwgEmitPlaceCensus)
     int32 RwgProvSessSpawned = 0, RwgProvSessSettled = 0, RwgProvSessRedealt = 0, RwgProvSessDeferred = 0, RwgProvSessPinned = 0; // session
+    int32 RwgProvSessSettledNoActor = 0, RwgProvSessRedealNotMoved = 0; // session: F4 outcomes with no actor (re-review V-R3)
     int32 RwgProvSessRefused = 0, RwgProvSessStale = 0, RwgProvSettleSamples = 0, RwgProvSettleSamplePass = -1;
     double RwgProvSessMovedXYmMax = 0.0;
     TArray<float> RwgProvSessDzCm;                                         // |settled Z - provisional Z| of in-place settles, session
