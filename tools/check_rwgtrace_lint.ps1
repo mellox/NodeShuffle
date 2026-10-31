@@ -56,7 +56,7 @@ $hookRe = '(?m)^[ \t]*' + 'NodeShuffleRwg' + 'TraceDiag::(BeginPass|NoteFirstTra
 $spans = @(
     @{ Id = 'D1'; Key = 'place'; A = 'bool ANodeShuffleSubsystem::RwgResolveAtSpawn('; B = 'void ANodeShuffleSubsystem::RwgSpawnPass('; Hooks = 1; Hash = 'FDF1CB84B8D6FD51BB4E3422CD31ACFCE6B7CE1BD0F296BE50ECAC522EFFCB11' }
     @{ Id = 'D2'; Key = 'sub'; A = 'bool ANodeShuffleSubsystem::RaycastGroundAt('; B = 'bool ANodeShuffleSubsystem::TryRedealWaterLockedEntry('; Hooks = 0; Hash = '9CD59F03FFC9DF35F29642F77D3273959DAB1C2A871C41EBB49B0DBF36DBF829' }
-    @{ Id = 'D3'; Key = 'place'; A = 'void ANodeShuffleSubsystem::RwgSpawnPass(float SpawnRadiusCm, bool& bChangedWorld)'; B = 'void ANodeShuffleSubsystem::RwgLogSkipOnce('; Hooks = 2; Hash = '2B07099CAFF7751559B534F3E72B554DC623B86DEA919FEA7D5BCB184BD228C0' }
+    @{ Id = 'D3'; Key = 'place'; A = 'void ANodeShuffleSubsystem::RwgSpawnPass(float SpawnRadiusCm, bool& bChangedWorld)'; B = 'void ANodeShuffleSubsystem::RwgLogSkipOnce('; Hooks = 2; Hash = 'B7E31BB7BEFB0672DE7F871F71C7C56A94568E6A8555D46C298670A4BD3363A8' }
     @{ Id = 'D4'; Key = 'sub'; A = '        bool bSettled = (GetMapMode() == ENodeShuffleMapMode::Rwg) ? RwgResolveAtSpawn(Entry, bRwgApiUsed, bWaterNoLand) : false;'; B = '            // Defer-log backoff: full detail once per entry per session;'; Hooks = 0; Hash = '17F0F252F7BDC0FC46C6584085E3CCE1235A1FC980E0531F5E4DB1D1DE4D07BC' }
     @{ Id = 'D5'; Key = 'dens'; A = 'int32 ANodeShuffleSubsystem::RwgStuckCounter(int32 I) const'; B = 'bool ANodeShuffleSubsystem::RwgDensityLandSample('; Hooks = 0; Hash = '08C016E766FBEDA15CEE1B062C57248AB055869060034EE74E19F8FF4583B3B3' }
 )
