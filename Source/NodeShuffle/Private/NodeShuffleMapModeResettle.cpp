@@ -183,6 +183,7 @@ void ANodeShuffleSubsystem::RwgResettlePass()
     {
         FNodeShuffleEntry& E = Layout[I];
         if (!E.bIsNewNode || !E.bActive || E.bRwgSettledOnTerrain || E.bUnderground || E.bRwgCave) { continue; } // RWG P5: a cave entry settles by the cave geometry only
+        if (E.bRwgProvisional) { continue; } // rwg-farspawn-1: a provisional actor is UNSETTLED; the spawn pass settles it on approach (RwgSettleProvisional)
         ++Remaining;
         if (RwgResettleGaveUp.Contains(E.EntryGuid)) { continue; }
         AFGResourceNode* const* Live = SpawnedNodes.Find(E.EntryGuid);

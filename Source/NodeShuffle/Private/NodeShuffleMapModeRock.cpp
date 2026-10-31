@@ -111,6 +111,7 @@ void ANodeShuffleSubsystem::RwgRockOcclusionPass()
         const FNodeShuffleEntry& E = Layout[I];
         if (!E.bIsNewNode || !E.bActive || E.bRwgRockChecked || E.bUnderground || E.bRwgCave) { continue; } // RWG P5: the window above a cave floor is the cave roof; its settle already refuses solid hits
         if (RwgRockRefused.Contains(E.EntryGuid)) { continue; }
+        if (E.bRwgProvisional) { continue; } // rwg-farspawn-1: a provisional actor is UNSETTLED; its settle on approach runs the solid checks
         AFGResourceNode* Live = SpawnedNodes.FindRef(E.EntryGuid);
         if (!IsValid(Live)) { continue; }
         const double D = RwgNearestPawnDist2D(Live->GetActorLocation());

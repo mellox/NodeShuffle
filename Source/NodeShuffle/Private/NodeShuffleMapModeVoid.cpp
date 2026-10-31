@@ -254,6 +254,7 @@ void ANodeShuffleSubsystem::RwgKillboxResettlePass()
     for (FNodeShuffleEntry& E : Layout)
     {
         if (!E.bIsNewNode || !E.bActive) { continue; }
+        if (E.bRwgProvisional) { continue; } // rwg-farspawn-1: a provisional actor is UNSETTLED; its settle on approach refuses a below-killbox Z
         AFGResourceNode* Node = SpawnedNodes.FindRef(E.EntryGuid);
         if (!IsValid(Node))
         {

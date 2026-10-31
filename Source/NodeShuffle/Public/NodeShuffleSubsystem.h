@@ -285,6 +285,10 @@ struct FNodeShuffleEntry
     // Cleared at every RwgResolveAtSpawn, written by every RaycastSettle success, cleared by the overlap nudge and RwgRedealLiveEntry. Read by the
     // rock pass and the resettle (ON vs UNDER) and the PLACEDZ split. Never written true on vanilla (bRwgLastProbeTopAccepted stays false there).
     UPROPERTY(SaveGame) bool bRwgOnSolidTop = false;
+    // rwg-farspawn-1 (2026-10-31): this RWG entry's LIVE actor was spawned beyond the attempt radius at RwgProvisionalZ (NodeShuffleMapModeProvisional.cpp)
+    // and has not been trace-settled. The resettle, rock, killbox and settle-near-players passes skip it; the spawn pass settles it on approach through
+    // RwgResolveAtSpawn and clears it (settled, redealt or pinned). Forward-only: older saves load it false. False on every vanilla entry (never written there).
+    UPROPERTY(SaveGame) bool bRwgProvisional = false;
 };
 
 // One original vanilla node location to suppress on stream-in after a wipe-on-
@@ -1137,6 +1141,18 @@ private:
     int32 RwgSteepSessGuidMismatch = 0, RwgSteepSessLastPrinted = -1;
     int32 RwgPcSteepOccludedRing = 0, RwgSteepSessOccludedRing = 0; // rwg-clifftop-1: occluded entries the ring moved (PLACECENSUS per pass / RWGSTEEPSUM session)
     int32 RwgSteepSessPassedFromOriginZ = 0;      // rwg-steep-2: ring passes that also pass when re-traced from the origin's API Z (RWGSTEEPSUM)
+    // ---- rwg-farspawn-1 (2026-10-31): provisional far spawn + settle on approach. NodeShuffleMapModeProvisional.cpp (subsystem .cpp is over 500 lines).
+    void RwgProvisionalSpawnPass(const TArray<FVector>& Pawns, float AttemptRadiusCm, bool& bChangedWorld); // spawns unspawned entries beyond the attempt radius
+    void RwgSettleProvisional(FNodeShuffleEntry& E, bool& bChangedWorld); // settle-on-approach of one provisional entry (the spawn pass's attempt loop)
+    bool RwgProvisionalPinWins(FNodeShuffleEntry& E);                     // true = pinned/occupied: flag cleared, never moved
+    void RwgProvisionalDespawn(FNodeShuffleEntry& E);                     // the RwgRedealLiveEntry teardown, without a redeal
+    void RwgProvisionalEmitCensus();                                       // PROVCENSUS (12th passes)
+    int32 RwgPcProvSpawned = 0, RwgPcProvSettled = 0;                      // PLACECENSUS per pass (reset by RwgEmitPlaceCensus)
+    int32 RwgProvSessSpawned = 0, RwgProvSessSettled = 0, RwgProvSessRedealt = 0, RwgProvSessDeferred = 0, RwgProvSessPinned = 0; // session
+    int32 RwgProvSessRefused = 0, RwgProvSessStale = 0, RwgProvSettleSamples = 0, RwgProvSettleSamplePass = -1;
+    double RwgProvSessMovedXYmMax = 0.0;
+    TArray<float> RwgProvSessDzCm;                                         // |settled Z - provisional Z| of in-place settles, session
+    TSet<FGuid> RwgProvRefused;                                            // session: a provisional spawn produced no actor (normal spawn on approach)
     // Coordinator addendum (water diagnostics, measured only, gates nothing): ROLLCENSUS / WELLROLL splits + bounded samples.
     void RwgNoteWaterSample(const NodeShuffleMapMode::FRwgGroundQuery& Q, const FVector& P, bool bVolumeWet, const TCHAR* Caller);
     int32 RwgRcWaterZBelow0 = 0, RwgRcWaterZAtOrAbove0 = 0, RwgRcDealtBelowZ0 = 0; // per roll (GenerateRwgLocations)

@@ -5357,6 +5357,7 @@ void ANodeShuffleSubsystem::SettleNewNodesNearPlayers()
         {
             continue;
         }
+        if (Entry.bRwgProvisional) { continue; } // rwg-farspawn-1: RWG provisional actors settle only through RwgSettleProvisional (never written true on vanilla)
         // coexist-1 §1: dormant entries do no work (no settles, no redeals, no defer counts).
         if (DormantThisSession.Num() > 0 && DormantThisSession.Contains(Entry.EntryGuid))
         {
