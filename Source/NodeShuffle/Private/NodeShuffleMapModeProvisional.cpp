@@ -138,11 +138,14 @@ void ANodeShuffleSubsystem::RwgSettleProvisional(FNodeShuffleEntry& E, bool& bCh
     // rwg-farspawn-1c C1: which settle branch may keep the actor. moveCheck prints the predicate that decided it (moved / xyShift /
     // classDiffers / resourceDiffers / noActor / notSettled); only "moved" keeps the actor, every other value takes the respawn below.
     const TCHAR* MoveCheck = bSettled ? RwgProvisionalMoveCheck(E, Node, ProvAt) : TEXT("notSettled");
+    // Readback (the RESETTLE-REFUSED precedent, NodeShuffleMapModeResettle.cpp): whether the engine applies a move is closed-source (a
+    // non-Movable root refuses it with a warning only). A move the actor did not take prints moveNotApplied and takes the respawn branch.
+    if (bSettled && FCString::Strcmp(MoveCheck, TEXT("moved")) == 0 && !RwgProvisionalMoveInPlace(E, Node)) { MoveCheck = TEXT("moveNotApplied"); }
     if (bSettled && FCString::Strcmp(MoveCheck, TEXT("moved")) == 0)
     {
-        // (a1) settled at the SAME XY (shift <= RwgProvisionalMoveTolCm), same node class + resource: the SAME actor is moved to the
-        // settled spot (identity, compass marker and radar reveal kept; NodeShuffleMapModeProvisionalMove.cpp lists what it re-runs).
-        RwgProvisionalMoveInPlace(E, Node);
+        // (a1) settled at the SAME XY (shift <= RwgProvisionalMoveTolCm), same node class + resource, and the move read back: the SAME
+        // actor now stands at the settled spot (identity, compass marker and radar reveal kept; NodeShuffleMapModeProvisionalMove.cpp
+        // lists what it re-ran).
         E.bRwgProvisional = false;
         E.bRayCasted = true;
         bChangedWorld = true; // scanner cluster midpoints + radar tower lists are rebuilt from the moved actor
@@ -157,7 +160,7 @@ void ANodeShuffleSubsystem::RwgSettleProvisional(FNodeShuffleEntry& E, bool& bCh
     }
     else if (bSettled)
     {
-        // (a2) settled at a different XY (or class/resource differ): the provisional actor is torn down FIRST, then the unchanged spawn
+        // (a2) settled at a different XY (or class/resource differ, or the move did not read back): the provisional actor is torn down FIRST, then the unchanged spawn
         // path materializes the node at the settled spot with bRayCasted already true. Counted as settled only when that spawn produced
         // an actor (tested just below).
         RwgProvisionalDespawn(E);
@@ -272,7 +275,7 @@ void ANodeShuffleSubsystem::RwgProvisionalSpawnPass(const TArray<FVector>& Pawns
         if (!IsValid(Node))
         {
             // rwg-farspawn-1c C6: the predicate the entry's own state shows after the spawn call, read BEFORE the snapshot restore.
-            const TCHAR* Reason = !E.bActive ? TEXT("overlapGaveUp")
+            const TCHAR* Reason = !E.bActive ? TEXT("inactiveAfterSpawn")
                 : (E.OverlapNudges != Snap.OverlapNudges) ? TEXT("overlapNudgeFailed")
                 : (SpawnFailCounts.FindRef(E.EntryGuid) > FailsBefore) ? TEXT("spawnActorNull")
                 : TEXT("noActorOtherReturn");
@@ -312,16 +315,20 @@ void ANodeShuffleSubsystem::RwgProvisionalEmitCensus()
         if (!E.bRwgProvisional) { continue; }
         if (IsValid(SpawnedNodes.FindRef(E.EntryGuid))) { ++Live; } else { ++FlagNoActor; }
     }
-    // Legend (re-review V-R3, prose only): the last two fields are session counts of two settle outcomes. settledNoActor counts settles
+    // Legend (re-review V-R3, prose only): the settledNoActor and redealNotMoved fields are session counts of two settle outcomes. settledNoActor counts settles
     // where the settle call returned true but no valid actor existed after the respawn. redealNotMoved counts unplaceable-branch
     // settles where the redeal call returned false (the entry did not move); a redeal that returned true also leaves no actor until
     // the next spawn and is counted in redealtFromProvisional, not here. Both match the PROVSETTLE outcome strings of the same names,
     // which are a sample; these are the census.
     // rwg-farspawn-1c C1 (prose only): the movedInPlace tail is the session count of settles that kept and moved the same actor; it is a
     // subset of settledFromProvisional (the rest of that count were respawned).
-    UE_LOG(LogNodeShuffle, Display, TEXT("PROVCENSUS: pass=%d provisional=%d settledFromProvisional=%d redealtFromProvisional=%d deferredProvisional=%d pinnedProvisional=%d dzP50Cm=%.0f dzP90Cm=%.0f dzMaxCm=%.0f movedXYmMax=%.1f spawnedSession=%d refusedSession=%d staleFlagCleared=%d flagNoActor=%d spawnAllAtRoll=%d settledNoActor=%d redealNotMoved=%d movedInPlace=%d"),
+    // rwg-farspawn-1d F1/F2 (prose only): the moveNotApplied, movedEnclosed and movedShadowInside fields are session counts.
+    // moveNotApplied counts moves whose readback found the actor more than 10 cm from the settled spot (each was then respawned,
+    // so it is NOT in the movedInPlace count). movedEnclosed and movedShadowInside count kept-and-moved settles whose shadow
+    // measurement at the settled spot read enclosed, and read totally inside by the inside gate's instrument; neither refused the move.
+    UE_LOG(LogNodeShuffle, Display, TEXT("PROVCENSUS: pass=%d provisional=%d settledFromProvisional=%d redealtFromProvisional=%d deferredProvisional=%d pinnedProvisional=%d dzP50Cm=%.0f dzP90Cm=%.0f dzMaxCm=%.0f movedXYmMax=%.1f spawnedSession=%d refusedSession=%d staleFlagCleared=%d flagNoActor=%d spawnAllAtRoll=%d settledNoActor=%d redealNotMoved=%d movedInPlace=%d moveNotApplied=%d movedEnclosed=%d movedShadowInside=%d"),
         RwgPcPasses, Live, RwgProvSessSettled, RwgProvSessRedealt, RwgProvSessDeferred, RwgProvSessPinned,
         ProvPercentile(RwgProvSessDzCm, 0.5f), ProvPercentile(RwgProvSessDzCm, 0.9f), ProvPercentile(RwgProvSessDzCm, 1.0f), RwgProvSessMovedXYmMax,
         RwgProvSessSpawned, RwgProvSessRefused, RwgProvSessStale, FlagNoActor, NodeShuffleMapMode::RwgSpawnAllAtRollOn() ? 1 : 0, RwgProvSessSettledNoActor, RwgProvSessRedealNotMoved,
-        RwgProvSessMovedInPlace);
+        RwgProvSessMovedInPlace, RwgProvSessMoveNotApplied, RwgProvSessMovedEnclosed, RwgProvSessMovedShadowInside);
 }

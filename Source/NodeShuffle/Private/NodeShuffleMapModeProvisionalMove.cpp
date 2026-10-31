@@ -7,19 +7,34 @@
 //   spawn at Entry.Location/Rotation      -> SetActorLocationAndRotation(Entry.Location, Entry.Rotation) on the same actor
 //   InitResource / overrides / purity     -> unchanged actor, unchanged class + resource (MoveCheck refuses otherwise)
 //   InitRadioactivity + UpdateRadioactivity -> emitters removed and re-initialised at the new spot when the actor had one
-//   UpdateNodeRepresentation              -> called (the representation is NOT removed: that removal is what lost the marker)
+//   UpdateNodeRepresentation              -> called (the representation is NOT removed: that removal is what lost the marker), then
+//                                            AFGActorRepresentationManager::UpdateRepresentation on the node's own representation
+//                                            (FindResourceNodeRepresentation), the public path to the representation's cached
+//                                            mActorLocation / mLocalActorLocation (FGActorRepresentation.h:251,254); whether it
+//                                            re-reads the actor's location is closed source (rwg-farspawn-1d F3, runtime H2/H5)
 //   UseBox / manager / SpawnedNodes / veto registry -> same actor pointer, already registered (nothing to re-register)
 //   component attach + dress              -> component already attached; the fallback rock is re-dressed when one is dressed
 //   SteadyAliveNodes.Add                  -> same instance, already steady
 //   despawn's MeshActorCache / AdoptRotRefit removal -> repeated here (same state the respawn left)
-//   overlap / enclosure / T54 inside-shadow gates at the settled spot -> NOT re-run (the provisional spawn ran them at the same XY,
-//                                            provisional Z); listed as a runtime check in the round-1c handoff.
+//   overlap gates at the settled spot     -> NOT run (lambda-local to EnsureNewNodeSpawned). The gates are 3-D and the provisional
+//                                            spawn ran them at the provisional Z, so a settle that rose onto a cliff top was never gated.
+//   enclosure / T54 inside-shadow gates   -> SHADOW-MEASURED at the settled spot (rwg-farspawn-1d F2, round-1c review option c):
+//                                            IsSpotEnclosed + EvaluateInsideShadowGate, this actor excluded; printed on PROVMOVE and
+//                                            counted on PROVCENSUS; they NEVER refuse the move.
+// READBACK (rwg-farspawn-1d F1, the RESETTLE-REFUSED precedent, NodeShuffleMapModeResettle.cpp): whether the engine applies the move
+// is closed source (a non-Movable root refuses it with a warning only). A move the actor did not take returns false; the caller then
+// prints moveCheck=moveNotApplied and takes the despawn + respawn branch, so an entry is never committed settled at a Z its actor
+// is not at (the save adopt matches in 3-D within 300 cm, NodeShuffleSubsystem.cpp, and would otherwise respawn a duplicate).
+// This REVERSES the DESPAWN-ON-MOVE rule (NodeShuffleWellDespawn.cpp:23,70; NodeShuffleSubsystem.h DespawnWellGroup comment) for
+// provisional settles only; its closed-source risks are runtime-checked (round-1c review H2, H5), not proven.
 #include "NodeShuffleMapModeProvisional.h"
 #include "NodeShuffleSubsystem.h"
 #include "NodeShuffleNodeComponent.h"
 #include "NodeShuffle.h"
 #include "Resources/FGResourceNode.h"
 #include "FGRadioactivitySubsystem.h"
+#include "FGActorRepresentationManager.h"
+#include "Representation/FGResourceNodeRepresentation.h"
 #include "Components/StaticMeshComponent.h"
 
 const TCHAR* ANodeShuffleSubsystem::RwgProvisionalMoveCheck(const FNodeShuffleEntry& E, AFGResourceNode* Node, const FVector& ProvAt) const
@@ -33,12 +48,33 @@ const TCHAR* ANodeShuffleSubsystem::RwgProvisionalMoveCheck(const FNodeShuffleEn
     return TEXT("moved");
 }
 
-void ANodeShuffleSubsystem::RwgProvisionalMoveInPlace(FNodeShuffleEntry& E, AFGResourceNode* Node)
+bool ANodeShuffleSubsystem::RwgProvisionalMoveInPlace(FNodeShuffleEntry& E, AFGResourceNode* Node)
 {
-    if (!IsValid(Node)) { return; } // MoveCheck returned noActor before this can run; belt only
+    if (!IsValid(Node)) { return false; } // MoveCheck returned noActor before this can run; belt only
     const FVector From = Node->GetActorLocation();
     const FRotator RotFrom = Node->GetActorRotation();
     Node->SetActorLocationAndRotation(E.Location, E.Rotation);
+    // rwg-farspawn-1d F1 readback: the entry follows the ACTOR's measured location, never the request (see the file header).
+    const FVector After = Node->GetActorLocation();
+    if (FVector::Dist(After, E.Location) > 10.0)
+    {
+        ++RwgProvSessMoveNotApplied;
+        UE_LOG(LogNodeShuffle, Display, TEXT("PROVMOVE: entry=%s moveCheck=moveNotApplied requested=%s actorAfter=%s distCm=%.0f notAppliedSession=%d"),
+            *E.EntryGuid.ToString(), *E.Location.ToCompactString(), *After.ToCompactString(), FVector::Dist(After, E.Location), RwgProvSessMoveNotApplied);
+        return false; // nothing below ran; the caller despawns this actor and respawns at the settled spot
+    }
+    // rwg-farspawn-1d F2 (shadow only, never refuses): the respawn path's enclosure + inside gates at the settled spot, this actor
+    // excluded. shadowGate is read from the inside gate's own per-pass counters (which one this call raised), so it is the
+    // instrument's verdict even while the refusal CVar is off; refuseIgnored is the gate's return (1 only while that CVar is set).
+    int32 EncBlocked = 0, EncTotal = 0;
+    const bool bEnclosed = IsSpotEnclosed(E.Location, EncBlocked, EncTotal, nullptr, nullptr, Node);
+    const int32 GateInsideBefore = InsideGateWouldRefuseThisPass, GateOutsideBefore = InsideGateNegativeThisPass;
+    const bool bRefuseIgnored = EvaluateInsideShadowGate(E.Location, Node, FString::Printf(TEXT("provisional move '%s'"), *E.EntryGuid.ToString()),
+        /*bAdoptedNotPlaced=*/false, /*bCaveFlagged=*/E.bUnderground || E.bRwgCave);
+    const TCHAR* ShadowGate = (InsideGateWouldRefuseThisPass > GateInsideBefore) ? TEXT("inside")
+        : (InsideGateNegativeThisPass > GateOutsideBefore) ? TEXT("outside") : TEXT("notMeasured");
+    if (bEnclosed) { ++RwgProvSessMovedEnclosed; }
+    if (InsideGateWouldRefuseThisPass > GateInsideBefore) { ++RwgProvSessMovedShadowInside; }
     MeshActorCache.Remove(TWeakObjectPtr<AFGResourceNodeBase>(Node)); // as RwgProvisionalDespawn
     AdoptRotRefit.Remove(E.EntryGuid);                                // as RwgProvisionalDespawn (the respawn never re-added it)
 
@@ -55,6 +91,13 @@ void ANodeShuffleSubsystem::RwgProvisionalMoveInPlace(FNodeShuffleEntry& E, AFGR
         }
     }
     Node->UpdateNodeRepresentation();
+    // rwg-farspawn-1d F3: the public path to the node representation's cached location. nodeRepUpdated prints the call's return
+    // (-1 = no representation manager or no node representation found, i.e. the call did not run).
+    int32 NodeRepUpdated = -1;
+    if (AFGActorRepresentationManager* RepMgr = AFGActorRepresentationManager::Get(GetWorld()))
+    {
+        if (UFGResourceNodeRepresentation* NodeRep = RepMgr->FindResourceNodeRepresentation(Node)) { NodeRepUpdated = RepMgr->UpdateRepresentation(NodeRep) ? 1 : 0; }
+    }
 
     // Dress: the rock is a component on the actor, so it moved with it; a changed rotation re-runs the rock dress the alive chain
     // runs after a rotation refit (SpawnVisualRockForNode), only when a rock is dressed. Oil decal / native visual: moved with the actor.
@@ -67,17 +110,19 @@ void ANodeShuffleSubsystem::RwgProvisionalMoveInPlace(FNodeShuffleEntry& E, AFGR
 
     if (FNodeShuffleModule::AreDiagnosticsEnabled())
     {
-        UE_LOG(LogNodeShuffle, Display, TEXT("PROVMOVE: entry=%s from=%s to=%s dzCm=%.0f rotChanged=%d rockDressed=%d rockRedressed=%d radEmitter=%d onSolidTop=%d"),
+        UE_LOG(LogNodeShuffle, Display, TEXT("PROVMOVE: entry=%s from=%s to=%s dzCm=%.0f rotChanged=%d rockDressed=%d rockRedressed=%d radEmitter=%d onSolidTop=%d enclosed=%d encBlocked=%d/%d shadowGate=%s refuseIgnored=%d nodeRepUpdated=%d"),
             *E.EntryGuid.ToString(), *From.ToCompactString(), *Node->GetActorLocation().ToCompactString(), Node->GetActorLocation().Z - From.Z,
-            bRotChanged ? 1 : 0, bRockDressed ? 1 : 0, RC ? 1 : 0, RadHad, E.bRwgOnSolidTop ? 1 : 0);
+            bRotChanged ? 1 : 0, bRockDressed ? 1 : 0, RC ? 1 : 0, RadHad, E.bRwgOnSolidTop ? 1 : 0,
+            bEnclosed ? 1 : 0, EncBlocked, EncTotal, ShadowGate, bRefuseIgnored ? 1 : 0, NodeRepUpdated);
     }
+    return true;
 }
 
 void ANodeShuffleSubsystem::RwgProvisionalLogRefusal(const FNodeShuffleEntry& E, const TCHAR* Reason)
 {
     // rwg-farspawn-1c C6: one line per provisional refusal (an entry is refused at most once per session: RwgProvRefused).
-    // refusedReason is the predicate read this run: zNonFinite (the seam returned a non-finite Z), overlapGaveUp (the spawn call left
-    // the entry inactive), overlapNudgeFailed (its nudge count rose), spawnActorNull (its spawn-failure count rose), noActorOtherReturn
+    // refusedReason is the predicate read this run: zNonFinite (the seam returned a non-finite Z), inactiveAfterSpawn (the spawn call
+    // left the entry inactive: overlap give-up, or the inside gate when NodeShuffle.InsideGateRefuse is set), overlapNudgeFailed (its nudge count rose), spawnActorNull (its spawn-failure count rose), noActorOtherReturn
     // (none of those changed; another early return of the spawn call ran).
     UE_LOG(LogNodeShuffle, Display, TEXT("PROVSPAWN: refused entry=%s res=%s at=%s refusedReason=%s refusedSession=%d"),
         *E.EntryGuid.ToString(), *E.AssignedResourceClassPath, *E.Location.ToCompactString(), Reason, RwgProvSessRefused);
