@@ -112,13 +112,14 @@ function Invoke-FarspawnChecks($T) {
     if ((Count $T.place 'if (E.bRwgProvisional) { E.bRwgProvisional = false; ++RwgProvSessStale; }') -ne 1) { $f += '(F9) a flag without a live actor is cleared' }
     if (-not (Ordered $T.place @('    ++RwgPcPasses;', '    RwgProvisionalSpawnPass(Pawns, AttemptRadiusCm, bChangedWorld);', '    RwgResettlePass();'))) { $f += '(F9) the provisional pass runs after the attempt loop, before the resettle' }
     # F10
-    if ((Count $p 'TEXT("PROVSPAWN: pass=%d spawnedThisPass=%d remainingUnspawned=%d provisionalTotal=%d zSource=%s msBatch=%.1f refusedThisPass=%d refusedSession=%d batch=%d seaPending=%d caveDealtZ=%d rayCastedNoActor=%d seaDealFailed=%d"),') -ne 1 -or
+    if ((Count $p 'TEXT("PROVSPAWN: pass=%d spawnedThisPass=%d remainingCandidates=%d provisionalTotal=%d zSource=%s msBatch=%.1f refusedThisPass=%d refusedSession=%d batch=%d seaPending=%d caveDealtZ=%d rayCastedNoActor=%d seaDealFailed=%d"),') -ne 1 -or
         (Count $p "RwgPcPasses, Spawned, Cands.Num() - Spawned - Refused, Total, *ZSource, MsBatch, Refused, RwgProvSessRefused, Batch, SeaPending, CaveDealtZ,`n            RayCastedNoActor, SeaDealFailed);") -ne 1) { $f += '(F10) PROVSPAWN format/args' }
     if ((Count $p 'TEXT("PROVSETTLE: entry=%s res=%s provZ=%.0f settledZ=%.0f dzCm=%.0f movedXYm=%.1f outcome=%s hitClass=%d apiUsed=%d onSolidTop=%d localMapRevealsBefore=%d localMapRevealsAfter=%d serverMapRevealsBefore=%d serverMapRevealsAfter=%d"),') -ne 1 -or
         (Count $p "FVector::Dist2D(MovedTo, ProvAt) / 100.0, Outcome, HitClass, bApiUsed ? 1 : 0, E.bRwgOnSolidTop ? 1 : 0,`n            LocalRevealsBefore, LocalRevealsAfter, ServerRevealsBefore, ServerRevealsAfter);") -ne 1) { $f += '(F10) PROVSETTLE format/args' }
     if ((Count $p 'TEXT("PROVSETTLE: entry=%s res=%s provZ=%.0f settledZ=%.0f dzCm=0 movedXYm=0.0 outcome=pinnedKept hitClass=-1 pinned=%d occupied=%d"),') -ne 1) { $f += '(F10) PROVSETTLE pinnedKept format' }
     if ((Count $p 'TEXT("PROVCENSUS: pass=%d provisional=%d settledFromProvisional=%d redealtFromProvisional=%d deferredProvisional=%d pinnedProvisional=%d dzP50Cm=%.0f dzP90Cm=%.0f dzMaxCm=%.0f movedXYmMax=%.1f spawnedSession=%d refusedSession=%d staleFlagCleared=%d flagNoActor=%d spawnAllAtRoll=%d"),') -ne 1 -or
         (Count $p 'ProvPercentile(RwgProvSessDzCm, 0.5f), ProvPercentile(RwgProvSessDzCm, 0.9f), ProvPercentile(RwgProvSessDzCm, 1.0f), RwgProvSessMovedXYmMax,') -ne 1) { $f += '(F10) PROVCENSUS format/args' }
+    if ((Count $p ('remaining' + 'Unspawned')) -ne 0) { $f += '(F10) fix F10: the PROVSPAWN field is remainingCandidates (the old name is gone)' }
     # F11
     if ((Count $T.place 'solidTopRejectedFootprint=%d provisionalSpawned=%d provisionalSettled=%d"),') -ne 1 -or (Count $T.place 'RwgPcSolidTopRejFootprint, RwgPcProvSpawned, RwgPcProvSettled);') -ne 1) { $f += '(F11) PLACECENSUS tail fields/args' }
     if ((Count $T.place '    RwgPcProvSpawned = RwgPcProvSettled = 0; // rwg-farspawn-1') -ne 1) { $f += '(F11) per-pass reset' }
@@ -203,6 +204,7 @@ $mutants = @(
     @{ Name = 'X42 F7 sea-deal-failed skip dropped'; Key = 'prov'; Expect = 'F17'; Find = "        if (RwgSeaDealFailed.Contains(E.EntryGuid)) { ++SeaPending; ++SeaDealFailed; continue; }"; Repl = '        // skip removed' }
     @{ Name = 'X43 F9 help text claims simultaneity again'; Key = 'prov'; Expect = 'F18'; Find = 'get a node placed, up to a batch per spawn pass, once'; Repl = ('get a node placed at ' + 'once, up to a batch per spawn pass, once') }
     @{ Name = 'X44 F9 help text drops the skips'; Key = 'prov'; Expect = 'F18'; Find = '(parked, dormant, refused, pinned, or already fitted to the ground) are skipped'; Repl = 'are skipped' }
+    @{ Name = 'X45 F10 old PROVSPAWN field name back'; Key = 'prov'; Expect = 'F10'; Find = 'spawnedThisPass=%d remainingCandidates=%d'; Repl = ('spawnedThisPass=%d remaining' + 'Unspawned=%d') }
     @{ Name = 'X27 F2 pin check evaluated before the distance test'; Key = 'place'; Expect = 'F9'; Find = 'if (E.bRwgProvisional && IsLocationNearAnyPlayer(E.Location, AttemptRadiusCm) && !RwgProvisionalPinWins(E)) {'; Repl = 'if (E.bRwgProvisional && !RwgProvisionalPinWins(E) && IsLocationNearAnyPlayer(E.Location, AttemptRadiusCm)) {' }
 )
 $mutantFails = @()
