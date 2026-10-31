@@ -18,6 +18,7 @@
 #   F13 Marker 2026-10-31-rwg-farspawn-1 once, previous marker absent; the new .cpp stays under 500 lines.
 #   F15 (fix round 1, F4) PROVSETTLE reports only what it tested: inPlace/settled counters need the respawned actor, settledZ is that
 #       actor's Z (never the entry's), ring/mapwide/redealt need TryRedealWaterLockedEntry to have returned true.
+#   F16 (fix round 1, F6) PROVSETTLE prints the scanner/radar reveal counts before the despawn and on the respawned actor; read-only.
 #   F14 (fix round 1, F3) RWGSTUCK / HERE-DENSITY: the provisional settle is bracketed by the RWGSTUCK snapshot/note, and the note,
 #       the stuck census and HERE-DENSITY count a valid actor as live only when it is NOT provisional.
 # Mutants run in-file. Exit 0 = all hold; 1 = at least one does not; 2 = a pinned FILE is missing.
@@ -111,8 +112,8 @@ function Invoke-FarspawnChecks($T) {
     # F10
     if ((Count $p 'TEXT("PROVSPAWN: pass=%d spawnedThisPass=%d remainingUnspawned=%d provisionalTotal=%d zSource=%s msBatch=%.1f refusedThisPass=%d refusedSession=%d batch=%d seaPending=%d caveDealtZ=%d"),') -ne 1 -or
         (Count $p 'RwgPcPasses, Spawned, Cands.Num() - Spawned - Refused, Total, *ZSource, MsBatch, Refused, RwgProvSessRefused, Batch, SeaPending, CaveDealtZ);') -ne 1) { $f += '(F10) PROVSPAWN format/args' }
-    if ((Count $p 'TEXT("PROVSETTLE: entry=%s res=%s provZ=%.0f settledZ=%.0f dzCm=%.0f movedXYm=%.1f outcome=%s hitClass=%d apiUsed=%d onSolidTop=%d"),') -ne 1 -or
-        (Count $p 'FVector::Dist2D(MovedTo, ProvAt) / 100.0, Outcome, HitClass, bApiUsed ? 1 : 0, E.bRwgOnSolidTop ? 1 : 0);') -ne 1) { $f += '(F10) PROVSETTLE format/args' }
+    if ((Count $p 'TEXT("PROVSETTLE: entry=%s res=%s provZ=%.0f settledZ=%.0f dzCm=%.0f movedXYm=%.1f outcome=%s hitClass=%d apiUsed=%d onSolidTop=%d localMapRevealsBefore=%d localMapRevealsAfter=%d serverMapRevealsBefore=%d serverMapRevealsAfter=%d"),') -ne 1 -or
+        (Count $p "FVector::Dist2D(MovedTo, ProvAt) / 100.0, Outcome, HitClass, bApiUsed ? 1 : 0, E.bRwgOnSolidTop ? 1 : 0,`n            LocalRevealsBefore, LocalRevealsAfter, ServerRevealsBefore, ServerRevealsAfter);") -ne 1) { $f += '(F10) PROVSETTLE format/args' }
     if ((Count $p 'TEXT("PROVSETTLE: entry=%s res=%s provZ=%.0f settledZ=%.0f dzCm=0 movedXYm=0.0 outcome=pinnedKept hitClass=-1 pinned=%d occupied=%d"),') -ne 1) { $f += '(F10) PROVSETTLE pinnedKept format' }
     if ((Count $p 'TEXT("PROVCENSUS: pass=%d provisional=%d settledFromProvisional=%d redealtFromProvisional=%d deferredProvisional=%d pinnedProvisional=%d dzP50Cm=%.0f dzP90Cm=%.0f dzMaxCm=%.0f movedXYmMax=%.1f spawnedSession=%d refusedSession=%d staleFlagCleared=%d flagNoActor=%d spawnAllAtRoll=%d"),') -ne 1 -or
         (Count $p 'ProvPercentile(RwgProvSessDzCm, 0.5f), ProvPercentile(RwgProvSessDzCm, 0.9f), ProvPercentile(RwgProvSessDzCm, 1.0f), RwgProvSessMovedXYmMax,') -ne 1) { $f += '(F10) PROVCENSUS format/args' }
@@ -132,6 +133,9 @@ function Invoke-FarspawnChecks($T) {
     if ((Count $settleFn ('SettledZ = ' + 'E.')) -ne 0 -or (Count $settleFn 'SettledZ = ') -ne 2) { $f += '(F15) settledZ is assigned only from the respawned actor' }
     if ((Count $settleFn 'const bool bMoved = TryRedealWaterLockedEntry(E);') -ne 1 -or (Count $settleFn 'if (bMoved) { ++RwgProvSessRedealt; }') -ne 1) { $f += '(F15) the redeal result gates redealt and the ring/mapwide outcome' }
     if ((Count $settleFn 'const FVector MovedTo = bFresh ? FreshAt : E.Location;') -ne 1) { $f += '(F15) movedXYm measures to the respawned actor when there is one' }
+    # F16 (fix F6, measure only): reveal counts read before the despawn, after-counts only from the respawned actor
+    if (-not (Ordered $settleFn @('const int32 LocalRevealsBefore = Node->mLocalMapReveals, ServerRevealsBefore = Node->mServerMapReveals;', 'Node->SetActorEnableCollision(false);', 'RwgProvisionalDespawn(E);', 'if (bRespawned)', 'LocalRevealsAfter = Fresh->mLocalMapReveals; ServerRevealsAfter = Fresh->mServerMapReveals;'))) { $f += '(F16) reveal counts: before the despawn, after only from the respawned actor' }
+    if ((Count $p ('mLocalMapReveals ' + '=')) -ne 0 -or (Count $p ('mServerMapReveals ' + '=')) -ne 0 -or (Count $p ('MapReveals' + '++')) -ne 0) { $f += '(F16) fix F6 is measure-only: nothing here writes a reveal count' }
     # F14
     if ((Count $T.place 'if (E.bRwgProvisional) { RwgStuckBeforeAttempt(E); RwgSettleProvisional(E, bChangedWorld); AFGResourceNode* const* Now = SpawnedNodes.Find(E.EntryGuid); if (Now && IsValid(*Now) && !E.bRwgProvisional) { ++RwgPcSpawned; } RwgStuckAfterAttempt(E); continue; }') -ne 1) { $f += '(F14) the provisional settle must be bracketed by RwgStuckBeforeAttempt / RwgStuckAfterAttempt' }
     if ((Count $T.dens 'if (Now && IsValid(*Now) && !E.bRwgProvisional) { RwgStuckTracker.Remove(E.EntryGuid); return; }') -ne 1) { $f += '(F14) the RWGSTUCK note must not forget a provisional entry as live' }
@@ -180,6 +184,8 @@ $mutants = @(
     @{ Name = 'X36 F4 settled counted without an actor'; Key = 'prov'; Expect = 'F15'; Find = "            ++RwgProvSessSettled; ++RwgPcProvSettled;`n        }`n"; Repl = "        }`n        ++RwgProvSessSettled; ++RwgPcProvSettled;`n" }
     @{ Name = 'X37 F4 movedXYm back to the entry location'; Key = 'prov'; Expect = 'F15'; Find = 'const FVector MovedTo = bFresh ? FreshAt : E.Location;'; Repl = 'const FVector MovedTo = E.Location;' }
     @{ Name = 'X38 F5 PROVCENSUS back behind the toggle return'; Key = 'prov'; Expect = 'F12'; Find = "    if ((RwgPcPasses % 12) == 1) { RwgProvisionalEmitCensus(); } // fix F5: before the toggle/pawn/query returns, so spawnAllAtRoll=0 can print`n    if (!NodeShuffleMapMode::RwgSpawnAllAtRollOn() || Pawns.Num() == 0) { return; }"; Repl = "    if (!NodeShuffleMapMode::RwgSpawnAllAtRollOn() || Pawns.Num() == 0) { return; }`n    if ((RwgPcPasses % 12) == 1) { RwgProvisionalEmitCensus(); }" }
+    @{ Name = 'X39 F6 reveal counts read after the despawn'; Key = 'prov'; Expect = 'F16'; Find = "    const int32 LocalRevealsBefore = Node->mLocalMapReveals, ServerRevealsBefore = Node->mServerMapReveals;`n"; Repl = '' }
+    @{ Name = 'X39b F6 reveal count written'; Key = 'prov'; Expect = 'F16'; Find = 'bFresh = true;'; Repl = ('bFresh = true; Fresh->mLocalMapReveals ' + '= LocalRevealsBefore;') }
     @{ Name = 'X27 F2 pin check evaluated before the distance test'; Key = 'place'; Expect = 'F9'; Find = 'if (E.bRwgProvisional && IsLocationNearAnyPlayer(E.Location, AttemptRadiusCm) && !RwgProvisionalPinWins(E)) {'; Repl = 'if (E.bRwgProvisional && !RwgProvisionalPinWins(E) && IsLocationNearAnyPlayer(E.Location, AttemptRadiusCm)) {' }
 )
 $mutantFails = @()
@@ -199,5 +205,5 @@ if ($all.Count -gt 0) {
     Write-Host "FARSPAWN LINT: FAIL -- $($all.Count) problem(s). Mutants caught $caught/$($mutants.Count)."
     exit 1
 }
-Write-Host "PASS: FARSPAWN lint -- F1..F15 hold across $($text.Count) loaded files; mutants caught $caught/$($mutants.Count)."
+Write-Host "PASS: FARSPAWN lint -- F1..F16 hold across $($text.Count) loaded files; mutants caught $caught/$($mutants.Count)."
 exit 0

@@ -111,6 +111,10 @@ void ANodeShuffleSubsystem::RwgSettleProvisional(FNodeShuffleEntry& E, bool& bCh
     if (!IsValid(Node)) { E.bRwgProvisional = false; ++RwgProvSessStale; return; } // the caller collected it live; counted, not settled
     if (RwgProvisionalPinWins(E)) { return; }
     const FVector ProvAt = Node->GetActorLocation();
+    // fix F6 (measure only): the node's scanner / radar reveal counts (AFGResourceNodeBase mLocalMapReveals / mServerMapReveals), read
+    // BEFORE the settle can despawn it; the respawned actor's counts are read after its spawn (-1 = no respawned actor).
+    const int32 LocalRevealsBefore = Node->mLocalMapReveals, ServerRevealsBefore = Node->mServerMapReveals;
+    int32 LocalRevealsAfter = -1, ServerRevealsAfter = -1;
     const FNodeShuffleEntry Snap = E;
     // The settle's probes must not meet the provisional node's own body: collision off for the synchronous settle only, back on
     // before anything else can read it (the scanner hook keeps a node only while its collision is enabled).
@@ -142,6 +146,7 @@ void ANodeShuffleSubsystem::RwgSettleProvisional(FNodeShuffleEntry& E, bool& bCh
         {
             FreshAt = Fresh->GetActorLocation(); // after any overlap nudge the spawn path applied
             bFresh = true;
+            LocalRevealsAfter = Fresh->mLocalMapReveals; ServerRevealsAfter = Fresh->mServerMapReveals; // fix F6
             SettledZ = FreshAt.Z;
             RwgProvSessDzCm.Add(static_cast<float>(FMath::Abs(FreshAt.Z - ProvAt.Z)));
             RwgProvSessMovedXYmMax = FMath::Max(RwgProvSessMovedXYmMax, FVector::Dist2D(FreshAt, ProvAt) / 100.0);
@@ -177,9 +182,10 @@ void ANodeShuffleSubsystem::RwgSettleProvisional(FNodeShuffleEntry& E, bool& bCh
         ++RwgProvSettleSamples;
         // movedXYm: from the provisional actor to the respawned actor (inPlace), else to the entry's location after this call.
         const FVector MovedTo = bFresh ? FreshAt : E.Location;
-        UE_LOG(LogNodeShuffle, Display, TEXT("PROVSETTLE: entry=%s res=%s provZ=%.0f settledZ=%.0f dzCm=%.0f movedXYm=%.1f outcome=%s hitClass=%d apiUsed=%d onSolidTop=%d"),
+        UE_LOG(LogNodeShuffle, Display, TEXT("PROVSETTLE: entry=%s res=%s provZ=%.0f settledZ=%.0f dzCm=%.0f movedXYm=%.1f outcome=%s hitClass=%d apiUsed=%d onSolidTop=%d localMapRevealsBefore=%d localMapRevealsAfter=%d serverMapRevealsBefore=%d serverMapRevealsAfter=%d"),
             *E.EntryGuid.ToString(), *ProvShort(E.AssignedResourceClassPath), ProvAt.Z, SettledZ, SettledZ - ProvAt.Z,
-            FVector::Dist2D(MovedTo, ProvAt) / 100.0, Outcome, HitClass, bApiUsed ? 1 : 0, E.bRwgOnSolidTop ? 1 : 0);
+            FVector::Dist2D(MovedTo, ProvAt) / 100.0, Outcome, HitClass, bApiUsed ? 1 : 0, E.bRwgOnSolidTop ? 1 : 0,
+            LocalRevealsBefore, LocalRevealsAfter, ServerRevealsBefore, ServerRevealsAfter);
     }
 }
 
