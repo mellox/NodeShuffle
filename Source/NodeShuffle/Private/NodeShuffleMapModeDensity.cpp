@@ -69,7 +69,7 @@ void ANodeShuffleSubsystem::RwgStuckAfterAttempt(const FNodeShuffleEntry& E)
     {
         if (RwgStuckCounter(I) != RwgStuckSnap[I]) { if (!Moved.IsEmpty()) { Moved += TEXT("+"); } Moved += RwgStuckCounterNames[I]; }
     }
-    if (!bRwgStuckSnapWaterLocked && WaterLockedThisSession.Contains(E.EntryGuid)) { if (!Moved.IsEmpty()) { Moved += TEXT("+"); } Moved += TEXT("waterLockedNew"); }
+    if (!bRwgStuckSnapWaterLocked && WaterLockedThisSession.Contains(E.EntryGuid)) { if (!Moved.IsEmpty()) { Moved += TEXT("+"); } Moved += TEXT("unplaceableNew"); } // rwg-clifftop-1: same name as the PLACECENSUS field
     TPair<int32, FString>& T = RwgStuckTracker.FindOrAdd(E.EntryGuid, TPair<int32, FString>(0, FString()));
     if (FVector::DistSquared2D(RwgStuckSnapLoc, E.Location) > 1.0) { T.Key = 0; } else { ++T.Key; } // moved in XY by this attempt: no attempt has run at the new spot
     T.Value = Moved.IsEmpty() ? FString(TEXT("none")) : Moved;

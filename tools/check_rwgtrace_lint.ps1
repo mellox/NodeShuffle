@@ -58,7 +58,7 @@ $spans = @(
     @{ Id = 'D2'; Key = 'sub'; A = 'bool ANodeShuffleSubsystem::RaycastGroundAt('; B = 'bool ANodeShuffleSubsystem::TryRedealWaterLockedEntry('; Hooks = 0; Hash = '9CD59F03FFC9DF35F29642F77D3273959DAB1C2A871C41EBB49B0DBF36DBF829' }
     @{ Id = 'D3'; Key = 'place'; A = 'void ANodeShuffleSubsystem::RwgSpawnPass(float SpawnRadiusCm, bool& bChangedWorld)'; B = 'void ANodeShuffleSubsystem::RwgLogSkipOnce('; Hooks = 2; Hash = 'B7E31BB7BEFB0672DE7F871F71C7C56A94568E6A8555D46C298670A4BD3363A8' }
     @{ Id = 'D4'; Key = 'sub'; A = '        bool bSettled = (GetMapMode() == ENodeShuffleMapMode::Rwg) ? RwgResolveAtSpawn(Entry, bRwgApiUsed, bWaterNoLand) : false;'; B = '            // Defer-log backoff: full detail once per entry per session;'; Hooks = 0; Hash = '17F0F252F7BDC0FC46C6584085E3CCE1235A1FC980E0531F5E4DB1D1DE4D07BC' }
-    @{ Id = 'D5'; Key = 'dens'; A = 'int32 ANodeShuffleSubsystem::RwgStuckCounter(int32 I) const'; B = 'bool ANodeShuffleSubsystem::RwgDensityLandSample('; Hooks = 0; Hash = '08C016E766FBEDA15CEE1B062C57248AB055869060034EE74E19F8FF4583B3B3' }
+    @{ Id = 'D5'; Key = 'dens'; A = 'int32 ANodeShuffleSubsystem::RwgStuckCounter(int32 I) const'; B = 'bool ANodeShuffleSubsystem::RwgDensityLandSample('; Hooks = 0; Hash = 'F527D4100BD4CC8E9EA7C029BFEBC989DB15E1CDA3962921B24B1CBE28D4BDE4' }
 )
 function Count([string]$t, [string]$n) { return ([regex]::Matches($t, [regex]::Escape($n))).Count }
 function Sha([string]$s) { return ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($s))) -replace '-', '') }
