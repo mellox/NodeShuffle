@@ -5,8 +5,13 @@
 //
 // One config table (master toggle ModdedVanillaCountsOnRwg, default ON; rows ModdedVanillaCountRows =
 // {ResourcePath, NodeClassPath (may be empty), VanillaCount}). Per row, on an RWG map only:
-//   target     = round(VanillaCount * landFactor)
-//   landFactor = (captured /Game/ SOLID-form originals this roll) / RwgBaseSolidNodes (429), clamped [0.25, 4.0]
+//   target     = round(VanillaCount * vanillaOreScale)
+//   vanillaOreScale = (captured /Game/ SOLID-form originals this roll) / RwgBaseSolidNodes (429), clamped [0.25, 4.0].
+//   MODQUOTA prints it as vanillaOreScale, next to its numerator vanillaOreOriginals and the constant baseMapSolidNodes.
+//   Legend: this world's RWG-planned vanilla solid-ore originals divided by the base map's 429, which includes the player's
+//   RWG amount settings as well as land. (Fix round 1, orchestrator: the old name landFactor claimed a land measure; with
+//   SolidNodeAmount 0.25x it is about 3.4x the land ratio times 0.25. Behaviour unchanged: modded rows follow the same
+//   amount setting the vanilla ores do.)
 //   captured originals of the row resource > 0  -> OVERRIDE: its count in the quota pipeline becomes target
 //   captured originals of the row resource == 0 -> SEED, only if the descriptor is RF_GAS AND an own node class resolves
 //                                                 (loaded, AFGResourceNode child, not an AFGResourceDeposit child, not
@@ -37,8 +42,8 @@ namespace NodeShuffleRwgSeedGas
     extern const TCHAR* const DefaultThoriumResource;
     constexpr int32 DefaultThoriumVanillaCount = 45;
     constexpr int32 RwgBaseSolidNodes = 429;  // RWG's documented base-map solid-node count at 1x (amendment A1)
-    constexpr float LandFactorMin = 0.25f;
-    constexpr float LandFactorMax = 4.0f;
+    constexpr float VanillaOreScaleMin = 0.25f;
+    constexpr float VanillaOreScaleMax = 4.0f;
     constexpr int32 MaxRowCount = 1000;       // boundary validation of a hand-edited VanillaCount
 
     struct FRow
@@ -73,14 +78,14 @@ namespace NodeShuffleRwgSeedGas
         bool bTreeFound = false;
         int32 RowsMalformed = 0;
         int32 VanillaOreOriginals = 0;
-        float LandFactor = 1.0f;
+        float VanillaOreScale = 1.0f;
         int32 VanillaCountBefore = 0;
         bool bApplied = false;                    // DecideAndApply changed the pipeline maps; Restore pending
         TMap<FString, int32> SavedCounts;         // resource -> captured count before override (absent key = seeded)
         TArray<FRowResult> Rows;
         TSet<FString> SeededKinds;
         // fix round 1 F2 (user decision D3): the purity source of SEEDED kinds = Impure/Normal/Pure of every captured original
-        // (not a new node) whose resource path starts /Game/ and is FormSolid -- the landFactor numerator's set. Counted on
+        // (not a new node) whose resource path starts /Game/ and is FormSolid -- the vanillaOreScale numerator's set. Counted on
         // every roll (no RNG); used only when a kind was seeded.
         int32 PuritySrc = 0;
         int32 PuritySrcBins[3] = { 0, 0, 0 };        // Impure, Normal, Pure

@@ -182,7 +182,7 @@ namespace NodeShuffleRwgSeedGas
         {
             if (KV.Key.StartsWith(TEXT("/Game/")) && FormByResource.FindRef(KV.Key) == FormSolid) { Out.VanillaOreOriginals += KV.Value; }
         }
-        Out.LandFactor = FMath::Clamp(static_cast<float>(Out.VanillaOreOriginals) / RwgBaseSolidNodes, LandFactorMin, LandFactorMax);
+        Out.VanillaOreScale = FMath::Clamp(static_cast<float>(Out.VanillaOreOriginals) / RwgBaseSolidNodes, VanillaOreScaleMin, VanillaOreScaleMax);
 
         const bool bActive = bEnabled && bMapIsRwg;
         NodeShuffleRepClass::FRegistryQuery RegQuery;
@@ -196,7 +196,7 @@ namespace NodeShuffleRwgSeedGas
             UClass* Desc = Row.Resource.IsEmpty() ? nullptr : LoadClassQuiet(Row.Resource);
             R.Form = FormName(Desc);
             R.CapturedOriginals = VanillaResourceCounts.FindRef(Row.Resource);
-            R.Target = FMath::RoundToInt(FMath::Clamp(Row.VanillaCount, 0, MaxRowCount) * Out.LandFactor);
+            R.Target = FMath::RoundToInt(FMath::Clamp(Row.VanillaCount, 0, MaxRowCount) * Out.VanillaOreScale);
             if (!bEnabled) { R.Skipped = TEXT("disabled"); continue; }
             if (!bMapIsRwg) { R.Skipped = TEXT("notRwg"); continue; }
             if (Row.Resource.IsEmpty() || Row.VanillaCount < 1 || Row.VanillaCount > MaxRowCount) { R.Skipped = TEXT("badRow"); continue; }
@@ -297,7 +297,7 @@ namespace NodeShuffleRwgSeedGas
     int32 AddSeededPuritySources(FState& S, const TArray<FNodeShuffleEntry>& Layout, const TMap<FString, uint8>& FormByResource,
         uint8 FormSolid, FRandomStream& Rng, NodeShuffleRwgDeal::FPurityDecks& Purity)
     {
-        // D3: vanilla ore purity, which the game's purity settings shape -- the same two predicates as the landFactor numerator
+        // D3: vanilla ore purity, which the game's purity settings shape -- the same two predicates as the vanillaOreScale numerator
         // (/Game/ AND FormSolid), on captured originals only, Impure/Normal/Pure only (BuildPurityDecks' own bound).
         TArray<TEnumAsByte<EResourcePurity>> Src;
         S.PuritySrcBins[0] = S.PuritySrcBins[1] = S.PuritySrcBins[2] = 0;
@@ -331,10 +331,10 @@ namespace NodeShuffleRwgSeedGas
         int32 Overridden = 0;
         for (const FRowResult& R : S.Rows) { if (FCString::Strcmp(R.Action, TEXT("override")) == 0) { ++Overridden; } }
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("MODQUOTA-CFG enabled=%d mapIsRwg=%d rowsTreeFound=%d rowsRead=%d rowsMalformed=%d vanillaOreOriginals=%d landBase=%d landFactor=%.3f overridden=%d seeded=%d puritySrc=%d puritySrcImpure=%d puritySrcNormal=%d puritySrcPure=%d"),
+            TEXT("MODQUOTA-CFG enabled=%d mapIsRwg=%d rowsTreeFound=%d rowsRead=%d rowsMalformed=%d vanillaOreOriginals=%d baseMapSolidNodes=%d vanillaOreScale=%.3f overridden=%d seeded=%d puritySrc=%d puritySrcImpure=%d puritySrcNormal=%d puritySrcPure=%d"),
             S.bEnabled ? 1 : 0, S.bMapIsRwg ? 1 : 0, S.bTreeFound ? 1 : 0,
             static_cast<int32>(Algo::CountIf(S.Rows, [](const FRowResult& R) { return R.bHasRow; })), S.RowsMalformed,
-            S.VanillaOreOriginals, RwgBaseSolidNodes, S.LandFactor, Overridden, S.SeededKinds.Num(),
+            S.VanillaOreOriginals, RwgBaseSolidNodes, S.VanillaOreScale, Overridden, S.SeededKinds.Num(),
             S.PuritySrc, S.PuritySrcBins[0], S.PuritySrcBins[1], S.PuritySrcBins[2]);
         for (const FRowResult& R : S.Rows)
         {
@@ -350,9 +350,9 @@ namespace NodeShuffleRwgSeedGas
                     : (Purity.ByClass.Contains(Res) ? TEXT("perResource") : (Purity.MapSource.Num() > 0 ? TEXT("mapwide") : TEXT("noSource")));
             }
             UE_LOG(LogNodeShuffle, Display,
-                TEXT("MODQUOTA resource=%s form=%s mapIsRwg=%d capturedOriginals=%d vanillaCount=%d vanillaOreOriginals=%d landBase=%d landFactor=%.3f target=%d action=%s classResolvedBy=%s pinnedOrCarried=%d quota=%d deckCards=%d purityDeck=%s skipped=%s"),
+                TEXT("MODQUOTA resource=%s form=%s mapIsRwg=%d capturedOriginals=%d vanillaCount=%d vanillaOreOriginals=%d baseMapSolidNodes=%d vanillaOreScale=%.3f target=%d action=%s classResolvedBy=%s pinnedOrCarried=%d quota=%d deckCards=%d purityDeck=%s skipped=%s"),
                 *Short(Res), *R.Form, S.bMapIsRwg ? 1 : 0, R.CapturedOriginals, R.Row.VanillaCount, S.VanillaOreOriginals,
-                RwgBaseSolidNodes, S.LandFactor, R.Target, R.Action, R.ResolvedBy, PinnedPerResource.FindRef(Res), // occupied + carried
+                RwgBaseSolidNodes, S.VanillaOreScale, R.Target, R.Action, R.ResolvedBy, PinnedPerResource.FindRef(Res), // occupied + carried
                 Quota.FindRef(Res), Cards, Branch, R.Skipped);
             if (FCString::Strcmp(R.ResolvedBy, TEXT("n/a")) != 0)
             {
