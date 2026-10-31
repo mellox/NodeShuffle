@@ -51,6 +51,7 @@ function Get-Logs([string]$t, [string]$prefix) {
         for (; $i -lt $t.Length; $i++) {
             $c = $t[$i]
             if ($inStr) { [void]$cur.Append($c); if ($c -eq '\') { $i++; [void]$cur.Append($t[$i]) } elseif ($c -eq '"') { $inStr = $false }; continue }
+            if ($c -eq '/' -and $i + 1 -lt $t.Length -and $t[$i + 1] -eq '/') { $nl = $t.IndexOf("`n", $i); if ($nl -lt 0) { break }; $i = $nl - 1; continue } # review r2: a // comment inside the argument list is not an argument
             if ($c -eq '"') { $inStr = $true; [void]$cur.Append($c); continue }
             if ($c -eq '(') { $depth++; if ($depth -eq 1) { continue } }
             if ($c -eq ')') { $depth--; if ($depth -eq 0) { $args += $cur.ToString(); break } }
@@ -159,6 +160,7 @@ $mutants = @(
     @{ Name = 'B11 slope argument dropped'; Key = 'steep'; Expect = 'S5'; Find = '*RwgSteepHitMesh, RwgSteepNormalRiseRun, RwgSteepApiRiseRun,'; Repl = '*RwgSteepHitMesh, RwgSteepApiRiseRun,' }
     @{ Name = 'B12 slope from the raw hit'; Key = 'steep'; Expect = 'S5'; Find = 'RwgSteepRiseRunOf(Normal);'; Repl = 'RwgSteepRiseRunOf(Hit.ImpactNormal);' }
     @{ Name = 'B13 PLACECENSUS drops a steep argument'; Key = 'place'; Expect = 'S6'; Find = 'RwgPcSteepRing, RwgPcSteepMapwide, RwgPcSteepOccluded,'; Repl = 'RwgPcSteepRing, RwgPcSteepMapwide,' }
+    @{ Name = 'B27 PLACECENSUS arguments swallowed by a line comment'; Key = 'place'; Expect = 'S6'; Find = '            RwgPcTraceHit, RwgPcTraceMiss, RwgPcTraceFar,'; Repl = ('            RwgPcTraceHit, ' + '/' + '/ trace: RwgPcTraceMiss, RwgPcTraceFar,') }
     @{ Name = 'B14 PLACECENSUS drops a steep field'; Key = 'place'; Expect = 'S6'; Find = ' steepMapwide=%d steepOccludedMapwide=%d steepOccludedRing=%d'; Repl = ' steepOccludedMapwide=%d steepOccludedRing=%d' }
     @{ Name = 'B14b PLACECENSUS clifftop fields swapped'; Key = 'place'; Expect = 'S6'; Find = 'RwgPcSolidTopRejNormal, RwgPcSolidTopRejFootprint);'; Repl = 'RwgPcSolidTopRejFootprint, RwgPcSolidTopRejNormal);' }
     @{ Name = 'B15 RWGSTEEPSUM arity'; Key = 'steep'; Expect = 'S6'; Find = "RwgSteepSessPassedFromOriginZ,`n        RwgSteepSessOccludedRing);"; Repl = 'RwgSteepSessPassedFromOriginZ);' }

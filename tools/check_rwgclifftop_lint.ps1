@@ -61,6 +61,7 @@ function Get-Logs([string]$t, [string]$prefix) {
         for (; $i -lt $t.Length; $i++) {
             $c = $t[$i]
             if ($inStr) { [void]$cur.Append($c); if ($c -eq '\') { $i++; [void]$cur.Append($t[$i]) } elseif ($c -eq '"') { $inStr = $false }; continue }
+            if ($c -eq '/' -and $i + 1 -lt $t.Length -and $t[$i + 1] -eq '/') { $nl = $t.IndexOf("`n", $i); if ($nl -lt 0) { break }; $i = $nl - 1; continue } # review r2: a // comment inside the argument list is not an argument
             if ($c -eq '"') { $inStr = $true; [void]$cur.Append($c); continue }
             if ($c -eq '(') { $depth++; if ($depth -eq 1) { continue } }
             if ($c -eq ')') { $depth--; if ($depth -eq 0) { $args += $cur.ToString(); break } }
@@ -82,6 +83,7 @@ function Invoke-CliffChecks($T) {
     # C1 inside-start guard
     if ((Count $c 'const bool bStartPen = Hit.bStartPenetrating;') -ne 1 -or (Count $c 'const bool bNormalUp = Hit.ImpactNormal.Z > 0.0;') -ne 1 -or (Count $c 'const bool bBelowStart = P.Z < TraceStartZ - NodeShuffleMapMode::RwgSolidTopStartMarginCm;') -ne 1) { $f += '(C1) the three inside-start predicates must be measured on the hit against the trace start minus the named margin' }
     if ((Count $c 'const bool bGuard = !bStartPen && bNormalUp && bBelowStart;') -ne 1 -or (Count $c 'const bool bAccepted = bGuard && bClearAbove && bFootprint && bGentle;') -ne 1 -or (Count $c '    if (!bAccepted) { return false; }') -ne 1) { $f += '(C1) the guard must AND all three predicates and gate the accept' }
+    if ((Count $c 'const bool bClearAbove = RwgRockOcclusionProbe(P, nullptr, AboveMesh) != 1;') -ne 1 -or (Count $c '    else if (!bClearAbove) { ++RwgPcSolidTopRejStartInside; Reject = TEXT("solidAbove"); }') -ne 1) { $f += '(C1) the accept must test the rock-pass window above the HIT point and report solidAbove' }
     if ((Count $T.mmh 'constexpr double RwgSolidTopStartMarginCm = 100.0;') -ne 1) { $f += '(C1) the inside-start margin must be the named constant (100 cm)' }
     if ((Count $s '&& RwgSolidTopTryAccept(Hit, Start.Z, Params, MinSettleNormalZ, SmoothNormalRingCm, NodeTiltClampDeg, bSkippedWaterSheet, OutLoc, OutRot, bOutWater,') -ne 1) { $f += '(C1/C2) the accept must receive the trace START Z, the terrain gate, the terrain smoothing ring and the tilt clamp' }
     # C2 footprint + gentle + water
@@ -172,6 +174,10 @@ $mutants = @(
     @{ Name = 'M27 stuck moved token back to the old name'; Key = 'dens'; Expect = 'C13'; Find = 'Moved += TEXT("unplaceableNew"); }'; Repl = ('Moved += TEXT("water' + 'LockedNew"); }') }
     @{ Name = 'M28 accept drops the rock-window clear test'; Key = 'cliff'; Expect = 'C1'; Find = 'const bool bAccepted = bGuard && bClearAbove && bFootprint && bGentle;'; Repl = 'const bool bAccepted = bGuard && bFootprint && bGentle;' }
     @{ Name = 'M29 footprint ignores a steep same-mesh probe'; Key = 'cliff'; Expect = 'C2'; Find = 'const bool bFootprint = SameMesh == 4 && SameMeshSteep == 0;'; Repl = 'const bool bFootprint = SameMesh == 4;' }
+    @{ Name = 'M33 RWGCLIFFTOP arguments swallowed by a line comment'; Key = 'cliff'; Expect = 'C10'; Find = '*RwgSolidTopGuid.ToString().Left(8), P.X, P.Y, *RwgCliffTopShort(RwgSolidTopRes),'; Repl = ('*RwgSolidTopGuid.ToString().Left(8), ' + '/' + '/ at: P.X, P.Y, *RwgCliffTopShort(RwgSolidTopRes),') }
+    @{ Name = 'M30 clear-above test forced true'; Key = 'cliff'; Expect = 'C1'; Find = 'const bool bClearAbove = RwgRockOcclusionProbe(P, nullptr, AboveMesh) != 1;'; Repl = 'const bool bClearAbove = true;' }
+    @{ Name = 'M31 clear-above window origin moved off the hit'; Key = 'cliff'; Expect = 'C1'; Find = 'RwgRockOcclusionProbe(P, nullptr, AboveMesh) != 1;'; Repl = 'RwgRockOcclusionProbe(FVector(P.X, P.Y, TraceStartZ), nullptr, AboveMesh) != 1;' }
+    @{ Name = 'M32 solidAbove reject branch removed'; Key = 'cliff'; Expect = 'C1'; Find = '    else if (!bClearAbove) { ++RwgPcSolidTopRejStartInside; Reject = TEXT("solidAbove"); }'; Repl = '' }
     @{ Name = 'M24 accept signal set before the gate'; Key = 'cliff'; Expect = 'C4'; Find = '    const bool bAccepted = bGuard && bClearAbove && bFootprint && bGentle;'; Repl = ('    const bool bAccepted = bGuard && bClearAbove && bFootprint && bGentle; bRwgLastProbeTopAccepted = ' + 'true;') }
 )
 $mutantFails = @(); $caught = 0
