@@ -85,10 +85,11 @@ void ANodeShuffleSubsystem::EmitScanPing(AFGResourceScanner* Scanner, const TArr
     // Legend (prose only): distances are 3-D metres from the scanning pawn; -1 means none exists in that set. marked counts the
     // clusters the scanner's pick returned; the nearest-live set is the world's scanner-eligible nodes of this resource other than
     // our provisional actors; the provisional set is our provisional actors; the no-actor set is our active new-node entries
-    // with no live actor.
-    UE_LOG(LogNodeShuffle, Display, TEXT("SCANPING: resource=%s clustersForResource=%d clustersTotal=%d marked=%d nearestMarkedM=%.0f nearestLiveActorM=%.0f nearestProvisionalM=%.0f nearestNoActorM=%.0f pawn=%s"),
+    // with no live actor. pawn is the scanner's instigator location, or the scanner's own location when it has no instigator;
+    // pawnFrom names which of the two was read (rwg-farspawn-1d F10).
+    UE_LOG(LogNodeShuffle, Display, TEXT("SCANPING: resource=%s clustersForResource=%d clustersTotal=%d marked=%d nearestMarkedM=%.0f nearestLiveActorM=%.0f nearestProvisionalM=%.0f nearestNoActorM=%.0f pawn=%s pawnFrom=%s"),
         Res ? *Res->GetName() : TEXT("<none>"), ForRes, Scanner->mNodeClusters.Num(), Closest.Num(), NsOrNeg(Marked), NsOrNeg(Live), NsOrNeg(Prov),
-        NsOrNeg(NoActor), *PawnAt.ToCompactString());
+        NsOrNeg(NoActor), *PawnAt.ToCompactString(), P ? TEXT("instigator") : TEXT("scanner"));
 }
 
 void ANodeShuffleSubsystem::EmitCompassWarnCensus(int32 TowersRescanned)
@@ -112,9 +113,9 @@ void ANodeShuffleSubsystem::EmitCompassWarnCensus(int32 TowersRescanned)
     int32 Prov = 0;
     for (const FNodeShuffleEntry& E : Layout) { if (E.bRwgProvisional && IsValid(SpawnedNodes.FindRef(E.EntryGuid))) { ++Prov; } }
     // Legend (prose only): rescan is the radar towers re-scanned in this call; removedWarnings counts the game's compass removal
-    // warnings logged since the previous COMPASSWARN line (they print before this line); hiddenOriginalsStripped counts recorded
+    // warnings logged since the previous COMPASSWARN line (they print before this line); hiddenOriginalsInTowerRadius counts recorded
     // originals that are hidden now and stand within a re-scanned tower's reveal radius (2-D), or -1 when no tower re-scanned;
     // provisional counts live provisional actors.
-    UE_LOG(LogNodeShuffle, Display, TEXT("COMPASSWARN: rescan=%d removedWarnings=%d hiddenOriginalsStripped=%d provisional=%d"),
+    UE_LOG(LogNodeShuffle, Display, TEXT("COMPASSWARN: rescan=%d removedWarnings=%d hiddenOriginalsInTowerRadius=%d provisional=%d"),
         TowersRescanned, Removed, Stripped, Prov);
 }
