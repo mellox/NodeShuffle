@@ -79,6 +79,12 @@ namespace NodeShuffleRwgSeedGas
         TMap<FString, int32> SavedCounts;         // resource -> captured count before override (absent key = seeded)
         TArray<FRowResult> Rows;
         TSet<FString> SeededKinds;
+        // fix round 1 F2 (user decision D3): the purity source of SEEDED kinds = Impure/Normal/Pure of every captured original
+        // (not a new node) whose resource path starts /Game/ and is FormSolid -- the landFactor numerator's set. Counted on
+        // every roll (no RNG); used only when a kind was seeded.
+        int32 PuritySrc = 0;
+        int32 PuritySrcBins[3] = { 0, 0, 0 };        // Impure, Normal, Pure
+        TSet<FString> PurityFromGameSolid;           // seeded kinds given that source (absent: map-wide deck, purityDeck=mapwide)
     };
 
     // Config panel: registers ModdedVanillaCountRows on Root with the lead + lithium rows as BOTH the runtime value and the
@@ -98,6 +104,12 @@ namespace NodeShuffleRwgSeedGas
     void Restore(FState& S, TMap<FString, int32>& VanillaResourceCounts, int32& VanillaCount);
 
     bool IsSeededKind(const FState& S, const FString& Kind);
+
+    // RollLayout call 2b (right after BuildPurityDecks, before LogRoll): counts the /Game/ solid originals' purities into S, then,
+    // ONLY when a kind was seeded and that set is non-empty, gives each seeded kind (sorted order) its own shuffled copy in
+    // Purity.ByClass. No seeded kind -> no RNG use. Empty set -> seeded kinds keep the map-wide deck. Returns the set size.
+    int32 AddSeededPuritySources(FState& S, const TArray<FNodeShuffleEntry>& Layout, const TMap<FString, uint8>& FormByResource,
+        uint8 FormSolid, FRandomStream& Rng, NodeShuffleRwgDeal::FPurityDecks& Purity);
 
     // RollLayout call 3 (after BuildPurityDecks): MODQUOTA-CFG once, MODQUOTA once per row and per captured modded resource
     // without a row, MODQUOTA-CLASS for every seed candidate that reached the class gate.

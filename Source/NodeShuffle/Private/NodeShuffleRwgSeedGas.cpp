@@ -293,16 +293,48 @@ namespace NodeShuffleRwgSeedGas
         return S.SeededKinds.Num() > 0 && S.SeededKinds.Contains(Kind);
     }
 
+    int32 AddSeededPuritySources(FState& S, const TArray<FNodeShuffleEntry>& Layout, const TMap<FString, uint8>& FormByResource,
+        uint8 FormSolid, FRandomStream& Rng, NodeShuffleRwgDeal::FPurityDecks& Purity)
+    {
+        // D3: vanilla ore purity, which the game's purity settings shape -- the same two predicates as the landFactor numerator
+        // (/Game/ AND FormSolid), on captured originals only, Impure/Normal/Pure only (BuildPurityDecks' own bound).
+        TArray<TEnumAsByte<EResourcePurity>> Src;
+        S.PuritySrcBins[0] = S.PuritySrcBins[1] = S.PuritySrcBins[2] = 0;
+        S.PurityFromGameSolid.Reset();
+        for (const FNodeShuffleEntry& E : Layout)
+        {
+            if (E.bIsNewNode || !E.OriginalResourceClassPath.StartsWith(TEXT("/Game/"))
+                || FormByResource.FindRef(E.OriginalResourceClassPath) != FormSolid) { continue; }
+            const int32 P = (int32)E.OriginalPurity.GetValue();
+            if (P < 0 || P > 2) { continue; }
+            Src.Add(E.OriginalPurity);
+            S.PuritySrcBins[P]++;
+        }
+        S.PuritySrc = Src.Num();
+        if (S.SeededKinds.Num() == 0 || Src.Num() == 0) { return Src.Num(); } // no seeded kind: no RNG use; empty set: map-wide deck
+        TArray<FString> Kinds = S.SeededKinds.Array();
+        Kinds.Sort();
+        for (const FString& Kind : Kinds)
+        {
+            TArray<TEnumAsByte<EResourcePurity>> Copy = Src;
+            for (int32 i = Copy.Num() - 1; i > 0; i--) { Copy.Swap(i, Rng.RandRange(0, i)); }
+            Purity.ByClass.Add(Kind, MoveTemp(Copy));
+            S.PurityFromGameSolid.Add(Kind);
+        }
+        return Src.Num();
+    }
+
     void LogRoll(const FState& S, const TMap<FString, int32>& Quota, const TMap<FString, int32>& PinnedPerResource,
         const TArray<FString>& SolidDeck, const TArray<FString>& LiquidDeck, const NodeShuffleRwgDeal::FPurityDecks& Purity)
     {
         int32 Overridden = 0;
         for (const FRowResult& R : S.Rows) { if (FCString::Strcmp(R.Action, TEXT("override")) == 0) { ++Overridden; } }
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("MODQUOTA-CFG enabled=%d mapIsRwg=%d rowsTreeFound=%d rowsRead=%d rowsMalformed=%d vanillaOreOriginals=%d landBase=%d landFactor=%.3f overridden=%d seeded=%d"),
+            TEXT("MODQUOTA-CFG enabled=%d mapIsRwg=%d rowsTreeFound=%d rowsRead=%d rowsMalformed=%d vanillaOreOriginals=%d landBase=%d landFactor=%.3f overridden=%d seeded=%d puritySrc=%d puritySrcImpure=%d puritySrcNormal=%d puritySrcPure=%d"),
             S.bEnabled ? 1 : 0, S.bMapIsRwg ? 1 : 0, S.bTreeFound ? 1 : 0,
             static_cast<int32>(Algo::CountIf(S.Rows, [](const FRowResult& R) { return R.bHasRow; })), S.RowsMalformed,
-            S.VanillaOreOriginals, RwgBaseSolidNodes, S.LandFactor, Overridden, S.SeededKinds.Num());
+            S.VanillaOreOriginals, RwgBaseSolidNodes, S.LandFactor, Overridden, S.SeededKinds.Num(),
+            S.PuritySrc, S.PuritySrcBins[0], S.PuritySrcBins[1], S.PuritySrcBins[2]);
         for (const FRowResult& R : S.Rows)
         {
             const FString& Res = R.Row.Resource;
@@ -312,7 +344,9 @@ namespace NodeShuffleRwgSeedGas
             const TCHAR* Branch = TEXT("n/a");
             if (Cards > 0)
             {
-                Branch = Purity.ByClass.Contains(Res) ? TEXT("perResource") : (Purity.MapSource.Num() > 0 ? TEXT("aggregate") : TEXT("noSource"));
+                // purityDeck: the deck this resource's dealt cards draw purity from, chosen before the deal.
+                Branch = S.PurityFromGameSolid.Contains(Res) ? TEXT("gameSolidOriginals")
+                    : (Purity.ByClass.Contains(Res) ? TEXT("perResource") : (Purity.MapSource.Num() > 0 ? TEXT("mapwide") : TEXT("noSource")));
             }
             UE_LOG(LogNodeShuffle, Display,
                 TEXT("MODQUOTA resource=%s form=%s mapIsRwg=%d capturedOriginals=%d vanillaCount=%d vanillaOreOriginals=%d landBase=%d landFactor=%.3f target=%d action=%s classResolvedBy=%s pinnedOrCarried=%d quota=%d deckCards=%d purityDeck=%s skipped=%s"),

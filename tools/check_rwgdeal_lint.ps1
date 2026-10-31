@@ -6,7 +6,8 @@
 #       the `else` body.
 #   G2  Vanilla deal pinned: the Vanilla deal loop hashes to the rwg-purity-1 text (= bf071d6 with its inline map-wide purity draw
 #       replaced by the shared ApplyPurity call -- a DELIBERATE re-pin, 2026-10-26); the FindVanilla block is pinned verbatim; the
-#       only RNG uses between the liquid-deck shuffle and the Vanilla loop are BuildPurityDecks (per-class purity shuffles) and the
+#       only RNG uses between the liquid-deck shuffle and the Vanilla loop are BuildPurityDecks (per-class purity shuffles),
+#       AddSeededPuritySources (rwg-seedgas-1b F2: draws only when the RWG table seeded a kind; seedgas lint Q8) and the
 #       Deal() call (rwg-purity-1 replaced the old map-wide purity shuffle; the per-class shuffles are pinned in G10).
 #   G3  Merged-deck draw: solid + liquid appended into one deck, shuffled inside Deal(), uniform draw in [Cursor, End) with bounded
 #       rejection; an existing slot rejects a Dealable card of the other form ONLY when no spawn class exists for that form.
@@ -112,7 +113,7 @@ function Invoke-RwgdealChecks($T) {
     if ((Count $s $fv) -ne 1) { $f += '(G2) the Vanilla FindVanilla block must be present verbatim, once' }
     $r0 = $s.IndexOf('for (int32 i = LiquidDeck.Num() - 1; i > 0; i--)')
     if ($r0 -lt 0 -or $a -lt $r0) { $f += '(G2) liquid-deck shuffle / Vanilla else anchors missing' }
-    else { $mid = $s.Substring($r0, $a - $r0); if ((Count $mid 'Rng') -ne 3 -or (Count $mid 'NodeShuffleRwgDeal::BuildPurityDecks(NewLayout, PurityDeckSource, SolidDeck, LiquidDeck, Rng, PurityDecks);') -ne 1) { $f += "(G2) RNG use between the deck shuffles and the Vanilla loop must be exactly 3: the liquid shuffle, BuildPurityDecks (per-class purity shuffles, pinned in G10) and the Deal() call (found $(Count $mid 'Rng'))" } }
+    else { $mid = $s.Substring($r0, $a - $r0); if ((Count $mid 'Rng') -ne 4 -or (Count $mid 'NodeShuffleRwgDeal::BuildPurityDecks(NewLayout, PurityDeckSource, SolidDeck, LiquidDeck, Rng, PurityDecks);') -ne 1 -or (Count $mid 'NodeShuffleRwgSeedGas::AddSeededPuritySources(ModQuota, NewLayout, FormByResource, FormSolid, Rng, PurityDecks);') -ne 1) { $f += "(G2) RNG use between the deck shuffles and the Vanilla loop must be exactly 4: the liquid shuffle, BuildPurityDecks (per-class purity shuffles, pinned in G10), AddSeededPuritySources (draws only for seeded kinds, pinned in the seedgas lint Q8) and the Deal() call (found $(Count $mid 'Rng'))" } }
     # G3
     if (-not (Ordered $d @('Deck.Append(*In.SolidDeck);', 'Deck.Append(*In.LiquidDeck);', 'for (int32 i = Deck.Num() - 1; i > 0; i--) { Deck.Swap(i, Rng.RandRange(0, i)); }'))) { $f += '(G3) Deal() must append both piles into one deck and shuffle it' }
     if (-not (Ordered $d @('int32 End = Deck.Num();', 'while (Cursor < End)', 'const int32 j = Rng.RandRange(Cursor, End - 1);', 'if (bOk) { Deck.Swap(Cursor, j); Card = Deck[Cursor]; Cursor++; break; }', 'Deck.Swap(j, End - 1);', 'End--;'))) { $f += '(G3) uniform draw in [Cursor, End) with bounded rejection' }

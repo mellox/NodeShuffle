@@ -20,6 +20,8 @@
 #       deckCards = every deck card of the resource; purityDeck = the deck its dealt cards draw purity from, set before the deal.)
 #       Diagnostics: MODQUOTA, MODQUOTA-CFG, MODQUOTA-CLASS and SEEDGASSPAWN exact formats, Display, specifier count == argument
 #       count, no repeated field; SEEDGASSPAWN is change-driven; the pre-A1 line name is gone.
+#   Q8  Seeded purity (fix round 1 F2, D3): /Game/ solid captured originals' purities, RNG only for seeded kinds, sorted order;
+#       empty source -> map-wide deck (purityDeck=mapwide); census on MODQUOTA-CFG.
 # Mutants run in-file. Exit 0 = all hold; 1 = at least one does not; 2 = a pinned FILE is missing.
 
 $ErrorActionPreference = 'Stop'
@@ -98,7 +100,7 @@ function Invoke-SeedgasChecks($T) {
     if ((Count $h 'constexpr int32 RwgBaseSolidNodes = 429;') -ne 1 -or (Count $h 'constexpr float LandFactorMin = 0.25f;') -ne 1 -or (Count $h 'constexpr float LandFactorMax = 4.0f;') -ne 1) { $f += '(Q4) landFactor constants must be 429, 0.25 and 4.0' }
     if ((Count $g 'Out.LandFactor = FMath::Clamp(static_cast<float>(Out.VanillaOreOriginals) / RwgBaseSolidNodes, LandFactorMin, LandFactorMax);') -ne 1 -or (Count $g 'if (KV.Key.StartsWith(TEXT("/Game/")) && FormByResource.FindRef(KV.Key) == FormSolid) { Out.VanillaOreOriginals += KV.Value; }') -ne 1 -or (Count $g 'R.Target = FMath::RoundToInt(FMath::Clamp(Row.VanillaCount, 0, MaxRowCount) * Out.LandFactor);') -ne 1) { $f += '(Q4) landFactor = /Game/ solid originals over 429, clamped; target = round(count x landFactor)' }
     # Q5
-    if (-not (Ordered $s @('NodeShuffleRwgSeedGas::DecideAndApply(this, Config.ModdedVanillaCountsOnRwg, GetMapMode() == ENodeShuffleMapMode::Rwg,', '    VanillaResourceCounts.GenerateKeyArray(ResourceKinds);', 'Q = FMath::Max3(Q, KindFloor, PinnedPerResource.FindRef(Kind));', 'while (QuotaSum != TargetActive && GuardCounter-- > 0)', 'NodeShuffleRwgSeedGas::Restore(ModQuota, VanillaResourceCounts, VanillaCount);', '    // 5. Choose the active set', '        if (IsGasResourcePath(Kind) && !NodeShuffleRwgSeedGas::IsSeededKind(ModQuota, Kind)) { continue; }', 'NodeShuffleRwgDeal::BuildPurityDecks(NewLayout, PurityDeckSource, SolidDeck, LiquidDeck, Rng, PurityDecks);', 'NodeShuffleRwgSeedGas::LogRoll(ModQuota, Quota, PinnedPerResource, SolidDeck, LiquidDeck, PurityDecks);'))) { $f += '(Q5) RollLayout call order: decide, kinds, max3 share, trim, restore, step 5, seeded-only gas drop, purity, MODQUOTA' }
+    if (-not (Ordered $s @('NodeShuffleRwgSeedGas::DecideAndApply(this, Config.ModdedVanillaCountsOnRwg, GetMapMode() == ENodeShuffleMapMode::Rwg,', '    VanillaResourceCounts.GenerateKeyArray(ResourceKinds);', 'Q = FMath::Max3(Q, KindFloor, PinnedPerResource.FindRef(Kind));', 'while (QuotaSum != TargetActive && GuardCounter-- > 0)', 'NodeShuffleRwgSeedGas::Restore(ModQuota, VanillaResourceCounts, VanillaCount);', '    // 5. Choose the active set', '        if (IsGasResourcePath(Kind) && !NodeShuffleRwgSeedGas::IsSeededKind(ModQuota, Kind)) { continue; }', 'NodeShuffleRwgDeal::BuildPurityDecks(NewLayout, PurityDeckSource, SolidDeck, LiquidDeck, Rng, PurityDecks);', 'NodeShuffleRwgSeedGas::AddSeededPuritySources(ModQuota, NewLayout, FormByResource, FormSolid, Rng, PurityDecks);', 'NodeShuffleRwgSeedGas::LogRoll(ModQuota, Quota, PinnedPerResource, SolidDeck, LiquidDeck, PurityDecks);'))) { $f += '(Q5) RollLayout call order: decide, kinds, max3 share, trim, restore, step 5, seeded-only gas drop, purity, MODQUOTA' }
     if ((Count $s 'NodeShuffleRwgSeedGas::Restore(') -ne 1 -or (Count $s 'NodeShuffleRwgSeedGas::DecideAndApply(') -ne 1) { $f += '(Q5) exactly one decide and one restore call' }
     if (-not (Ordered $s @('void ANodeShuffleSubsystem::ApplyLayout()', 'RwgSpawnPass(SpawnRadiusCm, bChangedWorld); }', 'NodeShuffleRwgSeedGas::EmitSpawnCensus(this, GetMapMode() == ENodeShuffleMapMode::Rwg, Layout,'))) { $f += '(Q5) SEEDGASSPAWN census must run after the RWG spawn pass in ApplyLayout' }
     # Q6
@@ -109,11 +111,17 @@ function Invoke-SeedgasChecks($T) {
     if ((Count $g 'Manager->GetConfigurationRootSection(FConfigId{"NodeShuffle", ""})') -ne 1 -or (Count $g ('Config' + '.ModdedVanillaCountRows')) -ne 0 -or (Count $s ('Config' + '.ModdedVanillaCountRows')) -ne 0) { $f += '(Q6) rows must be read from the live config tree, never the struct mirror' }
     # Q7
     $f += Check-Log $T 'sg' 'Q7' 'MODQUOTA resource=' 'MODQUOTA resource=%s form=%s mapIsRwg=%d capturedOriginals=%d vanillaCount=%d vanillaOreOriginals=%d landBase=%d landFactor=%.3f target=%d action=%s classResolvedBy=%s pinnedOrCarried=%d quota=%d deckCards=%d purityDeck=%s skipped=%s' 16
-    $f += Check-Log $T 'sg' 'Q7' 'MODQUOTA-CFG ' 'MODQUOTA-CFG enabled=%d mapIsRwg=%d rowsTreeFound=%d rowsRead=%d rowsMalformed=%d vanillaOreOriginals=%d landBase=%d landFactor=%.3f overridden=%d seeded=%d' 10
+    $f += Check-Log $T 'sg' 'Q7' 'MODQUOTA-CFG ' 'MODQUOTA-CFG enabled=%d mapIsRwg=%d rowsTreeFound=%d rowsRead=%d rowsMalformed=%d vanillaOreOriginals=%d landBase=%d landFactor=%.3f overridden=%d seeded=%d puritySrc=%d puritySrcImpure=%d puritySrcNormal=%d puritySrcPure=%d' 14
     $f += Check-Log $T 'sg' 'Q7' 'MODQUOTA-CLASS ' 'MODQUOTA-CLASS resource=%s configPath=%s configLoaded=%d configNode=%d configAbstract=%d configRefused=%d configOwnMount=%d configCdoResource=%s registryMountFiltered=%d registryMatched=%s chosen=%s' 11
     $f += Check-Log $T 'sg' 'Q7' 'SEEDGASSPAWN ' 'SEEDGASSPAWN resource=%s entries=%d spawnedOk=%d spawnFailed=%d parked=%d guids=%s' 6
     if (-not (Ordered $g @('void EmitSpawnCensus(', 'if (const FString* Prev = LastSig.Find(Row.Resource)) { if (*Prev == Sig) { continue; } }', 'LastSig.Add(Row.Resource, Sig);', 'TEXT("SEEDGASSPAWN resource='))) { $f += '(Q7) SEEDGASSPAWN must print only when its signature changed' }
     if ((Count $s ('TEXT("SEEDGAS ' + 'resource=')) -ne 0 -or (Count $g ('TEXT("SEEDGAS ' + 'resource=')) -ne 0) { $f += '(Q7) the pre-A1 line name must stay renamed to MODQUOTA' }
+    # Q8 (fix round 1 F2, D3): seeded kinds' purity source = captured originals, /Game/ AND FormSolid (the landFactor numerator's
+    # two predicates), Impure/Normal/Pure only; no RNG unless a kind was seeded; empty set keeps the map-wide deck; sorted kinds.
+    if (-not (Ordered $g @('int32 AddSeededPuritySources(FState& S, const TArray<FNodeShuffleEntry>& Layout', 'if (E.bIsNewNode || !E.OriginalResourceClassPath.StartsWith(TEXT("/Game/"))', '|| FormByResource.FindRef(E.OriginalResourceClassPath) != FormSolid) { continue; }', 'if (P < 0 || P > 2) { continue; }', 'S.PuritySrc = Src.Num();', 'if (S.SeededKinds.Num() == 0 || Src.Num() == 0) { return Src.Num(); }', 'Kinds.Sort();', 'Copy.Swap(i, Rng.RandRange(0, i));', 'Purity.ByClass.Add(Kind, MoveTemp(Copy));', 'S.PurityFromGameSolid.Add(Kind);', 'void LogRoll('))) { $f += '(Q8) seeded purity source must be /Game/ solid captured originals, drawn only for seeded kinds, sorted' }
+    $fnS = $g.IndexOf('int32 AddSeededPuritySources(FState& S'); $fnE = $g.IndexOf('void LogRoll(')
+    if ($fnS -lt 0 -or $fnE -lt $fnS) { $f += '(Q8) AddSeededPuritySources not found before LogRoll' } else { $body = $g.Substring($fnS, $fnE - $fnS); $ret = $body.IndexOf('if (S.SeededKinds.Num() == 0 || Src.Num() == 0) { return Src.Num(); }'); $rng = $body.IndexOf('Rng.'); if ((Count $body 'Rng.') -ne 1 -or $ret -lt 0 -or $rng -lt $ret) { $f += '(Q8) the only RNG use in AddSeededPuritySources must sit after the no-seeded-kind early return' } }
+    if ((Count $g 'Branch = S.PurityFromGameSolid.Contains(Res) ? TEXT("gameSolidOriginals")') -ne 1 -or (Count $g ('TEXT("' + 'aggregate")')) -ne 0) { $f += '(Q8) purityDeck must name gameSolidOriginals for seeded kinds and mapwide (never the old label) for the map-wide deck' }
     return $f
 }
 
@@ -144,6 +152,11 @@ $mutants = @(
     @{ Name = 'X19 lead default count'; Key = 'sgh'; Expect = 'Q6'; Find = 'constexpr int32 DefaultLeadVanillaCount = 6;'; Repl = 'constexpr int32 DefaultLeadVanillaCount = 104;' }
     @{ Name = 'X20 lithium row dropped'; Key = 'sg'; Expect = 'Q6'; Find = '{ DefaultLithiumResource, DefaultLithiumNodeClass, DefaultLithiumVanillaCount },'; Repl = '' }
     @{ Name = 'X28 ownership guard skips NodeClassPath'; Key = 'sg'; Expect = 'Q6'; Find = '|| static_cast<const UConfigProperty*>(K) == TplCls || N == CountProp)'; Repl = '|| N == CountProp)' }
+    @{ Name = 'X29 purity source admits modded'; Key = 'sg'; Expect = 'Q8'; Find = 'if (E.bIsNewNode || !E.OriginalResourceClassPath.StartsWith(TEXT("/Game/"))'; Repl = 'if (E.bIsNewNode' }
+    @{ Name = 'X30 purity source admits liquid'; Key = 'sg'; Expect = 'Q8'; Find = '|| FormByResource.FindRef(E.OriginalResourceClassPath) != FormSolid) { continue; }'; Repl = ') { continue; }' }
+    @{ Name = 'X31 purity RNG on every roll'; Key = 'sg'; Expect = 'Q8'; Find = 'if (S.SeededKinds.Num() == 0 || Src.Num() == 0) { return Src.Num(); }'; Repl = 'if (Src.Num() == 0) { return Src.Num(); }' }
+    @{ Name = 'X32 seeded kinds keep the map-wide deck'; Key = 'sg'; Expect = 'Q8'; Find = 'Purity.ByClass.Add(Kind, MoveTemp(Copy));'; Repl = '' }
+    @{ Name = 'X33 purity source call dropped'; Key = 'sub'; Expect = 'Q5'; Find = '    NodeShuffleRwgSeedGas::AddSeededPuritySources(ModQuota, NewLayout, FormByResource, FormSolid, Rng, PurityDecks);'; Repl = '' }
     @{ Name = 'X24 thorium count changed'; Key = 'sgh'; Expect = 'Q6'; Find = 'constexpr int32 DefaultThoriumVanillaCount = 45;'; Repl = 'constexpr int32 DefaultThoriumVanillaCount = 35;' }
     @{ Name = 'X21 MODQUOTA field dropped'; Key = 'sg'; Expect = 'Q7'; Find = ' landFactor=%.3f target=%d action=%s'; Repl = ' target=%d action=%s' }
     @{ Name = 'X22 SEEDGASSPAWN every pass'; Key = 'sg'; Expect = 'Q7'; Find = 'if (const FString* Prev = LastSig.Find(Row.Resource)) { if (*Prev == Sig) { continue; } }'; Repl = '' }
@@ -163,5 +176,5 @@ if ($all.Count -gt 0) {
     Write-Host "SEEDGAS LINT: FAIL -- $($all.Count) problem(s). Mutants caught $caught/$($mutants.Count)."
     exit 1
 }
-Write-Host "PASS: SEEDGAS lint -- Q1..Q7 hold across $($text.Count) loaded files; mutants caught $caught/$($mutants.Count)."
+Write-Host "PASS: SEEDGAS lint -- Q1..Q8 hold across $($text.Count) loaded files; mutants caught $caught/$($mutants.Count)."
 exit 0

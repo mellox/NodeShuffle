@@ -1545,10 +1545,13 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     // draws from its own originals' purities (shuffled: a sample, not a capture-order prefix), so each card class keeps the purity
     // distribution its captured originals had; a class with no original purity on record draws from
     // the map-wide multiset (PURITYCENSUS fallbackToMapDeck). Replaces the single map-wide deck + shared cursor.
-    // RNG: this call is the only purity RNG use (one shuffle per class, sorted order); seeds re-roll differently from
+    // RNG: this call is the only purity RNG use (one shuffle per class, sorted order) apart from AddSeededPuritySources below,
+    // which draws only when the RWG table SEEDED a kind (one shuffle per seeded kind); seeds re-roll differently from
     // this commit on, on Vanilla and RWG alike. Contract: NodeShuffleRwgDeal.h.
     NodeShuffleRwgDeal::FPurityDecks PurityDecks;
     NodeShuffleRwgDeal::BuildPurityDecks(NewLayout, PurityDeckSource, SolidDeck, LiquidDeck, Rng, PurityDecks);
+    // rwg-seedgas-1b F2 (D3): SEEDED kinds draw purity from the /Game/ solid originals, not the map-wide deck; draws only when seeded.
+    NodeShuffleRwgSeedGas::AddSeededPuritySources(ModQuota, NewLayout, FormByResource, FormSolid, Rng, PurityDecks);
     NodeShuffleRwgSeedGas::LogRoll(ModQuota, Quota, PinnedPerResource, SolidDeck, LiquidDeck, PurityDecks); // rwg-seedgas-1 MODQUOTA
 
     // Per-pile draw cursors (purity cursors are per class, inside PurityDecks).
