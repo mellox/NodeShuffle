@@ -82,11 +82,12 @@ namespace NodeShuffleRwgSeedGas
         Rows->bRequiresWorldReload = true; // read at each layout roll only (same reasoning as T60's F10)
         Rows->DisplayName = FText::FromString(TEXT("Modded Resource Vanilla Counts (Random World Generator)"));
         Rows->Tooltip = FText::FromString(
-            TEXT("Used on Random World Generator maps only, at each layout roll or re-roll. Each row names a modded resource, ")
-            TEXT("an optional node class, and how many nodes it has on the vanilla map. That number is scaled by this ")
-            TEXT("world's amount of vanilla ore nodes and replaces the modded resource's own node count in the shuffle. A ")
-            TEXT("gas resource with no node on this world gets new nodes of the listed class; if that class cannot be ")
-            TEXT("loaded, nothing is added. Pre-filled: Lead 6, Lithium 23, Thorium 45."));
+            TEXT("Used on Random World Generator maps only, at each layout roll or re-roll, while 'Use Vanilla Counts For Modded ")
+            TEXT("Resources' is on. Each row names a modded resource, an optional node class, and how many nodes that resource has ")
+            TEXT("on the vanilla map. That number is scaled by how many vanilla ore nodes this world has compared with the vanilla ")
+            TEXT("map and replaces the resource's own node count in the shuffle. A gas resource with no node on this world gets new ")
+            TEXT("nodes of its own node class (one NodeShuffle finds in that resource's mod, otherwise the class in the row); if ")
+            TEXT("neither is usable, nothing is added. Pre-filled: Lead 6, Lithium 23, Thorium 45."));
 
         UConfigPropertySection* RowTemplate = NewObject<UConfigPropertySection>(Rows, SectionClass, TEXT("ModdedVanillaCountRow"));
         RowTemplate->bRequiresWorldReload = true;
@@ -102,7 +103,7 @@ namespace NodeShuffleRwgSeedGas
             RowTemplate->SectionProperties.Add(Key, P);
         };
         AddString(TEXT("ResourcePath"), TEXT("Resource path"), TEXT("Full path of the resource descriptor class."));
-        AddString(TEXT("NodeClassPath"), TEXT("Node class path"), TEXT("Full path of the node class to place for a resource with no node on this world. May be empty."));
+        AddString(TEXT("NodeClassPath"), TEXT("Node class path"), TEXT("Full path of a node class for a gas resource with no node on this world. Used only when NodeShuffle finds no node class of that resource's own mod. May be empty."));
         UConfigPropertyInteger* CountProp = NewObject<UConfigPropertyInteger>(RowTemplate, IntegerClass, TEXT("VanillaCount"));
         CountProp->Value = 0; CountProp->DefaultValue = 0;
         CountProp->DisplayName = FText::FromString(TEXT("Vanilla map node count"));

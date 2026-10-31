@@ -496,7 +496,7 @@ void UNodeShuffleConfig::PostInitProperties()
     // NodeShuffleRwgSeedGas.cpp (this file is over the 500-line rule: call sites only). OTHER MODS group.
     AddBool(TEXT("ModdedVanillaCountsOnRwg"), true,
         TEXT("Use Vanilla Counts For Modded Resources (Random World Generator)"),
-        TEXT("ON by default. Random World Generator maps only, at each layout roll or re-roll: each modded resource listed in the table below gets its vanilla map node count, scaled by this world's amount of vanilla ore nodes, in place of the number of its nodes NodeShuffle found on this world, when deciding how many nodes of it the shuffle deals. A listed gas resource with no node on this world gets new nodes of its listed node class, and none if that class cannot be loaded. Other maps are not affected."));
+        TEXT("ON by default. Random World Generator maps only, at each layout roll or re-roll: each modded resource listed in the Modded Resource Vanilla Counts table gets its vanilla map node count, scaled by how many vanilla ore nodes this world has compared with the vanilla map, in place of the number of its nodes NodeShuffle found on this world, when deciding how many nodes of it the shuffle deals. A listed gas resource with no node on this world gets new nodes of its own node class (one NodeShuffle finds in that resource's mod, otherwise the class listed in the row); if neither is usable, none are added. Other maps are not affected."));
     NodeShuffleRwgSeedGas::RegisterConfigRows(Root, ArrayClass, SectionClass, StringClass, IntegerClass);
 
     // ---- T71 (ns-t71-wells-always-on, 2026-08-12): THE WHOLE RESOURCE WELLS GROUP WAS DELETED HERE. --
