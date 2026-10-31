@@ -149,6 +149,14 @@ void ANodeShuffleSubsystem::RwgRecordDz(const FVector& At, double DzCm)
     if (Band->Num() < RwgDzSampleCap) { Band->Add(static_cast<float>(FMath::Abs(DzCm))); }
 }
 
+void ANodeShuffleSubsystem::RwgRecordSolidTopDz(double DzCm)
+{
+    // rwg-clifftop-1: a settle ACCEPTED on a gentle solid-mesh top measures the mesh's height above the RWG surface, not the API's accuracy,
+    // so it is counted here and never enters the terrain dz bands RwgRecordDz feeds (PLACEDZ prints both).
+    ++RwgDzSolidTopN;
+    RwgDzSolidTopMaxAbsCm = FMath::Max(RwgDzSolidTopMaxAbsCm, static_cast<float>(FMath::Abs(DzCm)));
+}
+
 void ANodeShuffleSubsystem::RwgEmitDzCensus()
 {
     int32 N0, N1, N2;
@@ -157,8 +165,8 @@ void ANodeShuffleSubsystem::RwgEmitDzCensus()
     BandStats(RwgDzBand1, N1, M1, P1, X1);
     BandStats(RwgDzBand2, N2, M2, P2, X2);
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("PLACEDZ: apiToTerrainDz session samples (terrain-mesh hit Z minus RWG surface Z, from spawn settles and resettle probes), bands by distance to the nearest pawn, 0 is 0-250 m, 1 is 250-500 m, 2 is 500-1000 m; dzN0=%d dzMeanAbsCm0=%.0f dzP95AbsCm0=%.0f dzMaxAbsCm0=%.0f dzN1=%d dzMeanAbsCm1=%.0f dzP95AbsCm1=%.0f dzMaxAbsCm1=%.0f dzN2=%d dzMeanAbsCm2=%.0f dzP95AbsCm2=%.0f dzMaxAbsCm2=%.0f dzBeyond1000m=%d"),
-        N0, M0, P0, X0, N1, M1, P1, X1, N2, M2, P2, X2, RwgDzBeyond);
+        TEXT("PLACEDZ: apiToTerrainDz session samples (terrain-mesh hit Z minus RWG surface Z, from spawn settles and resettle probes), bands by distance to the nearest pawn, 0 is 0-250 m, 1 is 250-500 m, 2 is 500-1000 m; dzN0=%d dzMeanAbsCm0=%.0f dzP95AbsCm0=%.0f dzMaxAbsCm0=%.0f dzN1=%d dzMeanAbsCm1=%.0f dzP95AbsCm1=%.0f dzMaxAbsCm1=%.0f dzN2=%d dzMeanAbsCm2=%.0f dzP95AbsCm2=%.0f dzMaxAbsCm2=%.0f dzBeyond1000m=%d; settles accepted on a solid-mesh top are kept out of every band and counted after them, solidTopSettlesExcluded=%d solidTopMaxAbsDzCm=%.0f"),
+        N0, M0, P0, X0, N1, M1, P1, X1, N2, M2, P2, X2, RwgDzBeyond, RwgDzSolidTopN, RwgDzSolidTopMaxAbsCm);
 }
 
 void ANodeShuffleSubsystem::RwgResettlePass()
@@ -192,6 +200,7 @@ void ANodeShuffleSubsystem::RwgResettlePass()
     const bool bDiag = FNodeShuffleModule::AreDiagnosticsEnabled();
     int32 Checked = 0, Moved = 0, Kept = 0, Deferred = 0, MaxDz = 0, Occupied = 0, Wet = 0, MovedSteep = 0, GaveUp = 0, MoveRefused = 0;
     int32 RejectedRock = 0, RockRedealt = 0; // RWG P2d
+    int32 KeptOnSolidTop = 0; // rwg-clifftop-1
     for (int32 K = 0; K < N; ++K)
     {
         FNodeShuffleEntry& E = Layout[Cands[K].Value];
@@ -218,6 +227,15 @@ void ANodeShuffleSubsystem::RwgResettlePass()
         }
         if (bRwgLastProbeSolid)
         {
+            // rwg-clifftop-1 ON vs UNDER: an entry settled on an accepted solid top (bRwgOnSolidTop) whose probe stops on a solid mesh within
+            // RwgSolidTopOnTolCm of the node's Z stands ON that surface: kept in place, no dz sample, not re-probed this session (the SaveGame
+            // terrain flag is left as it is). A stop farther away is UNDER: redealt below, as before.
+            if (E.bRwgOnSolidTop && FMath::Abs(HitLoc.Z - Cur.Z) <= NodeShuffleMapMode::RwgSolidTopOnTolCm)
+            {
+                ++KeptOnSolidTop;
+                RwgResettleGaveUp.Add(E.EntryGuid);
+                continue;
+            }
             // RWG P2d: the probe stopped on a SOLID mesh (rock/cliff) at this XY -- the node is under, inside or on that mesh. Never
             // moved onto it: the entry is redealt (actor despawned, API redeal, re-placed by the spawn pass). Occupied was refused above.
             ++RejectedRock;
@@ -265,11 +283,11 @@ void ANodeShuffleSubsystem::RwgResettlePass()
     }
     int32 WChecked = 0, WMoved = 0, WKept = 0, WDeferred = 0, WOccupied = 0, WMaxDz = 0; // WMoved = well groups redealt (P2d)
     RwgResettleWells(WChecked, WMoved, WKept, WDeferred, WOccupied, WMaxDz);
-    if (Moved > 0 || Kept > 0 || MoveRefused > 0 || Occupied > 0 || Wet > 0 || GaveUp > 0 || Requeued > 0 || RejectedRock > 0 || WMoved > 0 || WKept > 0 || WOccupied > 0 || (RwgRsPasses % 12) == 1) // bounded: a pass that changed state, else once a minute
+    if (Moved > 0 || Kept > 0 || MoveRefused > 0 || Occupied > 0 || Wet > 0 || GaveUp > 0 || Requeued > 0 || RejectedRock > 0 || KeptOnSolidTop > 0 || WMoved > 0 || WKept > 0 || WOccupied > 0 || (RwgRsPasses % 12) == 1) // bounded: a pass that changed state, else once a minute
     {
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("RESETTLE: pass=%d checked=%d moved=%d kept=%d deferred=%d maxDzCm=%d occupiedSkipped=%d wetNotMoved=%d movedOntoCliff=%d moveRefused=%d rejectedRock=%d rockRedealt=%d voidGaveUpNow=%d requeuedUnspawned=%d unflaggedEntries=%d wellGroupsChecked=%d wellGroupsRedealt=%d wellGroupsKept=%d wellGroupsDeferred=%d wellGroupsInUse=%d wellMaxDzCm=%d"),
-            RwgRsPasses, Checked, Moved, Kept, Deferred, MaxDz, Occupied, Wet, MovedSteep, MoveRefused, RejectedRock, RockRedealt, GaveUp, Requeued, Remaining,
+            TEXT("RESETTLE: pass=%d checked=%d moved=%d kept=%d deferred=%d maxDzCm=%d occupiedSkipped=%d wetNotMoved=%d movedOntoCliff=%d moveRefused=%d rejectedRock=%d rockRedealt=%d keptOnSolidTop=%d voidGaveUpNow=%d requeuedUnspawned=%d unflaggedEntries=%d wellGroupsChecked=%d wellGroupsRedealt=%d wellGroupsKept=%d wellGroupsDeferred=%d wellGroupsInUse=%d wellMaxDzCm=%d"),
+            RwgRsPasses, Checked, Moved, Kept, Deferred, MaxDz, Occupied, Wet, MovedSteep, MoveRefused, RejectedRock, RockRedealt, KeptOnSolidTop, GaveUp, Requeued, Remaining,
             WChecked, WMoved, WKept, WDeferred, WOccupied, WMaxDz);
     }
 }

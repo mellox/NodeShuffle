@@ -33,7 +33,7 @@
 #       recorded before the RWGTRACEMISS schedule return; the record map is bounded with evict-oldest and cleared on a pass-number restart.
 #   W1  The old spawn-on-discovery Verbose line states its predicate, at the same level and gate; the old cause text is gone.
 #   T13 Dated rwg-trace-diag-2 TODO above every new UE_LOG and both new constants.
-#   V5  Marker rwg-layout-dump-1 present once; rwg-trace-diag-2, rwg-trace-diag-1, rwg-0-1-12-2 and the older markers absent (same block as check_rwg019_lint.ps1); no marker string in the diag files.
+#   V5  Marker rwg-clifftop-1 present once; rwg-layout-dump-1, rwg-trace-diag-2, rwg-trace-diag-1, rwg-0-1-12-2 and the older markers absent (same block as check_rwg019_lint.ps1); no marker string in the diag files.
 # Mutants run in-file. Exit 0 = all hold; 1 = at least one does not; 2 = a pinned FILE is missing.
 param([string]$PrintHashesAt = '')
 
@@ -54,9 +54,9 @@ $files = [ordered]@{
 }
 $hookRe = '(?m)^[ \t]*' + 'NodeShuffleRwg' + 'TraceDiag::(BeginPass|NoteFirstTrace|EmitPassCensus)\([^;\n]*\);[ \t]*//[ \t]*rwg-trace-diag-1[^\n]*$'
 $spans = @(
-    @{ Id = 'D1'; Key = 'place'; A = 'bool ANodeShuffleSubsystem::RwgResolveAtSpawn('; B = 'void ANodeShuffleSubsystem::RwgSpawnPass('; Hooks = 1; Hash = '35BF7932655680931ED8854F144DB108924391B7E7065D977EC4BB905B3FE13A' }
-    @{ Id = 'D2'; Key = 'sub'; A = 'bool ANodeShuffleSubsystem::RaycastGroundAt('; B = 'bool ANodeShuffleSubsystem::TryRedealWaterLockedEntry('; Hooks = 0; Hash = '6A84B3F4958E0EA37525F2F561EB10C236883901059DAC7B640D03F72F45F303' }
-    @{ Id = 'D3'; Key = 'place'; A = 'void ANodeShuffleSubsystem::RwgSpawnPass(float SpawnRadiusCm, bool& bChangedWorld)'; B = 'void ANodeShuffleSubsystem::RwgLogSkipOnce('; Hooks = 2; Hash = '0846E7385DE65C0A1615D6164AD3F6271E008AB1A5DB4C94A05283EF28E7375F' }
+    @{ Id = 'D1'; Key = 'place'; A = 'bool ANodeShuffleSubsystem::RwgResolveAtSpawn('; B = 'void ANodeShuffleSubsystem::RwgSpawnPass('; Hooks = 1; Hash = 'FDF1CB84B8D6FD51BB4E3422CD31ACFCE6B7CE1BD0F296BE50ECAC522EFFCB11' }
+    @{ Id = 'D2'; Key = 'sub'; A = 'bool ANodeShuffleSubsystem::RaycastGroundAt('; B = 'bool ANodeShuffleSubsystem::TryRedealWaterLockedEntry('; Hooks = 0; Hash = '9CD59F03FFC9DF35F29642F77D3273959DAB1C2A871C41EBB49B0DBF36DBF829' }
+    @{ Id = 'D3'; Key = 'place'; A = 'void ANodeShuffleSubsystem::RwgSpawnPass(float SpawnRadiusCm, bool& bChangedWorld)'; B = 'void ANodeShuffleSubsystem::RwgLogSkipOnce('; Hooks = 2; Hash = 'F39382C47C9AAD331F8946EFF1A8D745773BACD240CF4C81DAABDF24B5B0E4C1' }
     @{ Id = 'D4'; Key = 'sub'; A = '        bool bSettled = (GetMapMode() == ENodeShuffleMapMode::Rwg) ? RwgResolveAtSpawn(Entry, bRwgApiUsed, bWaterNoLand) : false;'; B = '            // Defer-log backoff: full detail once per entry per session;'; Hooks = 0; Hash = '17F0F252F7BDC0FC46C6584085E3CCE1235A1FC980E0531F5E4DB1D1DE4D07BC' }
     @{ Id = 'D5'; Key = 'dens'; A = 'int32 ANodeShuffleSubsystem::RwgStuckCounter(int32 I) const'; B = 'bool ANodeShuffleSubsystem::RwgDensityLandSample('; Hooks = 0; Hash = '08C016E766FBEDA15CEE1B062C57248AB055869060034EE74E19F8FF4583B3B3' }
 )
@@ -181,7 +181,7 @@ function Invoke-TraceChecks($T) {
     # T7
     foreach ($n in @(('Raycast' + 'GroundAt('), ('Raycast' + 'Settle('), ('RecordWater' + 'GridSample'), ('AddIgnored' + 'Actor'), ('AddIgnored' + 'Component'), ('NodeShuffle' + 'Subsystem.h'))) { if ($T.diag.Contains($n) -or $T.diagh.Contains($n)) { $f += "(T7) the diag files must not use '$n'" } }
     # T8
-    foreach ($n in @('    const FVector Start(ProbeXY.X, ProbeXY.Y, bShortTrace ? StartZ + 400.f : StartZ + 20000.f);', '    const FVector End(ProbeXY.X, ProbeXY.Y, bShortTrace ? StartZ - 800.f : StartZ - 40000.f);', 'if (!GetWorld()->LineTraceSingleByChannel(H, S, En, ECC_WorldStatic, P)) { return false; }', '    FCollisionQueryParams Params(SCENE_QUERY_STAT(NodeShuffleSettle), true);')) { if ((Count $T.sub $n) -ne 1) { $f += "(T8) decision trace statement changed: $($n.Trim().Substring(0, 40))..." } }
+    foreach ($n in @('    const FVector Start(ProbeXY.X, ProbeXY.Y, bShortTrace ? StartZ + 400.f : StartZ + NodeShuffleMapMode::RwgPrimaryTraceUpCm); // rwg-clifftop-1: named, same float value', '    const FVector End(ProbeXY.X, ProbeXY.Y, bShortTrace ? StartZ - 800.f : StartZ - 40000.f);', 'if (!GetWorld()->LineTraceSingleByChannel(H, S, En, ECC_WorldStatic, P)) { return false; }', '    FCollisionQueryParams Params(SCENE_QUERY_STAT(NodeShuffleSettle), true);')) { if ((Count $T.sub $n) -ne 1) { $f += "(T8) decision trace statement changed: $($n.Trim().Substring(0, 40))..." } }
     foreach ($n in @('constexpr double RwgDecisionUpCm = 20000.0;', 'constexpr double RwgDecisionDownCm = 40000.0;', 'constexpr double RwgDecisionShortUpCm = 400.0;', 'constexpr double RwgDecisionShortDownCm = 800.0;', 'FVector(X, Y, ToZ), ECC_WorldStatic, P)', 'const FCollisionQueryParams Fresh(SCENE_QUERY_STAT(NodeShuffleRwgTraceDiag), true);')) { if ((Count $T.diag $n) -ne 1) { $f += "(T8) mirror of the decision trace drifted: $n" } }
     if ((Count $T.place '    Entry.Location.Z = ApiZ0;') -ne 1) { $f += '(T8) the decision window must still be built around ApiZ0' }
     # T9
@@ -248,7 +248,7 @@ function Invoke-TraceChecks($T) {
     foreach ($nb in @("$todo2`n        UE_LOG(LogNodeShuffle, Display, TEXT(`"HERE-NEAREST-UNSPAWNED: no player pawn", "$todo2`n        UE_LOG(LogNodeShuffle, Display,`n            TEXT(`"HERE-NEAREST-UNSPAWNED: entry=", "$todo2`n        UE_LOG(LogNodeShuffle, Display,`n            TEXT(`"HERE-NEAREST-UNSPAWNED: none within", "$todo2`n    UE_LOG(LogNodeShuffle, Display,`n        TEXT(`"HERE-UNSPAWNED-BANDS: ")) { if ((Count $T.here $nb) -ne 1) { $f += "(T13) dated rwg-trace-diag-2 TODO missing above: $($nb.Substring($todo2.Length).Trim().Substring(0, 24))" } }
     # V5
     if ($T.here.Contains('LOADED' + ' (')) { $f += '(V5) no build-marker string in the new HERE file' }
-    if ((Count $T.nsmod ('LOADED (2026-10-29-rwg-' + 'layout-dump-1)')) -ne 1 -or (Count $T.nsmod ('2026-10-28-rwg-' + 'trace-diag-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-27-rwg-' + 'trace-diag-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-26-rwg-' + '0-1-12-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-26-rwg-' + '0-1-12-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'deal-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'density-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'rockcache-2')) -ne 0 -or (Count $T.nsmod ('2026-10-18-rwg-' + 'p4c-2')) -ne 0) { $f += '(V5) marker must be rwg-0-1-12-1 with rwg-steep-2 and the earlier markers absent' }
+    if ((Count $T.nsmod ('LOADED (2026-10-30-rwg-' + 'clifftop-1)')) -ne 1 -or (Count $T.nsmod ('2026-10-29-rwg-' + 'layout-dump-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-28-rwg-' + 'trace-diag-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-27-rwg-' + 'trace-diag-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-26-rwg-' + '0-1-12-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-26-rwg-' + '0-1-12-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'deal-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'density-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'rockcache-2')) -ne 0 -or (Count $T.nsmod ('2026-10-18-rwg-' + 'p4c-2')) -ne 0) { $f += '(V5) marker must be rwg-0-1-12-1 with rwg-steep-2 and the earlier markers absent' }
     if ($T.diag.Contains('LOADED' + ' (') -or $T.diagh.Contains('LOADED' + ' (')) { $f += '(V5) no build-marker string in the diag files' }
     return $f
 }
@@ -258,14 +258,14 @@ $mutants = @(
     @{ Name = 'M1 trace-miss counter double-counts'; Key = 'place'; Expect = 'D1'; Find = 'if (RwgProbeFirstClass < 0) { ++RwgPcTraceMiss; }'; Repl = 'if (RwgProbeFirstClass < 0) { RwgPcTraceMiss += 2; }' }
     @{ Name = 'M2 no-terrain defer falls through'; Key = 'place'; Expect = 'D1'; Find = "RwgSteepNoteUnplaceable(Q, Entry); } // rwg-steep-1: re-probe the primary, arm the ring (NodeShuffleMapModeSteep.cpp)`n        return false;"; Repl = 'RwgSteepNoteUnplaceable(Q, Entry); } // rwg-steep-1: re-probe the primary, arm the ring (NodeShuffleMapModeSteep.cpp)' }
     @{ Name = 'M3 decision edit hidden on the hook line'; Key = 'place'; Expect = 'D1'; Find = '    NodeShuffleRwgTraceDiag::NoteFirstTrace(GetWorld(),'; Repl = '    RwgProbeFirstClass = 0; NodeShuffleRwgTraceDiag::NoteFirstTrace(GetWorld(),' }
-    @{ Name = 'M4 decision window widened'; Key = 'sub'; Expect = 'D2'; Find = 'StartZ + 20000.f);'; Repl = 'StartZ + 30000.f);' }
+    @{ Name = 'M4 decision window widened'; Key = 'sub'; Expect = 'D2'; Find = 'StartZ + NodeShuffleMapMode::RwgPrimaryTraceUpCm);'; Repl = 'StartZ + 30000.f);' }
     @{ Name = 'M5 skip cap raised in the trace lambda'; Key = 'sub'; Expect = 'D2'; Find = 'for (int32 K = 0; K <= NodeShuffleMapMode::RwgTerrainSkipMax; ++K)'; Repl = 'for (int32 K = 0; K < NodeShuffleMapMode::RwgTerrainSkipMax + 2; ++K)' }
     @{ Name = 'M6 32/pass cap loosened'; Key = 'place'; Expect = 'D3'; Find = 'const int32 N = FMath::Min(Cands.Num(), NodeShuffleMapMode::RwgMaxSpawnAttemptsPerPass);'; Repl = 'const int32 N = Cands.Num();' }
     @{ Name = 'M7 candidates no longer nearest-first'; Key = 'place'; Expect = 'D3'; Find = 'return A.Key < B.Key; });'; Repl = 'return A.Key > B.Key; });' }
     @{ Name = 'M8 deferral counter dropped'; Key = 'sub'; Expect = 'D4'; Find = "            DeferredThisPass++;`n"; Repl = '' }
     @{ Name = 'M9 stuck tracker no longer resets on a move'; Key = 'dens'; Expect = 'D5'; Find = '{ T.Key = 0; } else { ++T.Key; }'; Repl = '{ ++T.Key; } else { ++T.Key; }' }
     @{ Name = 'M10 schedule loses 48'; Key = 'diag'; Expect = 'T1'; Find = '{ 1, 12, 48 };'; Repl = '{ 1, 12 };' }
-    @{ Name = 'M11 marker reverted'; Key = 'nsmod'; Expect = 'V5'; Find = ('2026-10-29-rwg-' + 'layout-dump-1'); Repl = ('2026-10-28-rwg-' + 'trace-diag-2') }
+    @{ Name = 'M11 marker reverted'; Key = 'nsmod'; Expect = 'V5'; Find = ('2026-10-30-rwg-' + 'clifftop-1'); Repl = ('2026-10-29-rwg-' + 'layout-dump-1') }
     @{ Name = 'M12 miss line raised to Warning'; Key = 'diag'; Expect = 'T2'; Find = "UE_LOG(LogNodeShuffle, Display,`n        TEXT(`"RWGTRACEMISS: "; Repl = "UE_LOG(LogNodeShuffle, Warning,`n        TEXT(`"RWGTRACEMISS: " }
     @{ Name = 'M13 census repeats a field'; Key = 'diag'; Expect = 'T3'; Find = 'missRecordsXYChanged=%d"'; Repl = 'missRecordsXYChanged=%d attempted=%d"' }
     @{ Name = 'M14 miss line drops an argument'; Key = 'diag'; Expect = 'T3'; Find = 'Ch.PrimsWithBody, Ch.Ms, KillboxTopZ);'; Repl = 'Ch.PrimsWithBody, KillboxTopZ);' }
@@ -329,7 +329,7 @@ $mutants = @(
     @{ Name = 'M36 probeEventsThisPass claim reverted'; Key = 'diag'; Expect = 'T12'; Find = 'this pass (this one included only when probesRun is 1).'; Repl = 'this pass, this one included.' }
     @{ Name = 'M37 bounds arithmetic reverted'; Key = 'diag'; Expect = 'T12'; Find = 'the floor lies below 3x the .key floor -60000 cm'; Repl = '3x the .key floor -60000 cm' }
     @{ Name = 'M38 cave defer edited (widened D1)'; Key = 'place'; Expect = 'D1'; Find = 'if (Entry.bRwgCave) { bOutApiUsed = true; ++RwgPcCaveDeferred; return false; }'; Repl = 'if (Entry.bRwgCave) { bOutApiUsed = true; return false; }' }
-    @{ Name = 'M39 settled counter dropped (widened D1)'; Key = 'place'; Expect = 'D1'; Find = "    ++RwgPcSettledTerrain;`n"; Repl = '' }
+    @{ Name = 'M39 settled counter dropped (widened D1)'; Key = 'place'; Expect = 'D1'; Find = '    ++RwgPcSettledTerrain; RwgPcSettledOnSolidTop'; Repl = '    RwgPcSettledOnSolidTop' }
     @{ Name = 'M40 probeMs timer moved outside the traces'; Key = 'diag'; Expect = 'T11'; Find = "        ProbeMs = (FPlatformTime::Seconds() - TProbe) * 1000.0;`n"; Repl = '' }
     @{ Name = 'M41 control moved to the miss path'; Key = 'diag'; Expect = 'T5'; Find = "    ++S.Misses;`n"; Repl = '' }
     @{ Name = 'M23 marker in a diag file'; Key = 'diagh'; Expect = 'V5'; Find = '// rwg-trace-diag-1 (2026-10-27) -- DIAGNOSTICS ONLY.'; Repl = '// LOADED (2026-10-26-rwg-0-1-12-2) -- DIAGNOSTICS ONLY.' }

@@ -70,6 +70,16 @@ namespace NodeShuffleMapMode
     // TODO(2026-10-18, RWG P2d -> R6): re-check against RESETTLE-ROCK / RESETTLE-WELL.
     constexpr double RwgRockOcclusionHeightCm = 20000.0; // RWG P2d review MF2: = RaycastGroundAt's primary start (StartZ + 20000), so the resettle removes exactly what placement refuses and the segment never starts inside a tall rock
     constexpr double RwgRockOcclusionEndAboveCm = 50.0;
+    // rwg-clifftop-1 (2026-10-30): RaycastGroundAt's long-trace start above its window origin (was the literal 20000.f; a float, so the vanilla
+    // expression StartZ + 20000.f compiles to the same value). Must equal RwgRockOcclusionHeightCm: the rock pass removes exactly what placement refuses.
+    constexpr float RwgPrimaryTraceUpCm = 20000.0f;
+    static_assert(static_cast<double>(RwgPrimaryTraceUpCm) == RwgRockOcclusionHeightCm, "rwg-clifftop-1: the placement trace start and the rock-pass window must stay equal");
+    // rwg-clifftop-1: gentle solid-top acceptance (NodeShuffleMapModeCliffTop.cpp). An accepted impact lies at least RwgSolidTopStartMarginCm below
+    // the trace start (inside-start guard). A rock-pass / resettle solid hit within RwgSolidTopOnTolCm of a bRwgOnSolidTop node's Z is the surface it
+    // stands ON (kept); farther above is UNDER (redealt as before). TODO(2026-10-30, rwg-clifftop-1): both are first values -- re-check against
+    // RWGCLIFFTOP hitZ/startZ and RESETTLE-ROCK onSolidTopKept.
+    constexpr double RwgSolidTopStartMarginCm = 100.0;
+    constexpr double RwgSolidTopOnTolCm = 100.0;
     constexpr int32 RwgResettleWellRedealsPerPass = 2;
     constexpr double RwgWellFloatCm = 300.0;
     // RWG P4b (2026-10-18): satellite re-bind retry -- claims tried per pass (nearest the pawn first), and the attempts after

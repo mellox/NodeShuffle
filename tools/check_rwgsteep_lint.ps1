@@ -2,11 +2,13 @@
 # LOCAL redraw ring (<= RwgSteepRingCandidates spots within RwgSteepRingRadiusCm) before the map-wide API redeal; a primary that stopped
 # on a SOLID mesh keeps the map-wide redeal; the measured slope is printed. Handoff: _team/test-logs/2026-10-19-nodeshuffle-rwgsteep-handoff.md.
 # LOADS and PINS every file the packet touched. Needles naming a forbidden or superseded literal are BUILT BY CONCATENATION.
-#   S1  Ring radius: the constant is 150 m, and the only radius formula is radius * sqrt((K + 0.5) / cap) (always < the radius).
+#   S1  Ring radius (rwg-clifftop-1, BY DESIGN): console variable NodeShuffle.RwgRingRadiusM, default 300 m, clamped 50..1000, read once per
+#       ring run; the only radius formula is RadiusCm * sqrt((K + 0.5) / cap) (always < the radius); the 150 m constant is gone.
 #   S2  Candidate cap: the constant is 12 and the ring loop is bounded by it (one loop, one RwgLocalRedraw call site).
 #   S3  Fall-through: TryRedealRwgEntry calls the ring once, BEFORE the salted map-wide stream; a ring miss continues to the map-wide
 #       draw; RwgSteepTryRing returns the ring's own result; the map-wide span hashes to its affc801 text.
-#   S4  Occluded exception: the re-probe's solid flag is copied into bRwgSteepOccluded; an occluded entry never reaches RwgLocalRedraw.
+#   S4  Ring on occluded (rwg-clifftop-1, BY DESIGN): the re-probe's solid flag is copied into bRwgSteepOccluded; steep AND occluded
+#       entries run RwgLocalRedraw (one unconditional call); the outcome splits occludedRing / occludedMapwide / steepRing / steepMapwide.
 #   S5  Slope print: RWGSTEEP exact format (normalRiseRun from the smoothed normal, apiRiseRun from RwgApiSlopeTooSteep), arity.
 #   S6  Censuses: PLACECENSUS ends with steepRing/steepMapwide/steepOccludedMapwide and its specifier count == argument count;
 #       RWGSTEEPSUM exact format + arity (13, ringPassedFromOriginZ last); its re-print signature includes guidMismatch; the
@@ -79,8 +81,8 @@ $MapwideEnd = '*Entry.EntryGuid.ToString(), bOutMoved ? 1 : 0, Salt, Outside, Wa
 function Invoke-RwgsteepChecks($T) {
     $f = @(); $s = $T.steep; $p = $T.place
     # S1 radius
-    if ((Count $s 'constexpr float RwgSteepRingRadiusCm = 15000.0f;') -ne 1) { $f += '(S1) RwgSteepRingRadiusCm must be pinned at 15000.0f (150 m)' }
-    if ((Count $s 'RwgSteepRingRadiusCm * FMath::Sqrt((K + 0.5) / static_cast<double>(RwgSteepRingCandidates))') -ne 1 -or (Count $s 'RwgSteepRingRadiusCm') -ne 5) { $f += '(S1) the ring radius must be RwgSteepRingRadiusCm * sqrt((K + 0.5) / cap), its only use besides the constant, the two comments and the census' }
+    if ((Count $s "TEXT(`"NodeShuffle.RwgRingRadiusM`"),`n        300,") -ne 1 -or (Count $s 'FMath::Clamp(CVarNodeShuffleRwgRingRadiusM.GetValueOnGameThread(), 50, 1000)') -ne 1) { $f += '(S1) the ring radius must be NodeShuffle.RwgRingRadiusM, default 300 m, clamped 50..1000' }
+    if ((Count $s 'RadiusCm * FMath::Sqrt((K + 0.5) / static_cast<double>(RwgSteepRingCandidates))') -ne 1 -or (Count $s 'FMath::Sqrt(') -ne 2 -or (Count $s ('RwgSteepRing' + 'RadiusCm = ')) -ne 0 -or (Count $s ('RwgSteepRing' + 'RadiusCm * ')) -ne 0 -or (Count $s ('RwgSteepRing' + 'RadiusCm / ')) -ne 0 -or (Count $s 'const float RadiusCm = RwgSteepRingRadiusCmNow();') -ne 1) { $f += '(S1) the ring radius must be RadiusCm * sqrt((K + 0.5) / cap), read once per ring run; the superseded 150 m constant must be gone' }
     # S2 cap
     if ((Count $s 'constexpr int32 RwgSteepRingCandidates = 12;') -ne 1) { $f += '(S2) RwgSteepRingCandidates must be pinned at 12' }
     if ((Count $s 'for (int32 K = 0; K < RwgSteepRingCandidates; ++K)') -ne 1 -or (Count $s 'for (') -ne 3) { $f += '(S2) the ring must be ONE loop bounded by RwgSteepRingCandidates (plus the two spacing loops)' }
@@ -100,20 +102,23 @@ function Invoke-RwgsteepChecks($T) {
     # S4 occluded exception
     if ((Count $s 'bRwgSteepOccluded = bRwgLastProbeSolid;') -ne 1 -or (Count $s 'bRwgSteepOccluded =') -ne 1) { $f += '(S4) bRwgSteepOccluded must be the re-probe solid flag, assigned once' }
     if (-not (Ordered $s @('&Normal, &Hit,', 'bRwgSteepOccluded = bRwgLastProbeSolid;'))) { $f += '(S4) the solid flag must be read after the re-probe' }
-    if (-not (Ordered $s @("    if (bRwgSteepOccluded)`n    {`n        ++RwgPcSteepOccluded;", "    else`n    {`n        ++RwgPcSteepRingRuns;", 'bMoved = RwgLocalRedraw('))) { $f += '(S4) an occluded entry must take the map-wide branch; RwgLocalRedraw only in the else' }
+    $call = '    const bool bMoved = RwgLocalRedraw(Q, Entry, SpacingCm, RadiusCm, Tried, Passed, RejLand, RejSpacing, RejTrace);'
+    if ((Count $s $call) -ne 1 -or -not (Ordered $s @('bRwgSteepArmed = false;', '++RwgPcSteepRingRuns;', $call, "    if (bRwgSteepOccluded)`n    {`n        if (bMoved) { ++RwgPcSteepOccludedRing; ++RwgSteepSessOccludedRing; Outcome = TEXT(`"occludedRing`"); }`n        else { ++RwgPcSteepOccluded; ++RwgSteepSessOccluded; Outcome = TEXT(`"occludedMapwide`"); }", "        if (bMoved) { ++RwgPcSteepRing; ++RwgSteepSessRing; Outcome = TEXT(`"steepRing`"); }"))) { $f += '(S4) steep and occluded entries must both run the ring (one unconditional RwgLocalRedraw call) before the outcome split' }
+    if ((Count $s ('// inside/under a solid mesh: the user' + "'s rule keeps the map-wide redeal")) -ne 0) { $f += '(S4) the superseded occluded -> map-wide exception must be gone' }
     # S5 slope print
-    $f += Check-Log $T 'steep' 'S5' 'RWGSTEEP entry=' 'RWGSTEEP entry=%s res=%s loc=%.0f/%.0f/%.0f hitMesh=%s normalRiseRun=%.2f apiRiseRun=%.2f ringTried=%d ringPassed=%d ringRejLand=%d ringRejSpacing=%d ringRejTrace=%d ringTo=%s outcome=%s' 15
+    $f += Check-Log $T 'steep' 'S5' 'RWGSTEEP entry=' 'RWGSTEEP entry=%s res=%s loc=%.0f/%.0f/%.0f hitMesh=%s normalRiseRun=%.2f apiRiseRun=%.2f ringRadiusM=%.0f ringTried=%d ringPassed=%d ringRejLand=%d ringRejSpacing=%d ringRejTrace=%d ringTo=%s ringDistM=%s outcome=%s' 17
+    if ((Count $s 'FVector::Dist2D(RwgSteepLoc, Entry.Location) / 100.0) : FString(TEXT("-"));') -ne 1) { $f += '(S5) ringDistM must be the 2-D distance from the original spot to the accepted candidate, a dash when none' }
     if ((Count $s 'RwgSteepNormalRiseRun = bRwgSteepOccluded ? -1.0 : RwgSteepRiseRunOf(Normal);') -ne 1 -or (Count $s 'RwgApiSlopeTooSteep(Q, Entry.Location.X, Entry.Location.Y, RwgSteepApiRiseRun);') -ne 1) { $f += '(S5) the printed slopes must be the smoothed-normal rise/run and the API rise/run at the entry' }
     if ((Count $s '*RwgSteepHitMesh, RwgSteepNormalRiseRun, RwgSteepApiRiseRun,') -ne 1) { $f += '(S5) the slope values must be the RWGSTEEP arguments' }
     # S6 censuses
     $pc = @(Get-Logs $p 'PLACECENSUS: pass=')
     if ($pc.Count -ne 1) { $f += "(S6) expected 1 PLACECENSUS pass statement, found $($pc.Count)" }
     else {
-        if (-not $pc[0].Fmt.EndsWith(' settledInsideCaveSurfaceEntry=%d steepRing=%d steepMapwide=%d steepOccludedMapwide=%d')) { $f += '(S6) PLACECENSUS must end with steepRing/steepMapwide/steepOccludedMapwide after the existing fields' }
-        if ((Spec-Count $pc[0].Fmt) -ne $pc[0].Args.Count -or $pc[0].Args.Count -ne 42) { $f += "(S6) PLACECENSUS arity: $(Spec-Count $pc[0].Fmt) specifier(s) vs $($pc[0].Args.Count) argument(s) (want 42)" }
-        if (($pc[0].Args | Select-Object -Last 3) -join ',' -ne 'RwgPcSteepRing,RwgPcSteepMapwide,RwgPcSteepOccluded') { $f += '(S6) the last three PLACECENSUS arguments must be the steep counters in field order' }
+        if (-not $pc[0].Fmt.EndsWith(' settledInsideCaveSurfaceEntry=%d steepRing=%d steepMapwide=%d steepOccludedMapwide=%d steepOccludedRing=%d settledOnSolidTop=%d solidTopAcceptedProbes=%d solidTopRejectedStartInside=%d solidTopRejectedNormal=%d solidTopRejectedFootprint=%d')) { $f += '(S6) PLACECENSUS must end with the steep then the rwg-clifftop-1 fields after the existing fields' }
+        if ((Spec-Count $pc[0].Fmt) -ne $pc[0].Args.Count -or $pc[0].Args.Count -ne 48) { $f += "(S6) PLACECENSUS arity: $(Spec-Count $pc[0].Fmt) specifier(s) vs $($pc[0].Args.Count) argument(s) (want 48)" }
+        if (($pc[0].Args | Select-Object -Last 9) -join ',' -ne 'RwgPcSteepRing,RwgPcSteepMapwide,RwgPcSteepOccluded,RwgPcSteepOccludedRing,RwgPcSettledOnSolidTop,RwgPcSolidTopAccepted,RwgPcSolidTopRejStartInside,RwgPcSolidTopRejNormal,RwgPcSolidTopRejFootprint') { $f += '(S6) the last nine PLACECENSUS arguments must be the steep and clifftop counters in field order' }
     }
-    $f += Check-Log $T 'steep' 'S6' 'RWGSTEEPSUM: ' 'RWGSTEEPSUM: pass=%d steepEvents=%d ring=%d mapwide=%d occludedMapwide=%d ringCandidatesTried=%d ringCandidatesPassed=%d reprobeWater=%d reprobeNoHitOrNotSteep=%d guidMismatch=%d ringRadiusM=%.0f ringCap=%d ringPassedFromOriginZ=%d' 13
+    $f += Check-Log $T 'steep' 'S6' 'RWGSTEEPSUM: ' 'RWGSTEEPSUM: pass=%d steepEvents=%d ring=%d mapwide=%d occludedMapwide=%d ringCandidatesTried=%d ringCandidatesPassed=%d reprobeWater=%d reprobeNoHitOrNotSteep=%d guidMismatch=%d ringRadiusM=%.0f ringCap=%d ringPassedFromOriginZ=%d occludedRing=%d' 14
     if ((Count $s 'const int32 Sig = RwgSteepSessEvents + RwgSteepSessReprobeWater + RwgSteepSessReprobeOther + RwgSteepSessGuidMismatch; if (RwgSteepSessLastPrinted == Sig) { return; } RwgSteepSessLastPrinted = Sig;') -ne 1) { $f += '(S6) the RWGSTEEPSUM re-print signature must include guidMismatch' }
     if ((Count $s 'RaycastGroundAt(C, O.Z, nullptr, nullptr, L0, R0, bW0, false, &bS0, nullptr, nullptr, true) && !bW0 && !bS0) { ++RwgSteepSessPassedFromOriginZ; }') -ne 1 -or -not (Ordered $s @('RaycastGroundAt(C, O.Z, nullptr, nullptr, L0, R0, bW0, false, &bS0, nullptr, nullptr, true) && !bW0 && !bS0) { ++RwgSteepSessPassedFromOriginZ; }', '++OutPassed;'))) { $f += '(S6) the ringPassedFromOriginZ discriminator must re-trace from the origin API Z before the pass is counted' }
     if ((Count $p 'RwgPcSteepRing = RwgPcSteepMapwide = RwgPcSteepOccluded = RwgPcSteepRingRuns = 0;') -ne 1) { $f += '(S6) the per-pass steep counters must be zeroed with the PLACECENSUS counters' }
@@ -131,28 +136,33 @@ function Invoke-RwgsteepChecks($T) {
     if ((Count $s 'if (!FMath::IsFinite(C.Z)) { ++OutRejLand; continue; }') -ne 1 -or -not (Ordered $s @('const FVector C(X, Y, Q.SurfaceZ(X, Y));', 'if (!FMath::IsFinite(C.Z)) { ++OutRejLand; continue; }', 'bool bTooClose = false;'))) { $f += '(S8) a non-finite candidate Z must be a land reject before spacing and the trace' }
     if ((Count $s ('Salt * ' + '7919')) -ne 0 -or (Count $s '^ (SavedSeed * 131) ^ ((SaltP ? *SaltP : 0) * 104729) ^ 0x2C1B3C6D);') -ne 1) { $f += '(S8) the ring must draw from its own stream, never the map-wide one' }
     # S9 marker
-    if ((Count $T.nsmod ('LOADED (2026-10-29-rwg-' + 'layout-dump-1)')) -ne 1 -or (Count $T.nsmod ('2026-10-28-rwg-' + 'trace-diag-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-27-rwg-' + 'trace-diag-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-26-rwg-' + '0-1-12-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-26-rwg-' + '0-1-12-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'deal-1')) -ne 0) { $f += '(S9) marker must be rwg-steep-2 with rwg-steep-1 and rwg-deal-1 absent' }
+    if ((Count $T.nsmod ('LOADED (2026-10-30-rwg-' + 'clifftop-1)')) -ne 1 -or (Count $T.nsmod ('2026-10-29-rwg-' + 'layout-dump-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-28-rwg-' + 'trace-diag-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-27-rwg-' + 'trace-diag-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-26-rwg-' + '0-1-12-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-26-rwg-' + '0-1-12-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'deal-1')) -ne 0) { $f += '(S9) marker must be rwg-steep-2 with rwg-steep-1 and rwg-deal-1 absent' }
     if ($s.Contains('LOADED' + ' (')) { $f += '(S9) no build-marker string in the new file' }
     return $f
 }
 
 $fails = Invoke-RwgsteepChecks $text
 $mutants = @(
-    @{ Name = 'B1 ring radius unbounded'; Key = 'steep'; Expect = 'S1'; Find = 'RwgSteepRingRadiusCm * FMath::Sqrt((K + 0.5) / static_cast<double>(RwgSteepRingCandidates))'; Repl = 'RwgSteepRingRadiusCm * (K + 1)' }
-    @{ Name = 'B2 ring radius constant widened'; Key = 'steep'; Expect = 'S1'; Find = 'RwgSteepRingRadiusCm = 15000.0f;'; Repl = 'RwgSteepRingRadiusCm = 150000.0f;' }
+    @{ Name = 'B1 ring radius unbounded'; Key = 'steep'; Expect = 'S1'; Find = 'RadiusCm * FMath::Sqrt((K + 0.5) / static_cast<double>(RwgSteepRingCandidates))'; Repl = 'RadiusCm * (K + 1)' }
+    @{ Name = 'B2 ring radius default widened'; Key = 'steep'; Expect = 'S1'; Find = "TEXT(`"NodeShuffle.RwgRingRadiusM`"),`n        300,"; Repl = "TEXT(`"NodeShuffle.RwgRingRadiusM`"),`n        3000," }
+    @{ Name = 'B2b ring radius clamp removed'; Key = 'steep'; Expect = 'S1'; Find = 'FMath::Clamp(CVarNodeShuffleRwgRingRadiusM.GetValueOnGameThread(), 50, 1000)'; Repl = 'CVarNodeShuffleRwgRingRadiusM.GetValueOnGameThread()' }
+    @{ Name = 'B2c 150 m constant reinstated'; Key = 'steep'; Expect = 'S1'; Find = '    float RwgSteepRingRadiusCmNow()'; Repl = ('    constexpr float RwgSteepRing' + 'RadiusCm = 15000.0f;' + "`n" + '    float RwgSteepRingRadiusCmNow()') }
     @{ Name = 'B3 candidate cap removed'; Key = 'steep'; Expect = 'S2'; Find = 'for (int32 K = 0; K < RwgSteepRingCandidates; ++K)'; Repl = 'for (int32 K = 0; K < Layout.Num(); ++K)' }
     @{ Name = 'B4 candidate cap raised'; Key = 'steep'; Expect = 'S2'; Find = 'RwgSteepRingCandidates = 12;'; Repl = 'RwgSteepRingCandidates = 64;' }
     @{ Name = 'B5 fall-through removed (ring miss returns)'; Key = 'place'; Expect = 'S3'; Find = '    if (RwgSteepTryRing(Q, Entry, SpacingCm)) { bOutMoved = true; return true; }'; Repl = '    if (bRwgSteepArmed) { bOutMoved = RwgSteepTryRing(Q, Entry, SpacingCm); return true; }' }
     @{ Name = 'B6 ring reports moved on a miss'; Key = 'steep'; Expect = 'S3'; Find = "    return bMoved;`n}"; Repl = "    return true;`n}" }
     @{ Name = 'B7 map-wide draw edited'; Key = 'place'; Expect = 'S3'; Find = 'for (int32 I = 0; I < Tries && !bOutMoved; ++I)'; Repl = 'for (int32 I = 0; I < Tries / 2 && !bOutMoved; ++I)' }
-    @{ Name = 'B8 occluded entries ringed'; Key = 'steep'; Expect = 'S4'; Find = "    if (bRwgSteepOccluded)`n    {`n        ++RwgPcSteepOccluded;"; Repl = "    if (false && bRwgSteepOccluded)`n    {`n        ++RwgPcSteepOccluded;" }
+    @{ Name = 'B8 occluded entries skip the ring again'; Key = 'steep'; Expect = 'S4'; Find = '    const bool bMoved = RwgLocalRedraw(Q, Entry, SpacingCm, RadiusCm,'; Repl = '    const bool bMoved = !bRwgSteepOccluded && RwgLocalRedraw(Q, Entry, SpacingCm, RadiusCm,' }
+    @{ Name = 'B8b occluded outcome mislabelled'; Key = 'steep'; Expect = 'S4'; Find = 'Outcome = TEXT("occludedRing");'; Repl = 'Outcome = TEXT("steepRing");' }
     @{ Name = 'B9 occluded flag dropped'; Key = 'steep'; Expect = 'S4'; Find = 'bRwgSteepOccluded = bRwgLastProbeSolid;'; Repl = 'bRwgSteepOccluded = false;' }
     @{ Name = 'B10 slope print dropped'; Key = 'steep'; Expect = 'S5'; Find = 'normalRiseRun=%.2f apiRiseRun=%.2f '; Repl = '' }
     @{ Name = 'B11 slope argument dropped'; Key = 'steep'; Expect = 'S5'; Find = '*RwgSteepHitMesh, RwgSteepNormalRiseRun, RwgSteepApiRiseRun,'; Repl = '*RwgSteepHitMesh, RwgSteepApiRiseRun,' }
     @{ Name = 'B12 slope from the raw hit'; Key = 'steep'; Expect = 'S5'; Find = 'RwgSteepRiseRunOf(Normal);'; Repl = 'RwgSteepRiseRunOf(Hit.ImpactNormal);' }
-    @{ Name = 'B13 PLACECENSUS drops a steep argument'; Key = 'place'; Expect = 'S6'; Find = 'RwgPcSteepRing, RwgPcSteepMapwide, RwgPcSteepOccluded);'; Repl = 'RwgPcSteepRing, RwgPcSteepMapwide);' }
-    @{ Name = 'B14 PLACECENSUS drops a steep field'; Key = 'place'; Expect = 'S6'; Find = ' steepMapwide=%d steepOccludedMapwide=%d"),'; Repl = ' steepOccludedMapwide=%d"),' }
-    @{ Name = 'B15 RWGSTEEPSUM arity'; Key = 'steep'; Expect = 'S6'; Find = 'RwgSteepRingCandidates, RwgSteepSessPassedFromOriginZ);'; Repl = 'RwgSteepRingCandidates);' }
+    @{ Name = 'B13 PLACECENSUS drops a steep argument'; Key = 'place'; Expect = 'S6'; Find = 'RwgPcSteepRing, RwgPcSteepMapwide, RwgPcSteepOccluded,'; Repl = 'RwgPcSteepRing, RwgPcSteepMapwide,' }
+    @{ Name = 'B14 PLACECENSUS drops a steep field'; Key = 'place'; Expect = 'S6'; Find = ' steepMapwide=%d steepOccludedMapwide=%d steepOccludedRing=%d'; Repl = ' steepOccludedMapwide=%d steepOccludedRing=%d' }
+    @{ Name = 'B14b PLACECENSUS clifftop fields swapped'; Key = 'place'; Expect = 'S6'; Find = 'RwgPcSolidTopRejNormal, RwgPcSolidTopRejFootprint);'; Repl = 'RwgPcSolidTopRejFootprint, RwgPcSolidTopRejNormal);' }
+    @{ Name = 'B15 RWGSTEEPSUM arity'; Key = 'steep'; Expect = 'S6'; Find = "RwgSteepSessPassedFromOriginZ,`n        RwgSteepSessOccludedRing);"; Repl = 'RwgSteepSessPassedFromOriginZ);' }
+    @{ Name = 'B15b RWGSTEEP ringDistM from the candidate Z'; Key = 'steep'; Expect = 'S5'; Find = 'FVector::Dist2D(RwgSteepLoc, Entry.Location) / 100.0)'; Repl = 'FVector::Dist(RwgSteepLoc, Entry.Location) / 100.0)' }
     @{ Name = 'B16 steep counters never zeroed'; Key = 'place'; Expect = 'S6'; Find = 'RwgPcSteepRing = RwgPcSteepMapwide = RwgPcSteepOccluded = RwgPcSteepRingRuns = 0;'; Repl = '' }
     @{ Name = 'B17 ring not charged to the budget'; Key = 'place'; Expect = 'S7'; Find = 'for (; K < N && K + RwgPcSteepRingRuns < NodeShuffleMapMode::RwgMaxSpawnAttemptsPerPass; ++K)'; Repl = 'for (; K < N; ++K)' }
     @{ Name = 'B18 arm never cleared by the consumer'; Key = 'steep'; Expect = 'S8'; Find = "    if (!bRwgSteepArmed) { return false; }`n    bRwgSteepArmed = false;"; Repl = '    if (!bRwgSteepArmed) { return false; }' }
@@ -163,7 +173,7 @@ $mutants = @(
     @{ Name = 'B24 RWGSTEEPSUM signature ignores guidMismatch'; Key = 'steep'; Expect = 'S6'; Find = ' + RwgSteepSessGuidMismatch; if (RwgSteepSessLastPrinted == Sig)'; Repl = '; if (RwgSteepSessLastPrinted == Sig)' }
     @{ Name = 'B25 non-finite candidate Z traced'; Key = 'steep'; Expect = 'S8'; Find = 'if (!FMath::IsFinite(C.Z)) { ++OutRejLand; continue; }'; Repl = '' }
     @{ Name = 'B26 discriminator traces from the candidate Z'; Key = 'steep'; Expect = 'S6'; Find = 'RaycastGroundAt(C, O.Z, nullptr'; Repl = 'RaycastGroundAt(C, C.Z, nullptr' }
-    @{ Name = 'B21 marker reverted'; Key = 'nsmod'; Expect = 'S9'; Find = ('2026-10-29-rwg-' + 'layout-dump-1'); Repl = ('2026-10-28-rwg-' + 'trace-diag-2') }
+    @{ Name = 'B21 marker reverted'; Key = 'nsmod'; Expect = 'S9'; Find = ('2026-10-30-rwg-' + 'clifftop-1'); Repl = ('2026-10-29-rwg-' + 'layout-dump-1') }
 )
 $mutantFails = @(); $caught = 0
 foreach ($m in $mutants) {

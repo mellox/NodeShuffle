@@ -281,6 +281,10 @@ struct FNodeShuffleEntry
     // down from floor + headroom (NodeShuffleMapModeCave.cpp), never from above the surface; the resettle, rock and sea passes skip it. Cleared
     // when a redeal moves it to the surface. False on every vanilla entry (vanilla caves keep bUnderground; never read there).
     UPROPERTY(SaveGame) bool bRwgCave = false;
+    // rwg-clifftop-1 (2026-10-30): this RWG entry's Location came from an ACCEPTED gentle solid-mesh top (RwgSolidTopTryAccept), not terrain.
+    // Cleared at every RwgResolveAtSpawn, written by every RaycastSettle success, cleared by the overlap nudge and RwgRedealLiveEntry. Read by the
+    // rock pass and the resettle (ON vs UNDER) and the PLACEDZ split. Never written true on vanilla (bRwgLastProbeTopAccepted stays false there).
+    UPROPERTY(SaveGame) bool bRwgOnSolidTop = false;
 };
 
 // One original vanilla node location to suppress on stream-in after a wipe-on-
@@ -1093,7 +1097,20 @@ private:
     mutable TSet<FString> RwgHitClassPaths;       // session: RWGHITCLASS already printed for these mesh paths
     mutable int32 RwgWpRejectedRock = 0;          // WELLPLACE rejectedRock (per pass): member probes that stopped on a solid mesh
     int32 RwgPcRejectedRock = 0, RwgPcFarSolid = 0; // PLACECENSUS per pass
-    int32 RwgRockOcclusionProbe(const FVector& At, const AActor* IgnoreActor, FString& OutMeshPath) const; // 0 clear, 1 solid above, 2 terrain/buildable above
+    // ---- rwg-clifftop-1 (2026-10-30): gentle solid-top acceptance. NodeShuffleMapModeCliffTop.cpp. ----
+    mutable bool bRwgSolidTopArmed = false;        // set by RwgSolidTopArm (RwgResolveAtSpawn's settle, RwgLocalRedraw); every other trace sees it clear
+    mutable bool bRwgLastProbeTopAccepted = false; // written by every RaycastGroundAt: its primary solid stop was ACCEPTED as ground (bRwgLastProbeSolid stays false then)
+    FGuid RwgSolidTopGuid; FString RwgSolidTopRes; const TCHAR* RwgSolidTopVia = TEXT("-"); // the armed entry and caller (RWGCLIFFTOP labels only)
+    mutable int32 RwgPcSolidTopRejStartInside = 0, RwgPcSolidTopRejNormal = 0, RwgPcSolidTopRejFootprint = 0, RwgPcSolidTopAccepted = 0; // PLACECENSUS per pass
+    mutable int32 RwgCliffTopSamples = 0;          // RWGCLIFFTOP lines printed this pass (<= 8)
+    int32 RwgPcSettledOnSolidTop = 0;              // PLACECENSUS per pass: spawn settles that ended with bRwgOnSolidTop
+    int32 RwgDzSolidTopN = 0; float RwgDzSolidTopMaxAbsCm = 0.0f; // PLACEDZ: solid-top settles, kept OUT of the terrain dz bands
+    void RwgSolidTopArm(const FNodeShuffleEntry& Entry, const TCHAR* Via);
+    bool RwgSolidTopTryAccept(const struct FHitResult& Hit, double TraceStartZ, const struct FCollisionQueryParams& Params, float MinNormalZ, float RingCm,
+                              float TiltClampDeg, bool bSkippedWater, FVector& OutLoc, FRotator& InOutRot, bool& bOutWater, FVector* OutGroundNormal,
+                              struct FHitResult* OutGroundHit) const;
+    void RwgRecordSolidTopDz(double DzCm);
+    int32 RwgRockOcclusionProbe(const FVector& At, const AActor* IgnoreActor, FString& OutMeshPath, double* OutHitZ = nullptr) const; // 0 clear, 1 solid above, 2 terrain/buildable above
     bool RwgRedealLiveEntry(FNodeShuffleEntry& E, const TCHAR* Why);   // false = refused (pinned/occupied); despawn + API redeal
     void RwgRockOcclusionPass();
     bool RwgRedealWellGroup(FNodeShuffleWellEntry& E, const TCHAR* Why, bool& bOutDealt); // false = DespawnWellGroup refused a member
@@ -1105,7 +1122,7 @@ private:
     // cleared by the very next TryRedealRwgEntry for the SAME entry guid; every other redeal caller sees it clear (map-wide, unchanged).
     void RwgSteepNoteUnplaceable(const NodeShuffleMapMode::FRwgGroundQuery& Q, const FNodeShuffleEntry& Entry);
     bool RwgSteepTryRing(const NodeShuffleMapMode::FRwgGroundQuery& Q, FNodeShuffleEntry& Entry, float SpacingCm); // true = moved by the ring
-    bool RwgLocalRedraw(const NodeShuffleMapMode::FRwgGroundQuery& Q, FNodeShuffleEntry& Entry, float SpacingCm,
+    bool RwgLocalRedraw(const NodeShuffleMapMode::FRwgGroundQuery& Q, FNodeShuffleEntry& Entry, float SpacingCm, float RadiusCm,
                         int32& OutTried, int32& OutPassed, int32& OutRejLand, int32& OutRejSpacing, int32& OutRejTrace);
     void RwgSteepEmitSession();                   // RWGSTEEPSUM: session totals (12th-pass census block)
     bool bRwgSteepArmed = false;
@@ -1118,6 +1135,7 @@ private:
     int32 RwgSteepSessEvents = 0, RwgSteepSessRing = 0, RwgSteepSessMapwide = 0, RwgSteepSessOccluded = 0; // session
     int32 RwgSteepSessRingTried = 0, RwgSteepSessRingPassed = 0, RwgSteepSessReprobeWater = 0, RwgSteepSessReprobeOther = 0;
     int32 RwgSteepSessGuidMismatch = 0, RwgSteepSessLastPrinted = -1;
+    int32 RwgPcSteepOccludedRing = 0, RwgSteepSessOccludedRing = 0; // rwg-clifftop-1: occluded entries the ring moved (PLACECENSUS per pass / RWGSTEEPSUM session)
     int32 RwgSteepSessPassedFromOriginZ = 0;      // rwg-steep-2: ring passes that also pass when re-traced from the origin's API Z (RWGSTEEPSUM)
     // Coordinator addendum (water diagnostics, measured only, gates nothing): ROLLCENSUS / WELLROLL splits + bounded samples.
     void RwgNoteWaterSample(const NodeShuffleMapMode::FRwgGroundQuery& Q, const FVector& P, bool bVolumeWet, const TCHAR* Caller);

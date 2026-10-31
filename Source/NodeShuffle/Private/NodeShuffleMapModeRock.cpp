@@ -17,8 +17,9 @@
 #include "FGActorRepresentationManager.h"
 #include "Representation/FGResourceNodeRepresentation.h"
 
-int32 ANodeShuffleSubsystem::RwgRockOcclusionProbe(const FVector& At, const AActor* IgnoreActor, FString& OutMeshPath) const
+int32 ANodeShuffleSubsystem::RwgRockOcclusionProbe(const FVector& At, const AActor* IgnoreActor, FString& OutMeshPath, double* OutHitZ) const
 {
+    // rwg-clifftop-1: OutHitZ (optional) receives the SOLID hit's impact Z on a return of 1 (the rock pass's ON vs UNDER test); untouched otherwise.
     // One vertical segment from RwgRockOcclusionHeightCm above At down to RwgRockOcclusionEndAboveCm above it (the ground the
     // node stands on is never part of the window). Canopy / water sheet / resource-node hits are ignored by component and the
     // segment is traced again (same cap as the terrain-only probe). Returns 1 on a SOLID hit (OutMeshPath = that hit's COMPONENT name; RWGHITCLASS has its mesh path),
@@ -44,6 +45,7 @@ int32 ANodeShuffleSubsystem::RwgRockOcclusionProbe(const FVector& At, const AAct
         {
             const UPrimitiveComponent* C = H.GetComponent();
             OutMeshPath = C ? C->GetName() : FString(TEXT("<no component>"));
+            if (OutHitZ) { *OutHitZ = H.ImpactPoint.Z; }
             return 1;
         }
         P.AddIgnoredComponent(H.GetComponent());
@@ -83,6 +85,7 @@ bool ANodeShuffleSubsystem::RwgRedealLiveEntry(FNodeShuffleEntry& E, const TCHAR
     SteadyAliveNodes.Remove(E.EntryGuid);
     AdoptRotRefit.Remove(E.EntryGuid);
     E.bRwgSettledOnTerrain = false;
+    E.bRwgOnSolidTop = false; // rwg-clifftop-1: the redealt spot is not the solid top this entry stood on
     E.bRwgRockChecked = false;
     E.bRwgVoidChecked = false; // RWG P2f: the new spot is re-checked by the re-deal pass
     E.bRayCasted = false;
@@ -119,13 +122,15 @@ void ANodeShuffleSubsystem::RwgRockOcclusionPass()
     const bool bDiag = FNodeShuffleModule::AreDiagnosticsEnabled();
     int32 Checked = 0, Occluded = 0, Redealt = 0, Clear = 0, NonRockAbove = 0, RefusedBuiltOn = 0;
     int32 CapExhausted = 0;
+    int32 OnSolidTopKept = 0; // rwg-clifftop-1
     for (int32 K = 0; K < N; ++K)
     {
         FNodeShuffleEntry& E = Layout[Cands[K].Value];
         AFGResourceNode* Node = SpawnedNodes.FindRef(E.EntryGuid);
         ++Checked;
         FString Mesh;
-        const int32 R = RwgRockOcclusionProbe(Node->GetActorLocation(), Node, Mesh);
+        double HitZ = 0.0;
+        const int32 R = RwgRockOcclusionProbe(Node->GetActorLocation(), Node, Mesh, &HitZ);
         if (R == 3) { ++CapExhausted; RwgRockRefused.Add(E.EntryGuid); continue; } // nothing measured: not flagged, re-probed next session
         if (R != 1)
         {
@@ -133,20 +138,26 @@ void ANodeShuffleSubsystem::RwgRockOcclusionPass()
             if (R == 2) { ++NonRockAbove; } else { ++Clear; }
             continue;
         }
+        // rwg-clifftop-1 ON vs UNDER: a solid hit within RwgSolidTopOnTolCm of a bRwgOnSolidTop node's Z is the surface it stands ON (kept,
+        // flagged); a hit farther above is UNDER (counted occluded and redealt, as before). The window ends RwgRockOcclusionEndAboveCm above the
+        // node, so only hits from that height up to the tolerance can read as ON.
+        const double HitDzCm = HitZ - Node->GetActorLocation().Z;
+        if (E.bRwgOnSolidTop && FMath::Abs(HitDzCm) <= NodeShuffleMapMode::RwgSolidTopOnTolCm) { ++OnSolidTopKept; E.bRwgRockChecked = true; continue; }
         ++Occluded;
         if (E.bPinned || IsNodeOccupiedAnyway(Node)) { ++RefusedBuiltOn; RwgRockRefused.Add(E.EntryGuid); continue; } // unflagged: next session re-checks
         if (bDiag)
         {
-            UE_LOG(LogNodeShuffle, Display, TEXT("RESETTLE-ROCK-HIT: entry=%s at=%s solidComponent='%s'"),
-                *E.EntryGuid.ToString(), *Node->GetActorLocation().ToCompactString(), *Mesh);
+            UE_LOG(LogNodeShuffle, Display, TEXT("RESETTLE-ROCK-HIT: entry=%s at=%s solidComponent='%s' hitDzCm=%.0f onSolidTop=%d"),
+                *E.EntryGuid.ToString(), *Node->GetActorLocation().ToCompactString(), *Mesh, HitDzCm, E.bRwgOnSolidTop ? 1 : 0);
         }
         if (RwgRedealLiveEntry(E, TEXT("rock-occluded"))) { ++Redealt; }
     }
-    if (Occluded > 0 || (Checked > 0 && (RwgRockPasses % 12) == 1)) // bounded: a pass that found rock, else once a minute while checking
+    if (Occluded > 0 || OnSolidTopKept > 0 || (Checked > 0 && (RwgRockPasses % 12) == 1)) // bounded: a pass that found rock, else once a minute while checking
     {
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("RESETTLE-ROCK: pass=%d checked=%d occluded=%d redealt=%d clear=%d terrainOrBuildableAbove=%d refusedBuiltOn=%d candidates=%d windowCm=%.0f skipCapExhausted=%d"),
-            RwgRockPasses, Checked, Occluded, Redealt, Clear, NonRockAbove, RefusedBuiltOn, Cands.Num(), NodeShuffleMapMode::RwgRockOcclusionHeightCm, CapExhausted);
+            TEXT("RESETTLE-ROCK: pass=%d checked=%d occluded=%d redealt=%d clear=%d terrainOrBuildableAbove=%d refusedBuiltOn=%d candidates=%d windowCm=%.0f skipCapExhausted=%d onSolidTopKept=%d"),
+            RwgRockPasses, Checked, Occluded, Redealt, Clear, NonRockAbove, RefusedBuiltOn, Cands.Num(), NodeShuffleMapMode::RwgRockOcclusionHeightCm, CapExhausted,
+            OnSolidTopKept);
     }
 }
 

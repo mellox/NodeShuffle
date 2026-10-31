@@ -4976,6 +4976,7 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
                     Entry.Location = TryLoc;
                     Entry.Rotation = TryRot;
                     bRelocated = true;
+                    Entry.bRwgOnSolidTop = false; // rwg-clifftop-1: nudge probes are never armed, so the nudged spot is not a solid top
                     UE_LOG(LogNodeShuffle, Verbose,
                         TEXT("Overlap nudge: relocated %s node to %s (free land)"),
                         *ResourceClass->GetName(), *TryLoc.ToCompactString());
@@ -7164,7 +7165,7 @@ bool ANodeShuffleSubsystem::RaycastGroundAt(const FVector& ProbeXY, float StartZ
     // cave-nodes-1: SHORT trace for underground entries — probe only a small window around the
     // recorded cave-floor Z. The standard 200 m top-down ray would hit the cave ROOF and settle the
     // node on the surface above the cavern.
-    const FVector Start(ProbeXY.X, ProbeXY.Y, bShortTrace ? StartZ + 400.f : StartZ + 20000.f);
+    const FVector Start(ProbeXY.X, ProbeXY.Y, bShortTrace ? StartZ + 400.f : StartZ + NodeShuffleMapMode::RwgPrimaryTraceUpCm); // rwg-clifftop-1: named, same float value
     const FVector End(ProbeXY.X, ProbeXY.Y, bShortTrace ? StartZ - 800.f : StartZ - 40000.f);
     // RWG P2c (2026-10-18): bTerrainOnly is passed true by RWG callers only (every vanilla caller takes the default, so
     // this lambda is the plain single trace there). On RWG a blocking hit whose component fails RwgIsTerrainHit (canopy,
@@ -7173,7 +7174,7 @@ bool ANodeShuffleSubsystem::RaycastGroundAt(const FVector& ProbeXY, float StartZ
     bool bSkippedWaterSheet = false; // RWG P2c review S2: a skipped water-class hit marks the primary settle wet
     // RWG P2d (2026-10-18): a SOLID mesh (class 4: rock/cliff by mesh path) stops the PRIMARY trace of a PLACEMENT caller (one that
     // passes bOutTooSteep) as a surface the node may not take; ring traces and normal-only callers keep P2c's skip-and-retrace.
-    bRwgLastProbeSolid = false;
+    bRwgLastProbeSolid = false; bRwgLastProbeTopAccepted = false; // rwg-clifftop-1: the accepted-top signal is reset by every call too
     bool bPrimarySolid = false;
     const bool bSolidBlocks = bTerrainOnly && bOutTooSteep != nullptr;
     const auto TraceDown = [this, bTerrainOnly, &bSkippedWaterSheet, &bPrimarySolid](FHitResult& H, const FVector& S, const FVector& En, FCollisionQueryParams& P, bool bSolidStops) -> bool
@@ -7206,6 +7207,14 @@ bool ANodeShuffleSubsystem::RaycastGroundAt(const FVector& ProbeXY, float StartZ
     if (!TraceDown(Hit, Start, End, Params, bSolidBlocks))
     {
         return false; // no terrain / out of range (true void)
+    }
+    // rwg-clifftop-1 (2026-10-30, user decision 1): an ARMED caller offers the solid stop to RwgSolidTopTryAccept (NodeShuffleMapModeCliffTop.cpp);
+    // a gentle top that passes the inside-start guard and the same-mesh footprint returns as ground. Not armed / not accepted: the refusal below.
+    if (bPrimarySolid && bRwgSolidTopArmed && !bShortTrace
+        && RwgSolidTopTryAccept(Hit, Start.Z, Params, MinSettleNormalZ, SmoothNormalRingCm, NodeTiltClampDeg, bSkippedWaterSheet, OutLoc, OutRot, bOutWater,
+                                OutGroundNormal, OutGroundHit))
+    {
+        return true;
     }
     if (bPrimarySolid)
     {
@@ -7310,6 +7319,7 @@ bool ANodeShuffleSubsystem::RaycastSettle(FNodeShuffleEntry& Entry, const AActor
         {
             Entry.Location = Loc;
             Entry.Rotation = Rot;
+            Entry.bRwgOnSolidTop = false; // rwg-clifftop-1: short (cave) traces never accept a solid top
             return true;
         }
         if (bCaveWater && bOutWaterNoLand) { *bOutWaterNoLand = true; }
@@ -7327,6 +7337,7 @@ bool ANodeShuffleSubsystem::RaycastSettle(FNodeShuffleEntry& Entry, const AActor
     {
         Entry.Location = Loc;
         Entry.Rotation = Rot;
+        Entry.bRwgOnSolidTop = bRwgLastProbeTopAccepted; // rwg-clifftop-1: this probe's own accept signal (false on vanilla: never armed)
         return true;
     }
 
@@ -7364,6 +7375,7 @@ bool ANodeShuffleSubsystem::RaycastSettle(FNodeShuffleEntry& Entry, const AActor
                     *Entry.EntryGuid.ToString(), bWater ? TEXT("water") : TEXT("a cliff face"),
                     *TryLoc.ToCompactString());
                 Entry.Location = TryLoc; // persist the corrected location (stable thereafter)
+                Entry.bRwgOnSolidTop = bRwgLastProbeTopAccepted; // rwg-clifftop-1: the winning spiral probe's own accept signal
                 Entry.Rotation = TryRot;
                 return true;
             }
