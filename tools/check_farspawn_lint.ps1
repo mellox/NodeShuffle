@@ -20,6 +20,7 @@
 #       actor's Z (never the entry's), ring/mapwide/redealt need TryRedealWaterLockedEntry to have returned true.
 #   F16 (fix round 1, F6) PROVSETTLE prints the scanner/radar reveal counts before the despawn and on the respawned actor; read-only.
 #   F17 (fix round 1, F7) Provisioning skips rayCasted actorless entries and counts RwgSeaDealFailed entries as sea-pending.
+#   F18 (fix round 1, F9) The RwgSpawnAllAtRoll help text claims only what the code does.
 #   F14 (fix round 1, F3) RWGSTUCK / HERE-DENSITY: the provisional settle is bracketed by the RWGSTUCK snapshot/note, and the note,
 #       the stuck census and HERE-DENSITY count a valid actor as live only when it is NOT provisional.
 # Mutants run in-file. Exit 0 = all hold; 1 = at least one does not; 2 = a pinned FILE is missing.
@@ -140,6 +141,13 @@ function Invoke-FarspawnChecks($T) {
     # F17 (fix F7): an actorless settled entry is never provisioned; a sea-flagged spot the sea pass could not re-deal stays sea-pending
     if (-not (Ordered $spawnFn @('if (IsLocationNearAnyPlayer(E.Location, AttemptRadiusCm)) { continue; }', 'if (E.bRayCasted) { ++RayCastedNoActor; continue; }', 'if (RwgSeaDealFailed.Contains(E.EntryGuid)) { ++SeaPending; ++SeaDealFailed; continue; }', 'const bool bSeaDone = bSeaPassIdle || (E.bRwgSeaChecked && (E.bRwgVoidChecked || !bVoidMaybe));', 'Cands.Emplace(Best, I);'))) { $f += '(F17) the candidate loop must skip rayCasted entries and sea-deal-failed entries before the sea-done test' }
     if ((Count $spawnFn 'RwgSeaDealFailed.Contains(') -ne 1) { $f += '(F17) RwgSeaDealFailed is read once, as a skip (never as sea-done)' }
+    # F18 (fix F9): the toggle's help text claims no universality or simultaneity and names the radius rule and the skips
+    $help = Span $p 'TEXT("NodeShuffle.RwgSpawnAllAtRoll"),' 'ECVF_Default);'
+    if ($help -eq '') { $f += '(F18) the RwgSpawnAllAtRoll help text span is missing' }
+    else {
+        foreach ($bad in @(('every new ' + 'node'), ('at ' + 'once'), ('height read from ' + 'the world generator'))) { if ($help.Contains($bad)) { $f += "(F18) the toggle help text must not claim: $bad" } }
+        foreach ($need in @('(1 km, or the ")', 'up to a batch per spawn pass', '(parked, dormant, refused, pinned, or already fitted to the ground) are skipped', '(cave spots at their dealt cave floor)', 'tries to re-fit')) { if (-not $help.Contains($need)) { $f += "(F18) the toggle help text must say: $need" } }
+    }
     # F14
     if ((Count $T.place 'if (E.bRwgProvisional) { RwgStuckBeforeAttempt(E); RwgSettleProvisional(E, bChangedWorld); AFGResourceNode* const* Now = SpawnedNodes.Find(E.EntryGuid); if (Now && IsValid(*Now) && !E.bRwgProvisional) { ++RwgPcSpawned; } RwgStuckAfterAttempt(E); continue; }') -ne 1) { $f += '(F14) the provisional settle must be bracketed by RwgStuckBeforeAttempt / RwgStuckAfterAttempt' }
     if ((Count $T.dens 'if (Now && IsValid(*Now) && !E.bRwgProvisional) { RwgStuckTracker.Remove(E.EntryGuid); return; }') -ne 1) { $f += '(F14) the RWGSTUCK note must not forget a provisional entry as live' }
@@ -193,6 +201,8 @@ $mutants = @(
     @{ Name = 'X40 F7 settled actorless entry re-provisioned'; Key = 'prov'; Expect = 'F17'; Find = "        if (E.bRayCasted) { ++RayCastedNoActor; continue; }"; Repl = '        // skip removed' }
     @{ Name = 'X41 F7 sea-deal-failed counted as sea done'; Key = 'prov'; Expect = 'F17'; Find = 'const bool bSeaDone = bSeaPassIdle || (E.bRwgSeaChecked'; Repl = 'const bool bSeaDone = bSeaPassIdle || RwgSeaDealFailed.Contains(E.EntryGuid) || (E.bRwgSeaChecked' }
     @{ Name = 'X42 F7 sea-deal-failed skip dropped'; Key = 'prov'; Expect = 'F17'; Find = "        if (RwgSeaDealFailed.Contains(E.EntryGuid)) { ++SeaPending; ++SeaDealFailed; continue; }"; Repl = '        // skip removed' }
+    @{ Name = 'X43 F9 help text claims simultaneity again'; Key = 'prov'; Expect = 'F18'; Find = 'get a node placed, up to a batch per spawn pass, once'; Repl = ('get a node placed at ' + 'once, up to a batch per spawn pass, once') }
+    @{ Name = 'X44 F9 help text drops the skips'; Key = 'prov'; Expect = 'F18'; Find = '(parked, dormant, refused, pinned, or already fitted to the ground) are skipped'; Repl = 'are skipped' }
     @{ Name = 'X27 F2 pin check evaluated before the distance test'; Key = 'place'; Expect = 'F9'; Find = 'if (E.bRwgProvisional && IsLocationNearAnyPlayer(E.Location, AttemptRadiusCm) && !RwgProvisionalPinWins(E)) {'; Repl = 'if (E.bRwgProvisional && !RwgProvisionalPinWins(E) && IsLocationNearAnyPlayer(E.Location, AttemptRadiusCm)) {' }
 )
 $mutantFails = @()
@@ -212,5 +222,5 @@ if ($all.Count -gt 0) {
     Write-Host "FARSPAWN LINT: FAIL -- $($all.Count) problem(s). Mutants caught $caught/$($mutants.Count)."
     exit 1
 }
-Write-Host "PASS: FARSPAWN lint -- F1..F17 hold across $($text.Count) loaded files; mutants caught $caught/$($mutants.Count)."
+Write-Host "PASS: FARSPAWN lint -- F1..F18 hold across $($text.Count) loaded files; mutants caught $caught/$($mutants.Count)."
 exit 0

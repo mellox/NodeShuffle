@@ -18,9 +18,13 @@ namespace
     TAutoConsoleVariable<int32> CVarNodeShuffleRwgSpawnAllAtRoll(
         TEXT("NodeShuffle.RwgSpawnAllAtRoll"),
         1,
-        TEXT("RWG maps only. 1 (default): every new node spot farther than 1 km from every player gets its node placed at once, at a ")
-        TEXT("height read from the world generator, and is fitted to the ground when a player comes within 1 km. 0: such spots get ")
-        TEXT("their node only when a player comes within 1 km. Read each spawn pass."),
+        // fix F9 (2026-10-31): every clause states what RwgProvisionalSpawnPass / the attempt loop do; no universal or simultaneous claim.
+        TEXT("RWG maps only. 1 (default): new node spots that have no node yet and are farther than the attempt radius (1 km, or the ")
+        TEXT("spawn radius if smaller) from every player get a node placed, up to a batch per spawn pass, once the sea check has ")
+        TEXT("cleared them; spots set aside this session (parked, dormant, refused, pinned, or already fitted to the ground) are skipped. ")
+        TEXT("They are placed at the world generator's surface height (cave spots at their dealt cave floor). When a player comes ")
+        TEXT("within that radius, the normal spawn check tries to re-fit each one to the ground, which can also move it. 0: no new far ")
+        TEXT("nodes are placed; nodes already placed stay and are still re-fitted on approach. Read each spawn pass."),
         ECVF_Default);
     TAutoConsoleVariable<int32> CVarNodeShuffleRwgProvisionalBatch(
         TEXT("NodeShuffle.RwgProvisionalBatchPerPass"),
