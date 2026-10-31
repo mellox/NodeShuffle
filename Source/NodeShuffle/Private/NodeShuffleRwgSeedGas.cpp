@@ -306,7 +306,7 @@ namespace NodeShuffleRwgSeedGas
         for (const FRowResult& R : S.Rows)
         {
             const FString& Res = R.Row.Resource;
-            int32 Cards = 0;
+            int32 Cards = 0; // deckCards: every card of this resource in both decks (override rows included)
             for (const FString& C : SolidDeck) { if (C == Res) { ++Cards; } }
             for (const FString& C : LiquidDeck) { if (C == Res) { ++Cards; } }
             const TCHAR* Branch = TEXT("n/a");
@@ -315,9 +315,9 @@ namespace NodeShuffleRwgSeedGas
                 Branch = Purity.ByClass.Contains(Res) ? TEXT("perResource") : (Purity.MapSource.Num() > 0 ? TEXT("aggregate") : TEXT("noSource"));
             }
             UE_LOG(LogNodeShuffle, Display,
-                TEXT("MODQUOTA resource=%s form=%s mapIsRwg=%d capturedOriginals=%d vanillaCount=%d vanillaOreOriginals=%d landBase=%d landFactor=%.3f target=%d action=%s classResolvedBy=%s pinnedCarried=%d quota=%d cardsAdded=%d purityBranch=%s skipped=%s"),
+                TEXT("MODQUOTA resource=%s form=%s mapIsRwg=%d capturedOriginals=%d vanillaCount=%d vanillaOreOriginals=%d landBase=%d landFactor=%.3f target=%d action=%s classResolvedBy=%s pinnedOrCarried=%d quota=%d deckCards=%d purityDeck=%s skipped=%s"),
                 *Short(Res), *R.Form, S.bMapIsRwg ? 1 : 0, R.CapturedOriginals, R.Row.VanillaCount, S.VanillaOreOriginals,
-                RwgBaseSolidNodes, S.LandFactor, R.Target, R.Action, R.ResolvedBy, PinnedPerResource.FindRef(Res),
+                RwgBaseSolidNodes, S.LandFactor, R.Target, R.Action, R.ResolvedBy, PinnedPerResource.FindRef(Res), // occupied + carried
                 Quota.FindRef(Res), Cards, Branch, R.Skipped);
             if (FCString::Strcmp(R.ResolvedBy, TEXT("n/a")) != 0)
             {

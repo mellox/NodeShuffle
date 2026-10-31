@@ -16,7 +16,9 @@
 #       BuildPurityDecks; EmitSpawnCensus after the RWG spawn pass.
 #   Q6  Defaults: toggle ModdedVanillaCountsOnRwg ON in the mirror and the panel; default rows lead 6 and thorium 45 (class empty) and
 #       lithium 23 (Alkali class); rows read from the LIVE config tree, never the struct mirror.
-#   Q7  Diagnostics: MODQUOTA, MODQUOTA-CFG, MODQUOTA-CLASS and SEEDGASSPAWN exact formats, Display, specifier count == argument
+#   Q7  (fix round 1 F7: pinnedOrCarried = PinnedPerResource, occupied layout entries plus carried entries of the resource;
+#       deckCards = every deck card of the resource; purityDeck = the deck its dealt cards draw purity from, set before the deal.)
+#       Diagnostics: MODQUOTA, MODQUOTA-CFG, MODQUOTA-CLASS and SEEDGASSPAWN exact formats, Display, specifier count == argument
 #       count, no repeated field; SEEDGASSPAWN is change-driven; the pre-A1 line name is gone.
 # Mutants run in-file. Exit 0 = all hold; 1 = at least one does not; 2 = a pinned FILE is missing.
 
@@ -106,7 +108,7 @@ function Invoke-SeedgasChecks($T) {
     if ((Count $g '|| static_cast<const UConfigProperty*>(K) == TplCls || N == CountProp)') -ne 1 -or (Count $g 'static_cast<const UConfigProperty*>(R) == TplRes') -ne 1) { $f += '(Q6) the default-row ownership guard must test all three sub-properties against the template' }
     if ((Count $g 'Manager->GetConfigurationRootSection(FConfigId{"NodeShuffle", ""})') -ne 1 -or (Count $g ('Config' + '.ModdedVanillaCountRows')) -ne 0 -or (Count $s ('Config' + '.ModdedVanillaCountRows')) -ne 0) { $f += '(Q6) rows must be read from the live config tree, never the struct mirror' }
     # Q7
-    $f += Check-Log $T 'sg' 'Q7' 'MODQUOTA resource=' 'MODQUOTA resource=%s form=%s mapIsRwg=%d capturedOriginals=%d vanillaCount=%d vanillaOreOriginals=%d landBase=%d landFactor=%.3f target=%d action=%s classResolvedBy=%s pinnedCarried=%d quota=%d cardsAdded=%d purityBranch=%s skipped=%s' 16
+    $f += Check-Log $T 'sg' 'Q7' 'MODQUOTA resource=' 'MODQUOTA resource=%s form=%s mapIsRwg=%d capturedOriginals=%d vanillaCount=%d vanillaOreOriginals=%d landBase=%d landFactor=%.3f target=%d action=%s classResolvedBy=%s pinnedOrCarried=%d quota=%d deckCards=%d purityDeck=%s skipped=%s' 16
     $f += Check-Log $T 'sg' 'Q7' 'MODQUOTA-CFG ' 'MODQUOTA-CFG enabled=%d mapIsRwg=%d rowsTreeFound=%d rowsRead=%d rowsMalformed=%d vanillaOreOriginals=%d landBase=%d landFactor=%.3f overridden=%d seeded=%d' 10
     $f += Check-Log $T 'sg' 'Q7' 'MODQUOTA-CLASS ' 'MODQUOTA-CLASS resource=%s configPath=%s configLoaded=%d configNode=%d configAbstract=%d configRefused=%d configOwnMount=%d configCdoResource=%s registryMountFiltered=%d registryMatched=%s chosen=%s' 11
     $f += Check-Log $T 'sg' 'Q7' 'SEEDGASSPAWN ' 'SEEDGASSPAWN resource=%s entries=%d spawnedOk=%d spawnFailed=%d parked=%d guids=%s' 6
