@@ -202,7 +202,7 @@ void ANodeShuffleSubsystem::RwgProvisionalSpawnPass(const TArray<FVector>& Pawns
     const bool bVoidMaybe = !(bRwgVoidCheckDone && bRwgKillboxDone) || RwgVoidPassTermsOn();
     const bool bSeaPassIdle = bRwgSeaCheckDone && !bRwgSeaUsable;
     TArray<TPair<double, int32>> Cands;
-    int32 SeaPending = 0, CaveDealtZ = 0;
+    int32 SeaPending = 0, CaveDealtZ = 0, RayCastedNoActor = 0, SeaDealFailed = 0;
     for (int32 I = 0; I < Layout.Num(); ++I)
     {
         const FNodeShuffleEntry& E = Layout[I];
@@ -212,7 +212,9 @@ void ANodeShuffleSubsystem::RwgProvisionalSpawnPass(const TArray<FVector>& Pawns
         if (RwgProvRefused.Contains(E.EntryGuid)) { continue; }
         if (IsValid(SpawnedNodes.FindRef(E.EntryGuid))) { continue; }
         if (IsLocationNearAnyPlayer(E.Location, AttemptRadiusCm)) { continue; } // within: the attempt loop spawns it (settled)
-        const bool bSeaDone = bSeaPassIdle || RwgSeaDealFailed.Contains(E.EntryGuid) || (E.bRwgSeaChecked && (E.bRwgVoidChecked || !bVoidMaybe));
+        if (E.bRayCasted) { ++RayCastedNoActor; continue; } // fix F7 (V7): a settled entry keeps its settled spot; it spawns through the attempt loop
+        if (RwgSeaDealFailed.Contains(E.EntryGuid)) { ++SeaPending; ++SeaDealFailed; continue; } // fix F7 (V7b): flagged by the sea pass, not re-dealt: no provisional node
+        const bool bSeaDone = bSeaPassIdle || (E.bRwgSeaChecked && (E.bRwgVoidChecked || !bVoidMaybe));
         if (!bSeaDone) { ++SeaPending; continue; }
         double Best = TNumericLimits<double>::Max();
         for (const FVector& P : Pawns) { Best = FMath::Min(Best, FVector::DistSquared2D(P, E.Location)); }
@@ -257,8 +259,9 @@ void ANodeShuffleSubsystem::RwgProvisionalSpawnPass(const TArray<FVector>& Pawns
     {
         int32 Total = 0;
         for (const FNodeShuffleEntry& E : Layout) { if (E.bRwgProvisional && IsValid(SpawnedNodes.FindRef(E.EntryGuid))) { ++Total; } }
-        UE_LOG(LogNodeShuffle, Display, TEXT("PROVSPAWN: pass=%d spawnedThisPass=%d remainingUnspawned=%d provisionalTotal=%d zSource=%s msBatch=%.1f refusedThisPass=%d refusedSession=%d batch=%d seaPending=%d caveDealtZ=%d"),
-            RwgPcPasses, Spawned, Cands.Num() - Spawned - Refused, Total, *ZSource, MsBatch, Refused, RwgProvSessRefused, Batch, SeaPending, CaveDealtZ);
+        UE_LOG(LogNodeShuffle, Display, TEXT("PROVSPAWN: pass=%d spawnedThisPass=%d remainingUnspawned=%d provisionalTotal=%d zSource=%s msBatch=%.1f refusedThisPass=%d refusedSession=%d batch=%d seaPending=%d caveDealtZ=%d rayCastedNoActor=%d seaDealFailed=%d"),
+            RwgPcPasses, Spawned, Cands.Num() - Spawned - Refused, Total, *ZSource, MsBatch, Refused, RwgProvSessRefused, Batch, SeaPending, CaveDealtZ,
+            RayCastedNoActor, SeaDealFailed);
     }
 }
 
