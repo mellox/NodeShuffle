@@ -1159,7 +1159,9 @@ private:
     static FVector WellMoveAt(const struct FNodeShuffleWellEntry& W);  // the LAYOUTDUMP-W location precedence (placed, dest, claim, vanilla)
     void WellMoveLog(const struct FNodeShuffleWellEntry& W, const FVector& From, const FVector& To, const TCHAR* Reason) const;
     // rwg-farspawn-1c C4/C5 (NodeShuffleScanDiag.cpp): SCANPING per GetClosetClusters call, COMPASSWARN beside SCANREGEN.
+public: // rwg-farspawn-1c: called from FNodeShuffleModule::StartupModule (NodeShuffle.cpp); the section below stays private
     static void InstallScanDiagHooks();                                                      // called once from StartupModule (game build)
+private:
     void EmitScanPing(class AFGResourceScanner* Scanner, const TArray<struct FNodeClusterData>& Closest);
     void EmitCompassWarnCensus(int32 TowersRescanned);                                     // session: settles that moved the same actor (PROVCENSUS movedInPlace)
     int32 RwgProvSessRefused = 0, RwgProvSessStale = 0, RwgProvSettleSamples = 0, RwgProvSettleSamplePass = -1;
