@@ -17,8 +17,12 @@ namespace NodeShuffleMapMode
 
     // Console variables (the RwgRingRadiusM precedent: a console variable, not a settings-panel row). Read each pass.
     bool RwgSpawnAllAtRollOn();          // NodeShuffle.RwgSpawnAllAtRoll, default 1 (ON)
-    int32 RwgProvisionalBatchPerPass();  // NodeShuffle.RwgProvisionalBatchPerPass, default 64, clamped 8..512
+    int32 RwgProvisionalBatchPerPass();  // NodeShuffle.RwgProvisionalBatchPerPass, default 16 (rwg-farspawn-1c C2; was 64), clamped 8..512
     constexpr int32 RwgProvisionalBatchMin = 8;
     constexpr int32 RwgProvisionalBatchMax = 512;
     constexpr int32 RwgProvisionalSettleSamplesPerPass = 8; // PROVSETTLE lines per pass (counters carry the rest)
+    // rwg-farspawn-1c C1: a settle whose 2-D shift from the provisional actor is at most this keeps and moves the SAME actor; a larger
+    // shift (a spiral step, a redeal) respawns. Same value as AdoptMatchRadiusCm (NodeShuffleSubsystem.cpp), the radius the save adopt
+    // already treats as "the same node spot"; a separate constant because that one is file-local there.
+    constexpr double RwgProvisionalMoveTolCm = 300.0;
 }

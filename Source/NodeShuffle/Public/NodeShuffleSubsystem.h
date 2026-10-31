@@ -1149,7 +1149,19 @@ private:
     void RwgProvisionalEmitCensus();                                       // PROVCENSUS (12th passes)
     int32 RwgPcProvSpawned = 0, RwgPcProvSettled = 0;                      // PLACECENSUS per pass (reset by RwgEmitPlaceCensus)
     int32 RwgProvSessSpawned = 0, RwgProvSessSettled = 0, RwgProvSessRedealt = 0, RwgProvSessDeferred = 0, RwgProvSessPinned = 0; // session
-    int32 RwgProvSessSettledNoActor = 0, RwgProvSessRedealNotMoved = 0; // session: F4 outcomes with no actor (re-review V-R3)
+    int32 RwgProvSessSettledNoActor = 0, RwgProvSessRedealNotMoved = 0; // session: settle outcomes counted by the settledNoActor and redealNotMoved branches (re-review V-R3)
+    // rwg-farspawn-1c C1 (NodeShuffleMapModeProvisionalMove.cpp): keep + move the provisional actor when the settle kept its XY.
+    const TCHAR* RwgProvisionalMoveCheck(const FNodeShuffleEntry& E, class AFGResourceNode* Node, const FVector& ProvAt) const; // "moved" or the refusing predicate
+    void RwgProvisionalMoveInPlace(FNodeShuffleEntry& E, class AFGResourceNode* Node);    // location/rotation + what the respawn re-ran
+    void RwgProvisionalLogRefusal(const FNodeShuffleEntry& E, const TCHAR* Reason); // rwg-farspawn-1c C6: PROVSPAWN refused line
+    int32 RwgProvSessMovedInPlace = 0;
+    // rwg-farspawn-1c C7 (NodeShuffleWellMoveLog.cpp): WELLMOVE, one line per well-layout location write after the roll.
+    static FVector WellMoveAt(const struct FNodeShuffleWellEntry& W);  // the LAYOUTDUMP-W location precedence (placed, dest, claim, vanilla)
+    void WellMoveLog(const struct FNodeShuffleWellEntry& W, const FVector& From, const FVector& To, const TCHAR* Reason) const;
+    // rwg-farspawn-1c C4/C5 (NodeShuffleScanDiag.cpp): SCANPING per GetClosetClusters call, COMPASSWARN beside SCANREGEN.
+    static void InstallScanDiagHooks();                                                      // called once from StartupModule (game build)
+    void EmitScanPing(class AFGResourceScanner* Scanner, const TArray<struct FNodeClusterData>& Closest);
+    void EmitCompassWarnCensus(int32 TowersRescanned);                                     // session: settles that moved the same actor (PROVCENSUS movedInPlace)
     int32 RwgProvSessRefused = 0, RwgProvSessStale = 0, RwgProvSettleSamples = 0, RwgProvSettleSamplePass = -1;
     double RwgProvSessMovedXYmMax = 0.0;
     TArray<float> RwgProvSessDzCm;                                         // |settled Z - provisional Z| of in-place settles, session

@@ -28,9 +28,9 @@ namespace
         ECVF_Default);
     TAutoConsoleVariable<int32> CVarNodeShuffleRwgProvisionalBatch(
         TEXT("NodeShuffle.RwgProvisionalBatchPerPass"),
-        64,
+        16, // rwg-farspawn-1c C2: was 64 (run 1 measured 44-63 ms per 64-node batch)
         TEXT("RWG maps only. How many far node spots get their node placed per spawn pass (about every 5 seconds) while ")
-        TEXT("NodeShuffle.RwgSpawnAllAtRoll is 1. Default 64. Values are clamped to 8..512. Read each spawn pass."),
+        TEXT("NodeShuffle.RwgSpawnAllAtRoll is 1. Default 16. Values are clamped to 8..512. Read each spawn pass."),
         ECVF_Default);
 
     FString ProvShort(const FString& P) { int32 Dot = INDEX_NONE; return P.FindLastChar(TEXT('.'), Dot) ? P.Mid(Dot + 1) : P; }
@@ -135,10 +135,31 @@ void ANodeShuffleSubsystem::RwgSettleProvisional(FNodeShuffleEntry& E, bool& bCh
     double SettledZ = NodeShuffleMapMode::RwgNaN(); // the respawned ACTOR's Z only; nan on every other outcome (fix F4)
     FVector FreshAt = FVector::ZeroVector;
     bool bFresh = false;
-    if (bSettled)
+    // rwg-farspawn-1c C1: which settle branch may keep the actor. moveCheck prints the predicate that decided it (moved / xyShift /
+    // classDiffers / resourceDiffers / noActor / notSettled); only "moved" keeps the actor, every other value takes the respawn below.
+    const TCHAR* MoveCheck = bSettled ? RwgProvisionalMoveCheck(E, Node, ProvAt) : TEXT("notSettled");
+    if (bSettled && FCString::Strcmp(MoveCheck, TEXT("moved")) == 0)
     {
-        // (a) settled: the provisional actor is torn down FIRST, then the unchanged spawn path materializes the node at the settled
-        // spot with bRayCasted already true. Counted as settled only when that spawn produced an actor (tested just below).
+        // (a1) settled at the SAME XY (shift <= RwgProvisionalMoveTolCm), same node class + resource: the SAME actor is moved to the
+        // settled spot (identity, compass marker and radar reveal kept; NodeShuffleMapModeProvisionalMove.cpp lists what it re-runs).
+        RwgProvisionalMoveInPlace(E, Node);
+        E.bRwgProvisional = false;
+        E.bRayCasted = true;
+        bChangedWorld = true; // scanner cluster midpoints + radar tower lists are rebuilt from the moved actor
+        FreshAt = Node->GetActorLocation();
+        bFresh = true;
+        LocalRevealsAfter = Node->mLocalMapReveals; ServerRevealsAfter = Node->mServerMapReveals; // fix F6: same actor, so Before==After is the expected read
+        SettledZ = FreshAt.Z;
+        RwgProvSessDzCm.Add(static_cast<float>(FMath::Abs(FreshAt.Z - ProvAt.Z)));
+        RwgProvSessMovedXYmMax = FMath::Max(RwgProvSessMovedXYmMax, FVector::Dist2D(FreshAt, ProvAt) / 100.0);
+        ++RwgProvSessSettled; ++RwgPcProvSettled; ++RwgProvSessMovedInPlace;
+        Outcome = TEXT("movedInPlace");
+    }
+    else if (bSettled)
+    {
+        // (a2) settled at a different XY (or class/resource differ): the provisional actor is torn down FIRST, then the unchanged spawn
+        // path materializes the node at the settled spot with bRayCasted already true. Counted as settled only when that spawn produced
+        // an actor (tested just below).
         RwgProvisionalDespawn(E);
         E.bRwgProvisional = false;
         E.bRayCasted = true;
@@ -188,10 +209,10 @@ void ANodeShuffleSubsystem::RwgSettleProvisional(FNodeShuffleEntry& E, bool& bCh
         ++RwgProvSettleSamples;
         // movedXYm: from the provisional actor to the respawned actor (inPlace), else to the entry's location after this call.
         const FVector MovedTo = bFresh ? FreshAt : E.Location;
-        UE_LOG(LogNodeShuffle, Display, TEXT("PROVSETTLE: entry=%s res=%s provZ=%.0f settledZ=%.0f dzCm=%.0f movedXYm=%.1f outcome=%s hitClass=%d apiUsed=%d onSolidTop=%d localMapRevealsBefore=%d localMapRevealsAfter=%d serverMapRevealsBefore=%d serverMapRevealsAfter=%d"),
+        UE_LOG(LogNodeShuffle, Display, TEXT("PROVSETTLE: entry=%s res=%s provZ=%.0f settledZ=%.0f dzCm=%.0f movedXYm=%.1f outcome=%s hitClass=%d apiUsed=%d onSolidTop=%d localMapRevealsBefore=%d localMapRevealsAfter=%d serverMapRevealsBefore=%d serverMapRevealsAfter=%d moveCheck=%s"),
             *E.EntryGuid.ToString(), *ProvShort(E.AssignedResourceClassPath), ProvAt.Z, SettledZ, SettledZ - ProvAt.Z,
             FVector::Dist2D(MovedTo, ProvAt) / 100.0, Outcome, HitClass, bApiUsed ? 1 : 0, E.bRwgOnSolidTop ? 1 : 0,
-            LocalRevealsBefore, LocalRevealsAfter, ServerRevealsBefore, ServerRevealsAfter);
+            LocalRevealsBefore, LocalRevealsAfter, ServerRevealsBefore, ServerRevealsAfter, MoveCheck);
     }
 }
 
@@ -240,18 +261,25 @@ void ANodeShuffleSubsystem::RwgProvisionalSpawnPass(const TArray<FVector>& Pawns
         if (!E.bRwgCave)
         {
             const double Z = NodeShuffleMapMode::RwgProvisionalZ(Q, E.Location.X, E.Location.Y, ZSource);
-            if (!FMath::IsFinite(Z)) { ++Refused; ++RwgProvSessRefused; RwgProvRefused.Add(E.EntryGuid); continue; }
+            if (!FMath::IsFinite(Z)) { ++Refused; ++RwgProvSessRefused; RwgProvRefused.Add(E.EntryGuid); RwgProvisionalLogRefusal(E, TEXT("zNonFinite")); continue; }
             E.Location.Z = Z;
         }
         else { ++CaveDealtZ; } // a carved-cave entry keeps its dealt cave-floor Z (its settle reads it as the floor hint)
         E.bRayCasted = true; // skips the settle block only: the spawn below is the unchanged EnsureNewNodeSpawned chain
+        const int32 FailsBefore = SpawnFailCounts.FindRef(E.EntryGuid); // rwg-farspawn-1c C6: read before the spawn for refusedReason
         EnsureNewNodeSpawned(E, bChangedWorld);
         AFGResourceNode* Node = SpawnedNodes.FindRef(E.EntryGuid);
         if (!IsValid(Node))
         {
+            // rwg-farspawn-1c C6: the predicate the entry's own state shows after the spawn call, read BEFORE the snapshot restore.
+            const TCHAR* Reason = !E.bActive ? TEXT("overlapGaveUp")
+                : (E.OverlapNudges != Snap.OverlapNudges) ? TEXT("overlapNudgeFailed")
+                : (SpawnFailCounts.FindRef(E.EntryGuid) > FailsBefore) ? TEXT("spawnActorNull")
+                : TEXT("noActorOtherReturn");
             E = Snap;
             ++Refused; ++RwgProvSessRefused;
             RwgProvRefused.Add(E.EntryGuid);
+            RwgProvisionalLogRefusal(E, Reason);
             continue;
         }
         E.bRayCasted = false;      // never trace-settled
@@ -284,11 +312,16 @@ void ANodeShuffleSubsystem::RwgProvisionalEmitCensus()
         if (!E.bRwgProvisional) { continue; }
         if (IsValid(SpawnedNodes.FindRef(E.EntryGuid))) { ++Live; } else { ++FlagNoActor; }
     }
-    // Legend (re-review V-R3, prose only): the last two fields are session counts of the two settle outcomes that ended with no actor
-    // -- the settle call returned true but the respawn left no valid actor, and the unplaceable branch's redeal call returned false.
-    // They are 1:1 with the PROVSETTLE outcome strings of the same names, which are a sample; these are the census.
-    UE_LOG(LogNodeShuffle, Display, TEXT("PROVCENSUS: pass=%d provisional=%d settledFromProvisional=%d redealtFromProvisional=%d deferredProvisional=%d pinnedProvisional=%d dzP50Cm=%.0f dzP90Cm=%.0f dzMaxCm=%.0f movedXYmMax=%.1f spawnedSession=%d refusedSession=%d staleFlagCleared=%d flagNoActor=%d spawnAllAtRoll=%d settledNoActor=%d redealNotMoved=%d"),
+    // Legend (re-review V-R3, prose only): the last two fields are session counts of two settle outcomes. settledNoActor counts settles
+    // where the settle call returned true but no valid actor existed after the respawn. redealNotMoved counts unplaceable-branch
+    // settles where the redeal call returned false (the entry did not move); a redeal that returned true also leaves no actor until
+    // the next spawn and is counted in redealtFromProvisional, not here. Both match the PROVSETTLE outcome strings of the same names,
+    // which are a sample; these are the census.
+    // rwg-farspawn-1c C1 (prose only): the movedInPlace tail is the session count of settles that kept and moved the same actor; it is a
+    // subset of settledFromProvisional (the rest of that count were respawned).
+    UE_LOG(LogNodeShuffle, Display, TEXT("PROVCENSUS: pass=%d provisional=%d settledFromProvisional=%d redealtFromProvisional=%d deferredProvisional=%d pinnedProvisional=%d dzP50Cm=%.0f dzP90Cm=%.0f dzMaxCm=%.0f movedXYmMax=%.1f spawnedSession=%d refusedSession=%d staleFlagCleared=%d flagNoActor=%d spawnAllAtRoll=%d settledNoActor=%d redealNotMoved=%d movedInPlace=%d"),
         RwgPcPasses, Live, RwgProvSessSettled, RwgProvSessRedealt, RwgProvSessDeferred, RwgProvSessPinned,
         ProvPercentile(RwgProvSessDzCm, 0.5f), ProvPercentile(RwgProvSessDzCm, 0.9f), ProvPercentile(RwgProvSessDzCm, 1.0f), RwgProvSessMovedXYmMax,
-        RwgProvSessSpawned, RwgProvSessRefused, RwgProvSessStale, FlagNoActor, NodeShuffleMapMode::RwgSpawnAllAtRollOn() ? 1 : 0, RwgProvSessSettledNoActor, RwgProvSessRedealNotMoved);
+        RwgProvSessSpawned, RwgProvSessRefused, RwgProvSessStale, FlagNoActor, NodeShuffleMapMode::RwgSpawnAllAtRollOn() ? 1 : 0, RwgProvSessSettledNoActor, RwgProvSessRedealNotMoved,
+        RwgProvSessMovedInPlace);
 }
