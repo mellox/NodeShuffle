@@ -25,6 +25,8 @@ $files = [ordered]@{
     nsmod = 'Source\NodeShuffle\Private\NodeShuffle.cpp'
     py    = 'tools\layout_spacing.py'
     fx    = 'tools\fixtures\layoutdump_fixture.log'
+    diffpy = 'tools\layout_diff.py'
+    diffx = 'tools\fixtures\layoutdiff_fixture.log'
 }
 $classes = @('BEGIN', 'E', 'W', 'O', 'G', 'END')
 function Count([string]$t, [string]$n) { return ([regex]::Matches($t, [regex]::Escape($n))).Count }
@@ -114,6 +116,9 @@ function Invoke-LayoutDumpChecks($T, [bool]$RunPy) {
         if ((Run-Py $T.py $T.fx @('--selftest')) -ne 0) { $f += '(L5) --selftest must exit 0' }
         if ((Run-Py $T.py $noEnd @('--log', '{D}\fixtures\layoutdump_fixture.log', '--out', $out)) -eq 0) { $f += '(L5) a fixture with END deleted was accepted' }
         if ((Run-Py $T.py $trunc @('--log', '{D}\fixtures\layoutdump_fixture.log', '--out', $out)) -eq 0) { $f += '(L5) a truncated LAST block was accepted (fell back to an earlier one)' }
+        # L12 (rwg-layout-diff-1): the diff tool and its fixture are RUN in-tree (it imports layout_spacing.py by path)
+        & python -I (Join-Path $root 'tools\layout_diff.py') --selftest *> $null
+        if ($LASTEXITCODE -ne 0) { $f += '(L12) layout_diff.py --selftest must exit 0' }
     }
     # L6
     $leg = [regex]::Matches($D, 'TEXT\("LAYOUTDUMP-LEGEND: ([^"]*)"\)')
@@ -197,5 +202,5 @@ if ($all.Count -gt 0) {
     Write-Host "LAYOUTDUMP LINT: FAIL -- $($all.Count) problem(s). Mutants caught $caught/$($mutants.Count)."
     exit 1
 }
-Write-Host "PASS: LAYOUTDUMP lint -- L1..L11 hold across $($text.Count) loaded files; mutants caught $caught/$($mutants.Count)."
+Write-Host "PASS: LAYOUTDUMP lint -- L1..L12 hold across $($text.Count) loaded files; mutants caught $caught/$($mutants.Count)."
 exit 0

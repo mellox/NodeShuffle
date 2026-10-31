@@ -39,7 +39,7 @@
 [2026.10.30-14.12.30:500][45000]LogNodeShuffle: Display: LAYOUTDUMP-E: i=2 guid=3C4D5E6F res=Desc_OreCopper_C purity=0 x=50000 y=-20000 z=980 cave=0 rayCasted=0 live=1 active=1 newNode=1 pinned=0
 [2026.10.30-14.12.30:500][45000]LogNodeShuffle: Display: LAYOUTDUMP-E: i=3 guid=4D5E6F70 res=Desc_Coal_C purity=1 x=10000 y=-60000 z=-4200 cave=1 rayCasted=1 live=1 active=1 newNode=1 pinned=0
 [2026.10.30-14.12.30:500][45000]LogNodeShuffle: Display: LAYOUTDUMP-E: i=4 guid=6F708192 res=Desc_OreGold_C purity=2 x=500060 y=90000 z=1500 cave=0 rayCasted=0 live=0 active=1 newNode=0 pinned=1
-[2026.10.30-14.12.30:500][45000]LogNodeShuffle: Display: LAYOUTDUMP-E: i=5 guid=00012345 res=Desc_OreIron_C purity=1 x=-30000 y=-30000 z=1250 cave=0 rayCasted=0 live=0 active=0 newNode=0 pinned=0
+[2026.10.30-14.12.30:500][45000]LogNodeShuffle: Display: LAYOUTDUMP-E: i=5 guid=00012345 res=Desc_OreIron_C purity=1 x=-30000 y=-30000 z=1600 cave=0 rayCasted=0 live=0 active=0 newNode=0 pinned=0
 [2026.10.30-14.12.30:500][45000]LogNodeShuffle: Display: LAYOUTDUMP-E: i=6 guid=12E45678 res=Desc_Stone_C purity=1 x=420000 y=-400000 z=1100 cave=0 rayCasted=1 live=1 active=1 newNode=1 pinned=0
 [2026.10.30-14.12.30:500][45000]LogNodeShuffle: Display: LAYOUTDUMP-E: i=7 guid=8B9CADBE res=Desc_RawQuartz_C purity=1 x=70000 y=-50000 z=1000 cave=0 rayCasted=0 live=0 active=1 newNode=1 pinned=0
 [2026.10.30-14.12.30:500][45000]LogNodeShuffle: Display: LAYOUTDUMP-E: i=8 guid=34E56789 res=Desc_OreUranium_C purity=0 x=600000 y=-600000 z=900 cave=0 rayCasted=0 live=0 active=1 newNode=1 pinned=0

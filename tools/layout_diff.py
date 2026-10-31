@@ -26,7 +26,6 @@ import re
 import sys
 from datetime import datetime
 
-
 def _load_spacing():
     """Load tools/layout_spacing.py by explicit path: `python -I` keeps the script directory off sys.path."""
     sys.dont_write_bytecode = True
@@ -45,6 +44,7 @@ RAW_KEYS = ('guid', 'res', 'src')  # kept as the printed token: parse_line's int
 E_FLAGS = ('cave', 'rayCasted', 'live', 'active', 'newNode', 'pinned', 'res', 'purity')
 W_FLAGS = ('src', 'satellites', 'placed', 'managed', 'pinned', 'res')
 O_FLAGS = ('purity', 'trueSet', 'modded')
+O_REANCHOR_CM = 500.0  # second-pass pairing radius for originals; REHIDE rebinds within 300 cm of the recorded anchor (Subsystem.cpp ~L6360)
 DEFAULT_LOG = os.path.join(os.environ.get('LOCALAPPDATA', ''), 'FactoryGame', 'Saved', 'Logs', 'FactoryGame.log')
 
 
@@ -101,6 +101,12 @@ def check_block(b):
         raise DumpError(f'block dumpId {B["dumpId"]}: END countsMatch is {X["countsMatch"]}, not 1')
     if [e['i'] for e in b['E']] != list(range(len(b['E']))):
         raise DumpError(f'block dumpId {B["dumpId"]}: entry indices are not 0..n-1 in order')
+    E = b['E']
+    got = (sum(1 for e in E if e['newNode'] and e['active'] and not e['cave']), sum(1 for e in E if e['newNode'] and e['active'] and e['cave']),
+           sum(1 for e in E if e['newNode'] and not e['active']), sum(1 for e in E if not e['newNode']))
+    if got != (B['surface'], B['cave'], B['inactive'], B['notNew']):
+        raise DumpError(f'block dumpId {B["dumpId"]}: entry flags give surface/cave/inactive/notNew {got}, BEGIN prints '
+                        f'{(B["surface"], B["cave"], B["inactive"], B["notNew"])}')
 
 
 def select(complete, incomplete, ids, allow_seed_change):
@@ -145,7 +151,7 @@ def _flags(a, b, names):
 
 
 def _new_result(nA, nB, key):
-    return {'nA': nA, 'nB': nB, 'key': key, 'ambiguous': [], 'pairs': [], 'moved': [], 'flagOnly': [], 'zOnly': 0,
+    return {'nA': nA, 'nB': nB, 'key': key, 'ambiguous': [], 'pairs': [], 'moved': [], 'flagOnly': [], 'zOnly': [],
             'unchanged': 0, 'onlyA': [], 'onlyB': []}
 
 
@@ -155,7 +161,7 @@ def _classify(r, a, b, flags, moved_cm, sentinel=False):
     d = _xy(a, b)
     if sentinel:  # a well printed with src none carries 0,0,0, not a position: a state change when a flag differs, never a move
         if fl:
-            r['flagOnly'].append((a, b, d, fl))
+            r['flagOnly'].append((a, b, None, fl))  # None: no distance exists between a sentinel and a position
         else:
             r['unchanged'] += 1
     elif d > moved_cm:
@@ -163,7 +169,7 @@ def _classify(r, a, b, flags, moved_cm, sentinel=False):
     elif fl:
         r['flagOnly'].append((a, b, d, fl))
     elif abs(b['z'] - a['z']) > moved_cm:
-        r['zOnly'] += 1
+        r['zOnly'].append((a, b, d, fl))
     else:
         r['unchanged'] += 1
 
@@ -204,6 +210,18 @@ def diff_originals(A, B, moved_cm):
         r['onlyA'] += ra[m:]
     for k, rb in kb.items():
         r['onlyB'] += rb[len(ka.get(k, [])):]
+    left = list(r['onlyB'])
+    still = []
+    for a in r['onlyA']:
+        near = [(_xy(a, b), j) for j, b in enumerate(left) if b['res'] == a['res'] and _xy(a, b) <= O_REANCHOR_CM]
+        if not near:
+            still.append(a)
+            continue
+        d, j = min(near)
+        b = left.pop(j)
+        r['pairs'].append((a, b))
+        r['flagOnly'].append((a, b, d, _flags(a, b, O_FLAGS) + [('xyz', _p(a), _p(b))]))
+    r['onlyA'], r['onlyB'] = still, left
     return r
 
 
@@ -218,7 +236,8 @@ def spot_stats(A, B, ed, sx, sy, r_cm):
          'within': sum(1 for a, b, _, _ in ed['moved'] if inside(a) and inside(b)),
          'removedIn': sum(map(inside, ed['onlyA'])), 'addedIn': sum(map(inside, ed['onlyB'])),
          'ambA': sum(1 for side, e in ed['ambiguous'] if side == 'A' and inside(e)),
-         'ambB': sum(1 for side, e in ed['ambiguous'] if side == 'B' and inside(e))}
+         'ambB': sum(1 for side, e in ed['ambiguous'] if side == 'B' and inside(e)),
+         'zOnlyIn': sum(1 for a, b, _, _ in ed['zOnly'] if inside(a))}
     unmoved = [(a, b) for a, b in ed['pairs'] if not any(a is m[0] for m in ed['moved'])]
     s['subOut'] = sum(1 for a, b in unmoved if inside(a) and not inside(b))
     s['subIn'] = sum(1 for a, b in unmoved if not inside(a) and inside(b))
@@ -251,20 +270,31 @@ def _quants(dists_cm):
     return f'distance m p10 {q(.1)}, p50 {q(.5)}, p90 {q(.9)}, max {max(dists_cm) / 100:.1f}'
 
 
+def _by_field(r):
+    n = {}
+    for rows in (r['moved'], r['flagOnly']):
+        for _, _, _, fl in rows:
+            for f, _, _ in fl:
+                n[f] = n.get(f, 0) + 1
+    return n
+
+
 def pop_section(title, r, show_res, show_guid=True):
     md = [f'## {title}', '', f'Key: {r["key"]}. Rows in A {r["nA"]}, in B {r["nB"]}; paired {len(r["pairs"])}; ambiguous rows '
           f'{len(r["ambiguous"])}; only in A (removed) {len(r["onlyA"])}; only in B (added) {len(r["onlyB"])}.', '',
           f'Moved (XY distance above the threshold): {len(r["moved"])}; {_quants([m[2] for m in r["moved"]])}. '
-          f'Spawn-state changes (position within the threshold, a flag differs): {len(r["flagOnly"])}. '
-          f'Z-only changes (XY within the threshold, |dz| above it, no flag change): {r["zOnly"]}. Unchanged: {r["unchanged"]}.', '']
+          f'Flag changes (XY within the threshold, a printed flag or field differs; Z may differ too): {len(r["flagOnly"])}. '
+          f'Z-only changes (XY within the threshold, |dz| above it, no flag change): {len(r["zOnly"])}. Unchanged: {r["unchanged"]}.', '',
+          'Flag changes by field (moved and flag-change rows): ' + (', '.join(f'{k} {v}' for k, v in sorted(_by_field(r).items())) or 'none') + '.', '']
     head = ('| guid ' if show_guid else '| ') + ('| res ' if show_res else '') + '| from XYZ (cm) | to XYZ (cm) | dist m | flag changes (before->after) |'
     sep = '|' + '---|' * (head.count('|') - 1)
-    for name, rows in (('Moved', r['moved']), ('Spawn-state changes', r['flagOnly'])):
+    for name, rows in (('Moved', r['moved']), ('Flag changes', r['flagOnly']), ('Z-only changes', r['zOnly'])):
         if rows:
             md += [f'**{name}**', '', head, sep]
-            for a, b, d, fl in sorted(rows, key=lambda t: -t[2]):
+            for a, b, d, fl in sorted(rows, key=lambda t: -(t[2] if t[2] is not None else -1.0)):
+                dist = '-' if d is None else f'{d / 100:.1f}'
                 md.append(('| ' + a['guid'] + ' ' if show_guid else '| ') + (f'| {a["res"]} ' if show_res else '')
-                          + f'| {_p(a)} | {_p(b)} | {d / 100:.1f} | {_fl(fl)} |')
+                          + f'| {_p(a)} | {_p(b)} | {dist} | {_fl(fl)} |')
             md.append('')
     for name, rows in (('Only in A (removed)', r['onlyA']), ('Only in B (added)', r['onlyB']),
                        ('Ambiguous (key printed more than once in a block; never paired)', [row for _, row in r['ambiguous']])):
@@ -291,14 +321,14 @@ def build_report(log, A, B, ed, wd, od, spots, r_cm, moved_cm, allow_seed_change
           f'Controls: {ctrl}', '',
           f'Move threshold {moved_cm / 100:g} m (XY); spot radius {r_cm / 100:g} m. Keys: entries by guid prefix, wells by claim-guid prefix '
           f'(a pair with a well printed as src none is a state change, never a move), originals by resource class + exact XYZ '
-          f'(a trueSet flip changes the printed XYZ, so it shows as one removed + one added; originals never count as moved).', '',
+          f'(a pair whose printed XYZ differs by at most 5 m XY is listed as a flag change carrying xyz; a larger difference, as after a trueSet flip, shows as one removed + one added; originals never count as moved).', '',
           '## Spots (entry rows within the disk; every entry class, plus active new entries in their own column)', '']
     agg = {'out': 0, 'into': 0, 'within': 0, 'removedIn': 0, 'addedIn': 0}
     if not spots:
         md += ['No --at spot given: per-spot counts not computed.', '']
     else:
         md += ['| spot | X,Y (cm) | in A | in B | active new A | active new B | moved out | moved in | moved within | removed inside '
-               '| added inside | sub-threshold crossers out/in | ambiguous A/B | reconciles |', '|' + '---|' * 14]
+               '| added inside | sub-threshold crossers out/in | ambiguous A/B | partition check |', '|' + '---|' * 14]
         cens = []
         for label, sx, sy in spots:
             s = spot_stats(A['E'], B['E'], ed, sx, sy, r_cm)
@@ -307,10 +337,12 @@ def build_report(log, A, B, ed, wd, od, spots, r_cm, moved_cm, allow_seed_change
             md.append(f'| {label} | {sx:.0f},{sy:.0f} | {s["nA"]} | {s["nB"]} | {s["activeA"]} | {s["activeB"]} | {s["out"]} | {s["into"]} '
                       f'| {s["within"]} | {s["removedIn"]} | {s["addedIn"]} | {s["subOut"]}/{s["subIn"]} | {s["ambA"]}/{s["ambB"]} '
                       f'| {"PASS" if s["reconciles"] else "FAIL"} (in A - out + in - sub-out + sub-in - removed + added - amb A + amb B = {s["expect"]}) |')
-            cens.append(f'LAYOUTDIFF-AT: label={label} x={sx:.0f} y={sy:.0f} nA={s["nA"]} nB={s["nB"]} activeA={s["activeA"]} activeB={s["activeB"]} '
+            cens.append(f'LAYOUTDIFF-AT: label={label} x={sx:.0f} y={sy:.0f} ambA={s["ambA"]} ambB={s["ambB"]} subOut={s["subOut"]} '
+                        f'subIn={s["subIn"]} zOnlyInside={s["zOnlyIn"]} nA={s["nA"]} nB={s["nB"]} activeA={s["activeA"]} activeB={s["activeB"]} '
                         f'movedOut={s["out"]} movedIn={s["into"]} movedWithin={s["within"]} removedInside={s["removedIn"]} '
                         f'addedInside={s["addedIn"]} reconciles={s["reconciles"]}')
-        md += ['', '```'] + cens + ['```', '']
+        md += ['', 'The partition check is an identity over how this tool split the rows (paired, removed, added, ambiguous): it fails only '
+               'on a defect in this tool, never on what the dumps contain, and it passes when nothing moved.', '', '```'] + cens + ['```', '']
     md += pop_section('Entries (E)', ed, True)
     md += pop_section('Well cores (W)', wd, True)
     md += pop_section('Originals (O)', od, True, show_guid=False)
@@ -318,8 +350,8 @@ def build_report(log, A, B, ed, wd, od, spots, r_cm, moved_cm, allow_seed_change
     census = (f'LAYOUTDIFF: blocks={BA["dumpId"]},{BB["dumpId"]} seedA={BA["seed"]} seedB={BB["seed"]} spots={len(spots)} '
               f'radiusM={r_cm / 100:g} movedM={moved_cm / 100:g} '
               f'eA={ed["nA"]} eB={ed["nB"]} ePaired={len(ed["pairs"])} eMoved={len(ed["moved"])} eFlagOnly={len(ed["flagOnly"])} '
-              f'eZOnly={ed["zOnly"]} eRemoved={len(ed["onlyA"])} eAdded={len(ed["onlyB"])} eAmbiguous={len(ed["ambiguous"])} '
-              f'wA={wd["nA"]} wB={wd["nB"]} wMoved={len(wd["moved"])} wFlagOnly={len(wd["flagOnly"])} wRemoved={len(wd["onlyA"])} '
+              f'eZOnly={len(ed["zOnly"])} eRemoved={len(ed["onlyA"])} eAdded={len(ed["onlyB"])} eAmbiguous={len(ed["ambiguous"])} '
+              f'wA={wd["nA"]} wB={wd["nB"]} wMoved={len(wd["moved"])} wMovedSrcChanged={sum(1 for m in wd["moved"] if any(f == "src" for f, _, _ in m[3]))} wFlagOnly={len(wd["flagOnly"])} wRemoved={len(wd["onlyA"])} '
               f'wAdded={len(wd["onlyB"])} wAmbiguous={len(wd["ambiguous"])} oA={od["nA"]} oB={od["nB"]} oFlagOnly={len(od["flagOnly"])} '
               f'oRemoved={len(od["onlyA"])} oAdded={len(od["onlyB"])} eMovedOut={sp("out")} eMovedIn={sp("into")} '
               f'eMovedWithin={sp("within")} eRemovedInside={sp("removedIn")} eAddedInside={sp("addedIn")}')
@@ -333,7 +365,12 @@ def run(lines, log, ids, spots, r_cm, moved_cm, allow_seed_change):
     ed = diff_keyed(A['E'], B['E'], E_FLAGS, moved_cm, 'entry guid prefix (first 8 hex digits)')
     wd = diff_keyed(A['W'], B['W'], W_FLAGS, moved_cm, 'well claim-guid prefix (first 8 hex digits)', is_well=True)
     od = diff_originals(A['O'], B['O'], moved_cm)
-    return build_report(log, A, B, ed, wd, od, spots, r_cm, moved_cm, allow_seed_change)
+    md, census = build_report(log, A, B, ed, wd, od, spots, r_cm, moved_cm, allow_seed_change)
+    got = ', '.join('%s@%s' % (b['begin']['dumpId'], b['line']) for b in complete)
+    bad = ', '.join('%s@%s' % d for d in incomplete) or 'none'
+    inv = f'Complete blocks in this log (dumpId@line): {got}. Incomplete BEGINs (dumpId@line): {bad}.'
+    md = md.replace('\n\nElapsed between the two BEGIN lines', f'\n\n{inv}\n\nElapsed between the two BEGIN lines', 1)
+    return md, census
 
 
 def parse_spot(s):
@@ -344,6 +381,8 @@ def parse_spot(s):
         x, y = float(parts[0]), float(parts[1])
     except ValueError:
         raise DumpError(f'--at {s!r}: X and Y must be numbers (cm)')
+    if not (math.isfinite(x) and math.isfinite(y)):
+        raise DumpError(f'--at {s!r}: X and Y must be finite')
     label = re.sub(r'[\s=|]+', '_', parts[2].strip()) if len(parts) == 3 and parts[2].strip() else f'{x:.0f},{y:.0f}'
     return label, x, y
 
@@ -357,7 +396,7 @@ def selftest() -> int:
     fails = []
     forbidden = ('re' + 'deal', 'ex' + 'port', 'be' + 'cause')
     want = {'blocks': '1,2', 'seedA': '123456', 'seedB': '123456', 'spots': '2', 'eA': '8', 'eB': '9', 'ePaired': '7',
-            'eMoved': '4', 'eFlagOnly': '1', 'eZOnly': '0', 'eRemoved': '1', 'eAdded': '2', 'eAmbiguous': '0', 'wA': '4',
+            'eMoved': '4', 'eFlagOnly': '1', 'eZOnly': '1', 'eRemoved': '1', 'eAdded': '2', 'eAmbiguous': '0', 'wA': '4',
             'wB': '4', 'wMoved': '1', 'wFlagOnly': '1', 'wRemoved': '0', 'wAdded': '0', 'oA': '3', 'oB': '4', 'oFlagOnly': '0',
             'oRemoved': '0', 'oAdded': '1', 'eMovedOut': '1', 'eMovedIn': '1', 'eMovedWithin': '2', 'eRemovedInside': '1',
             'eAddedInside': '1'}
@@ -377,6 +416,9 @@ def selftest() -> int:
             hit = [ln for ln in md.splitlines() if ln.startswith(f'LAYOUTDIFF-AT: label={label} ')]
             if len(hit) != 1 or not hit[0].endswith(tail):
                 fails.append(f'spot {label}: {hit} does not end with {tail!r}')
+        if ('| 00012345 | Desc_OreIron_C | -30000,-30000,1250 | -30000,-30000,1600 | 0.0 | - |' not in md
+                or '| 9ABCDEF0 | Desc_Water_C | 0,0,0 | 300000,-200000,600 | - |' not in md):
+            fails.append('Z-only row 00012345 not listed with its from/to, or the src-none well pair printed a distance')
         if 'max 4060.8' not in md:
             fails.append('entry moved-distance max 4060.8 m not in the report')
         if 'elapsed between the two begin lines: 750.5 s' not in md.lower():
@@ -436,8 +478,8 @@ def main(argv=None) -> int:
     if a.selftest:
         return selftest()
     try:
-        if a.radius_m <= 0 or a.moved_m < 0:
-            raise DumpError('--radius-m must be above 0 and --moved-m at least 0')
+        if not (math.isfinite(a.radius_m) and math.isfinite(a.moved_m)) or a.radius_m <= 0 or a.moved_m < 0:
+            raise DumpError('--radius-m must be a finite number above 0 and --moved-m a finite number at least 0')
         spots = [parse_spot(s) for s in a.at]
         with open(a.log, encoding='utf-8', errors='replace') as fh:
             md, census = run(fh, a.log, a.blocks, spots, a.radius_m * 100.0, a.moved_m * 100.0, a.allow_seed_change)
