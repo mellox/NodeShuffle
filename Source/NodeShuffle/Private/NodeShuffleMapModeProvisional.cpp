@@ -186,6 +186,7 @@ void ANodeShuffleSubsystem::RwgSettleProvisional(FNodeShuffleEntry& E, bool& bCh
 void ANodeShuffleSubsystem::RwgProvisionalSpawnPass(const TArray<FVector>& Pawns, float AttemptRadiusCm, bool& bChangedWorld)
 {
     if (GetMapMode() != ENodeShuffleMapMode::Rwg) { return; } // RWG-only gate
+    if ((RwgPcPasses % 12) == 1) { RwgProvisionalEmitCensus(); } // fix F5: before the toggle/pawn/query returns, so spawnAllAtRoll=0 can print
     if (!NodeShuffleMapMode::RwgSpawnAllAtRollOn() || Pawns.Num() == 0) { return; }
     const NodeShuffleMapMode::FRwgGroundQuery Q(GetWorld(), RwgGenerator.Get());
     if (!Q.IsUsable()) { return; }
@@ -253,7 +254,6 @@ void ANodeShuffleSubsystem::RwgProvisionalSpawnPass(const TArray<FVector>& Pawns
         UE_LOG(LogNodeShuffle, Display, TEXT("PROVSPAWN: pass=%d spawnedThisPass=%d remainingUnspawned=%d provisionalTotal=%d zSource=%s msBatch=%.1f refusedThisPass=%d refusedSession=%d batch=%d seaPending=%d caveDealtZ=%d"),
             RwgPcPasses, Spawned, Cands.Num() - Spawned - Refused, Total, *ZSource, MsBatch, Refused, RwgProvSessRefused, Batch, SeaPending, CaveDealtZ);
     }
-    if ((RwgPcPasses % 12) == 1) { RwgProvisionalEmitCensus(); }
 }
 
 void ANodeShuffleSubsystem::RwgProvisionalEmitCensus()
