@@ -155,6 +155,7 @@ function Invoke-FarspawnChecks($T) {
     # F17 (fix F7): an actorless settled entry is never provisioned; a sea-flagged spot the sea pass could not re-deal stays sea-pending
     if (-not (Ordered $spawnFn @('if (IsLocationNearAnyPlayer(E.Location, AttemptRadiusCm)) { continue; }', 'if (E.bRayCasted) { ++RayCastedNoActor; continue; }', 'if (RwgSeaDealFailed.Contains(E.EntryGuid)) { ++SeaPending; ++SeaDealFailed; continue; }', 'const bool bSeaDone = bSeaPassIdle || (E.bRwgSeaChecked && (E.bRwgVoidChecked || !bVoidMaybe));', 'Cands.Emplace(Best, I);'))) { $f += '(F17) the candidate loop must skip rayCasted entries and sea-deal-failed entries before the sea-done test' }
     if ((Count $spawnFn 'RwgSeaDealFailed.Contains(') -ne 1) { $f += '(F17) RwgSeaDealFailed is read once, as a skip (never as sea-done)' }
+    if ((Count $spawnFn 'which the sea pass skips for the rest of the session, so the sea pass never clears them from this count') -ne 1) { $f += '(F17) R7: the seaPending legend must say it includes the sea-deal-failed entries the sea pass never revisits' }
     # F18 (fix F9): the toggle's help text claims no universality or simultaneity and names the radius rule and the skips
     $help = Span $p 'TEXT("NodeShuffle.RwgSpawnAllAtRoll"),' 'ECVF_Default);'
     if ($help -eq '') { $f += '(F18) the RwgSpawnAllAtRoll help text span is missing' }
@@ -229,6 +230,7 @@ $mutants = @(
     @{ Name = 'X52 V-R4 unplaceable branch no longer counts a deferral'; Key = 'prov'; Expect = 'F15'; Find = "        ++DeferredThisPass; // parity with EnsureNewNodeSpawned: its unsettled water branch counts as a deferral (NodeShuffleSubsystem.cpp DeferredThisPass++)`n"; Repl = '' }
     @{ Name = 'X53 V-R4 deferral counted on the settled branch too'; Key = 'prov'; Expect = 'F15'; Find = "        else { ++RwgProvSessSettledNoActor; }`n"; Repl = "        else { ++RwgProvSessSettledNoActor; }`n        ++DeferredThisPass;`n" }
     @{ Name = 'X54 V-R6 help text drops the sea-idle clause'; Key = 'prov'; Expect = 'F18'; Find = 'cleared them (or without it where this world has no usable sea check);'; Repl = 'cleared them;' }
+    @{ Name = 'X55 R7 seaPending legend drops the never-revisited clause'; Key = 'prov'; Expect = 'F17'; Find = 'which the sea pass skips for the rest of the session, so the sea pass never clears them from this count'; Repl = 'which the sea pass re-deals later' }
     @{ Name = 'X27 F2 pin check evaluated before the distance test'; Key = 'place'; Expect = 'F9'; Find = 'if (E.bRwgProvisional && IsLocationNearAnyPlayer(E.Location, AttemptRadiusCm) && !RwgProvisionalPinWins(E)) {'; Repl = 'if (E.bRwgProvisional && !RwgProvisionalPinWins(E) && IsLocationNearAnyPlayer(E.Location, AttemptRadiusCm)) {' }
 )
 $mutantFails = @()

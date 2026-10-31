@@ -267,6 +267,9 @@ void ANodeShuffleSubsystem::RwgProvisionalSpawnPass(const TArray<FVector>& Pawns
         for (const FNodeShuffleEntry& E : Layout) { if (E.bRwgProvisional && IsValid(SpawnedNodes.FindRef(E.EntryGuid))) { ++Total; } }
         // remainingCandidates (fix F10): far entries that passed every skip and the sea check this pass, minus this pass's spawned and
         // refused; it does NOT include seaPending entries or unspawned entries within the attempt radius.
+        // seaPending (re-review R7): far entries held back for the sea/void pass -- those it has not checked yet, PLUS the entries whose
+        // sea re-deal found no spot (RwgSeaDealFailed), which the sea pass skips for the rest of the session, so the sea pass never clears them from this count
+        // this session; seaDealFailed prints that subset.
         UE_LOG(LogNodeShuffle, Display, TEXT("PROVSPAWN: pass=%d spawnedThisPass=%d remainingCandidates=%d provisionalTotal=%d zSource=%s msBatch=%.1f refusedThisPass=%d refusedSession=%d batch=%d seaPending=%d caveDealtZ=%d rayCastedNoActor=%d seaDealFailed=%d"),
             RwgPcPasses, Spawned, Cands.Num() - Spawned - Refused, Total, *ZSource, MsBatch, Refused, RwgProvSessRefused, Batch, SeaPending, CaveDealtZ,
             RayCastedNoActor, SeaDealFailed);
