@@ -16,6 +16,8 @@
 #   F11 PLACECENSUS ends with provisionalSpawned/provisionalSettled; their counters are the last two args and are reset per pass.
 #   F12 PROVSETTLE sampled <= 8 per pass; PROVCENSUS on 12th passes; a provisional attempt that made no actor restores the entry.
 #   F13 Marker 2026-10-31-rwg-farspawn-1 once, previous marker absent; the new .cpp stays under 500 lines.
+#   F14 (fix round 1, F3) RWGSTUCK / HERE-DENSITY: the provisional settle is bracketed by the RWGSTUCK snapshot/note, and the note,
+#       the stuck census and HERE-DENSITY count a valid actor as live only when it is NOT provisional.
 # Mutants run in-file. Exit 0 = all hold; 1 = at least one does not; 2 = a pinned FILE is missing.
 
 $ErrorActionPreference = 'Stop'
@@ -31,6 +33,7 @@ $files = [ordered]@{
     sub   = 'NodeShuffle\Private\NodeShuffleSubsystem.cpp'
     subh  = 'NodeShuffle\Public\NodeShuffleSubsystem.h'
     nsmod = 'NodeShuffle\Private\NodeShuffle.cpp'
+    dens  = 'NodeShuffle\Private\NodeShuffleMapModeDensity.cpp'
 }
 $text = [ordered]@{}
 foreach ($k in $files.Keys) {
@@ -100,7 +103,7 @@ function Invoke-FarspawnChecks($T) {
     if ((Count $T.void '        if (E.bRwgProvisional) { continue; } // rwg-farspawn-1: a provisional actor is UNSETTLED') -ne 1) { $f += '(F9) killbox pass must skip provisional' }
     if ((Count $T.sub '        if (Entry.bRwgProvisional) { continue; } // rwg-farspawn-1: RWG provisional actors settle only through RwgSettleProvisional') -ne 1) { $f += '(F9) settle-near-players must skip provisional' }
     if ((Count $T.place 'if (E.bRwgProvisional && IsLocationNearAnyPlayer(E.Location, AttemptRadiusCm) && !RwgProvisionalPinWins(E)) { Cands.Emplace(FMath::Square(RwgNearestPawnDist2D(E.Location)), I); continue; }') -ne 1) { $f += '(F9) provisional within the attempt radius joins the attempt candidates' }
-    if ((Count $T.place 'if (E.bRwgProvisional) { RwgSettleProvisional(E, bChangedWorld);') -ne 1) { $f += '(F9) the attempt loop settles provisional entries' }
+    if ((Count $T.place 'if (E.bRwgProvisional) { RwgStuckBeforeAttempt(E); RwgSettleProvisional(E, bChangedWorld);') -ne 1) { $f += '(F9) the attempt loop settles provisional entries' }
     if ((Count $T.place 'if (E.bRwgProvisional) { E.bRwgProvisional = false; ++RwgProvSessStale; }') -ne 1) { $f += '(F9) a flag without a live actor is cleared' }
     if (-not (Ordered $T.place @('    ++RwgPcPasses;', '    RwgProvisionalSpawnPass(Pawns, AttemptRadiusCm, bChangedWorld);', '    RwgResettlePass();'))) { $f += '(F9) the provisional pass runs after the attempt loop, before the resettle' }
     # F10
@@ -121,6 +124,12 @@ function Invoke-FarspawnChecks($T) {
     # F13
     if ((Count $T.nsmod ('LOADED (2026-10-31-rwg-' + 'farspawn-1)')) -ne 1 -or (Count $T.nsmod ('2026-10-31-rwg-' + 'seedgas-1b)')) -ne 0) { $f += '(F13) marker farspawn-1 present once, seedgas-1b absent' }
     if (($p.Split("`n")).Count -ge 500) { $f += '(F13) NodeShuffleMapModeProvisional.cpp must stay under 500 lines' }
+    # F14
+    if ((Count $T.place 'if (E.bRwgProvisional) { RwgStuckBeforeAttempt(E); RwgSettleProvisional(E, bChangedWorld); AFGResourceNode* const* Now = SpawnedNodes.Find(E.EntryGuid); if (Now && IsValid(*Now) && !E.bRwgProvisional) { ++RwgPcSpawned; } RwgStuckAfterAttempt(E); continue; }') -ne 1) { $f += '(F14) the provisional settle must be bracketed by RwgStuckBeforeAttempt / RwgStuckAfterAttempt' }
+    if ((Count $T.dens 'if (Now && IsValid(*Now) && !E.bRwgProvisional) { RwgStuckTracker.Remove(E.EntryGuid); return; }') -ne 1) { $f += '(F14) the RWGSTUCK note must not forget a provisional entry as live' }
+    if ((Count $T.dens 'if (Live && IsValid(*Live) && !E.bRwgProvisional) { continue; }') -ne 1) { $f += '(F14) the RWGSTUCK census must not skip a provisional entry as live' }
+    if ((Count $T.dens 'const bool bLive = Live && IsValid(*Live) && !E.bRwgProvisional;') -ne 1) { $f += '(F14) HERE-DENSITY live must exclude provisional actors' }
+    if ((Count $T.dens 'a provisional node, placed far from every player and not yet fitted to the ground, is not counted as live') -ne 1) { $f += '(F14) the HERE-DENSITY legend must say provisional nodes are not live' }
     return $f
 }
 
@@ -152,6 +161,10 @@ $mutants = @(
     @{ Name = 'X24 refused attempt keeps the mutated entry'; Key = 'prov'; Expect = 'F12'; Find = "        if (!IsValid(Node))`n        {`n            E = Snap;"; Repl = "        if (!IsValid(Node))`n        {" }
     @{ Name = 'X25 marker reverted'; Key = 'nsmod'; Expect = 'F13'; Find = ('2026-10-31-rwg-' + 'farspawn-1'); Repl = ('2026-10-31-rwg-' + 'seedgas-1b') }
     @{ Name = 'X26 killbox pass treats provisional as live and fine'; Key = 'void'; Expect = 'F9'; Find = '        if (E.bRwgProvisional) { continue; } // rwg-farspawn-1: a provisional actor is UNSETTLED'; Repl = '        // skip removed' }
+    @{ Name = 'X28 F3 provisional settle no longer tracked by RWGSTUCK'; Key = 'place'; Expect = 'F14'; Find = 'if (E.bRwgProvisional) { RwgStuckBeforeAttempt(E); RwgSettleProvisional(E, bChangedWorld);'; Repl = 'if (E.bRwgProvisional) { RwgSettleProvisional(E, bChangedWorld);' }
+    @{ Name = 'X29 F3 RWGSTUCK note forgets a deferring provisional entry'; Key = 'dens'; Expect = 'F14'; Find = 'if (Now && IsValid(*Now) && !E.bRwgProvisional) { RwgStuckTracker.Remove(E.EntryGuid); return; }'; Repl = 'if (Now && IsValid(*Now)) { RwgStuckTracker.Remove(E.EntryGuid); return; }' }
+    @{ Name = 'X30 F3 RWGSTUCK census skips provisional as live'; Key = 'dens'; Expect = 'F14'; Find = 'if (Live && IsValid(*Live) && !E.bRwgProvisional) { continue; }'; Repl = 'if (Live && IsValid(*Live)) { continue; }' }
+    @{ Name = 'X31 F3 HERE-DENSITY counts provisional as live'; Key = 'dens'; Expect = 'F14'; Find = 'const bool bLive = Live && IsValid(*Live) && !E.bRwgProvisional;'; Repl = 'const bool bLive = Live && IsValid(*Live);' }
     @{ Name = 'X27 F2 pin check evaluated before the distance test'; Key = 'place'; Expect = 'F9'; Find = 'if (E.bRwgProvisional && IsLocationNearAnyPlayer(E.Location, AttemptRadiusCm) && !RwgProvisionalPinWins(E)) {'; Repl = 'if (E.bRwgProvisional && !RwgProvisionalPinWins(E) && IsLocationNearAnyPlayer(E.Location, AttemptRadiusCm)) {' }
 )
 $mutantFails = @()
@@ -171,5 +184,5 @@ if ($all.Count -gt 0) {
     Write-Host "FARSPAWN LINT: FAIL -- $($all.Count) problem(s). Mutants caught $caught/$($mutants.Count)."
     exit 1
 }
-Write-Host "PASS: FARSPAWN lint -- F1..F13 hold across $($text.Count) loaded files; mutants caught $caught/$($mutants.Count)."
+Write-Host "PASS: FARSPAWN lint -- F1..F14 hold across $($text.Count) loaded files; mutants caught $caught/$($mutants.Count)."
 exit 0

@@ -62,8 +62,9 @@ void ANodeShuffleSubsystem::RwgStuckAfterAttempt(const FNodeShuffleEntry& E)
 {
     // Live after the attempt -> forgotten (the count is "failed attempts since last live"). Not live -> +1, and the names of the
     // counters this one attempt moved are kept ("none" when the attempt moved no tracked counter, e.g. an already-settled entry).
+    // rwg-farspawn-1 fix F3: a provisional actor (bRwgProvisional still set after its settle attempt = the settle deferred) is NOT live here.
     AFGResourceNode* const* Now = SpawnedNodes.Find(E.EntryGuid);
-    if (Now && IsValid(*Now)) { RwgStuckTracker.Remove(E.EntryGuid); return; }
+    if (Now && IsValid(*Now) && !E.bRwgProvisional) { RwgStuckTracker.Remove(E.EntryGuid); return; }
     FString Moved;
     for (int32 I = 0; I < RwgStuckCounterN && I < RwgStuckSnap.Num(); ++I)
     {
@@ -185,7 +186,7 @@ void ANodeShuffleSubsystem::RwgEmitStuckCensus(const TArray<FVector>& Pawns, flo
         const TPair<int32, FString>* T = RwgStuckTracker.Find(E.EntryGuid);
         if (!T || T->Key < RwgStuckMinFailedAttempts) { continue; }
         AFGResourceNode* const* Live = SpawnedNodes.Find(E.EntryGuid);
-        if (Live && IsValid(*Live)) { continue; }
+        if (Live && IsValid(*Live) && !E.bRwgProvisional) { continue; } // rwg-farspawn-1 fix F3: a provisional actor is not live
         ++StuckMap;
         double Best = TNumericLimits<double>::Max();
         for (const FVector& P : Pawns) { Best = FMath::Min(Best, FVector::DistSquared2D(P, E.Location)); }
@@ -227,6 +228,7 @@ void ANodeShuffleSubsystem::RwgEmitStuckCensus(const TArray<FVector>& Pawns, flo
 void ANodeShuffleSubsystem::LogHereDensity(const FVector& P, float HereRadiusCm) const
 {
     // Population: layout entries with bIsNewNode && bActive; distance is 2-D from the HERE pawn. live + deferred + noFailedAttempt == active.
+    // rwg-farspawn-1 fix F3: live = a valid actor that is NOT provisional; a provisional actor counts as deferred or noFailedAttempt.
     const float Radii[2] = { NodeShuffleMapMode::RwgAttemptRadiusCm, HereRadiusCm };
     int32 A[2] = {}, L[2] = {}, D[2] = {}, St[2] = {};
     for (const FNodeShuffleEntry& E : Layout)
@@ -234,7 +236,7 @@ void ANodeShuffleSubsystem::LogHereDensity(const FVector& P, float HereRadiusCm)
         if (!E.bIsNewNode || !E.bActive) { continue; }
         const double D2 = FVector::DistSquared2D(E.Location, P);
         AFGResourceNode* const* Live = SpawnedNodes.Find(E.EntryGuid);
-        const bool bLive = Live && IsValid(*Live);
+        const bool bLive = Live && IsValid(*Live) && !E.bRwgProvisional; // rwg-farspawn-1 fix F3: a provisional actor is not live
         const TPair<int32, FString>* T = bLive ? nullptr : RwgStuckTracker.Find(E.EntryGuid);
         for (int32 R = 0; R < 2; ++R)
         {
@@ -245,7 +247,7 @@ void ANodeShuffleSubsystem::LogHereDensity(const FVector& P, float HereRadiusCm)
         }
     }
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("HERE-DENSITY: within %.0f m: active=%d live=%d deferred=%d stuck=%d noFailedAttempt=%d; within %.0f m: active=%d live=%d deferred=%d stuck=%d noFailedAttempt=%d (deferred counts unspawned active entries with at least one failed spawn attempt since they were last live or last moved in XY, stuck ones included; stuck needs %d such passes; noFailedAttempt is the rest of the unspawned active entries)"),
+        TEXT("HERE-DENSITY: within %.0f m: active=%d live=%d deferred=%d stuck=%d noFailedAttempt=%d; within %.0f m: active=%d live=%d deferred=%d stuck=%d noFailedAttempt=%d (deferred counts unspawned active entries with at least one failed spawn attempt since they were last live or last moved in XY, stuck ones included; stuck needs %d such passes; noFailedAttempt is the rest of the unspawned active entries; a provisional node, placed far from every player and not yet fitted to the ground, is not counted as live and falls in deferred or noFailedAttempt by the same test)"),
         Radii[0] / 100.f, A[0], L[0], D[0], St[0], A[0] - L[0] - D[0], Radii[1] / 100.f, A[1], L[1], D[1], St[1], A[1] - L[1] - D[1], RwgStuckMinFailedAttempts);
     // HERE-LAND (cold review F1): the deal's land predicate measured at the player's own position -- a 100 m lattice inside the 1000 m attempt
     // radius, plus the RwgRejectV3 bits at the pawn's feet. Pure reads of the predicate; user-invoked only (NodeShuffle.Here on RWG).
