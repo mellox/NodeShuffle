@@ -114,7 +114,7 @@ function Invoke-RwgsteepChecks($T) {
     $pc = @(Get-Logs $p 'PLACECENSUS: pass=')
     if ($pc.Count -ne 1) { $f += "(S6) expected 1 PLACECENSUS pass statement, found $($pc.Count)" }
     else {
-        if (-not $pc[0].Fmt.EndsWith(' settledInsideCaveSurfaceEntry=%d steepRing=%d steepMapwide=%d steepOccludedMapwide=%d steepOccludedRing=%d settledOnSolidTop=%d solidTopAcceptedProbes=%d solidTopRejectedStartInside=%d solidTopRejectedNormal=%d solidTopRejectedFootprint=%d')) { $f += '(S6) PLACECENSUS must end with the steep then the rwg-clifftop-1 fields after the existing fields' }
+        if (-not $pc[0].Fmt.EndsWith(' settledInsideCaveSurfaceEntry=%d steepRing=%d steepMapwide=%d steepOccludedMapwide=%d steepOccludedRing=%d settledOnSolidTop=%d solidTopAcceptedProbes=%d solidTopRejectedGuard=%d solidTopRejectedNormal=%d solidTopRejectedFootprint=%d')) { $f += '(S6) PLACECENSUS must end with the steep then the rwg-clifftop-1 fields after the existing fields' }
         if ((Spec-Count $pc[0].Fmt) -ne $pc[0].Args.Count -or $pc[0].Args.Count -ne 48) { $f += "(S6) PLACECENSUS arity: $(Spec-Count $pc[0].Fmt) specifier(s) vs $($pc[0].Args.Count) argument(s) (want 48)" }
         if (($pc[0].Args | Select-Object -Last 9) -join ',' -ne 'RwgPcSteepRing,RwgPcSteepMapwide,RwgPcSteepOccluded,RwgPcSteepOccludedRing,RwgPcSettledOnSolidTop,RwgPcSolidTopAccepted,RwgPcSolidTopRejStartInside,RwgPcSolidTopRejNormal,RwgPcSolidTopRejFootprint') { $f += '(S6) the last nine PLACECENSUS arguments must be the steep and clifftop counters in field order' }
     }

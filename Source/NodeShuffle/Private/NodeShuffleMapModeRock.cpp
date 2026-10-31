@@ -138,9 +138,8 @@ void ANodeShuffleSubsystem::RwgRockOcclusionPass()
             if (R == 2) { ++NonRockAbove; } else { ++Clear; }
             continue;
         }
-        // rwg-clifftop-1 ON vs UNDER: a solid hit within RwgSolidTopOnTolCm of a bRwgOnSolidTop node's Z is the surface it stands ON (kept,
-        // flagged); a hit farther above is UNDER (counted occluded and redealt, as before). The window ends RwgRockOcclusionEndAboveCm above the
-        // node, so only hits from that height up to the tolerance can read as ON.
+        // rwg-clifftop-1 ON vs UNDER, symmetric with the resettle: the window ends RwgRockOcclusionEndAboveCm above the node, so the surface a marked node
+        // stands on is never in it; this branch can fire only for a solid 0.5..1 m above the node. Expected count 0 (onSolidTopKept); non-zero is an anomaly.
         const double HitDzCm = HitZ - Node->GetActorLocation().Z;
         if (E.bRwgOnSolidTop && FMath::Abs(HitDzCm) <= NodeShuffleMapMode::RwgSolidTopOnTolCm) { ++OnSolidTopKept; E.bRwgRockChecked = true; continue; }
         ++Occluded;

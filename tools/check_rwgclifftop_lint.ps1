@@ -129,7 +129,7 @@ function Invoke-CliffChecks($T) {
     $cl = @(Get-Logs $c 'RWGCLIFFTOP: ')
     if ($cl.Count -ne 1 -or $cl[0].Fmt -ne $CliffFmt -or $cl[0].Level -ne 'Display' -or (Spec-Count $cl[0].Fmt) -ne $cl[0].Args.Count -or $cl[0].Args.Count -ne 20) { $f += '(C10) RWGCLIFFTOP format drifted or arity is wrong' }
     if ((Count $c 'constexpr int32 RwgCliffTopSampleCap = 8;') -ne 1 -or (Count $c 'if (RwgCliffTopSamples < RwgCliffTopSampleCap && FNodeShuffleModule::AreDiagnosticsEnabled())') -ne 1 -or (Count $p 'RwgPcSolidTopRejFootprint = RwgCliffTopSamples = 0;') -ne 1) { $f += '(C10) RWGCLIFFTOP must be capped per pass and the cap zeroed with the PLACECENSUS counters' }
-    foreach ($n in @('settledOnSolidTop=%d', 'solidTopAcceptedProbes=%d', 'solidTopRejectedStartInside=%d', 'solidTopRejectedNormal=%d', 'solidTopRejectedFootprint=%d')) { if ((Count $p $n) -ne 1) { $f += "(C10) PLACECENSUS must carry $n once" } }
+    foreach ($n in @('settledOnSolidTop=%d', 'solidTopAcceptedProbes=%d', 'solidTopRejectedGuard=%d', 'solidTopRejectedNormal=%d', 'solidTopRejectedFootprint=%d')) { if ((Count $p $n) -ne 1) { $f += "(C10) PLACECENSUS must carry $n once" } }
     # C11 vanilla
     if ((Count $s 'const bool bSolidBlocks = bTerrainOnly && bOutTooSteep != nullptr;') -ne 1) { $f += '(C11) the RWG-only bSolidBlocks gate must be unchanged' }
     # C13 (review F1b): the two packet-touched files this lint did not load. The LAYOUTDUMP-E purity argument stays CODE (not swallowed by a
