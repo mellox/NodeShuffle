@@ -170,6 +170,7 @@ void ANodeShuffleSubsystem::RwgSettleProvisional(FNodeShuffleEntry& E, bool& bCh
         const bool bMoved = TryRedealWaterLockedEntry(E);
         bChangedWorld = true;
         if (bMoved) { ++RwgProvSessRedealt; } else { ++RwgProvSessRedealNotMoved; }
+        ++DeferredThisPass; // parity with EnsureNewNodeSpawned: its unsettled water branch counts as a deferral (NodeShuffleSubsystem.cpp DeferredThisPass++)
         Outcome = !bMoved ? TEXT("redealNotMoved") : (RwgPcSteepRing > RingBefore) ? TEXT("ring") : TEXT("mapwide");
     }
     else

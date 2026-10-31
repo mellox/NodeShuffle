@@ -143,6 +143,10 @@ function Invoke-FarspawnChecks($T) {
     # F15 (re-review V-R3): the two no-actor outcomes have session counters, bumped 1:1 with their Outcome strings
     if (-not (Ordered $settleFn @('++RwgProvSessSettled; ++RwgPcProvSettled;', "        }`n        else { ++RwgProvSessSettledNoActor; }`n        Outcome = bRespawned ?"))) { $f += '(F15) V-R3: settledNoActor is counted exactly when the respawn left no actor' }
     if ((Count $settleFn 'if (bMoved) { ++RwgProvSessRedealt; } else { ++RwgProvSessRedealNotMoved; }') -ne 1) { $f += '(F15) V-R3: redealNotMoved is counted exactly when the redeal returned false' }
+    # F15 (re-review V-R4): the unplaceable branch counts as a deferral, as the fresh path's unsettled water branch does; (a) does not, (c) still does
+    $branchB = Span $settleFn '    else if (bWaterNoLand)' "    else`n    {"
+    if ($branchB -eq '' -or (Count $branchB '        ++DeferredThisPass; // parity with EnsureNewNodeSpawned') -ne 1 -or -not (Ordered $branchB @('const bool bMoved = TryRedealWaterLockedEntry(E);', '++RwgProvSessRedealNotMoved; }', '        ++DeferredThisPass;', 'Outcome = !bMoved ?'))) { $f += '(F15) V-R4: the unplaceable branch bumps DeferredThisPass once, after the redeal' }
+    if ((Count $settleFn '++DeferredThisPass;') -ne 2) { $f += '(F15) V-R4: DeferredThisPass is bumped in exactly the unplaceable and the deferred branches' }
     if ((Count $p '++RwgProvSessSettledNoActor;') -ne 1 -or (Count $p '++RwgProvSessRedealNotMoved;') -ne 1) { $f += '(F15) V-R3: one increment site per no-actor counter' }
     if ((Count $T.subh '    int32 RwgProvSessSettledNoActor = 0, RwgProvSessRedealNotMoved = 0; // session') -ne 1) { $f += '(F15) V-R3: the two session counters are declared on their own line (not inside a comment)' }
     # F16 (fix F6, measure only): reveal counts read before the despawn, after-counts only from the respawned actor
@@ -222,6 +226,8 @@ $mutants = @(
     @{ Name = 'X49 V-R3 PROVCENSUS drops the two fields'; Key = 'prov'; Expect = 'F10'; Find = 'spawnAllAtRoll=%d settledNoActor=%d redealNotMoved=%d"),'; Repl = 'spawnAllAtRoll=%d"),' }
     @{ Name = 'X50 V-R3 PROVCENSUS args swapped'; Key = 'prov'; Expect = 'F10'; Find = 'RwgProvSessSettledNoActor, RwgProvSessRedealNotMoved);'; Repl = 'RwgProvSessRedealNotMoved, RwgProvSessSettledNoActor);' }
     @{ Name = 'X51 V-R3 header counters appended into the comment'; Key = 'subh'; Expect = 'F15'; Find = "RwgProvSessPinned = 0; // session`n    int32 RwgProvSessSettledNoActor"; Repl = 'RwgProvSessPinned = 0; // session int32 RwgProvSessSettledNoActor' }
+    @{ Name = 'X52 V-R4 unplaceable branch no longer counts a deferral'; Key = 'prov'; Expect = 'F15'; Find = "        ++DeferredThisPass; // parity with EnsureNewNodeSpawned: its unsettled water branch counts as a deferral (NodeShuffleSubsystem.cpp DeferredThisPass++)`n"; Repl = '' }
+    @{ Name = 'X53 V-R4 deferral counted on the settled branch too'; Key = 'prov'; Expect = 'F15'; Find = "        else { ++RwgProvSessSettledNoActor; }`n"; Repl = "        else { ++RwgProvSessSettledNoActor; }`n        ++DeferredThisPass;`n" }
     @{ Name = 'X27 F2 pin check evaluated before the distance test'; Key = 'place'; Expect = 'F9'; Find = 'if (E.bRwgProvisional && IsLocationNearAnyPlayer(E.Location, AttemptRadiusCm) && !RwgProvisionalPinWins(E)) {'; Repl = 'if (E.bRwgProvisional && !RwgProvisionalPinWins(E) && IsLocationNearAnyPlayer(E.Location, AttemptRadiusCm)) {' }
 )
 $mutantFails = @()
