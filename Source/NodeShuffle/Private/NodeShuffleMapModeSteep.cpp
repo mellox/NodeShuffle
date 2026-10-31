@@ -30,7 +30,7 @@ namespace
         TEXT("NodeShuffle.RwgRingRadiusM"),
         300,
         TEXT("RWG maps only. Radius in metres of the local search tried before a new node spot is redrawn anywhere on the map, when the ")
-        TEXT("spot it was dealt is too steep, or is rock or cliff it cannot stand on (not used for water). Default 300. Values are clamped to 50..1000. Read each time the search runs."),
+        TEXT("spot it was dealt and the nearby spots tried around it are too steep, or rock or cliff it cannot stand on (not used for water, nor for a spot refused after it settled). Default 300. Values are clamped to 50..1000. Read each time the search runs."),
         ECVF_Default);
     float RwgSteepRingRadiusCmNow() { return 100.0f * static_cast<float>(FMath::Clamp(CVarNodeShuffleRwgRingRadiusM.GetValueOnGameThread(), 50, 1000)); }
     constexpr int32 RwgSteepRingCandidates = 12;       // candidate cap per ring run
@@ -155,7 +155,7 @@ bool ANodeShuffleSubsystem::RwgLocalRedraw(const NodeShuffleMapMode::FRwgGroundQ
         }
         // rwg-steep-2 discriminator (diagnostics, gates nothing): the same XY re-traced from the ORIGIN's API Z, the settle spiral's
         // window. RWGSTEEPSUM ringPassedFromOriginZ counts the ring passes that also pass from that window.
-        { FVector L0; FRotator R0 = Entry.Rotation; bool bW0 = false, bS0 = false; if (RaycastGroundAt(C, O.Z, nullptr, nullptr, L0, R0, bW0, false, &bS0, nullptr, nullptr, true) && !bW0 && !bS0) { ++RwgSteepSessPassedFromOriginZ; } }
+        { const bool bArmWas = bRwgSolidTopArmed; bRwgSolidTopArmed = false; FVector L0; FRotator R0 = Entry.Rotation; bool bW0 = false, bS0 = false; if (RaycastGroundAt(C, O.Z, nullptr, nullptr, L0, R0, bW0, false, &bS0, nullptr, nullptr, true) && !bW0 && !bS0) { ++RwgSteepSessPassedFromOriginZ; } bRwgSolidTopArmed = bArmWas; } // rwg-clifftop-1 review: the discriminator gates nothing, so it never offers a top
         ++OutPassed;
         // The map-wide redeal's move, field for field: XY + API Z, a fresh yaw, back to the surface pool, unsettled (the next spawn
         // attempt runs the full RwgResolveAtSpawn there: killbox, dZ, insideCave censuses as for any redealt entry).

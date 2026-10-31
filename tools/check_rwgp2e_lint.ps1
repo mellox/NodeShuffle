@@ -86,7 +86,7 @@ if (-not $d1) { $fails += 'E3: RwgDealOneSpot body not found' } else {
     if ($d1.Contains('RwgIsPointInWater' + 'Cached(')) { $fails += 'E3: RwgDealOneSpot must not call the bare volume test' }
 }
 $ra = Get-Body $text.place ('bool ' + $cls + 'RwgResolveAtSpawn(')
-if (-not $ra -or (Count $ra ('if (RwgRejectV3(Q, FVector(X0, Y0, ApiZ0)) != 0) { bOutWaterNoLand = true; return ' + 'false; }')) -ne 1 -or (Count $ra ('if (RwgRejectV3(Q, FVector(X1, Y1, ApiZ1)) != 0) { bOutWaterNoLand = true; return ' + 'false; }')) -ne 1 -or $ra.Contains('RwgIsPointInWater' + 'Cached(')) { $fails += 'E3: both RwgResolveAtSpawn water checks must go through v2' }
+if (-not $ra -or (Count $ra ('if (RwgRejectV3(Q, FVector(X0, Y0, ApiZ0)) != 0) { bOutWaterNoLand = true; return ' + 'false; }')) -ne 1 -or (Count $ra ('if (RwgRejectV3(Q, FVector(X1, Y1, ApiZ1)) != 0) { Entry.bRwgOnSolidTop = false; bOutWaterNoLand = true; return ' + 'false; }')) -ne 1 -or $ra.Contains('RwgIsPointInWater' + 'Cached(')) { $fails += 'E3: both RwgResolveAtSpawn water checks must go through v2' }
 $ws = Get-Body $text.wrwg ('bool ' + $cls + 'RwgDealWellSite(')
 if (-not $ws -or -not $ws.Contains('const int32 WetCore = RwgRejectV3(Q, FVector(X, Y, ' + 'Zc));') -or -not $ws.Contains('const int32 WetSat = RwgRejectV3(Q, FVector(Sx, Sy, ' + 'Sz));') -or $ws.Contains('RwgIsPointInWater' + 'Cached(')) { $fails += 'E3: RwgDealWellSite core and satellites must go through v2' }
 

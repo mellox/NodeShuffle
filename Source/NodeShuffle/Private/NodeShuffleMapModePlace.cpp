@@ -335,9 +335,9 @@ bool ANodeShuffleSubsystem::RwgResolveAtSpawn(FNodeShuffleEntry& Entry, bool& bO
     if (RwgProbeSkipped > 0) { ++RwgPcSkippedToTerrain; }
     // The spiral may have moved XY: the deal predicates again there (as P2b did after its spiral).
     const double X1 = Entry.Location.X, Y1 = Entry.Location.Y;
-    if (Q.Outside(X1, Y1)) { bOutWaterNoLand = true; return false; }
+    if (Q.Outside(X1, Y1)) { Entry.bRwgOnSolidTop = false; bOutWaterNoLand = true; return false; }
     const double ApiZ1 = Q.SurfaceZ(X1, Y1);
-    if (RwgRejectV3(Q, FVector(X1, Y1, ApiZ1)) != 0) { bOutWaterNoLand = true; return false; } // RWG P2f: predicate v3 (v2 | void | below killbox)
+    if (RwgRejectV3(Q, FVector(X1, Y1, ApiZ1)) != 0) { Entry.bRwgOnSolidTop = false; bOutWaterNoLand = true; return false; } // RWG P2f: predicate v3 (v2 | void | below killbox)
     if (bRwgKillboxKnown && Entry.Location.Z < RwgKillboxTopZ)
     {
         // RWG P2f: the SETTLED Z lies below the killbox top (inside RWG's damage volume): unplaceable -> the caller's redeal. Measured: v3 at the
@@ -349,7 +349,7 @@ bool ANodeShuffleSubsystem::RwgResolveAtSpawn(FNodeShuffleEntry& Entry, bool& bO
             UE_LOG(LogNodeShuffle, Display, TEXT("RWGKILLBOXSETTLE: sample=%d entry=%s settledAt=%s apiSurfaceZ=%.0f killboxTopZ=%.0f; refused, redealt by the caller"),
                 RwgKbSettleSamples, *Entry.EntryGuid.ToString(), *Entry.Location.ToCompactString(), ApiZ1, RwgKillboxTopZ);
         }
-        bOutWaterNoLand = true;
+        Entry.bRwgOnSolidTop = false; bOutWaterNoLand = true;
         return false;
     }
     Entry.bRwgSettledOnTerrain = true;

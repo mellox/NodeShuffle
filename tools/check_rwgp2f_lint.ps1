@@ -102,7 +102,7 @@ if (-not $d1) { $fails += 'F3: RwgDealOneSpot body not found' } else {
 $ra = Get-Body $text.place ('bool ' + $cls + 'RwgResolveAtSpawn(')
 if (-not $ra) { $fails += 'F3: RwgResolveAtSpawn body not found' } else {
     $i0 = $ra.IndexOf('if (RwgRejectV3(Q, FVector(X0, Y0, ApiZ0)) != 0) { bOutWaterNoLand = true; return ' + 'false; }')
-    $i1 = $ra.IndexOf('if (RwgRejectV3(Q, FVector(X1, Y1, ApiZ1)) != 0) { bOutWaterNoLand = true; return ' + 'false; }')
+    $i1 = $ra.IndexOf('if (RwgRejectV3(Q, FVector(X1, Y1, ApiZ1)) != 0) { Entry.bRwgOnSolidTop = false; bOutWaterNoLand = true; return ' + 'false; }')
     $iK = $ra.IndexOf('if (bRwgKillboxKnown && Entry.Location.Z < RwgKillbox' + 'TopZ)')
     $iS = $ra.IndexOf('Entry.bRwgSettledOnTerrain = ' + 'true;')
     if ($i0 -lt 0 -or $i1 -lt $i0 -or $iK -lt $i1 -or $iS -lt $iK) { $fails += 'F3: RwgResolveAtSpawn must check v3 at both XYs, then refuse a settled Z below the killbox top, before marking it settled' }

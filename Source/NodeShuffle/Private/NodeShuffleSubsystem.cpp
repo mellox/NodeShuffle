@@ -3559,17 +3559,17 @@ void ANodeShuffleSubsystem::SpawnVisualRockForNode(AFGResourceNode* Node, UClass
     FQuat RockRelQuat = FQuat::Identity;
     float SlopeDeg = 0.0f;
     bool bUndergroundEntry = false;
-    bool bPinnedEntry = false;
+    bool bPinnedEntry = false; bool bSolidTopEntry = false; // rwg-clifftop-1
     for (const FNodeShuffleEntry& E : Layout)
     {
-        if (E.EntryGuid == EntryGuid) { bUndergroundEntry = E.bUnderground || E.bRwgCave; bPinnedEntry = E.bPinned; break; } // RWG P5: bRwgCave false on vanilla
+        if (E.EntryGuid == EntryGuid) { bUndergroundEntry = E.bUnderground || E.bRwgCave; bPinnedEntry = E.bPinned; bSolidTopEntry = E.bRwgOnSolidTop; break; } // RWG P5: bRwgCave false on vanilla
     }
     // knowledge-1 item 5: a PINNED entry has a BUILDING on it (that is what pinning means), so the
     // slope probe below raycasts into the miner's mesh/foundation instead of terrain — a bogus steep
     // "ground" normal that tilted the rock and slope-sank it ~1 m below the node origin (ROCKDIAG at
     // the dirty-caterium miner: rock Z 3827.60 vs entry 3927.15). The entry is settled — trust its
     // stored Z and dress flat, exactly like a fresh spawn on flat open ground.
-    if (!bUndergroundEntry && !bPinnedEntry)
+    if (!bUndergroundEntry && !bPinnedEntry && !bSolidTopEntry) // rwg-clifftop-1: on RWG this probe skips a solid top and would read the terrain beneath it; a solid-top node dresses flat
     {
         FVector ProbeLoc;
         FRotator ProbeRot = FRotator::ZeroRotator;
@@ -4626,7 +4626,7 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
         // relative alignment. Rotation only — location untouched; occupied/pinned/underground skipped.
         bool bRotRefit = false;
         if (!Entry.bPinned && !Entry.bUnderground && !Entry.bRwgCave && !AdoptRotRefit.Contains(Entry.EntryGuid) // RWG P5: bRwgCave false on vanilla
-            && !IsNodeOccupiedAnyway(*Existing))
+            && !IsNodeOccupiedAnyway(*Existing) && !Entry.bRwgOnSolidTop) // rwg-clifftop-1: the RWG refit probe skips a solid top; the settle already clamped this rotation
         {
             AdoptRotRefit.Add(Entry.EntryGuid);
             FVector RefitLoc;
