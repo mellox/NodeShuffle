@@ -24,6 +24,8 @@
 #   G9  Re-roll rebuild: on RWG the rebuilt slot form, FormByResource and the representative latch read the ORIGINAL resource's
 #       descriptor form (RebuildForm), never the saved card form; a class that does not load is counted (originalLoadNull);
 #       RWGDEAL-REROLL census 3/3.
+#   G11 rwg-seedgas-1 gas pin: the deck's gas drop skips SEEDED kinds only (gas AND NOT seeded, one site, after the seed decision and
+#       restore, before Deal()); Deal() still skips existing gas slots.
 #   G10 rwg-purity-1 per-class purity (spec _team/nodeshuffle-followups/rwg-purity-spec.md): BuildPurityDecks groups the originals
 #       by OriginalResourceClassPath, sorts the classes, shuffles each class's source (the deal file's ONLY extra RNG use) and the
 #       map-wide source only when a class has none; ApplyPurity draws by the card's class, falls back to the map-wide source and
@@ -133,7 +135,7 @@ function Invoke-RwgdealChecks($T) {
     $f += Check-Log $T 'sub' 'G6' 'RWGDEAL-STAMP ' 'RWGDEAL-STAMP newFormRep=%d convFormChanged=%d convFormRestamped=%d convFormOwnClass=%d convFormKept=%d' 5
     if ((Count $s ('(no liquid card on a solid slot by ' + 'construction)"),')) -ne 1 -or (Count $s '(rwg: form follows the card)"),') -ne 1 -or -not (Ordered $s @('        if (bRwgDeal)', '(rwg: form follows the card)"),', '        else', ('(no liquid card on a solid slot by ' + 'construction)"),')))) { $f += '(G6) FIX B line: Vanilla keeps its exact text in the else branch; RWG prints the claim-free variant' }
     # G7
-    if ((Count $T.nsmod ('LOADED (2026-10-30-rwg-' + 'clifftop-1)')) -ne 1 -or (Count $T.nsmod ('2026-10-29-rwg-' + 'layout-dump-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-28-rwg-' + 'trace-diag-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-27-rwg-' + 'trace-diag-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-26-rwg-' + '0-1-12-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-26-rwg-' + '0-1-12-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'deal-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'density-2')) -ne 0) { $f += '(G7) marker must be rwg-steep-2 (rwg-steep-1 and rwg-deal-1 absent) with rwg-density-2 absent' }
+    if ((Count $T.nsmod ('LOADED (2026-10-31-rwg-' + 'seedgas-1)')) -ne 1 -or (Count $T.nsmod ('2026-10-30-rwg-' + 'clifftop-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-29-rwg-' + 'layout-dump-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-28-rwg-' + 'trace-diag-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-27-rwg-' + 'trace-diag-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-26-rwg-' + '0-1-12-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-26-rwg-' + '0-1-12-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'deal-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'density-2')) -ne 0) { $f += '(G7) marker must be rwg-steep-2 (rwg-steep-1 and rwg-deal-1 absent) with rwg-density-2 absent' }
     # G8
     if (-not (Ordered $s @('// Rung 3: scan the layout', 'const FString& Cand = (GetMapMode() == ENodeShuffleMapMode::Rwg) ? PreSubstituteSpawnPath(E) : E.NodeClassPath;', 'if (!Cand.StartsWith(TEXT("/Game/"))) { continue; }', 'if (!IsEligible(Cand)) { continue; }', 'return Cand;', '// Rung 4 (SOLID ONLY)'))) { $f += '(G8) Rung 3 must read the class the entry spawns (PreSubstituteSpawnPath) on RWG and NodeClassPath on Vanilla' }
     # G9
@@ -153,6 +155,12 @@ function Invoke-RwgdealChecks($T) {
     if ((Count $s ('PurityDeckSource[i % ' + 'PurityDeckSource.Num()]')) -ne 0 -or (Count $s ('Purity' + 'Idx')) -ne 0 -or (Count $d ('Purity' + 'Idx')) -ne 0 -or (Count $h ('PurityDeck' + ' =')) -ne 0) { $f += '(G10) the map-wide prefix deck and the shared purity cursor must be gone' }
     $f += Check-Log $T 'deal' 'G10' 'PURITYCENSUS: ' 'PURITYCENSUS: deal=%s res=%s cards=%d origImpure=%d origNormal=%d origPure=%d dealt=%d drawnImpure=%d drawnNormal=%d drawnPure=%d assignedImpure=%d assignedNormal=%d assignedPure=%d randomize=%d newDealt=%d fallbackToMapDeck=%d' 16
     if ((Count $d 'Emit(TEXT("ALL"), Total);') -ne 1) { $f += '(G10) PURITYCENSUS totals line (res ALL) missing' }
+    # G11 (rwg-seedgas-1): the gas deck drop is bypassed for SEEDED kinds only -- the predicate keeps the gas test and ANDs the
+    # seeded-kind exemption onto it (never an OR, never a bare seeded test); Deal()'s existing-gas-slot skip is untouched.
+    $gasDrop = '        if (IsGasResourcePath(Kind) && !NodeShuffleRwgSeedGas::IsSeededKind(ModQuota, Kind)) { continue; }'
+    if ((Count $s $gasDrop) -ne 1 -or (Count $s ('if (IsGasResourcePath(Kind)) { con' + 'tinue; }')) -ne 0 -or (Count $s 'NodeShuffleRwgSeedGas::IsSeededKind(') -ne 1) { $f += '(G11) the gas deck drop must skip SEEDED kinds only: IsGasResourcePath(Kind) AND NOT IsSeededKind, at the single deck-build site' }
+    if (-not (Ordered $s @('NodeShuffleRwgSeedGas::DecideAndApply(', 'NodeShuffleRwgSeedGas::Restore(ModQuota', $gasDrop, 'NodeShuffleRwgDeal::Deal(NewLayout, In, Rng, RwgDeal);'))) { $f += '(G11) seed decision, restore and the gas deck drop must precede the RWG Deal() call' }
+    if ((Count $T.deal 'return E.bActive && !E.bPinned && !(!E.bIsNewNode && In.IsGas && In.IsGas(E.AssignedResourceClassPath));') -ne 1) { $f += '(G11) Deal() must still skip EXISTING gas slots (never retyped)' }
     return $f
 }
 
@@ -175,7 +183,7 @@ $mutants = @(
     @{ Name = 'A13 RWGDEAL drops an argument'; Key = 'deal'; Expect = 'G6'; Find = 'Out.SolidToLiquid, Out.LiquidToSolid, Out.VanillaOnlyFallbacks);'; Repl = 'Out.SolidToLiquid, Out.LiquidToSolid);' }
     @{ Name = 'A14 RWGDEAL-RES drops look'; Key = 'deal'; Expect = 'G6'; Find = ' ownClass=%d look=%d"),'; Repl = ' ownClass=%d"),' }
     @{ Name = 'A15 RWG FIX B line keeps the false claim'; Key = 'sub'; Expect = 'G6'; Find = '(rwg: form follows the card)"),'; Repl = ('(no liquid card on a solid slot by ' + 'construction)"),') }
-    @{ Name = 'A16 marker reverted'; Key = 'nsmod'; Expect = 'G7'; Find = ('2026-10-30-rwg-' + 'clifftop-1'); Repl = ('2026-10-29-rwg-' + 'layout-dump-1') }
+    @{ Name = 'A16 marker reverted'; Key = 'nsmod'; Expect = 'G7'; Find = ('2026-10-31-rwg-' + 'seedgas-1'); Repl = ('2026-10-30-rwg-' + 'clifftop-1') }
     @{ Name = 'A17 Rung 3 reads NodeClassPath on RWG'; Key = 'sub'; Expect = 'G8'; Find = '? PreSubstituteSpawnPath(E) : E.NodeClassPath;'; Repl = '? E.NodeClassPath : E.NodeClassPath;' }
     @{ Name = 'A19 rebuild entry form from the saved card'; Key = 'sub'; Expect = 'G9'; Find = 'E.ResourceForm = RebuildForm;'; Repl = ('E.ResourceForm = Old.' + 'ResourceForm;') }
     @{ Name = 'A20 rebuild latch from the saved card form'; Key = 'sub'; Expect = 'G9'; Find = '                if (RebuildForm == FormLiquid)'; Repl = ('                if (Old.' + 'ResourceForm == FormLiquid)') }
@@ -200,6 +208,9 @@ $mutants = @(
     @{ Name = 'B17 newDealt not counted'; Key = 'deal'; Expect = 'G10'; Find = 'if (E.bIsNewNode) { C.NewDealt++; }'; Repl = '' }
     @{ Name = 'B18 census drops randomize'; Key = 'deal'; Expect = 'G10'; Find = ' randomize=%d newDealt=%d'; Repl = ' newDealt=%d' }
     @{ Name = 'B19 census call loses the RandomizePurity argument'; Key = 'sub'; Expect = 'G10'; Find = ', Config.RandomizePurity); // once per roll'; Repl = ', false); // once per roll' }
+    @{ Name = 'S1 gas drop exempts every kind'; Key = 'sub'; Expect = 'G11'; Find = 'if (IsGasResourcePath(Kind) && !NodeShuffleRwgSeedGas::IsSeededKind(ModQuota, Kind))'; Repl = 'if (IsGasResourcePath(Kind) && false)' }
+    @{ Name = 'S2 gas drop OR instead of AND'; Key = 'sub'; Expect = 'G11'; Find = 'if (IsGasResourcePath(Kind) && !NodeShuffleRwgSeedGas::IsSeededKind(ModQuota, Kind))'; Repl = 'if (IsGasResourcePath(Kind) || !NodeShuffleRwgSeedGas::IsSeededKind(ModQuota, Kind))' }
+    @{ Name = 'S3 existing gas slots dealt on RWG'; Key = 'deal'; Expect = 'G11'; Find = '&& !(!E.bIsNewNode && In.IsGas && In.IsGas(E.AssignedResourceClassPath))'; Repl = '' }
     @{ Name = 'A18 registry fallback after the kind table'; Key = 'sub'; Expect = 'G4'; Find = 'NodeShuffleRepClass::MatchByRegistry(Res, RegQuery'; Repl = 'NodeShuffleRepClass::MatchByRegistryMovedOut(Res, RegQuery'; Find2 = 'K.bLook = ResourceHasAuthoredLook(LoadClassByPath(Kind));'; Repl2 = 'K.bLook = ResourceHasAuthoredLook(LoadClassByPath(Kind)); NodeShuffleRepClass::MatchByRegistry(Res, RegQuery' }
 )
 $mutantFails = @(); $caught = 0
@@ -217,5 +228,5 @@ if ($all.Count -gt 0) {
     Write-Host "RWGDEAL LINT: FAIL -- $($all.Count) problem(s). Mutants caught $caught/$($mutants.Count)."
     exit 1
 }
-Write-Host "PASS: RWGDEAL lint -- G1..G10 hold across $($text.Count) loaded files; mutants caught $caught/$($mutants.Count)."
+Write-Host "PASS: RWGDEAL lint -- G1..G11 hold across $($text.Count) loaded files; mutants caught $caught/$($mutants.Count)."
 exit 0

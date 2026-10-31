@@ -11,6 +11,7 @@
 #include "NodeShuffleRepClass.h" // rwg-repclass-1: per-resource node-class ranking + registry fallback + own-class predicate
 #include "NodeShuffleRwgRockCache.h" // rwg-rockcache-1: the shared 8 m rock-owns-node constant
 #include "NodeShuffleRwgDeal.h" // rwg-deal-1: the slot-kind-agnostic RWG card deal
+#include "NodeShuffleRwgSeedGas.h" // rwg-seedgas-1: the RWG modded vanilla-count table
 
 #include "EngineUtils.h"
 #include "TimerManager.h"
@@ -1312,6 +1313,13 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
         NewLayout.Add(E);
     }
 
+    // rwg-seedgas-1 (A1): the RWG modded vanilla-count table. Overrides a listed modded resource's count, or seeds a listed
+    // gas resource with zero originals, BEFORE ResourceKinds is generated; Restore below puts the captured counts back
+    // after the trim loop. Contract: NodeShuffleRwgSeedGas.h. Vanilla maps: no map changes (MODQUOTA prints notRwg).
+    NodeShuffleRwgSeedGas::FState ModQuota;
+    NodeShuffleRwgSeedGas::DecideAndApply(this, Config.ModdedVanillaCountsOnRwg, GetMapMode() == ENodeShuffleMapMode::Rwg,
+        SpawnRefusedClassSubstitute, VanillaResourceCounts, VanillaCount, FormByResource, FormSolid, NodeClassByResource, ModQuota);
+
     // 3. Decide how many nodes are active.
     const int32 PoolSize = NewLayout.Num() + CarriedEntries.Num();
     const int32 PinnedCount = CarriedEntries.Num() +
@@ -1384,6 +1392,9 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
             Q++; QuotaSum++;
         }
     }
+
+    // rwg-seedgas-1 (A1): quotas are final; the registry block, REPCLASS census and EmitRollCensus read captured counts.
+    NodeShuffleRwgSeedGas::Restore(ModQuota, VanillaResourceCounts, VanillaCount);
 
     // 5. Choose the active set: pinned always; then random draws until TargetActive.
     //    (T68: "all vanilla if disappearing is off" is gone with the option -- see above.)
@@ -1520,7 +1531,9 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     TArray<FString> LiquidDeck;
     for (const FString& Kind : ResourceKinds)
     {
-        if (IsGasResourcePath(Kind)) { continue; } // gas: relocate-only, never enters a deal deck
+        // gas: relocate-only, never enters a deal deck -- EXCEPT a kind the RWG table SEEDED (rwg-seedgas-1: zero originals,
+        // own node class resolved), whose cards spawn that own class carrying their own resource.
+        if (IsGasResourcePath(Kind) && !NodeShuffleRwgSeedGas::IsSeededKind(ModQuota, Kind)) { continue; }
         const int32 DeckCount = Quota[Kind] - PinnedPerResource.FindRef(Kind);
         TArray<FString>& Pile = (CardFormOf(Kind) == FormLiquid) ? LiquidDeck : SolidDeck;
         for (int32 i = 0; i < DeckCount; i++) { Pile.Add(Kind); }
@@ -1536,6 +1549,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     // this commit on, on Vanilla and RWG alike. Contract: NodeShuffleRwgDeal.h.
     NodeShuffleRwgDeal::FPurityDecks PurityDecks;
     NodeShuffleRwgDeal::BuildPurityDecks(NewLayout, PurityDeckSource, SolidDeck, LiquidDeck, Rng, PurityDecks);
+    NodeShuffleRwgSeedGas::LogRoll(ModQuota, Quota, PinnedPerResource, SolidDeck, LiquidDeck, PurityDecks); // rwg-seedgas-1 MODQUOTA
 
     // Per-pile draw cursors (purity cursors are per class, inside PurityDecks).
     int32 SolidIdx = 0, LiquidIdx = 0;
@@ -2547,6 +2561,9 @@ void ANodeShuffleSubsystem::ApplyLayout()
     // NOTHING ELSE IN THIS PASS TOUCHES WELLS: they are excluded from the regular node population by
     // IsFrackingActor, so this call is the mod's entire well surface.
     if (GetMapMode() != ENodeShuffleMapMode::Vanilla) { RwgSpawnPass(SpawnRadiusCm, bChangedWorld); }
+    // rwg-seedgas-1: SEEDGASSPAWN, change-driven (prints only when a seeded gas resource's spawn counts move).
+    NodeShuffleRwgSeedGas::EmitSpawnCensus(this, GetMapMode() == ENodeShuffleMapMode::Rwg, Layout, SpawnedNodes, SpawnFailCounts,
+        SpawnParkedThisSession);
     // RWG P4 (2026-10-18): wells run on every map mode. Off vanilla, saved claims are re-bound to this session's actor
     // paths first (once per session), BEFORE ApplyWellRetype / AdoptRestoredWellGroups read any path.
     if (GetMapMode() != ENodeShuffleMapMode::Vanilla) { RwgRebindWellClaimsOnce(TEXT("apply")); }

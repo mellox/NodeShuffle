@@ -10,6 +10,7 @@
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "Engine/GameInstance.h"
+#include "NodeShuffleRwgSeedGas.h"
 
 FNodeShuffleConfigStruct FNodeShuffleConfigStruct::GetActiveConfig(UObject* WorldContext)
 {
@@ -490,6 +491,13 @@ void UNodeShuffleConfig::PostInitProperties()
         Rows->DefaultValue = RowTemplate;
         Root->SectionProperties.Add(TEXT("ProtectedForeignResources"), Rows);
     }
+
+    // rwg-seedgas-1 (2026-10-31, amendment A1): the RWG modded vanilla-count table -- toggle here, rows + logic in
+    // NodeShuffleRwgSeedGas.cpp (this file is over the 500-line rule: call sites only). OTHER MODS group.
+    AddBool(TEXT("ModdedVanillaCountsOnRwg"), true,
+        TEXT("Use Vanilla Counts For Modded Resources (Random World Generator)"),
+        TEXT("ON by default. Random World Generator maps only, at each layout roll or re-roll: each modded resource listed in the table below gets its vanilla map node count, scaled by this world's amount of vanilla ore nodes, in place of the number of its nodes NodeShuffle found on this world, when deciding how many nodes of it the shuffle deals. A listed gas resource with no node on this world gets new nodes of its listed node class, and none if that class cannot be loaded. Other maps are not affected."));
+    NodeShuffleRwgSeedGas::RegisterConfigRows(Root, ArrayClass, SectionClass, StringClass, IntegerClass);
 
     // ---- T71 (ns-t71-wells-always-on, 2026-08-12): THE WHOLE RESOURCE WELLS GROUP WAS DELETED HERE. --
     // T71: the two rows named here -- 'Shuffle Resource Wells (In Place)' (ShuffleResourceWells) and

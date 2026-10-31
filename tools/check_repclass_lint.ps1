@@ -3,7 +3,8 @@
 # Needles naming a forbidden or superseded literal are BUILT BY CONCATENATION so this file cannot match itself.
 #   R1  Ranking predicate: generic = /Game/ or /Script/FactoryGame.; base-game resource ranks every class 0 (first-seen kept);
 #       own-mount 2 > non-generic 1 > generic 0; replace only on a STRICTLY higher rank; the latch lambda routes through it.
-#   R2  Replace-before-stamp: every LatchByResource call, every NodeClassByResource write and the registry fallback sit
+#   R2  Replace-before-stamp: every LatchByResource call, every NodeClassByResource write, the registry fallback and the rwg-seedgas-1
+#       seed decision (NodeShuffleRwgSeedGas::DecideAndApply) sit
 #       textually before the Phase-2 stamp loop (the map is read by that loop and the conversion restamp); no write after it.
 #   R3  Own-class dress skip at all three dress sites (spawn, adopt, mid-session redress): own class (IsOwnNodeClassForResource:
 #       own-mount AND CDO resource == resource, fail-open on a null CDO resource; repclass-3 F7) AND NodeHasOwnVisual skips
@@ -105,6 +106,7 @@ function Invoke-RepclassChecks($T) {
             $last = $s.LastIndexOf($n)
             if ($last -lt 0) { $f += "(R2) '$n' absent" } elseif ($last -gt $stamp) { $f += "(R2) '$n' appears after the Phase-2 stamp loop (a replacement could land after copies were stamped)" }
         }
+        if ((Count $s 'NodeShuffleRwgSeedGas::DecideAndApply(') -ne 1 -or $s.IndexOf('NodeShuffleRwgSeedGas::DecideAndApply(') -gt $stamp) { $f += '(R2) the rwg-seedgas-1 seed decision (writes NodeClassByResource) must run once, before the Phase-2 stamp loop' }
         if ($s.IndexOf('NodeClassByResource[', $stamp) -ge 0 -or $s.IndexOf('NodeClassByResource.FindOrAdd(', $stamp) -ge 0 -or $s.IndexOf('NodeClassByResource.Emplace(', $stamp) -ge 0) { $f += '(R2) no NodeClassByResource write after the stamp loop' }
         if (-not (Ordered $s @('// rwg-repclass-1 (b) REGISTRY FALLBACK', 'NodeShuffleRepClass::QueryDerivedNodeClasses(RegQuery);', 'TEXT("REPCLASS res=', '    // Phase 2: now that every active new node', '    int32 StampedByResource = 0;', 'if (const FString* ByResource = NodeClassByResource.Find(E.AssignedResourceClassPath))'))) { $f += '(R2) registry fallback and REPCLASS census must precede the Phase-2 stamp loop' }
     }
@@ -150,7 +152,7 @@ function Invoke-RepclassChecks($T) {
     }
     if ((Count $s ('rep-class byResource ' + 'CONFLICT')) -ne 0 -or (Count $s ('NodeClassByResource' + 'ConflictLogged')) -ne 0) { $f += '(R6) the first-seen CONFLICT line and its set must be gone' }
     # R7
-    if ((Count $T.nsmod ('LOADED (2026-10-30-rwg-' + 'clifftop-1)')) -ne 1 -or (Count $T.nsmod ('2026-10-29-rwg-' + 'layout-dump-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-28-rwg-' + 'trace-diag-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-27-rwg-' + 'trace-diag-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-26-rwg-' + '0-1-12-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-26-rwg-' + '0-1-12-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'deal-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'density-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'rockcache-2')) -ne 0) { $f += '(R7) marker must be rwg-steep-2 with rwg-steep-1, rwg-deal-1, rwg-density-2 and rwg-rockcache-2 absent' }
+    if ((Count $T.nsmod ('LOADED (2026-10-31-rwg-' + 'seedgas-1)')) -ne 1 -or (Count $T.nsmod ('2026-10-30-rwg-' + 'clifftop-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-29-rwg-' + 'layout-dump-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-28-rwg-' + 'trace-diag-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-27-rwg-' + 'trace-diag-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-26-rwg-' + '0-1-12-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-26-rwg-' + '0-1-12-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'deal-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'density-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'rockcache-2')) -ne 0) { $f += '(R7) marker must be rwg-steep-2 with rwg-steep-1, rwg-deal-1, rwg-density-2 and rwg-rockcache-2 absent' }
     if ((Count $s '#include "NodeShuffleRepClass.h"') -ne 1) { $f += '(R7) subsystem must include NodeShuffleRepClass.h' }
     # R8 restamp (rwg-repclass-2)
     if ((Count $s ('RepClassSpawnPath =' + ' ')) -ne 2 -or (Count $s 'E.RepClassSpawnPath = *OwnByRes;') -ne 1 -or (Count $s 'E.RepClassSpawnPath = FormRep;') -ne 1 -or (Count $s 'E.RepClassSpawnPath.Reset();') -ne 1) { $f += '(R8) RepClassSpawnPath is written only by the conversion restamp (rank-2 assignment + rwg-deal-1 form-restamp assignment, one reset)' }
@@ -179,6 +181,7 @@ $mutants = @(
     @{ Name = 'M4 generic predicate loses /Script/FactoryGame.'; Key = 'rc'; Expect = 'R1'; Find = ' || ClassPath.StartsWith(TEXT("/Script/FactoryGame."));'; Repl = ';' }
     @{ Name = 'M5 latch call after the stamp loop'; Key = 'sub'; Expect = 'R2'; Find = "            E.NodeClassPath = *ByResource;`n            StampedByResource++;"; Repl = "            E.NodeClassPath = *ByResource;`n            StampedByResource++;`n            LatchByResource(E.AssignedResourceClassPath, E.NodeClassPath, NodeClassByResource, RepClassStats);" }
     @{ Name = 'M6 map write after the stamp loop'; Key = 'sub'; Expect = 'R2'; Find = '            StampedByFormFallback++;'; Repl = '            StampedByFormFallback++; NodeClassByResource.Add(E.AssignedResourceClassPath, E.NodeClassPath);' }
+    @{ Name = 'M5b seed decision after the stamp loop'; Key = 'sub'; Expect = 'R2'; Find = '            StampedByFormFallback++;'; Repl = '            StampedByFormFallback++; NodeShuffleRwgSeedGas::DecideAndApply(this);' }
     @{ Name = 'M7 spawn counts captured as authored again'; Key = 'sub'; Expect = 'R3'; Find = 'const bool bOwnClassVisual = bOwnClass && NodeHasOwnVisual('; Repl = 'const bool bOwnClassVisual = false && NodeHasOwnVisual(' }
     @{ Name = 'M8 adopt counts captured as authored again'; Key = 'sub'; Expect = 'R3'; Find = 'const bool bOwnClassAdoptVisual = bOwnClassAdopt && NodeHasOwnVisual('; Repl = 'const bool bOwnClassAdoptVisual = false && NodeHasOwnVisual(' }
     @{ Name = 'M9 redress hides own-class nodes again'; Key = 'sub'; Expect = 'R3'; Find = '                && NodeHasOwnVisual(*Live, LiveRock))'; Repl = '                && false)' }
@@ -192,7 +195,7 @@ $mutants = @(
     @{ Name = 'M17 DRESS-SKIP reason becomes a cause sentence'; Key = 'sub'; Expect = 'R5'; Find = 'reason=ownClass"),'; Repl = 'reason=the mod already dressed it"),' }
     @{ Name = 'M18 DRESS-SKIP ungated at spawn'; Key = 'sub'; Expect = 'R5'; Find = 'if (bOwnClass && bSpawnDiag)'; Repl = 'if (bOwnClass)' }
     @{ Name = 'M19 REPCLASS repeats a field'; Key = 'sub'; Expect = 'R6'; Find = ' replacedFirstSeen=%d source=%s"),'; Repl = ' replacedFirstSeen=%d source=%s seen=%d"),' }
-    @{ Name = 'M20 marker reverted'; Key = 'nsmod'; Expect = 'R7'; Find = ('2026-10-30-rwg-' + 'clifftop-1'); Repl = ('2026-10-29-rwg-' + 'layout-dump-1') }
+    @{ Name = 'M20 marker reverted'; Key = 'nsmod'; Expect = 'R7'; Find = ('2026-10-31-rwg-' + 'seedgas-1'); Repl = ('2026-10-30-rwg-' + 'clifftop-1') }
     @{ Name = 'M21 trap ii: rebuild carries the restamp'; Key = 'sub'; Expect = 'R8'; Find = '            E.SpawnNodeClassPath = Old.SpawnNodeClassPath;'; Repl = ('            E.SpawnNodeClassPath = Old.SpawnNodeClassPath; E.RepClassSpawnPath = Old.' + 'RepClassSpawnPath;') }
     @{ Name = 'M22 trap ii: re-roll latch learns the copy class'; Key = 'sub'; Expect = 'R8'; Find = 'LatchByResource(Old.OriginalResourceClassPath, Old.NodeClassPath, NodeClassByResource, RepClassStats);'; Repl = ('LatchByResource(Old.OriginalResourceClassPath, PreSubstituteSpawnPath(' + 'Old), NodeClassByResource, RepClassStats);') }
     @{ Name = 'M23 trap i: restamp writes the original class'; Key = 'sub'; Expect = 'R8'; Find = 'E.RepClassSpawnPath = *OwnByRes;'; Repl = 'E.RepClassSpawnPath = *OwnByRes; E.NodeClassPath = *OwnByRes;' }

@@ -31,6 +31,24 @@ struct NODESHUFFLE_API FNodeShuffleForeignResourceRow
     bool Protected{true};
 };
 
+// rwg-seedgas-1 (2026-10-31, amendment A1): ONE row of the RWG modded vanilla-count table. Mirrors the three properties
+// of the ModdedVanillaCountRows element section BY NAME. Required for the same check() reason as the T60 row above.
+// NOTHING READS THE MIRRORED ROWS: NodeShuffleRwgSeedGas.cpp reads the LIVE config tree, as T60 does.
+USTRUCT(BlueprintType)
+struct NODESHUFFLE_API FNodeShuffleModdedCountRow
+{
+    GENERATED_BODY()
+
+    UPROPERTY(BlueprintReadWrite)
+    FString ResourcePath;
+
+    UPROPERTY(BlueprintReadWrite)
+    FString NodeClassPath;
+
+    UPROPERTY(BlueprintReadWrite)
+    int32 VanillaCount{0};
+};
+
 // Plain struct mirror of the configuration. Field names MUST match the
 // section property keys registered in UNodeShuffleConfig exactly —
 // UConfigManager::FillConfigurationStruct maps them by name.
@@ -178,6 +196,14 @@ struct NODESHUFFLE_API FNodeShuffleConfigStruct
     // If a future consumer wants to read it, prove it fills correctly first.
     UPROPERTY(BlueprintReadWrite)
     TArray<FNodeShuffleForeignResourceRow> ProtectedForeignResources;
+
+    // rwg-seedgas-1 (amendment A1): master toggle of the RWG modded vanilla-count table. Default ON. Read by RollLayout.
+    UPROPERTY(BlueprintReadWrite)
+    bool ModdedVanillaCountsOnRwg{true};
+
+    // rwg-seedgas-1: mirror of the table rows (see FNodeShuffleModdedCountRow -- present for the check(), never read).
+    UPROPERTY(BlueprintReadWrite)
+    TArray<FNodeShuffleModdedCountRow> ModdedVanillaCountRows;
 
     static FNodeShuffleConfigStruct GetActiveConfig(UObject* WorldContext);
 };
