@@ -22,7 +22,8 @@
 #   F17 (fix round 1, F7) Provisioning skips rayCasted actorless entries and counts RwgSeaDealFailed entries as sea-pending.
 #   F18 (fix round 1, F9) The RwgSpawnAllAtRoll help text claims only what the code does.
 #   F14 (fix round 1, F3) RWGSTUCK / HERE-DENSITY: the provisional settle is bracketed by the RWGSTUCK snapshot/note, and the note,
-#       the stuck census and HERE-DENSITY count a valid actor as live only when it is NOT provisional.
+#       the stuck census and HERE-DENSITY count a valid actor as live only when it is NOT provisional; (re-review V-R1) the
+#       HereUnspawned comment says its two lines still count a provisional actor as spawned (code unchanged; rwgtrace H3 pins it).
 # Mutants run in-file. Exit 0 = all hold; 1 = at least one does not; 2 = a pinned FILE is missing.
 
 $ErrorActionPreference = 'Stop'
@@ -39,6 +40,7 @@ $files = [ordered]@{
     subh  = 'NodeShuffle\Public\NodeShuffleSubsystem.h'
     nsmod = 'NodeShuffle\Private\NodeShuffle.cpp'
     dens  = 'NodeShuffle\Private\NodeShuffleMapModeDensity.cpp'
+    here  = 'NodeShuffle\Private\NodeShuffleHereUnspawned.cpp'
 }
 $text = [ordered]@{}
 foreach ($k in $files.Keys) {
@@ -155,6 +157,8 @@ function Invoke-FarspawnChecks($T) {
     if ((Count $T.dens 'if (Live && IsValid(*Live) && !E.bRwgProvisional) { continue; }') -ne 1) { $f += '(F14) the RWGSTUCK census must not skip a provisional entry as live' }
     if ((Count $T.dens 'const bool bLive = Live && IsValid(*Live) && !E.bRwgProvisional;') -ne 1) { $f += '(F14) HERE-DENSITY live must exclude provisional actors' }
     if ((Count $T.dens 'a provisional node, placed far from every player and not yet fitted to the ground, is not counted as live') -ne 1) { $f += '(F14) the HERE-DENSITY legend must say provisional nodes are not live' }
+    # F14 (re-review V-R1): HERE-NEAREST-UNSPAWNED / HERE-UNSPAWNED-BANDS deliberately count a provisional actor as spawned; the comment says so
+    if ((Count $T.here 'A provisional actor (rwg-farspawn-1) HAS an actor and is not in it, while HERE-DENSITY counts it as not live (fix F3): the two lines are not complements.') -ne 1 -or (Count $T.here ("(HERE-DENSITY's live" + "`n// test, negated)")) -ne 0) { $f += '(F14) V-R1: the HereUnspawned population comment must say a provisional actor is in neither line while HERE-DENSITY counts it not live' }
     return $f
 }
 
@@ -205,6 +209,7 @@ $mutants = @(
     @{ Name = 'X43 F9 help text claims simultaneity again'; Key = 'prov'; Expect = 'F18'; Find = 'get a node placed, up to a batch per spawn pass, once'; Repl = ('get a node placed at ' + 'once, up to a batch per spawn pass, once') }
     @{ Name = 'X44 F9 help text drops the skips'; Key = 'prov'; Expect = 'F18'; Find = '(parked, dormant, refused, pinned, or already fitted to the ground) are skipped'; Repl = 'are skipped' }
     @{ Name = 'X45 F10 old PROVSPAWN field name back'; Key = 'prov'; Expect = 'F10'; Find = 'spawnedThisPass=%d remainingCandidates=%d'; Repl = ('spawnedThisPass=%d remaining' + 'Unspawned=%d') }
+    @{ Name = 'X46 V-R1 HereUnspawned comment drops the provisional sentence'; Key = 'here'; Expect = 'F14'; Find = 'A provisional actor (rwg-farspawn-1) HAS an actor and is not in it, while HERE-DENSITY counts it as not live (fix F3): the two lines are not complements. '; Repl = '' }
     @{ Name = 'X27 F2 pin check evaluated before the distance test'; Key = 'place'; Expect = 'F9'; Find = 'if (E.bRwgProvisional && IsLocationNearAnyPlayer(E.Location, AttemptRadiusCm) && !RwgProvisionalPinWins(E)) {'; Repl = 'if (E.bRwgProvisional && !RwgProvisionalPinWins(E) && IsLocationNearAnyPlayer(E.Location, AttemptRadiusCm)) {' }
 )
 $mutantFails = @()

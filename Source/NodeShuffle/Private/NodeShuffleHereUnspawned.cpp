@@ -1,8 +1,8 @@
 // rwg-trace-diag-2 (2026-10-28) -- DIAGNOSTICS ONLY. NodeShuffle.Here on RWG: where the nearest unspawned active entry lies from where the
 // player stands, and how the unspawned active entries spread over player-distance bands. Reads Layout, SpawnedNodes, RwgStuckTracker,
 // SpawnParkedThisSession and DormantThisSession; writes nothing. Called once from LogHereCensus (NodeShuffleSubsystem.cpp), next to LogHereDensity.
-// Population of both lines: layout entries with bIsNewNode && bActive whose SpawnedNodes actor is absent or invalid (HERE-DENSITY's live
-// test, negated), so deferred, stuck and never-attempted entries alike. Every distance is 2-D from the HERE pawn.
+// Population of both lines: layout entries with bIsNewNode && bActive whose SpawnedNodes actor is absent or invalid, so deferred, stuck and never-attempted entries
+// alike. A provisional actor (rwg-farspawn-1) HAS an actor and is not in it, while HERE-DENSITY counts it as not live (fix F3): the two lines are not complements. Every distance is 2-D from the HERE pawn.
 // HERE-NEAREST-UNSPAWNED legend (prose only): entry is the first 8 GUID characters, res the resource class tail, distM the 2-D distance,
 //   dzM the entry's stored Z minus the pawn Z (an unspawned entry stores its deal or API Z, not a settled ground Z), worldDeltaXM /
 //   worldDeltaYM the world-axis delta from the pawn in metres. failedAttemptsAtLoc is RwgStuckTracker's count for the entry (the field of
