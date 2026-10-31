@@ -9,9 +9,10 @@
 //   landFactor = (captured /Game/ SOLID-form originals this roll) / RwgBaseSolidNodes (429), clamped [0.25, 4.0]
 //   captured originals of the row resource > 0  -> OVERRIDE: its count in the quota pipeline becomes target
 //   captured originals of the row resource == 0 -> SEED, only if the descriptor is RF_GAS AND an own node class resolves
-//                                                 (loaded, AFGResourceNode child, not abstract, not session-refused,
-//                                                 own-mount rank 2 -- the Phase-2 stamp's test); registry first, then
-//                                                 the configured class path
+//                                                 (loaded, AFGResourceNode child, not an AFGResourceDeposit child, not
+//                                                 abstract, not session-refused, and the spawn site's own-class test
+//                                                 IsOwnNodeClassForResource: own mount AND CDO resource == the row
+//                                                 resource); registry first, then the configured class path
 //   anything else                               -> skip, with the reason printed
 // Both actions go through the SAME quota pipeline as captured originals: the count is written into
 // VanillaResourceCounts/VanillaCount before ResourceKinds is generated and RESTORED right after the trim loop, so share,

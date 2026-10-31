@@ -5,7 +5,8 @@
 #   Q1  Gate order per row: disabled -> notRwg -> badRow -> duplicate -> OVERRIDE only when captured originals > 0 (then continue)
 #       -> SEED path: gas form required -> class gate -> noClass skip -> seeded. The seed branch is reachable only past the
 #       override branch's continue, i.e. only with zero captured originals.
-#   Q2  Class gate: AcceptOwnClass = AFGResourceNode child AND not abstract AND not session-refused AND own-mount rank 2; the
+#   Q2  Class gate: AcceptOwnClass = AFGResourceNode child AND not an AFGResourceDeposit child AND not abstract AND not
+#       session-refused AND IsOwnNodeClassForResource (own mount AND CDO resource == row resource, fix round 1 F1); the
 #       registry candidate and the configured class both pass through it; registry is tried first.
 #   Q3  Override saves the captured count, writes the target, moves VanillaCount by (target - captured); seed writes the target,
 #       FormSolid, the resolved class and the seeded set. The table file never writes the quota or the active target.
@@ -82,8 +83,8 @@ function Invoke-SeedgasChecks($T) {
     if (-not (Ordered $g @('void DecideAndApply(UObject* WorldContext', 'if (!bEnabled) { R.Skipped = TEXT("disabled"); continue; }', 'if (!bMapIsRwg) { R.Skipped = TEXT("notRwg"); continue; }', 'if (Row.Resource.IsEmpty() || Row.VanillaCount < 1 || Row.VanillaCount > MaxRowCount) { R.Skipped = TEXT("badRow"); continue; }', 'if (SeenRows.Contains(Row.Resource)) { R.Skipped = TEXT("duplicate"); continue; }', 'if (R.CapturedOriginals > 0)', 'R.Action = TEXT("override");', 'continue;', 'if (R.Form != TEXT("gas")) { R.Skipped = TEXT("notGas"); continue; }', 'if (R.ResolvedClass.IsEmpty()) { R.Skipped = TEXT("noClass"); continue; }', 'Out.SeededKinds.Add(Row.Resource);', 'R.Action = TEXT("seed");'))) { $f += '(Q1) gate order must be disabled, notRwg, badRow, duplicate, override only when originals > 0, then gas, class, seed' }
     if ((Count $g 'if (R.CapturedOriginals > 0)') -ne 1 -or (Count $g ('R.CapturedOriginals ' + '>= 0')) -ne 0 -or (Count $g ('R.CapturedOriginals ' + '== 0')) -ne 0) { $f += '(Q1) the override branch is the single originals-positive test; the seed path is its fall-through' }
     # Q2
-    $accept = 'return C && C->IsChildOf(AFGResourceNode::StaticClass()) && !C->HasAnyClassFlags(CLASS_Abstract)' + "`n" + '                && !Refused.Contains(Path) && NodeShuffleRepClass::IsOwnNodeClass(Path, Res);'
-    if ((Count $g $accept) -ne 1) { $f += '(Q2) AcceptOwnClass must test node child, not abstract, not refused and own-mount rank 2' }
+    $accept = 'return C && C->IsChildOf(AFGResourceNode::StaticClass()) && !C->IsChildOf(AFGResourceDeposit::StaticClass())' + "`n" + '                && !C->HasAnyClassFlags(CLASS_Abstract)' + "`n" + '                && !Refused.Contains(Path) && NodeShuffleRepClass::IsOwnNodeClassForResource(C, Path, Res);'
+    if ((Count $g $accept) -ne 1 -or (Count $g '#include "Resources/FGResourceDeposit.h"') -ne 1) { $f += '(Q2) AcceptOwnClass must test node child, not a deposit, not abstract, not refused and the spawn site own-class test (own mount AND CDO resource)' }
     if ((Count $g 'AcceptOwnClass(LoadClassQuiet(Match.Matched), Match.Matched, Row.Resource, RefusedClasses)') -ne 1 -or (Count $g 'AcceptOwnClass(Cfg, Row.NodeClassPath, Row.Resource, RefusedClasses)') -ne 1) { $f += '(Q2) both the registry candidate and the configured class must pass AcceptOwnClass' }
     if (-not (Ordered $g @('NodeShuffleRepClass::MatchByRegistry(Row.Resource, RegQuery, RefusedClasses, RegCache, Match);', 'R.ResolvedBy = TEXT("registry");', 'if (R.ResolvedClass.IsEmpty() && AcceptOwnClass(Cfg', 'R.ResolvedBy = TEXT("config");'))) { $f += '(Q2) registry first, configured class only when the registry did not resolve' }
     # Q3
@@ -120,7 +121,9 @@ $mutants = @(
     @{ Name = 'X3 gas gate dropped'; Key = 'sg'; Expect = 'Q1'; Find = 'if (R.Form != TEXT("gas")) { R.Skipped = TEXT("notGas"); continue; }'; Repl = '' }
     @{ Name = 'X4 seed without a class'; Key = 'sg'; Expect = 'Q1'; Find = 'if (R.ResolvedClass.IsEmpty()) { R.Skipped = TEXT("noClass"); continue; }'; Repl = '' }
     @{ Name = 'X5 class gate accepts abstract'; Key = 'sg'; Expect = 'Q2'; Find = '&& !C->HasAnyClassFlags(CLASS_Abstract)'; Repl = '' }
-    @{ Name = 'X6 class gate drops own-mount'; Key = 'sg'; Expect = 'Q2'; Find = '&& NodeShuffleRepClass::IsOwnNodeClass(Path, Res);'; Repl = ';' }
+    @{ Name = 'X6 class gate drops own-mount'; Key = 'sg'; Expect = 'Q2'; Find = '&& NodeShuffleRepClass::IsOwnNodeClassForResource(C, Path, Res);'; Repl = ';' }
+    @{ Name = 'X25 class gate admits deposits'; Key = 'sg'; Expect = 'Q2'; Find = ' && !C->IsChildOf(AFGResourceDeposit::StaticClass())'; Repl = '' }
+    @{ Name = 'X25b class gate drops the CDO-resource test'; Key = 'sg'; Expect = 'Q2'; Find = 'NodeShuffleRepClass::IsOwnNodeClassForResource(C, Path, Res);'; Repl = 'NodeShuffleRepClass::IsOwnNodeClass(Path, Res);' }
     @{ Name = 'X7 config bypasses the class gate'; Key = 'sg'; Expect = 'Q2'; Find = 'if (R.ResolvedClass.IsEmpty() && AcceptOwnClass(Cfg, Row.NodeClassPath, Row.Resource, RefusedClasses))'; Repl = 'if (R.ResolvedClass.IsEmpty() && Cfg)' }
     @{ Name = 'X8 override keeps VanillaCount'; Key = 'sg'; Expect = 'Q3'; Find = 'VanillaCount += R.Target - R.CapturedOriginals;'; Repl = '' }
     @{ Name = 'X9 table writes the quota'; Key = 'sg'; Expect = 'Q3'; Find = 'R.Action = TEXT("seed");'; Repl = ('R.Action = TEXT("seed"); Quota' + '.Add(Row.Resource, R.Target);') }

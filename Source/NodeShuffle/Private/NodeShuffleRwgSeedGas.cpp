@@ -13,6 +13,7 @@
 #include "Configuration/Properties/WidgetExtension/CP_Section.h"
 #include "Resources/FGItemDescriptor.h"
 #include "Resources/FGResourceDescriptor.h"
+#include "Resources/FGResourceDeposit.h"
 #include "Algo/Count.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
@@ -51,11 +52,12 @@ namespace NodeShuffleRwgSeedGas
             return C ? C : LoadObject<UClass>(nullptr, *Path, nullptr, LOAD_NoWarn | LOAD_Quiet);
         }
 
-        // Gate 4's acceptance test: the same predicate as the Phase-2 RWG stamp and the conversion restamp.
+        // Gate 4: the spawn site's own-class test (own mount AND CDO resource == this resource), never a pickup deposit class.
         bool AcceptOwnClass(const UClass* C, const FString& Path, const FString& Res, const TMap<FString, FString>& Refused)
         {
-            return C && C->IsChildOf(AFGResourceNode::StaticClass()) && !C->HasAnyClassFlags(CLASS_Abstract)
-                && !Refused.Contains(Path) && NodeShuffleRepClass::IsOwnNodeClass(Path, Res);
+            return C && C->IsChildOf(AFGResourceNode::StaticClass()) && !C->IsChildOf(AFGResourceDeposit::StaticClass())
+                && !C->HasAnyClassFlags(CLASS_Abstract)
+                && !Refused.Contains(Path) && NodeShuffleRepClass::IsOwnNodeClassForResource(C, Path, Res);
         }
 
         UConfigPropertySection* FindRowSection(UConfigProperty* Element, UConfigPropertyString** OutRes,
