@@ -386,7 +386,7 @@ void ANodeShuffleSubsystem::RwgSpawnPass(float SpawnRadiusCm, bool& bChangedWorl
         if (Live && IsValid(*Live))
         {
             // rwg-farspawn-1: a provisional actor (not trace-settled) within the attempt radius is settled by the attempt loop below, nearest first, same budget.
-            if (E.bRwgProvisional && !RwgProvisionalPinWins(E) && IsLocationNearAnyPlayer(E.Location, AttemptRadiusCm)) { Cands.Emplace(FMath::Square(RwgNearestPawnDist2D(E.Location)), I); continue; }
+            if (E.bRwgProvisional && IsLocationNearAnyPlayer(E.Location, AttemptRadiusCm) && !RwgProvisionalPinWins(E)) { Cands.Emplace(FMath::Square(RwgNearestPawnDist2D(E.Location)), I); continue; }
             // Live actors keep the vanilla per-pass re-assert chain, uncapped, at the vanilla radius.
             if (IsLocationNearAnyPlayer(E.Location, SpawnRadiusCm)) { ++RwgPcLive; EnsureNewNodeSpawned(E, bChangedWorld); bRwgSteepArmed = false; }
             continue;
