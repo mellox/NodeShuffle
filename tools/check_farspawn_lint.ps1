@@ -15,7 +15,7 @@
 #   F10 Diagnostic field lists: PROVSPAWN, PROVSETTLE (both lines), PROVCENSUS formats and argument lists verbatim.
 #   F11 PLACECENSUS ends with provisionalSpawned/provisionalSettled; their counters are the last two args and are reset per pass.
 #   F12 PROVSETTLE sampled <= 8 per pass; PROVCENSUS on 12th passes; a provisional attempt that made no actor restores the entry.
-#   F13 Marker 2026-10-31-rwg-farspawn-1 once, previous marker absent; the new .cpp stays under 500 lines.
+#   F13 Marker 2026-10-31-rwg-farspawn-1b once (fix round 1), previous markers absent; the new .cpp stays under 500 lines.
 #   F15 (fix round 1, F4) PROVSETTLE reports only what it tested: inPlace/settled counters need the respawned actor, settledZ is that
 #       actor's Z (never the entry's), ring/mapwide/redealt need TryRedealWaterLockedEntry to have returned true.
 #   F16 (fix round 1, F6) PROVSETTLE prints the scanner/radar reveal counts before the despawn and on the respawned actor; read-only.
@@ -129,7 +129,7 @@ function Invoke-FarspawnChecks($T) {
     if (-not (Ordered $spawnFn @('// RWG-only gate', '    if ((RwgPcPasses % 12) == 1) { RwgProvisionalEmitCensus(); }', '    if (!NodeShuffleMapMode::RwgSpawnAllAtRollOn() || Pawns.Num() == 0) { return; }', 'if (!Q.IsUsable()) { return; }'))) { $f += '(F12) fix F5: PROVCENSUS is emitted after the RWG gate and before the toggle/pawn/query returns' }
     if (-not (Ordered $spawnFn @('const FNodeShuffleEntry Snap = E;', 'EnsureNewNodeSpawned(E, bChangedWorld);', 'if (!IsValid(Node))', 'E = Snap;', 'RwgProvRefused.Add(E.EntryGuid);', 'E.bRayCasted = false;', 'E.bRwgProvisional = true;'))) { $f += '(F12) no actor -> entry restored and refused; actor -> unsettled + provisional' }
     # F13
-    if ((Count $T.nsmod ('LOADED (2026-10-31-rwg-' + 'farspawn-1)')) -ne 1 -or (Count $T.nsmod ('2026-10-31-rwg-' + 'seedgas-1b)')) -ne 0) { $f += '(F13) marker farspawn-1 present once, seedgas-1b absent' }
+    if ((Count $T.nsmod ('LOADED (2026-10-31-rwg-' + 'farspawn-1b)')) -ne 1 -or (Count $T.nsmod ('2026-10-31-rwg-' + 'farspawn-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-31-rwg-' + 'seedgas-1b)')) -ne 0) { $f += '(F13) marker farspawn-1b present once, farspawn-1 and seedgas-1b absent' }
     if (($p.Split("`n")).Count -ge 500) { $f += '(F13) NodeShuffleMapModeProvisional.cpp must stay under 500 lines' }
     # F15
     if (-not (Ordered $settleFn @('EnsureNewNodeSpawned(E, bChangedWorld);', 'AFGResourceNode* Fresh = SpawnedNodes.FindRef(E.EntryGuid);', 'const bool bRespawned = IsValid(Fresh);', 'if (bRespawned)', 'FreshAt = Fresh->GetActorLocation();', 'SettledZ = FreshAt.Z;', '++RwgProvSessSettled; ++RwgPcProvSettled;', '    }', 'Outcome = bRespawned ?'))) { $f += '(F15) inPlace, settledZ and the settled counters need the respawned actor' }
@@ -184,7 +184,7 @@ $mutants = @(
     @{ Name = 'X22 PLACECENSUS tail args swapped'; Key = 'place'; Expect = 'F11'; Find = 'RwgPcSolidTopRejFootprint, RwgPcProvSpawned, RwgPcProvSettled);'; Repl = 'RwgPcSolidTopRejFootprint, RwgPcProvSettled, RwgPcProvSpawned);' }
     @{ Name = 'X23 sample cap widened'; Key = 'provh'; Expect = 'F12'; Find = 'constexpr int32 RwgProvisionalSettleSamplesPerPass = 8;'; Repl = 'constexpr int32 RwgProvisionalSettleSamplesPerPass = 64;' }
     @{ Name = 'X24 refused attempt keeps the mutated entry'; Key = 'prov'; Expect = 'F12'; Find = "        if (!IsValid(Node))`n        {`n            E = Snap;"; Repl = "        if (!IsValid(Node))`n        {" }
-    @{ Name = 'X25 marker reverted'; Key = 'nsmod'; Expect = 'F13'; Find = ('2026-10-31-rwg-' + 'farspawn-1'); Repl = ('2026-10-31-rwg-' + 'seedgas-1b') }
+    @{ Name = 'X25 marker reverted'; Key = 'nsmod'; Expect = 'F13'; Find = ('2026-10-31-rwg-' + 'farspawn-1b'); Repl = ('2026-10-31-rwg-' + 'farspawn-1') }
     @{ Name = 'X26 killbox pass treats provisional as live and fine'; Key = 'void'; Expect = 'F9'; Find = '        if (E.bRwgProvisional) { continue; } // rwg-farspawn-1: a provisional actor is UNSETTLED'; Repl = '        // skip removed' }
     @{ Name = 'X28 F3 provisional settle no longer tracked by RWGSTUCK'; Key = 'place'; Expect = 'F14'; Find = 'if (E.bRwgProvisional) { RwgStuckBeforeAttempt(E); RwgSettleProvisional(E, bChangedWorld);'; Repl = 'if (E.bRwgProvisional) { RwgSettleProvisional(E, bChangedWorld);' }
     @{ Name = 'X29 F3 RWGSTUCK note forgets a deferring provisional entry'; Key = 'dens'; Expect = 'F14'; Find = 'if (Now && IsValid(*Now) && !E.bRwgProvisional) { RwgStuckTracker.Remove(E.EntryGuid); return; }'; Repl = 'if (Now && IsValid(*Now)) { RwgStuckTracker.Remove(E.EntryGuid); return; }' }
