@@ -197,6 +197,7 @@ namespace NodeShuffleRwgSeedGas
             if (!bEnabled) { R.Skipped = TEXT("disabled"); continue; }
             if (!bMapIsRwg) { R.Skipped = TEXT("notRwg"); continue; }
             if (Row.Resource.IsEmpty() || Row.VanillaCount < 1 || Row.VanillaCount > MaxRowCount) { R.Skipped = TEXT("badRow"); continue; }
+            if (Row.Resource.StartsWith(TEXT("/Game/"))) { R.Skipped = TEXT("vanillaRow"); continue; } // the table is for MODDED resources only
             if (SeenRows.Contains(Row.Resource)) { R.Skipped = TEXT("duplicate"); continue; }
             SeenRows.Add(Row.Resource);
 
