@@ -98,9 +98,9 @@ bool ANodeShuffleSubsystem::RwgSolidTopTryAccept(const FHitResult& Hit, double T
         const FString MeshName = Mesh ? Mesh->GetName() : (HitComp ? HitComp->GetName() : FString(TEXT("<none>")));
         const double RiseRun = N.Z > 1e-6 ? FMath::Sqrt(N.X * N.X + N.Y * N.Y) / N.Z : 999.0;
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("RWGCLIFFTOP: sample=%d via=%s entry=%s at=%.0f/%.0f res=%s hitMesh=%s smoothedRiseRun=%.2f hitZ=%.0f apiZ=%.0f dzCm=%.0f startZ=%.0f startPenetrating=%d normalZ=%.3f smoothedNormalZ=%.3f gateNormalZ=%.3f outerProbesSameMesh=%d/4 steepOuterProbes=%d accepted=%d rejectReason=%s"),
+            TEXT("RWGCLIFFTOP: sample=%d via=%s entry=%s at=%.0f/%.0f res=%s hitMesh=%s smoothedRiseRun=%.2f hitZ=%.0f apiZ=%.0f dzCm=%.0f startZ=%.0f startPenetrating=%d normalZ=%.3f smoothedNormalZ=%.3f gateNormalZ=%.3f outerProbesSameMesh=%d/4 steepOuterProbes=%d accepted=%d rejectReason=%s aboveComponent=%s"),
             RwgCliffTopSamples, RwgSolidTopVia, *RwgSolidTopGuid.ToString().Left(8), P.X, P.Y, *RwgCliffTopShort(RwgSolidTopRes), *MeshName, RiseRun, P.Z, ApiZ,
-            P.Z - ApiZ, TraceStartZ, bStartPen ? 1 : 0, Hit.ImpactNormal.Z, N.Z, MinNormalZ, SameMesh, SameMeshSteep, bAccepted ? 1 : 0, Reject);
+            P.Z - ApiZ, TraceStartZ, bStartPen ? 1 : 0, Hit.ImpactNormal.Z, N.Z, MinNormalZ, SameMesh, SameMeshSteep, bAccepted ? 1 : 0, Reject, *AboveMesh);
     }
     if (!bAccepted) { return false; }
     // Accepted: the terrain path's outputs, from this hit.

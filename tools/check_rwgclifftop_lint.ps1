@@ -76,7 +76,7 @@ function Get-Logs([string]$t, [string]$prefix) {
     return $out
 }
 
-$CliffFmt = 'RWGCLIFFTOP: sample=%d via=%s entry=%s at=%.0f/%.0f res=%s hitMesh=%s smoothedRiseRun=%.2f hitZ=%.0f apiZ=%.0f dzCm=%.0f startZ=%.0f startPenetrating=%d normalZ=%.3f smoothedNormalZ=%.3f gateNormalZ=%.3f outerProbesSameMesh=%d/4 steepOuterProbes=%d accepted=%d rejectReason=%s'
+$CliffFmt = 'RWGCLIFFTOP: sample=%d via=%s entry=%s at=%.0f/%.0f res=%s hitMesh=%s smoothedRiseRun=%.2f hitZ=%.0f apiZ=%.0f dzCm=%.0f startZ=%.0f startPenetrating=%d normalZ=%.3f smoothedNormalZ=%.3f gateNormalZ=%.3f outerProbesSameMesh=%d/4 steepOuterProbes=%d accepted=%d rejectReason=%s aboveComponent=%s'
 
 function Invoke-CliffChecks($T) {
     $f = @(); $c = $T.cliff; $s = $T.sub; $p = $T.place
@@ -129,9 +129,9 @@ function Invoke-CliffChecks($T) {
     if ((Count $s ('StartZ + ' + '20000.f')) -ne 0 -or (Count $s 'bShortTrace ? StartZ + 400.f : StartZ + NodeShuffleMapMode::RwgPrimaryTraceUpCm);') -ne 1) { $f += '(C9) the trace start must use the named constant' }
     # C10 diagnostics
     $cl = @(Get-Logs $c 'RWGCLIFFTOP: ')
-    if ($cl.Count -ne 1 -or $cl[0].Fmt -ne $CliffFmt -or $cl[0].Level -ne 'Display' -or (Spec-Count $cl[0].Fmt) -ne $cl[0].Args.Count -or $cl[0].Args.Count -ne 20) { $f += '(C10) RWGCLIFFTOP format drifted or arity is wrong' }
+    if ($cl.Count -ne 1 -or $cl[0].Fmt -ne $CliffFmt -or $cl[0].Level -ne 'Display' -or (Spec-Count $cl[0].Fmt) -ne $cl[0].Args.Count -or $cl[0].Args.Count -ne 21) { $f += '(C10) RWGCLIFFTOP format drifted or arity is wrong' }
     if ((Count $c 'constexpr int32 RwgCliffTopSampleCap = 8;') -ne 1 -or (Count $c 'if (RwgCliffTopSamples < RwgCliffTopSampleCap && FNodeShuffleModule::AreDiagnosticsEnabled())') -ne 1 -or (Count $p 'RwgPcSolidTopRejFootprint = RwgCliffTopSamples = 0;') -ne 1) { $f += '(C10) RWGCLIFFTOP must be capped per pass and the cap zeroed with the PLACECENSUS counters' }
-    foreach ($n in @('settledOnSolidTop=%d', 'solidTopAcceptedProbes=%d', 'solidTopRejectedGuard=%d', 'solidTopRejectedNormal=%d', 'solidTopRejectedFootprint=%d')) { if ((Count $p $n) -ne 1) { $f += "(C10) PLACECENSUS must carry $n once" } }
+    foreach ($n in @('settledOnSolidTop=%d', 'solidTopAcceptedProbes=%d', 'solidTopRejectedGuardOrAbove=%d', 'solidTopRejectedNormal=%d', 'solidTopRejectedFootprint=%d')) { if ((Count $p $n) -ne 1) { $f += "(C10) PLACECENSUS must carry $n once" } }
     # C11 vanilla
     if ((Count $s 'const bool bSolidBlocks = bTerrainOnly && bOutTooSteep != nullptr;') -ne 1) { $f += '(C11) the RWG-only bSolidBlocks gate must be unchanged' }
     # C13 (review F1b): the two packet-touched files this lint did not load. The LAYOUTDUMP-E purity argument stays CODE (not swallowed by a
