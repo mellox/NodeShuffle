@@ -82,6 +82,7 @@ function Log-Args([string]$t, [string]$tag) {
         $c = $t[$i]
         if ($inS) { if ($c -eq '\') { $i++ } elseif ($c -eq '"') { $inS = $false } }
         elseif ($inC) { if ($c -eq '\') { $i++ } elseif ($c -eq "'") { $inC = $false } }
+        elseif ($c -eq '/' -and $i + 1 -lt $t.Length -and $t[$i + 1] -eq '/') { $nl = $t.IndexOf("`n", $i); if ($nl -lt 0) { return -1 }; $i = $nl; continue }
         elseif ($c -eq '"') { $inS = $true } elseif ($c -eq "'") { $inC = $true }
         elseif ('([{'.Contains($c)) { $depth++ }
         elseif (')]}'.Contains($c)) { if ($depth -eq 0) { return $commas + 1 - 3 }; $depth-- }

@@ -20,6 +20,7 @@
 #   C10 Diagnostics: RWGCLIFFTOP exact format + arity, capped per pass and zeroed with the PLACECENSUS counters; PLACECENSUS carries the fields.
 #   C11 Vanilla: the bSolidBlocks gate line is unchanged; the arm call sites live only in RWG-only files.
 #   C12 Marker rwg-clifftop-1 present once, rwg-layout-dump-1 absent; no marker string in the new file.
+#   C13 (review F1b) LayoutDump.cpp and Density.cpp are loaded: E-row purity argument live; RWGSTUCK moved token unplaceableNew.
 # Mutants run in-file. Exit 0 = all hold; 1 = at least one does not; 2 = a pinned FILE is missing.
 
 $ErrorActionPreference = 'Stop'
@@ -36,6 +37,8 @@ $files = [ordered]@{
     rock   = 'NodeShuffle\Private\NodeShuffleMapModeRock.cpp'
     wfoot  = 'NodeShuffle\Private\NodeShuffleWellFootprint.cpp'
     nsmod  = 'NodeShuffle\Private\NodeShuffle.cpp'
+    dump   = 'NodeShuffle\Private\NodeShuffleLayoutDump.cpp'
+    dens   = 'NodeShuffle\Private\NodeShuffleMapModeDensity.cpp'
 }
 $text = @{}
 foreach ($k in $files.Keys) {
@@ -129,6 +132,10 @@ function Invoke-CliffChecks($T) {
     foreach ($n in @('settledOnSolidTop=%d', 'solidTopAcceptedProbes=%d', 'solidTopRejectedStartInside=%d', 'solidTopRejectedNormal=%d', 'solidTopRejectedFootprint=%d')) { if ((Count $p $n) -ne 1) { $f += "(C10) PLACECENSUS must carry $n once" } }
     # C11 vanilla
     if ((Count $s 'const bool bSolidBlocks = bTerrainOnly && bOutTooSteep != nullptr;') -ne 1) { $f += '(C11) the RWG-only bSolidBlocks gate must be unchanged' }
+    # C13 (review F1b): the two packet-touched files this lint did not load. The LAYOUTDUMP-E purity argument stays CODE (not swallowed by a
+    # line comment); the stuck-tracker moved token carries the renamed field and not the old name.
+    if ((Count $T.dump 'I, *E.EntryGuid.ToString(), *LayoutDumpShortName(E.AssignedResourceClassPath), static_cast<int32>(E.AssignedPurity.GetValue()),') -ne 1) { $f += '(C13) the LAYOUTDUMP-E purity argument must be live code' }
+    if ((Count $T.dens 'Moved += TEXT("unplaceableNew"); }') -ne 1 -or (Count $T.dens ('Moved += TEXT("water' + 'LockedNew")')) -ne 0) { $f += '(C13) the RWGSTUCK moved token must be unplaceableNew' }
     # C12 marker
     if ((Count $T.nsmod ('LOADED (2026-10-30-rwg-' + 'clifftop-1)')) -ne 1 -or (Count $T.nsmod ('2026-10-29-rwg-' + 'layout-dump-1)')) -ne 0) { $f += '(C12) marker rwg-clifftop-1 must be present once and rwg-layout-dump-1 absent' }
     if ($c.Contains('LOADED' + ' (')) { $f += '(C12) no build-marker string in the new file' }
@@ -161,6 +168,8 @@ $mutants = @(
     @{ Name = 'M22 RWGCLIFFTOP uncapped'; Key = 'cliff'; Expect = 'C10'; Find = 'if (RwgCliffTopSamples < RwgCliffTopSampleCap && '; Repl = 'if (' }
     @{ Name = 'M23 marker reverted'; Key = 'nsmod'; Expect = 'C12'; Find = ('2026-10-30-rwg-' + 'clifftop-1'); Repl = ('2026-10-29-rwg-' + 'layout-dump-1') }
     @{ Name = 'M25 vanilla solid gate widened'; Key = 'sub'; Expect = 'C11'; Find = 'const bool bSolidBlocks = bTerrainOnly && bOutTooSteep != nullptr;'; Repl = 'const bool bSolidBlocks = bOutTooSteep != nullptr;' }
+    @{ Name = 'M26 LayoutDump E purity argument commented out'; Key = 'dump'; Expect = 'C13'; Find = '*LayoutDumpShortName(E.AssignedResourceClassPath), static_cast<int32>(E.AssignedPurity.GetValue()),'; Repl = ('*LayoutDumpShortName(E.AssignedResourceClassPath), ' + '/' + '/ static_cast<int32>(E.AssignedPurity.GetValue()),') }
+    @{ Name = 'M27 stuck moved token back to the old name'; Key = 'dens'; Expect = 'C13'; Find = 'Moved += TEXT("unplaceableNew"); }'; Repl = ('Moved += TEXT("water' + 'LockedNew"); }') }
     @{ Name = 'M24 accept signal set before the gate'; Key = 'cliff'; Expect = 'C4'; Find = '    const bool bAccepted = bGuard && bFootprint && bGentle;'; Repl = ('    const bool bAccepted = bGuard && bFootprint && bGentle; bRwgLastProbeTopAccepted = ' + 'true;') }
 )
 $mutantFails = @(); $caught = 0
@@ -177,5 +186,5 @@ if ($all.Count -gt 0) {
     Write-Host "RWGCLIFFTOP LINT: FAIL -- $($all.Count) problem(s). Mutants caught $caught/$($mutants.Count)."
     exit 1
 }
-Write-Host "PASS: RWGCLIFFTOP lint -- C1..C12 hold across $($text.Count) loaded files; mutants caught $caught/$($mutants.Count)."
+Write-Host "PASS: RWGCLIFFTOP lint -- C1..C13 hold across $($text.Count) loaded files; mutants caught $caught/$($mutants.Count)."
 exit 0

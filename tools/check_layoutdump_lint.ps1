@@ -42,6 +42,7 @@ function Log-Args([string]$t, [string]$tag) {
         $c = $t[$i]
         if ($inS) { if ($c -eq '\') { $i++ } elseif ($c -eq '"') { $inS = $false } }
         elseif ($inC) { if ($c -eq '\') { $i++ } elseif ($c -eq "'") { $inC = $false } }
+        elseif ($c -eq '/' -and $i + 1 -lt $t.Length -and $t[$i + 1] -eq '/') { $nl = $t.IndexOf("`n", $i); if ($nl -lt 0) { return -1 }; $i = $nl; continue }
         elseif ($c -eq '"') { $inS = $true } elseif ($c -eq "'") { $inC = $true }
         elseif ('([{'.Contains($c)) { $depth++ }
         elseif (')]}'.Contains($c)) { if ($depth -eq 0) { return $commas + 1 - 3 }; $depth-- }
@@ -154,7 +155,7 @@ function Invoke-LayoutDumpChecks($T, [bool]$RunPy) {
     $fxl = @([regex]::Matches($T.fx, '(?m)^\[[^\]]*\]\[\s*\d+\]LogNodeShuffle: Display: LAYOUTDUMP-LEGEND: ([^\n]*)$') | ForEach-Object { $_.Groups[1].Value })
     if (($cl -join "`n") -ne ($fxl -join "`n")) { $f += "(L11) fixture LEGEND lines ($($fxl.Count)) differ from the C++ legend literals ($($cl.Count))" }
     # L11 (rwg-clifftop-1 E3): the E row prints the FULL entry guid; the diff keys on its 8-hex prefix.
-    if ((Count $T.dump 'I, *E.EntryGuid.ToString(), *LayoutDumpShortName(E.AssignedResourceClassPath),') -ne 1) { $f += '(L11) LAYOUTDUMP-E must print the full 32-hex entry guid' }
+    if ((Count $T.dump 'I, *E.EntryGuid.ToString(), *LayoutDumpShortName(E.AssignedResourceClassPath), static_cast<int32>(E.AssignedPurity.GetValue()),') -ne 1) { $f += '(L11) LAYOUTDUMP-E must print the full 32-hex entry guid' }
     if ((Count $T.diffpy "d.setdefault(row['guid'][:8], []).append(row)") -ne 1) { $f += '(L11) layout_diff.py must key rows on the 8-hex guid prefix' }
     return $f
 }
@@ -183,6 +184,7 @@ $mutants = @(
     @{ Name = 'M19 latch masks lose the Done bits'; Key = 'dump'; Expect = 'L10'; Find = ' | (bRwgKillboxDone ? 32 : 0);'; Repl = ';' }
     @{ Name = 'M20 fixture E line drifts from the format (extra literal)'; Key = 'fx'; Expect = 'L11'; Find = 'LAYOUTDUMP-E: i=0 guid='; Repl = 'LAYOUTDUMP-E: i=0 entry guid=' }
     @{ Name = 'M22 E row guid clipped again'; Key = 'dump'; Expect = 'L11'; Find = 'I, *E.EntryGuid.ToString(), *LayoutDumpShortName('; Repl = ('I, *E.EntryGuid.ToString()' + '.Left(8), *LayoutDumpShortName(') }
+    @{ Name = 'M25 E row purity argument commented out'; Key = 'dump'; Expect = 'L4'; Find = '*LayoutDumpShortName(E.AssignedResourceClassPath), static_cast<int32>(E.AssignedPurity.GetValue()),'; Repl = ('*LayoutDumpShortName(E.AssignedResourceClassPath), ' + '/' + '/ static_cast<int32>(E.AssignedPurity.GetValue()),') }
     @{ Name = 'M23 fixture E row back to 8 hex'; Key = 'fx'; Expect = 'L11'; Find = 'guid=1A2B3C4D000000000000000000000000 '; Repl = 'guid=1A2B3C4D ' }
     @{ Name = 'M24 diff keys on the full guid'; Key = 'diffpy'; Expect = 'L11'; Find = "d.setdefault(row['guid'][:8], []).append(row)"; Repl = "d.setdefault(row['guid'], []).append(row)" }
     @{ Name = 'M21 fixture legend drifts from source'; Key = 'fx'; Expect = 'L11'; Find = 'one line per layout entry'; Repl = 'one line per entry' }
