@@ -1,9 +1,11 @@
-// rwg-farspawn-1c C7 (2026-10-31): WELLMOVE -- one Display line at every site that writes a well-layout location after the roll, so a
+// rwg-farspawn-1c C7 (2026-10-31): WELLMOVE -- one Display line at each site listed below that writes a well-layout location after the roll, so a
 // dump-to-dump well move can be joined to the write that made it (round-1 run: well A3FC5EA1 moved 4105 m between two LAYOUTDUMP
 // dumps; the move was an EscalateWellPlacement RWG redeal, named in the log only by core path). Call sites (one line each):
 // rollDeal + dealCleared (NodeShuffleWellRelocateRoll.cpp), nudge + rwgRedeal + boxRedeal (NodeShuffleWellEscalate.cpp), seaRedeal
 // (NodeShuffleMapModeSea.cpp), resettleRedeal (NodeShuffleMapModeRock.cpp), placedCommit (NodeShuffleWellRelocateApply.cpp).
 // The line prints the site's own name, never why the site was reached.
+// Not every location write is listed: ClearAbandonedWellPlacement zeroes PlacedCoreLocation unlogged (rwg-farspawn-1d F8).
+// from is the LAYOUTDUMP-W precedence read just before this write and after any placement clear the site ran first (ClearAbandonedWellPlacement is not itself logged), so after a re-enrolment or resettle it can differ from the previous dump's row.
 #include "NodeShuffleSubsystem.h"
 #include "NodeShuffle.h"
 #include "Misc/PackageName.h"
