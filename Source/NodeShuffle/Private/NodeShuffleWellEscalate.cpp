@@ -191,8 +191,10 @@ void ANodeShuffleSubsystem::EscalateWellPlacement(FNodeShuffleWellEntry& E, cons
         const float Radius = FMath::Min(WellGroupNudgeMaxRadiusCm,
             WellGroupNudgeStepCm * FMath::Sqrt(static_cast<float>(E.GroupNudges)));
         const float Angle = WellGoldenAngleRad * E.GroupNudges;
+        const FVector WmFrom = WellMoveAt(E); // rwg-farspawn-1c C7
         E.DestCoreLocation = FVector(Anchor.X + Radius * FMath::Cos(Angle),
                                      Anchor.Y + Radius * FMath::Sin(Angle), Anchor.Z);
+        WellMoveLog(E, WmFrom, E.DestCoreLocation, TEXT("nudge")); // rwg-farspawn-1c C7
         UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH2-SEARCH core='%s': %s at %s -- nudging the whole group to %s (nudge %d/%d, ")
             TEXT("redeal %d/%d). Yaw order re-seeded for the new spot, deterministically."),
@@ -232,7 +234,7 @@ void ANodeShuffleSubsystem::EscalateWellPlacement(FNodeShuffleWellEntry& E, cons
                     FVector Site(FVector::ZeroVector);
                     for (; Draws < WellRedealTries && !bRwgRedealt; ++Draws)
                     {
-                        if (RwgDealWellSite(RwgQ, Rng, Offs, Site)) { E.DestCoreLocation = Site; bRwgRedealt = true; }
+                        if (RwgDealWellSite(RwgQ, Rng, Offs, Site)) { const FVector WmFrom = WellMoveAt(E); E.DestCoreLocation = Site; bRwgRedealt = true; WellMoveLog(E, WmFrom, Site, TEXT("rwgRedeal")); } // rwg-farspawn-1c C7
                     }
                 }
                 UE_LOG(LogNodeShuffle, Display, TEXT("WELLRWG-REDEAL: core='%s' apiUsable=%d draws=%d viaApi=%d"),
@@ -242,9 +244,11 @@ void ANodeShuffleSubsystem::EscalateWellPlacement(FNodeShuffleWellEntry& E, cons
             {
             E.bRwgSeaChecked = false; // RWG P2e review: the vanilla-box point is not water-tested; let the sea pass re-check it
             E.bRwgVoidChecked = false; // RWG P2f: nor void/killbox-tested; let the re-deal pass re-check it under v3
+            const FVector WmFrom = WellMoveAt(E); // rwg-farspawn-1c C7
             E.DestCoreLocation = FVector(Rng.FRandRange(BoxMin.X, BoxMax.X),
                                          Rng.FRandRange(BoxMin.Y, BoxMax.Y),
                                          (DealMeanZ != 0.0f) ? DealMeanZ : E.DestCoreLocation.Z);
+            WellMoveLog(E, WmFrom, E.DestCoreLocation, TEXT("boxRedeal")); // rwg-farspawn-1c C7
             }
             UE_LOG(LogNodeShuffle, Display,
                 TEXT("WELLH2-SEARCH core='%s': %s and the nudge budget is exhausted -- RE-DEALT to %s ")

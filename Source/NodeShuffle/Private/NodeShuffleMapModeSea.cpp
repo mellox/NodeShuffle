@@ -263,7 +263,9 @@ void ANodeShuffleSubsystem::RwgSeaRedealPass()
         for (int32 D = 0; D < NodeShuffleMapMode::RwgSeaWellDealDraws && !bDealt; ++D) { bDealt = RwgDealWellSite(Q, Rng, Offs, Site); }
         if (bDealt)
         {
+            const FVector WmFrom = WellMoveAt(W); // rwg-farspawn-1c C7
             W.DestCoreLocation = Site;
+            WellMoveLog(W, WmFrom, Site, TEXT("seaRedeal")); // rwg-farspawn-1c C7
             W.YawCursor = 0;
             W.GroupNudges = 0;
             W.bRwgSeaChecked = true;

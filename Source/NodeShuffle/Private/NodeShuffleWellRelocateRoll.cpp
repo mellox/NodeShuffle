@@ -792,8 +792,10 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll)
             {
                 // F-F: HEAD cleared these in the capture; A3 must clear them here or a dead
                 // destination survives into the next roll's spacing list.
+                const FVector WmFrom = WellMoveAt(E); // rwg-farspawn-1c C7
                 E.bDestDealt = false;
                 E.DestCoreLocation = FVector::ZeroVector;
+                WellMoveLog(E, WmFrom, WellMoveAt(E), TEXT("dealCleared")); // rwg-farspawn-1c C7
                 // ns-t23-rollhide -- TERMINAL FAILURE SITE 2 OF 2. This entry has just lost its
                 // destination, and it was never placed. The invariant roll-time commitment depends on --
                 // "suppressed implies a live destination" -- no longer holds for it, so any suppression a
@@ -994,8 +996,10 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll)
         // DON'T. You would be undoing ns-review-h2-r4 F-5.
         const bool bClaimWithdrawn = ClearAbandonedWellPlacement(E, TEXT("re-enrolled by a new roll"));
 
+        const FVector WmFrom = WellMoveAt(E); // rwg-farspawn-1c C7
         E.DestCoreLocation = P.Dest;
         E.bDestDealt = true;
+        WellMoveLog(E, WmFrom, E.DestCoreLocation, TEXT("rollDeal")); // rwg-farspawn-1c C7
         // ns-t23-stage0 INSTRUMENT 2 (K3): the deferral window starts HERE, at the one site in the mod
         // where bDestDealt goes false -> true, and it is the same instant a roll-time commit design would
         // hide the vanilla well. Zeroed rather than left alone so a re-enrolment restarts the clock; the

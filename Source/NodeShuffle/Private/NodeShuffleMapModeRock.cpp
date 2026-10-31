@@ -197,7 +197,7 @@ bool ANodeShuffleSubsystem::RwgRedealWellGroup(FNodeShuffleWellEntry& E, const T
         FVector Site(FVector::ZeroVector);
         for (; Draws < WellRedealTries && !bOutDealt; ++Draws)
         {
-            if (RwgDealWellSite(Q, Rng, Offs, Site)) { E.DestCoreLocation = Site; bOutDealt = true; }
+            if (RwgDealWellSite(Q, Rng, Offs, Site)) { const FVector WmFrom = WellMoveAt(E); E.DestCoreLocation = Site; bOutDealt = true; WellMoveLog(E, WmFrom, Site, TEXT("resettleRedeal")); } // rwg-farspawn-1c C7
         }
     }
     UE_LOG(LogNodeShuffle, Display, TEXT("RESETTLE-WELL-REDEAL: core='%s' from=%s dest=%s apiUsable=%d draws=%d dealtNewSite=%d trigger='%s'"),

@@ -568,6 +568,7 @@ bool ANodeShuffleSubsystem::TryPlaceWellGroup(FNodeShuffleWellEntry& E, UClass* 
             // (well spawn x2, well audit x1) and they will print zero for every T27-placed group. See
             // the field's own comment in NodeShuffleSubsystem.h for the dated retirement note.
             E.GroupYawDeg = 0.0f;
+            WellMoveLog(E, WellMoveAt(E), CoreLoc, TEXT("placedCommit")); // rwg-farspawn-1c C7: before the write, so from= is the pre-commit spot
             E.PlacedCoreLocation = CoreLoc;
             E.PlacedCoreRotation = CoreRot;
             // A3 -- THE ONLY PLACE bPlacementClaimLive IS EVER SET TRUE, deliberately on the line after
