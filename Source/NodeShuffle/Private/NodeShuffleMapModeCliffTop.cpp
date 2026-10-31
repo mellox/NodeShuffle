@@ -66,8 +66,8 @@ bool ANodeShuffleSubsystem::RwgSolidTopTryAccept(const FHitResult& Hit, double T
         {
             if (!World->LineTraceSingleByChannel(R, S, En, ECC_WorldStatic, RingParams)) { break; }
             const int32 Cls = RwgHitClassOf(R);
-            const AActor* Owner = R.GetActor();
-            if (Cls == 0 || Cls == 4 || (Owner && (Owner->IsA<AFGBuildable>() || Owner->GetClass()->GetName().Contains(TEXT("AbstractInstanceManager")))))
+            const AActor* HitOwner = R.GetActor(); // not "Owner": that name hides AActor::Owner (C4458 is an error in this build)
+            if (Cls == 0 || Cls == 4 || (HitOwner && (HitOwner->IsA<AFGBuildable>() || HitOwner->GetClass()->GetName().Contains(TEXT("AbstractInstanceManager")))))
             {
                 bStopped = true;
                 break;
