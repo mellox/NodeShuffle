@@ -227,9 +227,9 @@ void ANodeShuffleSubsystem::RwgResettlePass()
         }
         if (bRwgLastProbeSolid)
         {
-            // rwg-clifftop-1 ON vs UNDER: an entry settled on an accepted solid top (bRwgOnSolidTop) whose probe stops on a solid mesh within
-            // RwgSolidTopOnTolCm of the node's Z stands ON that surface: kept in place, no dz sample, not re-probed this session (the SaveGame
-            // terrain flag is left as it is). A stop farther away is UNDER: redealt below, as before.
+            // rwg-clifftop-1 ON vs UNDER, symmetric with the rock pass: a marked entry (bRwgOnSolidTop) whose probe stops on a solid mesh within
+            // RwgSolidTopOnTolCm of the node's Z is kept. Every settle that marks an entry also sets bRwgSettledOnTerrain, which the candidate
+            // loop above skips, so no marked entry is expected here: expected keptOnSolidTop 0, non-zero is an anomaly. A farther stop is redealt.
             if (E.bRwgOnSolidTop && FMath::Abs(HitLoc.Z - Cur.Z) <= NodeShuffleMapMode::RwgSolidTopOnTolCm)
             {
                 ++KeptOnSolidTop;

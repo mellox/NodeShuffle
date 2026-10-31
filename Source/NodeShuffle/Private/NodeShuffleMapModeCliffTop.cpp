@@ -5,8 +5,9 @@
 // around its candidate traces. Every other trace (wells, resettle, rock pass, overlap nudge, probes, SettleNewNodesNearPlayers, caves) sees
 // bRwgSolidTopArmed clear and keeps the P2d refusal byte-for-byte. Accepted only when ALL of these hold, each measured on THIS hit:
 //   inside-start guard: Hit.bStartPenetrating is false; ImpactNormal.Z > 0; ImpactPoint.Z < trace start - RwgSolidTopStartMarginCm.
+//   clear above: the rock pass's own window above the hit (RwgRockOcclusionProbe at the impact point) holds no solid mesh.
 //   footprint: each of the 4 outer probes (RingCm = the terrain path's own smoothing ring, 3.5 m) first stops on the SAME component and
-//     instance item as the hit. A miss, terrain, a buildable or another solid fails it: a cliff edge is never averaged into a plateau.
+//     instance item as the hit, on a face whose own normal meets the gate. A miss, terrain, a buildable, another solid or a steep face fails it.
 //   gentle: the smoothed normal (hit + the 4 outer normals, the terrain path's smoothing) has Z >= MinNormalZ (the same 60 deg cliff gate).
 // On accept the node's rotation uses the terrain path's tilt clamp; water is the point-in-volume test plus a skipped water sheet; the water
 // grid is NOT taught (a solid top says nothing about the terrain column). Log lines report measured values and the predicate, never a cause.
