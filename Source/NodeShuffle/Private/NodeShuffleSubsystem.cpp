@@ -8483,6 +8483,7 @@ void ANodeShuffleSubsystem::RefreshScannersAndRadarTowers()
         UE_LOG(LogNodeShuffle, Display,
             TEXT("SCANREGEN: invalidated %d scanner cluster cache(s), re-scanned %d radar tower(s)"),
             ScannersInvalidated, TowersRescanned);
+        EmitCompassWarnCensus(TowersRescanned); // rwg-farspawn-1c C5 (NodeShuffleScanDiag.cpp)
     }
 }
 

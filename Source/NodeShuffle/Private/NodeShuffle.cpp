@@ -583,7 +583,7 @@ void FNodeShuffleModule::StartupModule()
     // UNREVIEWED binary printing the REVIEWED t68-3 banner, which is the one state that makes a
     // deployed DLL indistinguishable from its parked predecessor in a log. Bump the tag in the same
     // action as the build, never after it.
-    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle 1.4.0 LOADED (2026-10-31-rwg-farspawn-1b)====="));
+    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle 1.4.0 LOADED (2026-10-31-rwg-farspawn-1c)====="));
     FNodeShuffleModule::LogAutoAllowExtractorsState(); // Packet G: log the CVar state once at startup
 
 #if !WITH_EDITOR
@@ -1107,6 +1107,7 @@ void FNodeShuffleModule::StartupModule()
         }
         Scope(Self, NewLoc, resourceNode); // spawn the portable miner on the rock surface
     });
+    ANodeShuffleSubsystem::InstallScanDiagHooks(); // rwg-farspawn-1c C4/C5: SCANPING hook + compass-warning counter (NodeShuffleScanDiag.cpp)
 #endif
 }
 
