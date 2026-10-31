@@ -124,7 +124,9 @@ namespace NodeShuffleRwgSeedGas
             UConfigPropertyString* R = nullptr; UConfigPropertyString* K = nullptr; UConfigPropertyInteger* N = nullptr;
             // Each element must own its sub-properties; writing through a template-shared pointer would rewrite the template.
             const UConfigProperty* TplRes = RowTemplate->SectionProperties.FindRef(TEXT("ResourcePath")).Get();
-            if (!FindRowSection(Elem, &R, &K, &N) || static_cast<const UConfigProperty*>(R) == TplRes || N == CountProp)
+            const UConfigProperty* TplCls = RowTemplate->SectionProperties.FindRef(TEXT("NodeClassPath")).Get();
+            if (!FindRowSection(Elem, &R, &K, &N) || static_cast<const UConfigProperty*>(R) == TplRes
+                || static_cast<const UConfigProperty*>(K) == TplCls || N == CountProp)
             {
                 UE_LOG(LogNodeShuffle, Error, TEXT("MODQUOTA-REGISTER defaultRow=%s ownsSubProperties=0 -- default rows not written"), *Short(D.Res));
                 Rows->Values.Empty();
