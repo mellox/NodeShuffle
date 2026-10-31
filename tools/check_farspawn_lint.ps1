@@ -16,6 +16,8 @@
 #   F11 PLACECENSUS ends with provisionalSpawned/provisionalSettled; their counters are the last two args and are reset per pass.
 #   F12 PROVSETTLE sampled <= 8 per pass; PROVCENSUS on 12th passes; a provisional attempt that made no actor restores the entry.
 #   F13 Marker 2026-10-31-rwg-farspawn-1 once, previous marker absent; the new .cpp stays under 500 lines.
+#   F15 (fix round 1, F4) PROVSETTLE reports only what it tested: inPlace/settled counters need the respawned actor, settledZ is that
+#       actor's Z (never the entry's), ring/mapwide/redealt need TryRedealWaterLockedEntry to have returned true.
 #   F14 (fix round 1, F3) RWGSTUCK / HERE-DENSITY: the provisional settle is bracketed by the RWGSTUCK snapshot/note, and the note,
 #       the stuck census and HERE-DENSITY count a valid actor as live only when it is NOT provisional.
 # Mutants run in-file. Exit 0 = all hold; 1 = at least one does not; 2 = a pinned FILE is missing.
@@ -86,7 +88,7 @@ function Invoke-FarspawnChecks($T) {
     if (-not (Ordered $settleFn @('Node->SetActorEnableCollision(false);', 'bool bSettled = RwgResolveAtSpawn(E, bApiUsed, bWaterNoLand);', 'if (IsValid(Node)) { Node->SetActorEnableCollision(true); }', 'if (bSettled)'))) { $f += '(F4) collision is off only around the settle call' }
     if ((Count $settleFn ('SetActorEnableCollision(' + 'false')) -ne 1) { $f += '(F4) exactly one collision-off in the settle' }
     # F5
-    if (-not (Ordered $settleFn @('if (bSettled)', 'E.bRwgProvisional = false;', 'E.bRayCasted = true;', 'Outcome = TEXT("inPlace");', 'else if (bWaterNoLand)', 'Outcome = (RwgPcSteepRing > RingBefore) ? TEXT("ring") : TEXT("mapwide");', '    else', '        E = Snap;', '++RwgProvSessDeferred;'))) { $f += '(F5) the three outcomes, in order' }
+    if (-not (Ordered $settleFn @('if (bSettled)', 'E.bRwgProvisional = false;', 'E.bRayCasted = true;', 'Outcome = bRespawned ? TEXT("inPlace") : TEXT("settledNoActor");', 'else if (bWaterNoLand)', 'Outcome = !bMoved ? TEXT("redealNotMoved") : (RwgPcSteepRing > RingBefore) ? TEXT("ring") : TEXT("mapwide");', '    else', '        E = Snap;', '++RwgProvSessDeferred;'))) { $f += '(F5) the three outcomes, in order' }
     if (-not $settleFn.Contains('const TCHAR* Outcome = TEXT("deferred");')) { $f += '(F5) deferred is the default outcome' }
     # F6
     if (-not (Ordered $settleFn @('if (bSettled)', 'RwgProvisionalDespawn(E);', 'EnsureNewNodeSpawned(E, bChangedWorld);', 'else if (bWaterNoLand)', 'RwgProvisionalDespawn(E);', 'TryRedealWaterLockedEntry(E);'))) { $f += '(F6) despawn before respawn and before the redeal' }
@@ -110,7 +112,7 @@ function Invoke-FarspawnChecks($T) {
     if ((Count $p 'TEXT("PROVSPAWN: pass=%d spawnedThisPass=%d remainingUnspawned=%d provisionalTotal=%d zSource=%s msBatch=%.1f refusedThisPass=%d refusedSession=%d batch=%d seaPending=%d caveDealtZ=%d"),') -ne 1 -or
         (Count $p 'RwgPcPasses, Spawned, Cands.Num() - Spawned - Refused, Total, *ZSource, MsBatch, Refused, RwgProvSessRefused, Batch, SeaPending, CaveDealtZ);') -ne 1) { $f += '(F10) PROVSPAWN format/args' }
     if ((Count $p 'TEXT("PROVSETTLE: entry=%s res=%s provZ=%.0f settledZ=%.0f dzCm=%.0f movedXYm=%.1f outcome=%s hitClass=%d apiUsed=%d onSolidTop=%d"),') -ne 1 -or
-        (Count $p 'FVector::Dist2D(E.Location, ProvAt) / 100.0, Outcome, HitClass, bApiUsed ? 1 : 0, E.bRwgOnSolidTop ? 1 : 0);') -ne 1) { $f += '(F10) PROVSETTLE format/args' }
+        (Count $p 'FVector::Dist2D(MovedTo, ProvAt) / 100.0, Outcome, HitClass, bApiUsed ? 1 : 0, E.bRwgOnSolidTop ? 1 : 0);') -ne 1) { $f += '(F10) PROVSETTLE format/args' }
     if ((Count $p 'TEXT("PROVSETTLE: entry=%s res=%s provZ=%.0f settledZ=%.0f dzCm=0 movedXYm=0.0 outcome=pinnedKept hitClass=-1 pinned=%d occupied=%d"),') -ne 1) { $f += '(F10) PROVSETTLE pinnedKept format' }
     if ((Count $p 'TEXT("PROVCENSUS: pass=%d provisional=%d settledFromProvisional=%d redealtFromProvisional=%d deferredProvisional=%d pinnedProvisional=%d dzP50Cm=%.0f dzP90Cm=%.0f dzMaxCm=%.0f movedXYmMax=%.1f spawnedSession=%d refusedSession=%d staleFlagCleared=%d flagNoActor=%d spawnAllAtRoll=%d"),') -ne 1 -or
         (Count $p 'ProvPercentile(RwgProvSessDzCm, 0.5f), ProvPercentile(RwgProvSessDzCm, 0.9f), ProvPercentile(RwgProvSessDzCm, 1.0f), RwgProvSessMovedXYmMax,') -ne 1) { $f += '(F10) PROVCENSUS format/args' }
@@ -124,6 +126,11 @@ function Invoke-FarspawnChecks($T) {
     # F13
     if ((Count $T.nsmod ('LOADED (2026-10-31-rwg-' + 'farspawn-1)')) -ne 1 -or (Count $T.nsmod ('2026-10-31-rwg-' + 'seedgas-1b)')) -ne 0) { $f += '(F13) marker farspawn-1 present once, seedgas-1b absent' }
     if (($p.Split("`n")).Count -ge 500) { $f += '(F13) NodeShuffleMapModeProvisional.cpp must stay under 500 lines' }
+    # F15
+    if (-not (Ordered $settleFn @('EnsureNewNodeSpawned(E, bChangedWorld);', 'AFGResourceNode* Fresh = SpawnedNodes.FindRef(E.EntryGuid);', 'const bool bRespawned = IsValid(Fresh);', 'if (bRespawned)', 'FreshAt = Fresh->GetActorLocation();', 'SettledZ = FreshAt.Z;', '++RwgProvSessSettled; ++RwgPcProvSettled;', '    }', 'Outcome = bRespawned ?'))) { $f += '(F15) inPlace, settledZ and the settled counters need the respawned actor' }
+    if ((Count $settleFn ('SettledZ = ' + 'E.')) -ne 0 -or (Count $settleFn 'SettledZ = ') -ne 2) { $f += '(F15) settledZ is assigned only from the respawned actor' }
+    if ((Count $settleFn 'const bool bMoved = TryRedealWaterLockedEntry(E);') -ne 1 -or (Count $settleFn 'if (bMoved) { ++RwgProvSessRedealt; }') -ne 1) { $f += '(F15) the redeal result gates redealt and the ring/mapwide outcome' }
+    if ((Count $settleFn 'const FVector MovedTo = bFresh ? FreshAt : E.Location;') -ne 1) { $f += '(F15) movedXYm measures to the respawned actor when there is one' }
     # F14
     if ((Count $T.place 'if (E.bRwgProvisional) { RwgStuckBeforeAttempt(E); RwgSettleProvisional(E, bChangedWorld); AFGResourceNode* const* Now = SpawnedNodes.Find(E.EntryGuid); if (Now && IsValid(*Now) && !E.bRwgProvisional) { ++RwgPcSpawned; } RwgStuckAfterAttempt(E); continue; }') -ne 1) { $f += '(F14) the provisional settle must be bracketed by RwgStuckBeforeAttempt / RwgStuckAfterAttempt' }
     if ((Count $T.dens 'if (Now && IsValid(*Now) && !E.bRwgProvisional) { RwgStuckTracker.Remove(E.EntryGuid); return; }') -ne 1) { $f += '(F14) the RWGSTUCK note must not forget a provisional entry as live' }
@@ -145,7 +152,7 @@ $mutants = @(
     @{ Name = 'X8 collision never restored after the settle'; Key = 'prov'; Expect = 'F4'; Find = '    if (IsValid(Node)) { Node->SetActorEnableCollision(true); }'; Repl = '' }
     @{ Name = 'X9 deferred no longer restores the entry'; Key = 'prov'; Expect = 'F5'; Find = "    else`n    {`n        // (c) no terrain-mesh hit in the window: the entry and the actor stay exactly as they were (provisional); retried next pass.`n        E = Snap;"; Repl = "    else`n    {`n        // (c) no terrain-mesh hit in the window: the entry and the actor stay exactly as they were (provisional); retried next pass.`n        E.bRwgProvisional = false;" }
     @{ Name = 'X10 respawn before the despawn'; Key = 'prov'; Expect = 'F6'; Find = "        RwgProvisionalDespawn(E);`n        E.bRwgProvisional = false;`n        E.bRayCasted = true;`n        EnsureNewNodeSpawned(E, bChangedWorld);"; Repl = "        E.bRwgProvisional = false;`n        E.bRayCasted = true;`n        EnsureNewNodeSpawned(E, bChangedWorld);`n        RwgProvisionalDespawn(E);" }
-    @{ Name = 'X11 redeal before the despawn'; Key = 'prov'; Expect = 'F6'; Find = "        RwgProvisionalDespawn(E);`n        E.bRwgProvisional = false;`n        ++NodeGateSettleRejectedWater;`n        WaterLockedThisSession.Add(E.EntryGuid);`n        TryRedealWaterLockedEntry(E);"; Repl = "        TryRedealWaterLockedEntry(E);`n        RwgProvisionalDespawn(E);`n        E.bRwgProvisional = false;`n        ++NodeGateSettleRejectedWater;`n        WaterLockedThisSession.Add(E.EntryGuid);" }
+    @{ Name = 'X11 redeal before the despawn'; Key = 'prov'; Expect = 'F6'; Find = "        RwgProvisionalDespawn(E);`n        E.bRwgProvisional = false;`n        ++NodeGateSettleRejectedWater;`n        WaterLockedThisSession.Add(E.EntryGuid);`n        const bool bMoved = TryRedealWaterLockedEntry(E);"; Repl = "        const bool bMoved = TryRedealWaterLockedEntry(E);`n        RwgProvisionalDespawn(E);`n        E.bRwgProvisional = false;`n        ++NodeGateSettleRejectedWater;`n        WaterLockedThisSession.Add(E.EntryGuid);" }
     @{ Name = 'X12 teardown keeps the slot'; Key = 'prov'; Expect = 'F6'; Find = "    SpawnedNodes.Remove(E.EntryGuid);`n    SteadyAliveNodes.Remove(E.EntryGuid);`n    AdoptRotRefit.Remove(E.EntryGuid);"; Repl = "    SteadyAliveNodes.Remove(E.EntryGuid);`n    AdoptRotRefit.Remove(E.EntryGuid);" }
     @{ Name = 'X13 pin check dropped from the settle'; Key = 'prov'; Expect = 'F7'; Find = '    if (RwgProvisionalPinWins(E)) { return; }'; Repl = '' }
     @{ Name = 'X14 pinned entries provisioned'; Key = 'prov'; Expect = 'F7'; Find = 'if (!E.bIsNewNode || !E.bActive || E.bPinned) { continue; }'; Repl = 'if (!E.bIsNewNode || !E.bActive) { continue; }' }
@@ -165,6 +172,12 @@ $mutants = @(
     @{ Name = 'X29 F3 RWGSTUCK note forgets a deferring provisional entry'; Key = 'dens'; Expect = 'F14'; Find = 'if (Now && IsValid(*Now) && !E.bRwgProvisional) { RwgStuckTracker.Remove(E.EntryGuid); return; }'; Repl = 'if (Now && IsValid(*Now)) { RwgStuckTracker.Remove(E.EntryGuid); return; }' }
     @{ Name = 'X30 F3 RWGSTUCK census skips provisional as live'; Key = 'dens'; Expect = 'F14'; Find = 'if (Live && IsValid(*Live) && !E.bRwgProvisional) { continue; }'; Repl = 'if (Live && IsValid(*Live)) { continue; }' }
     @{ Name = 'X31 F3 HERE-DENSITY counts provisional as live'; Key = 'dens'; Expect = 'F14'; Find = 'const bool bLive = Live && IsValid(*Live) && !E.bRwgProvisional;'; Repl = 'const bool bLive = Live && IsValid(*Live);' }
+    @{ Name = 'X32 F4 inPlace without the respawn test'; Key = 'prov'; Expect = 'F5'; Find = 'Outcome = bRespawned ? TEXT("inPlace") : TEXT("settledNoActor");'; Repl = 'Outcome = TEXT("inPlace");' }
+    @{ Name = 'X33 F4 settledZ from the entry'; Key = 'prov'; Expect = 'F15'; Find = 'SettledZ = FreshAt.Z;'; Repl = ('SettledZ = ' + 'E.Location.Z;') }
+    @{ Name = 'X34 F4 redeal result ignored'; Key = 'prov'; Expect = 'F15'; Find = 'const bool bMoved = TryRedealWaterLockedEntry(E);'; Repl = 'TryRedealWaterLockedEntry(E); const bool bMoved = true;' }
+    @{ Name = 'X35 F4 redealt counted when nothing moved'; Key = 'prov'; Expect = 'F15'; Find = 'if (bMoved) { ++RwgProvSessRedealt; }'; Repl = '++RwgProvSessRedealt;' }
+    @{ Name = 'X36 F4 settled counted without an actor'; Key = 'prov'; Expect = 'F15'; Find = "            ++RwgProvSessSettled; ++RwgPcProvSettled;`n        }`n"; Repl = "        }`n        ++RwgProvSessSettled; ++RwgPcProvSettled;`n" }
+    @{ Name = 'X37 F4 movedXYm back to the entry location'; Key = 'prov'; Expect = 'F15'; Find = 'const FVector MovedTo = bFresh ? FreshAt : E.Location;'; Repl = 'const FVector MovedTo = E.Location;' }
     @{ Name = 'X27 F2 pin check evaluated before the distance test'; Key = 'place'; Expect = 'F9'; Find = 'if (E.bRwgProvisional && IsLocationNearAnyPlayer(E.Location, AttemptRadiusCm) && !RwgProvisionalPinWins(E)) {'; Repl = 'if (E.bRwgProvisional && !RwgProvisionalPinWins(E) && IsLocationNearAnyPlayer(E.Location, AttemptRadiusCm)) {' }
 )
 $mutantFails = @()
@@ -184,5 +197,5 @@ if ($all.Count -gt 0) {
     Write-Host "FARSPAWN LINT: FAIL -- $($all.Count) problem(s). Mutants caught $caught/$($mutants.Count)."
     exit 1
 }
-Write-Host "PASS: FARSPAWN lint -- F1..F14 hold across $($text.Count) loaded files; mutants caught $caught/$($mutants.Count)."
+Write-Host "PASS: FARSPAWN lint -- F1..F15 hold across $($text.Count) loaded files; mutants caught $caught/$($mutants.Count)."
 exit 0

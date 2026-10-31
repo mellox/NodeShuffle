@@ -124,38 +124,43 @@ void ANodeShuffleSubsystem::RwgSettleProvisional(FNodeShuffleEntry& E, bool& bCh
     const int32 HitClass = RwgProbeFirstClass;
     if (IsValid(Node)) { Node->SetActorEnableCollision(true); }
     const TCHAR* Outcome = TEXT("deferred");
-    double SettledZ = NodeShuffleMapMode::RwgNaN();
+    double SettledZ = NodeShuffleMapMode::RwgNaN(); // the respawned ACTOR's Z only; nan on every other outcome (fix F4)
+    FVector FreshAt = FVector::ZeroVector;
+    bool bFresh = false;
     if (bSettled)
     {
         // (a) settled: the provisional actor is torn down FIRST, then the unchanged spawn path materializes the node at the settled
-        // spot with bRayCasted already true (overlap/enclosure/inside gates, class, resource, purity, dress, registration).
-        const FVector Settled = E.Location;
+        // spot with bRayCasted already true. Counted as settled only when that spawn produced an actor (tested just below).
         RwgProvisionalDespawn(E);
         E.bRwgProvisional = false;
         E.bRayCasted = true;
         EnsureNewNodeSpawned(E, bChangedWorld);
         bChangedWorld = true;
-        SettledZ = Settled.Z;
-        const double DzCm = Settled.Z - ProvAt.Z;
-        const double MovedM = FVector::Dist2D(Settled, ProvAt) / 100.0;
-        RwgProvSessDzCm.Add(static_cast<float>(FMath::Abs(DzCm)));
-        RwgProvSessMovedXYmMax = FMath::Max(RwgProvSessMovedXYmMax, MovedM);
-        ++RwgProvSessSettled; ++RwgPcProvSettled;
-        Outcome = TEXT("inPlace");
+        AFGResourceNode* Fresh = SpawnedNodes.FindRef(E.EntryGuid);
+        const bool bRespawned = IsValid(Fresh);
+        if (bRespawned)
+        {
+            FreshAt = Fresh->GetActorLocation(); // after any overlap nudge the spawn path applied
+            bFresh = true;
+            SettledZ = FreshAt.Z;
+            RwgProvSessDzCm.Add(static_cast<float>(FMath::Abs(FreshAt.Z - ProvAt.Z)));
+            RwgProvSessMovedXYmMax = FMath::Max(RwgProvSessMovedXYmMax, FVector::Dist2D(FreshAt, ProvAt) / 100.0);
+            ++RwgProvSessSettled; ++RwgPcProvSettled;
+        }
+        Outcome = bRespawned ? TEXT("inPlace") : TEXT("settledNoActor");
     }
     else if (bWaterNoLand)
     {
         // (b) unplaceable here: despawn BEFORE the redeal moves the entry, then the spawn path's own redeal (ring, else map-wide).
-        // The moved entry has no actor; the next pass provisions it (beyond the attempt radius) or spawns it (within).
+        // settledZ stays nan: a redeal is not a settle. redealNotMoved = the redeal call returned false (the entry did not move).
         RwgProvisionalDespawn(E);
         E.bRwgProvisional = false;
         ++NodeGateSettleRejectedWater;
         WaterLockedThisSession.Add(E.EntryGuid);
-        TryRedealWaterLockedEntry(E);
+        const bool bMoved = TryRedealWaterLockedEntry(E);
         bChangedWorld = true;
-        SettledZ = E.Location.Z;
-        ++RwgProvSessRedealt;
-        Outcome = (RwgPcSteepRing > RingBefore) ? TEXT("ring") : TEXT("mapwide");
+        if (bMoved) { ++RwgProvSessRedealt; }
+        Outcome = !bMoved ? TEXT("redealNotMoved") : (RwgPcSteepRing > RingBefore) ? TEXT("ring") : TEXT("mapwide");
     }
     else
     {
@@ -170,9 +175,11 @@ void ANodeShuffleSubsystem::RwgSettleProvisional(FNodeShuffleEntry& E, bool& bCh
     if (RwgProvSettleSamples < NodeShuffleMapMode::RwgProvisionalSettleSamplesPerPass)
     {
         ++RwgProvSettleSamples;
+        // movedXYm: from the provisional actor to the respawned actor (inPlace), else to the entry's location after this call.
+        const FVector MovedTo = bFresh ? FreshAt : E.Location;
         UE_LOG(LogNodeShuffle, Display, TEXT("PROVSETTLE: entry=%s res=%s provZ=%.0f settledZ=%.0f dzCm=%.0f movedXYm=%.1f outcome=%s hitClass=%d apiUsed=%d onSolidTop=%d"),
             *E.EntryGuid.ToString(), *ProvShort(E.AssignedResourceClassPath), ProvAt.Z, SettledZ, SettledZ - ProvAt.Z,
-            FVector::Dist2D(E.Location, ProvAt) / 100.0, Outcome, HitClass, bApiUsed ? 1 : 0, E.bRwgOnSolidTop ? 1 : 0);
+            FVector::Dist2D(MovedTo, ProvAt) / 100.0, Outcome, HitClass, bApiUsed ? 1 : 0, E.bRwgOnSolidTop ? 1 : 0);
     }
 }
 
