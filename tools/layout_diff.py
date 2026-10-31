@@ -153,8 +153,11 @@ def _classify(r, a, b, flags, moved_cm, sentinel=False):
     r['pairs'].append((a, b))
     fl = _flags(a, b, flags)
     d = _xy(a, b)
-    if sentinel:  # a well printed with src none carries 0,0,0, not a position: a state change, never a move
-        r['flagOnly'].append((a, b, d, fl))
+    if sentinel:  # a well printed with src none carries 0,0,0, not a position: a state change when a flag differs, never a move
+        if fl:
+            r['flagOnly'].append((a, b, d, fl))
+        else:
+            r['unchanged'] += 1
     elif d > moved_cm:
         r['moved'].append((a, b, d, fl))
     elif fl:
@@ -354,8 +357,8 @@ def selftest() -> int:
     fails = []
     forbidden = ('re' + 'deal', 'ex' + 'port', 'be' + 'cause')
     want = {'blocks': '1,2', 'seedA': '123456', 'seedB': '123456', 'spots': '2', 'eA': '8', 'eB': '9', 'ePaired': '7',
-            'eMoved': '4', 'eFlagOnly': '1', 'eZOnly': '0', 'eRemoved': '1', 'eAdded': '2', 'eAmbiguous': '0', 'wA': '3',
-            'wB': '3', 'wMoved': '1', 'wFlagOnly': '1', 'wRemoved': '0', 'wAdded': '0', 'oA': '3', 'oB': '4', 'oFlagOnly': '0',
+            'eMoved': '4', 'eFlagOnly': '1', 'eZOnly': '0', 'eRemoved': '1', 'eAdded': '2', 'eAmbiguous': '0', 'wA': '4',
+            'wB': '4', 'wMoved': '1', 'wFlagOnly': '1', 'wRemoved': '0', 'wAdded': '0', 'oA': '3', 'oB': '4', 'oFlagOnly': '0',
             'oRemoved': '0', 'oAdded': '1', 'eMovedOut': '1', 'eMovedIn': '1', 'eMovedWithin': '2', 'eRemovedInside': '1',
             'eAddedInside': '1'}
     want_at = {'camp': 'nA=5 nB=5 activeA=3 activeB=4 movedOut=1 movedIn=1 movedWithin=1 removedInside=1 addedInside=1 reconciles=1',
