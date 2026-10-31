@@ -21,7 +21,7 @@ namespace
         // fix F9 (2026-10-31): every clause states what RwgProvisionalSpawnPass / the attempt loop do; no universal or simultaneous claim.
         TEXT("RWG maps only. 1 (default): new node spots that have no node yet and are farther than the attempt radius (1 km, or the ")
         TEXT("spawn radius if smaller) from every player get a node placed, up to a batch per spawn pass, once the sea check has ")
-        TEXT("cleared them; spots set aside this session (parked, dormant, refused, pinned, or already fitted to the ground) are skipped. ")
+        TEXT("cleared them (or without it where this world has no usable sea check); spots set aside this session (parked, dormant, refused, pinned, or already fitted to the ground) are skipped. ")
         TEXT("They are placed at the world generator's surface height (cave spots at their dealt cave floor). When a player comes ")
         TEXT("within that radius, the normal spawn check tries to re-fit each one to the ground, which can also move it. 0: no new far ")
         TEXT("nodes are placed; nodes already placed stay and are still re-fitted on approach. Read each spawn pass."),

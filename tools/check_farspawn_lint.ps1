@@ -160,7 +160,7 @@ function Invoke-FarspawnChecks($T) {
     if ($help -eq '') { $f += '(F18) the RwgSpawnAllAtRoll help text span is missing' }
     else {
         foreach ($bad in @(('every new ' + 'node'), ('at ' + 'once'), ('height read from ' + 'the world generator'))) { if ($help.Contains($bad)) { $f += "(F18) the toggle help text must not claim: $bad" } }
-        foreach ($need in @('(1 km, or the ")', 'up to a batch per spawn pass', '(parked, dormant, refused, pinned, or already fitted to the ground) are skipped', '(cave spots at their dealt cave floor)', 'tries to re-fit')) { if (-not $help.Contains($need)) { $f += "(F18) the toggle help text must say: $need" } }
+        foreach ($need in @('(1 km, or the ")', 'up to a batch per spawn pass', '(parked, dormant, refused, pinned, or already fitted to the ground) are skipped', '(cave spots at their dealt cave floor)', 'tries to re-fit', 'cleared them (or without it where this world has no usable sea check);')) { if (-not $help.Contains($need)) { $f += "(F18) the toggle help text must say: $need" } }
     }
     # F14
     if ((Count $T.place 'if (E.bRwgProvisional) { RwgStuckBeforeAttempt(E); RwgSettleProvisional(E, bChangedWorld); AFGResourceNode* const* Now = SpawnedNodes.Find(E.EntryGuid); if (Now && IsValid(*Now) && !E.bRwgProvisional) { ++RwgPcSpawned; } RwgStuckAfterAttempt(E); continue; }') -ne 1) { $f += '(F14) the provisional settle must be bracketed by RwgStuckBeforeAttempt / RwgStuckAfterAttempt' }
@@ -228,6 +228,7 @@ $mutants = @(
     @{ Name = 'X51 V-R3 header counters appended into the comment'; Key = 'subh'; Expect = 'F15'; Find = "RwgProvSessPinned = 0; // session`n    int32 RwgProvSessSettledNoActor"; Repl = 'RwgProvSessPinned = 0; // session int32 RwgProvSessSettledNoActor' }
     @{ Name = 'X52 V-R4 unplaceable branch no longer counts a deferral'; Key = 'prov'; Expect = 'F15'; Find = "        ++DeferredThisPass; // parity with EnsureNewNodeSpawned: its unsettled water branch counts as a deferral (NodeShuffleSubsystem.cpp DeferredThisPass++)`n"; Repl = '' }
     @{ Name = 'X53 V-R4 deferral counted on the settled branch too'; Key = 'prov'; Expect = 'F15'; Find = "        else { ++RwgProvSessSettledNoActor; }`n"; Repl = "        else { ++RwgProvSessSettledNoActor; }`n        ++DeferredThisPass;`n" }
+    @{ Name = 'X54 V-R6 help text drops the sea-idle clause'; Key = 'prov'; Expect = 'F18'; Find = 'cleared them (or without it where this world has no usable sea check);'; Repl = 'cleared them;' }
     @{ Name = 'X27 F2 pin check evaluated before the distance test'; Key = 'place'; Expect = 'F9'; Find = 'if (E.bRwgProvisional && IsLocationNearAnyPlayer(E.Location, AttemptRadiusCm) && !RwgProvisionalPinWins(E)) {'; Repl = 'if (E.bRwgProvisional && !RwgProvisionalPinWins(E) && IsLocationNearAnyPlayer(E.Location, AttemptRadiusCm)) {' }
 )
 $mutantFails = @()
