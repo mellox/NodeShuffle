@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+(Not yet verified in game: the in-game checks for this entry are still open.)
+
+### New
+
+- **Modded resources on Random World Generator maps get vanilla-map node counts, on by default.** Random World
+  Generator places modded ores from its own templates, so a resource can end up with far more nodes than the vanilla
+  map has (lead: 104 on one tested world, against 6 on the vanilla map). A new table, **Modded Resource Vanilla
+  Counts**, gives each listed modded resource its vanilla map node count, scaled by how many vanilla ore nodes the
+  world has compared with the vanilla map, so it follows your Random World Generator amount settings the way the
+  vanilla ores do. The shuffle then deals that many instead; your density and minimum-per-resource settings still
+  apply. Pre-filled: Lead 6, Lithium 23, Thorium 45. On a world with lead, lead nodes become far fewer.
+- **A listed gas resource with no node on the world** (Lithium is the known case) gets new nodes of its own node
+  class. If no usable node class is found, nothing is added for that resource.
+- Both act only when a layout is rolled: a new Random World Generator world at its first roll, an existing one at
+  its next **Re-roll Layout**. Loading a save changes nothing, and other maps are not affected. Turn off **Use
+  Vanilla Counts For Modded Resources** before re-rolling to keep the counts Random World Generator planned.
+
 ## 1.4.0 — 2026-08-13
 
 ### New

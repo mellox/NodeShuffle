@@ -63,8 +63,7 @@ confirmed working with NodeShuffle, **before** the update, were KBFL 2026.2.267,
 
 All settings are in the in-game **Mods → Node Shuffle** panel (and persist to
 `<game>/FactoryGame/Configs/NodeShuffle.cfg`), in three groups: **the shuffle**,
-**other mods**, and **troubleshooting** — 15 settings plus the protected-resource
-list. There is no resource-wells group: since 1.4.0 wells are part of the shuffle
+**other mods**, and **troubleshooting** — 16 settings plus two lists: the protected-resource list and the modded-resource vanilla-count table. There is no resource-wells group: since 1.4.0 wells are part of the shuffle
 and have no switches of their own (see **Resource wells** below).
 
 ### The shuffle
@@ -90,6 +89,8 @@ and have no switches of their own (see **Resource wells** below).
 | Include Modded Nodes | on | Shuffle nodes added by other mods too; their solid nodes also **relocate** on a re-roll, like vanilla nodes. |
 | Unlock Scanner Knowledge For Shuffled Modded Resources | on | Registers shuffled modded resources with the resource scanner so it can find them. Some overhaul mods also gate **miner placement** on scanner knowledge, so this can allow placing miners on modded ores earlier than that overhaul's own research intended (crafting stays gated). Turn off to let each mod's own progression grant this. Vanilla resources are never affected. |
 | Protect Other Mods' Nodes | **on** | Some overhaul mods — Satisfactory Plus is the known case — remove other mods' resource nodes. When on, NodeShuffle **answers those removal checks** for the resources ticked in the list below (refusing the handler's condition — never a claim that it "stops removal" outright). Off, NodeShuffle answers nothing and each mod's own handler decides; the list still fills itself in either way. Takes effect the next time you load the save; doesn't bring back nodes already removed. |
+| Use Vanilla Counts For Modded Resources (Random World Generator) | on | ON by default. Random World Generator maps only, at each layout roll or re-roll: each modded resource listed in the Modded Resource Vanilla Counts table gets its vanilla map node count, scaled by how many vanilla ore nodes this world has compared with the vanilla map, in place of the number of its nodes NodeShuffle found on this world, when deciding how many nodes of it the shuffle deals. A listed gas resource with no node on this world gets new nodes of its own node class (one NodeShuffle finds in that resource's mod, otherwise the class listed in the row); if neither is usable, none are added. Other maps are not affected. |
+| Modded Resource Vanilla Counts (Random World Generator) | Lead 6, Lithium 23, Thorium 45 | Used on Random World Generator maps only, at each layout roll or re-roll, while 'Use Vanilla Counts For Modded Resources' is on. Each row names a modded resource, an optional node class, and how many nodes that resource has on the vanilla map. That number is scaled by how many vanilla ore nodes this world has compared with the vanilla map and replaces the resource's own node count in the shuffle. A gas resource with no node on this world gets new nodes of its own node class (one NodeShuffle finds in that resource's mod, otherwise the class in the row); if neither is usable, nothing is added. Pre-filled: Lead 6, Lithium 23, Thorium 45. |
 
 **Protect Other Mods' Nodes (Per Resource)** — the self-filling list under the checkbox above: a
 resource appears once another mod's node handler has checked nodes of that resource at least once,
