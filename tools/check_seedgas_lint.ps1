@@ -3,7 +3,7 @@
 # Needles naming a forbidden literal are BUILT BY CONCATENATION so this file cannot match itself. Pins anchor on context unique
 # to their site (function names / exact statements), never on a bare fragment.
 #   Q1  Gate order per row: disabled -> notRwg -> badRow -> duplicate -> OVERRIDE only when captured originals > 0 (then continue)
-#       -> SEED path: gas form required -> class gate -> noClass skip -> seeded. The seed branch is reachable only past the
+#       -> SEED path: descriptor loaded (descUnloaded) -> gas form required -> class gate -> noClass skip -> seeded. The seed branch is reachable only past the
 #       override branch's continue, i.e. only with zero captured originals.
 #   Q2  Class gate: AcceptOwnClass = AFGResourceNode child AND not an AFGResourceDeposit child AND not abstract AND not
 #       session-refused AND IsOwnNodeClassForResource (own mount AND CDO resource == row resource, fix round 1 F1); the
@@ -80,7 +80,7 @@ function Invoke-SeedgasChecks($T) {
     $f = @()
     $g = $T.sg; $s = $T.sub; $h = $T.sgh
     # Q1
-    if (-not (Ordered $g @('void DecideAndApply(UObject* WorldContext', 'if (!bEnabled) { R.Skipped = TEXT("disabled"); continue; }', 'if (!bMapIsRwg) { R.Skipped = TEXT("notRwg"); continue; }', 'if (Row.Resource.IsEmpty() || Row.VanillaCount < 1 || Row.VanillaCount > MaxRowCount) { R.Skipped = TEXT("badRow"); continue; }', 'if (SeenRows.Contains(Row.Resource)) { R.Skipped = TEXT("duplicate"); continue; }', 'if (R.CapturedOriginals > 0)', 'R.Action = TEXT("override");', 'continue;', 'if (R.Form != TEXT("gas")) { R.Skipped = TEXT("notGas"); continue; }', 'if (R.ResolvedClass.IsEmpty()) { R.Skipped = TEXT("noClass"); continue; }', 'Out.SeededKinds.Add(Row.Resource);', 'R.Action = TEXT("seed");'))) { $f += '(Q1) gate order must be disabled, notRwg, badRow, duplicate, override only when originals > 0, then gas, class, seed' }
+    if (-not (Ordered $g @('void DecideAndApply(UObject* WorldContext', 'if (!bEnabled) { R.Skipped = TEXT("disabled"); continue; }', 'if (!bMapIsRwg) { R.Skipped = TEXT("notRwg"); continue; }', 'if (Row.Resource.IsEmpty() || Row.VanillaCount < 1 || Row.VanillaCount > MaxRowCount) { R.Skipped = TEXT("badRow"); continue; }', 'if (SeenRows.Contains(Row.Resource)) { R.Skipped = TEXT("duplicate"); continue; }', 'if (R.CapturedOriginals > 0)', 'R.Action = TEXT("override");', 'continue;', 'if (Desc == nullptr) { R.Skipped = TEXT("descUnloaded"); continue; }', 'if (R.Form != TEXT("gas")) { R.Skipped = TEXT("notGas"); continue; }', 'if (R.ResolvedClass.IsEmpty()) { R.Skipped = TEXT("noClass"); continue; }', 'Out.SeededKinds.Add(Row.Resource);', 'R.Action = TEXT("seed");'))) { $f += '(Q1) gate order must be disabled, notRwg, badRow, duplicate, override only when originals > 0, then descUnloaded, gas, class, seed' }
     if ((Count $g 'if (R.CapturedOriginals > 0)') -ne 1 -or (Count $g ('R.CapturedOriginals ' + '>= 0')) -ne 0 -or (Count $g ('R.CapturedOriginals ' + '== 0')) -ne 0) { $f += '(Q1) the override branch is the single originals-positive test; the seed path is its fall-through' }
     # Q2
     $accept = 'return C && C->IsChildOf(AFGResourceNode::StaticClass()) && !C->IsChildOf(AFGResourceDeposit::StaticClass())' + "`n" + '                && !C->HasAnyClassFlags(CLASS_Abstract)' + "`n" + '                && !Refused.Contains(Path) && NodeShuffleRepClass::IsOwnNodeClassForResource(C, Path, Res);'
@@ -119,6 +119,7 @@ $mutants = @(
     @{ Name = 'X1 override also when zero originals'; Key = 'sg'; Expect = 'Q1'; Find = 'if (R.CapturedOriginals > 0)'; Repl = ('if (R.CapturedOriginals ' + '>= 0)') }
     @{ Name = 'X2 RWG gate dropped'; Key = 'sg'; Expect = 'Q1'; Find = 'if (!bMapIsRwg) { R.Skipped = TEXT("notRwg"); continue; }'; Repl = '' }
     @{ Name = 'X3 gas gate dropped'; Key = 'sg'; Expect = 'Q1'; Find = 'if (R.Form != TEXT("gas")) { R.Skipped = TEXT("notGas"); continue; }'; Repl = '' }
+    @{ Name = 'X26 unloaded descriptor reported as notGas'; Key = 'sg'; Expect = 'Q1'; Find = 'if (Desc == nullptr) { R.Skipped = TEXT("descUnloaded"); continue; }'; Repl = '' }
     @{ Name = 'X4 seed without a class'; Key = 'sg'; Expect = 'Q1'; Find = 'if (R.ResolvedClass.IsEmpty()) { R.Skipped = TEXT("noClass"); continue; }'; Repl = '' }
     @{ Name = 'X5 class gate accepts abstract'; Key = 'sg'; Expect = 'Q2'; Find = '&& !C->HasAnyClassFlags(CLASS_Abstract)'; Repl = '' }
     @{ Name = 'X6 class gate drops own-mount'; Key = 'sg'; Expect = 'Q2'; Find = '&& NodeShuffleRepClass::IsOwnNodeClassForResource(C, Path, Res);'; Repl = ';' }

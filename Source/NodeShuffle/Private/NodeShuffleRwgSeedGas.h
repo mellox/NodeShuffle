@@ -56,7 +56,7 @@ namespace NodeShuffleRwgSeedGas
         FString ResolvedClass;
         const TCHAR* ResolvedBy = TEXT("n/a");    // config | registry | none | n/a (not a seed candidate)
         const TCHAR* Action = TEXT("skip");       // override | seed | skip
-        const TCHAR* Skipped = TEXT("none");      // none | disabled | notRwg | hasNoRow | badRow | duplicate | notGas | noClass | emptyPool
+        const TCHAR* Skipped = TEXT("none");      // none | disabled | notRwg | hasNoRow | badRow | duplicate | descUnloaded | notGas | noClass | emptyPool
         int32 CapturedOriginals = 0;
         int32 Target = 0;
         // gate-4 measurements, printed by MODQUOTA-CLASS

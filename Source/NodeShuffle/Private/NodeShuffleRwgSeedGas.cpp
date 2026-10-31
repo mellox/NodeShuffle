@@ -211,6 +211,7 @@ namespace NodeShuffleRwgSeedGas
                 continue;
             }
             // SEED candidate (zero captured originals).
+            if (Desc == nullptr) { R.Skipped = TEXT("descUnloaded"); continue; }
             if (R.Form != TEXT("gas")) { R.Skipped = TEXT("notGas"); continue; }
             R.ResolvedBy = TEXT("none");
             if (!bRegQueried) { NodeShuffleRepClass::QueryDerivedNodeClasses(RegQuery); bRegQueried = true; }
