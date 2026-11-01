@@ -653,6 +653,7 @@ void ANodeShuffleSubsystem::PostLoadGame_Implementation(int32 /*saveVersion*/, i
 
 void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
 {
+    RwgProvCandMarkDirty(bIsReroll ? TEXT("reroll") : TEXT("roll")); // rwg-farspawn-1f C3: the provisional candidate list is rebuilt next pass
     const FNodeShuffleConfigStruct Config = FNodeShuffleConfigStruct::GetActiveConfig(this);
     FRandomStream Rng(Seed);
 
@@ -3839,6 +3840,7 @@ void ANodeShuffleSubsystem::PreRegisterRestoredNodesForVeto()
                 {
                     FNodeShuffleModule::RegisterManagedNode(Node);
                     PreRegistered++;
+                    AdoptAuditNotePreRegistered(Node, Legacy->EntryGuid); // rwg-farspawn-1f C1 (NodeShuffleAdoptAudit.cpp)
                 }
                 continue;
             }
@@ -3853,6 +3855,7 @@ void ANodeShuffleSubsystem::PreRegisterRestoredNodesForVeto()
                     && NodeRes != E->AssignedResourceClassPath) { continue; }
                 FNodeShuffleModule::RegisterManagedNode(Node);
                 PreRegistered++;
+                AdoptAuditNotePreRegistered(Node, E->EntryGuid); // rwg-farspawn-1f C1 (NodeShuffleAdoptAudit.cpp)
                 break;
             }
         }
@@ -3967,6 +3970,7 @@ void ANodeShuffleSubsystem::AdoptRestoredSpawnedNodes()
         Adopted, LegacyByGuid, RealByLocation, PinnedOnLoad, RuntimeNodesSeen,
         Adopted, ExpectedSpawned,
         bFail ? TEXT(" <-- WARNING: almost nothing adopted — spawned nodes may not be save-collected") : TEXT(" (OK)"));
+    AdoptAuditEmit(Adopted); // rwg-farspawn-1f C1: ADOPTMISS per pre-registered node left unbound + ADOPTCENSUS (NodeShuffleAdoptAudit.cpp; diagnostic only)
 }
 
 bool ANodeShuffleSubsystem::FinalizeAdoptedNode(AFGResourceNode* Node, int32 EntryIdx)
@@ -7420,6 +7424,7 @@ bool ANodeShuffleSubsystem::RaycastSettle(FNodeShuffleEntry& Entry, const AActor
 
 bool ANodeShuffleSubsystem::TryRedealWaterLockedEntry(FNodeShuffleEntry& Entry)
 {
+    RwgProvCandMarkDirty(TEXT("redeal")); // rwg-farspawn-1f C3: a redeal moves an entry; the provisional candidate list is rebuilt next pass
     // playtest-fixes-3 (UNANCHORED redeal): draw fresh RANDOM candidates from the SAME map-wide deal
     // box the roll used — the fixes-1 version anchored to streamed originals, which clustered
     // relocations around original node sites and defeated the mod's randomization (user call).

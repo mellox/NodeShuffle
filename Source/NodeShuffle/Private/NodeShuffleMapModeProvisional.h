@@ -5,7 +5,7 @@
 // returns, so the hand scanner, the radar tower and the map marker can find it; the spawn pass settles it on approach through the
 // unchanged RwgResolveAtSpawn. The subsystem side lives in NodeShuffleMapModeProvisional.cpp.
 // rwg-farspawn-1e C1: also an entry WITHIN the attempt radius whose fresh attempt this pass left no actor (trace miss), unless it is
-// underground or water-locked at its lock spot; same batch, same seam, same flag.
+// underground (legacy bUnderground; RWG caves are provisioned at their dealt floor Z) or water-locked at its lock spot; same batch, same seam, same flag.
 
 #include "CoreMinimal.h"
 #include "NodeShuffleMapMode.h"
@@ -32,4 +32,6 @@ namespace NodeShuffleMapMode
     // shift (a spiral step, a redeal) respawns. Same value as AdoptMatchRadiusCm (NodeShuffleSubsystem.cpp), the radius the save adopt
     // already treats as "the same node spot"; a separate constant because that one is file-local there.
     constexpr double RwgProvisionalMoveTolCm = 300.0;
+    // rwg-farspawn-1f C3: the per-session provisional candidate list is rebuilt at least every this many spawn passes (no console variable).
+    constexpr int32 RwgProvisionalCandRebuildPasses = 12;
 }

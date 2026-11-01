@@ -1152,7 +1152,7 @@ private:
     int32 RwgProvSessSettledNoActor = 0, RwgProvSessRedealNotMoved = 0; // session: settle outcomes counted by the settledNoActor and redealNotMoved branches (re-review V-R3)
     // rwg-farspawn-1c C1 (NodeShuffleMapModeProvisionalMove.cpp): keep + move the provisional actor when the settle kept its XY.
     const TCHAR* RwgProvisionalMoveCheck(const FNodeShuffleEntry& E, class AFGResourceNode* Node, const FVector& ProvAt) const; // "moved" or the refusing predicate
-    bool RwgProvisionalMoveInPlace(FNodeShuffleEntry& E, class AFGResourceNode* Node); // false = actor did not take the move (rwg-farspawn-1d F1 readback)
+    const TCHAR* RwgProvisionalMoveInPlace(FNodeShuffleEntry& E, class AFGResourceNode* Node); // nullptr = kept and moved; else the moveCheck word: moveNotApplied (1d F1 readback) or gatedRespawn (1f C2)
     void RwgProvisionalLogRefusal(const FNodeShuffleEntry& E, const TCHAR* Reason); // rwg-farspawn-1c C6: PROVSPAWN refused line
     int32 RwgProvSessMovedInPlace = 0; // session: settles that moved the same actor (PROVCENSUS movedInPlace)
     int32 RwgProvSessMoveNotApplied = 0, RwgProvSessMovedEnclosed = 0, RwgProvSessMovedShadowInside = 0; // rwg-farspawn-1d F1/F2 session counts (PROVCENSUS)
@@ -1177,6 +1177,21 @@ private:
     TMap<FGuid, bool> RwgProvOriginWithin;                                 // session: true = provisioned within the attempt radius, false = beyond it
     TSet<FGuid> RwgProvSessDeferredEntries;                                // session: distinct entries counted by RwgProvSessDeferred (PROVCENSUS deferredEntries)
     int32 RwgProvSessWithinRadius = 0;                                     // session: provisional spawns of within-radius entries (PROVCENSUS withinRadiusProvisionedSession)
+    // rwg-farspawn-1f C1 (NodeShuffleAdoptAudit.cpp): adopt-on-load accounting of the veto pre-registered restored nodes (ADOPTMISS / ADOPTCENSUS).
+    void AdoptAuditNotePreRegistered(class AFGResourceNode* Node, const FGuid& EntryGuid); // beside each PreRegistered++ (PreRegisterRestoredNodesForVeto)
+    void AdoptAuditEmit(int32 AdoptLineAdopted);                           // end of AdoptRestoredSpawnedNodes; diagnostic only, binds/destroys nothing
+    TMap<TWeakObjectPtr<AFGResourceNode>, FGuid> AdoptPreRegistered;       // session: pre-registered node -> the entry its pre-registration matched
+    // rwg-farspawn-1f C2: kept-and-moved settles measured enclosed or all-solid take the despawn + respawn branch instead.
+    int32 RwgProvSessGatedRespawn = 0;                                     // session: moves refused by the measurement (PROVCENSUS gatedRespawn)
+    // rwg-farspawn-1f C3 (NodeShuffleMapModeProvisionalScan.cpp): the per-session provisional candidate list, rebuilt on a layout change or every 12 passes.
+    void RwgProvCandMarkDirty(const TCHAR* Why);                           // the next provisional pass rebuilds the list (first reason since the last build wins)
+    void RwgProvisionalCollectCandidates(const TArray<FVector>& Pawns, float AttemptRadiusCm, const TSet<int32>& FreshNoActor, TArray<int32>& OutCands,
+        TSet<int32>& OutWithin, int32& SeaPending, int32& RayCastedNoActor, int32& SeaDealFailed, int32& WetSpot, int32& WithinUnderground, const TCHAR*& OutBuild);
+    TArray<TPair<FGuid, int32>> RwgProvCandList;                           // session: (entry guid, layout index), nearest-first to any player at build time
+    int32 RwgProvCandBuiltPass = -1;                                       // RwgPcPasses at the last build (-1 = never built this session)
+    int32 RwgProvCandBuiltLayoutNum = -1;                                  // Layout.Num() at the last build
+    const TCHAR* RwgProvCandDirtyWhy = nullptr;                            // set by RwgProvCandMarkDirty; cleared by a build
+    int32 RwgProvCandBuilds = 0;                                           // session: list builds (PROVSPAWN candidateListBuilds)
     // Coordinator addendum (water diagnostics, measured only, gates nothing): ROLLCENSUS / WELLROLL splits + bounded samples.
     void RwgNoteWaterSample(const NodeShuffleMapMode::FRwgGroundQuery& Q, const FVector& P, bool bVolumeWet, const TCHAR* Caller);
     int32 RwgRcWaterZBelow0 = 0, RwgRcWaterZAtOrAbove0 = 0, RwgRcDealtBelowZ0 = 0; // per roll (GenerateRwgLocations)

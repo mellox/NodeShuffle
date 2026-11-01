@@ -57,6 +57,7 @@ bool ANodeShuffleSubsystem::RwgRedealLiveEntry(FNodeShuffleEntry& E, const TCHAR
 {
     AFGResourceNode* Node = SpawnedNodes.FindRef(E.EntryGuid);
     if (E.bPinned || (IsValid(Node) && IsNodeOccupiedAnyway(Node))) { return false; } // never under a player's building
+    RwgProvCandMarkDirty(TEXT("redeal")); // rwg-farspawn-1f C3: this live entry is torn down and redealt; the provisional candidate list is rebuilt next pass
     const FVector From = E.Location;
     // The SAME teardown as the re-roll wipe (NodeShuffleSubsystem.cpp, RollLayout, coexist-1 INVARIANT): Destroy, unregister
     // AFTER (a KBFL destroyed-listener still sees the node as managed), and the SpawnedNodes slot removed in this same block,
