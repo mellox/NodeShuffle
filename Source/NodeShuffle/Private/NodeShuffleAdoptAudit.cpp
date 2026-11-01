@@ -113,8 +113,13 @@ void ANodeShuffleSubsystem::AdoptAuditEmit(int32 AdoptLineAdopted)
     // first failing test (entryInactiveAtAdopt, resourceMismatchAtAdopt, distanceAtAdopt). boundNotPreRegistered counts bound actors
     // the pre-registration did not record; adoptLineAdopted is the Adopt-on-load line's own count; provisionalFlagUnbound counts
     // provisional-flagged entries with no bound actor, which the next spawn pass clears (PROVCENSUS staleFlagCleared).
-    UE_LOG(LogNodeShuffle, Display, TEXT("ADOPTCENSUS: preRegistered=%d adopted=%d matchedNotBound=%d unmatched=%d alreadyBound=%d frackingSkipped=%d componentSkipped=%d goneAtAdopt=%d entryInactiveAtAdopt=%d resourceMismatchAtAdopt=%d distanceAtAdopt=%d boundNotPreRegistered=%d adoptLineAdopted=%d provisionalFlagUnbound=%d reconciles=%d"),
+    // rwg-farspawn-1f review F4 (prose only): reconciles holds by construction (every pre-registered row raises exactly one counter);
+    // lineReconciles is the independent identity, 1 when the Adopt-on-load line's count equals adopted plus boundNotPreRegistered, i.e.
+    // every bind adopt counted is a distinct actor still valid here. It relies on adopt running before any spawn this session (ApplyLayout
+    // adopts before its first EnsureNewNodeSpawned, RwgPipelineMayRun adopts before RwgSpawnPass, SpawnedNodes is not saved).
+    UE_LOG(LogNodeShuffle, Display, TEXT("ADOPTCENSUS: preRegistered=%d adopted=%d matchedNotBound=%d unmatched=%d alreadyBound=%d frackingSkipped=%d componentSkipped=%d goneAtAdopt=%d entryInactiveAtAdopt=%d resourceMismatchAtAdopt=%d distanceAtAdopt=%d boundNotPreRegistered=%d adoptLineAdopted=%d provisionalFlagUnbound=%d reconciles=%d lineReconciles=%d"),
         PreRegistered, AdoptedPre, MatchedNotBound, Unmatched, AlreadyBound, Fracking, Component, Gone, EntryInactive, ResMismatch, Distance,
-        BoundNotPre, AdoptLineAdopted, FlagUnbound, (PreRegistered == AdoptedPre + MatchedNotBound + Unmatched) ? 1 : 0);
+        BoundNotPre, AdoptLineAdopted, FlagUnbound, (PreRegistered == AdoptedPre + MatchedNotBound + Unmatched) ? 1 : 0,
+        (AdoptLineAdopted == AdoptedPre + BoundNotPre) ? 1 : 0);
     RwgProvCandMarkDirty(TEXT("reload")); // rwg-farspawn-1f C3: the provisional candidate list is rebuilt after adopt-on-load
 }

@@ -2,6 +2,7 @@
 # Brief: _team/test-logs/2026-10-31-nodeshuffle-farspawn-1f-brief.md. LOADS and PINS NodeShuffleAdoptAudit.cpp, its two call-site files.
 # Pins anchor on context unique to their site; needles naming a forbidden literal are BUILT BY CONCATENATION. Run under pwsh 7.
 #   A1 ADOPTCENSUS reconciles by construction: preRegistered = adopted + matchedNotBound + unmatched; each row raises exactly one counter.
+#      (round-1f review F4) lineReconciles = the independent identity adoptLineAdopted == adopted + boundNotPreRegistered, printed beside it.
 #   A2 ADOPTMISS: one UNGATED Display line per valid pre-registered node left unbound; format + 13 arguments verbatim.
 #   A3 Call sites: a note beside each PreRegistered++ (two), the emit at the end of AdoptRestoredSpawnedNodes after the Adopt-on-load line.
 #   A4 Diagnostic only: the file binds, registers, moves, pins and destroys nothing.
@@ -50,8 +51,8 @@ function Invoke-AdoptChecks($T) {
     if ((Count $emit ('UE_LOG(LogNodeShuffle, Display, ' + $miss)) -ne 1) { $f += '(A2) ADOPTMISS format' }
     if ((Count $emit "*Node->GetName(), *AdoptShort(Res), *At.ToCompactString(), *Matched.ToString().Left(8), Reason, OtherWhy, DistCm,`n            *Row.Value.ToString().Left(8), *BoundName, bBoundValid ? FVector::Dist(At, BoundTo->GetActorLocation()) : -1.0,`n            IsNodeOccupiedAnyway(Node) ? 1 : 0, bBoundValid ? (IsNodeOccupiedAnyway(BoundTo) ? 1 : 0) : -1, bLegacy ? 1 : 0);") -ne 1) { $f += '(A2) ADOPTMISS arguments (13)' }
     if ($a.Contains('AreDiagnostics' + 'Enabled')) { $f += '(A2) ADOPTMISS / ADOPTCENSUS print ungated' }
-    $cen = 'TEXT("ADOPTCENSUS: preRegistered=%d adopted=%d matchedNotBound=%d unmatched=%d alreadyBound=%d frackingSkipped=%d componentSkipped=%d goneAtAdopt=%d entryInactiveAtAdopt=%d resourceMismatchAtAdopt=%d distanceAtAdopt=%d boundNotPreRegistered=%d adoptLineAdopted=%d provisionalFlagUnbound=%d reconciles=%d"),'
-    if ((Count $emit $cen) -ne 1 -or (Count $emit "PreRegistered, AdoptedPre, MatchedNotBound, Unmatched, AlreadyBound, Fracking, Component, Gone, EntryInactive, ResMismatch, Distance,`n        BoundNotPre, AdoptLineAdopted, FlagUnbound, (PreRegistered == AdoptedPre + MatchedNotBound + Unmatched) ? 1 : 0);") -ne 1) { $f += '(A1) ADOPTCENSUS format/args (15)' }
+    $cen = 'TEXT("ADOPTCENSUS: preRegistered=%d adopted=%d matchedNotBound=%d unmatched=%d alreadyBound=%d frackingSkipped=%d componentSkipped=%d goneAtAdopt=%d entryInactiveAtAdopt=%d resourceMismatchAtAdopt=%d distanceAtAdopt=%d boundNotPreRegistered=%d adoptLineAdopted=%d provisionalFlagUnbound=%d reconciles=%d lineReconciles=%d"),'
+    if ((Count $emit $cen) -ne 1 -or (Count $emit "PreRegistered, AdoptedPre, MatchedNotBound, Unmatched, AlreadyBound, Fracking, Component, Gone, EntryInactive, ResMismatch, Distance,`n        BoundNotPre, AdoptLineAdopted, FlagUnbound, (PreRegistered == AdoptedPre + MatchedNotBound + Unmatched) ? 1 : 0,`n        (AdoptLineAdopted == AdoptedPre + BoundNotPre) ? 1 : 0);") -ne 1) { $f += '(A1) ADOPTCENSUS format/args (16)' }
     # A3
     if ((Count $T.sub "PreRegistered++;`n                    AdoptAuditNotePreRegistered(Node, Legacy->EntryGuid);") -ne 1 -or (Count $T.sub "PreRegistered++;`n                AdoptAuditNotePreRegistered(Node, E->EntryGuid);") -ne 1 -or (Count $T.sub 'PreRegistered++;') -ne 2 -or (Count $T.sub 'AdoptAuditNotePreRegistered(') -ne 2) { $f += '(A3) a note directly after each PreRegistered++ (two sites)' }
     $adoptFn = Span $T.sub 'void ANodeShuffleSubsystem::AdoptRestoredSpawnedNodes()' 'bool ANodeShuffleSubsystem::FinalizeAdoptedNode('
@@ -72,7 +73,9 @@ function Invoke-AdoptChecks($T) {
 $fails = @(Invoke-AdoptChecks $text)
 $mutants = @(
     @{ Name = 'M1 identity drops goneAtAdopt'; Key = 'adopt'; Expect = 'A1'; Find = 'const int32 Unmatched = Gone + ResMismatch + Distance + EntryInactive;'; Repl = 'const int32 Unmatched = ResMismatch + Distance + EntryInactive;' }
-    @{ Name = 'M2 reconciles hard-coded'; Key = 'adopt'; Expect = 'A1'; Find = '(PreRegistered == AdoptedPre + MatchedNotBound + Unmatched) ? 1 : 0);'; Repl = '1);' }
+    @{ Name = 'M2 reconciles hard-coded'; Key = 'adopt'; Expect = 'A1'; Find = '(PreRegistered == AdoptedPre + MatchedNotBound + Unmatched) ? 1 : 0,'; Repl = '1,' }
+    @{ Name = 'M12 lineReconciles hard-coded (review F4)'; Key = 'adopt'; Expect = 'A1'; Find = '(AdoptLineAdopted == AdoptedPre + BoundNotPre) ? 1 : 0);'; Repl = '1);' }
+    @{ Name = 'M13 lineReconciles dropped from the format (review F4)'; Key = 'adopt'; Expect = 'A1'; Find = ' reconciles=%d lineReconciles=%d"),'; Repl = ' reconciles=%d"),' }
     @{ Name = 'M3 alreadyBound counts nothing'; Key = 'adopt'; Expect = 'A1'; Find = 'Reason = TEXT("alreadyBound"); ++AlreadyBound;'; Repl = 'Reason = TEXT("alreadyBound");' }
     @{ Name = 'M4 ADOPTMISS diagnostics-gated'; Key = 'adopt'; Expect = 'A2'; Find = '        UE_LOG(LogNodeShuffle, Display, TEXT("ADOPTMISS'; Repl = ('        if (FNodeShuffleModule::AreDiagnostics' + 'Enabled()) UE_LOG(LogNodeShuffle, Display, TEXT("ADOPTMISS') }
     @{ Name = 'M5 ADOPTMISS drops boundOccupied'; Key = 'adopt'; Expect = 'A2'; Find = ' thisOccupied=%d boundOccupied=%d legacy=%d"),'; Repl = ' thisOccupied=%d legacy=%d"),' }
