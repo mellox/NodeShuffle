@@ -1438,6 +1438,10 @@ private:
     TSet<FGuid> ModdedVisualRebuilt;
     // rwg-repclass-1: adopt-branch DRESS-SKIP / DRESS-NOSKIP printed once per node per session (adopt re-runs every pass).
     TSet<FGuid> OwnClassDressLogged;
+    // rwg-thoriumclass-2: DRESS-NATIVE printed once per entry per session (spawn or adopt, whichever runs first; adopt re-runs
+    // every pass). Defined in NodeShuffleRepClassDiag.cpp. Reports what it measured; asserts no cause.
+    TSet<FGuid> NativeDressLogged;
+    void EmitDressNativeOnce(const TCHAR* Site, const FNodeShuffleEntry& Entry, class AActor* Node, class UStaticMeshComponent* ExcludeRock);
     void AdoptRestoredSpawnedNodes();
     // coexist-veto-1 FIX A: REGISTRY-ONLY pre-pass run in BeginPlay, before the veto arms. Registers
     // restored spawned-node actors into the module's managed-node registry using the SAME identity

@@ -131,7 +131,7 @@ function Invoke-RwgdealChecks($T) {
     if (-not (Ordered $s @('    int32 RwgNewFormRepStamps = 0;', 'if (bRwgDeal && !NodeShuffleRepClass::IsGenericNodeClassPath(E.AssignedResourceClassPath))', '? SpawnableLiquidNodeClassPath : SpawnableNodeClassPath;', '++RwgNewFormRepStamps;', 'continue;', 'if (const FString* ByResource = NodeClassByResource.Find(E.AssignedResourceClassPath))'))) { $f += '(G5) Phase-2: an RWG modded card without a spawnable chosen class takes the form representative before the resource-keyed stamp' }
     # G6
     $f += Check-Log $T 'deal' 'G6' 'RWGDEAL: ' 'RWGDEAL: activeSlots=%d cards=%d dealt=%d vanillaCards=%d moddedCards=%d undealtCards=%d slotsLeftInactiveNoCard=%d formChangedSolidToLiquid=%d liquidToSolid=%d noClassNoLookRejectSlots=%d' 10
-    $f += Check-Log $T 'deal' 'G6' 'RWGDEAL-RES ' 'RWGDEAL-RES res=%s cards=%d dealt=%d dealable=%d spawnClass=%d look=%d' 6
+    $f += Check-Log $T 'deal' 'G6' 'RWGDEAL-RES ' 'RWGDEAL-RES res=%s cards=%d dealt=%d dealable=%d spawnClass=%d look=%d seeded=%d' 7
     $f += Check-Log $T 'deal' 'G6' 'RWGDEAL-SLOTS ' 'RWGDEAL-SLOTS existingSlots=%d newSlots=%d existingKeptNoCard=%d reserveForced=%d formChangeNoRepRejects=%d' 5
     $f += Check-Log $T 'sub' 'G6' 'RWGDEAL-STAMP ' 'RWGDEAL-STAMP newFormRep=%d convFormChanged=%d convFormRestamped=%d convFormSpawnClass=%d convFormKept=%d' 5
     if ((Count $s ('(no liquid card on a solid slot by ' + 'construction)"),')) -ne 1 -or (Count $s '(rwg: form follows the card)"),') -ne 1 -or -not (Ordered $s @('        if (bRwgDeal)', '(rwg: form follows the card)"),', '        else', ('(no liquid card on a solid slot by ' + 'construction)"),')))) { $f += '(G6) FIX B line: Vanilla keeps its exact text in the else branch; RWG prints the claim-free variant' }
@@ -159,7 +159,9 @@ function Invoke-RwgdealChecks($T) {
     # G11 (rwg-seedgas-1): the gas deck drop is bypassed for SEEDED kinds only -- the predicate keeps the gas test and ANDs the
     # seeded-kind exemption onto it (never an OR, never a bare seeded test); Deal()'s existing-gas-slot skip is untouched.
     $gasDrop = '        if (IsGasResourcePath(Kind) && !NodeShuffleRwgSeedGas::IsSeededKind(ModQuota, Kind)) { continue; }'
-    if ((Count $s $gasDrop) -ne 1 -or (Count $s ('if (IsGasResourcePath(Kind)) { con' + 'tinue; }')) -ne 0 -or (Count $s 'NodeShuffleRwgSeedGas::IsSeededKind(') -ne 1) { $f += '(G11) the gas deck drop must skip SEEDED kinds only: IsGasResourcePath(Kind) AND NOT IsSeededKind, at the single deck-build site' }
+    # rwg-thoriumclass-2 (2026-11-01): two further IsSeededKind reads exist, both print-only (the REPCLASS census and the kind table's bSeeded,
+    # pinned by check_thoriumclass2_lint U4/U5); the deck-build site stays the only one that gates a deck decision on it.
+    if ((Count $s $gasDrop) -ne 1 -or (Count $s ('if (IsGasResourcePath(Kind)) { con' + 'tinue; }')) -ne 0 -or (Count $s 'NodeShuffleRwgSeedGas::IsSeededKind(') -ne 3 -or (Count $s 'IsSeededKind(ModQuota, Kind)) { continue; }') -ne 1) { $f += '(G11) the gas deck drop must skip SEEDED kinds only: IsGasResourcePath(Kind) AND NOT IsSeededKind, at the single deck-build site (three IsSeededKind reads in all: deck drop, REPCLASS census, kind table)' }
     if (-not (Ordered $s @('NodeShuffleRwgSeedGas::DecideAndApply(', 'NodeShuffleRwgSeedGas::Restore(ModQuota', $gasDrop, 'NodeShuffleRwgDeal::Deal(NewLayout, In, Rng, RwgDeal);'))) { $f += '(G11) seed decision, restore and the gas deck drop must precede the RWG Deal() call' }
     if ((Count $T.deal 'return E.bActive && !E.bPinned && !(!E.bIsNewNode && In.IsGas && In.IsGas(E.AssignedResourceClassPath));') -ne 1) { $f += '(G11) Deal() must still skip EXISTING gas slots (never retyped)' }
     return $f
@@ -182,7 +184,7 @@ $mutants = @(
     @{ Name = 'A11 drop the conversion form restamp'; Key = 'sub'; Expect = 'G5'; Find = 'E.RepClassSpawnPath = FormRep;'; Repl = '' }
     @{ Name = 'A12 drop the Phase-2 RWG gate'; Key = 'sub'; Expect = 'G5'; Find = 'if (bRwgDeal && !NodeShuffleRepClass::IsGenericNodeClassPath(E.AssignedResourceClassPath))'; Repl = 'if (false)' }
     @{ Name = 'A13 RWGDEAL drops an argument'; Key = 'deal'; Expect = 'G6'; Find = 'Out.SolidToLiquid, Out.LiquidToSolid, Out.VanillaOnlyFallbacks);'; Repl = 'Out.SolidToLiquid, Out.LiquidToSolid);' }
-    @{ Name = 'A14 RWGDEAL-RES drops look'; Key = 'deal'; Expect = 'G6'; Find = ' spawnClass=%d look=%d"),'; Repl = ' spawnClass=%d"),' }
+    @{ Name = 'A14 RWGDEAL-RES drops look'; Key = 'deal'; Expect = 'G6'; Find = ' spawnClass=%d look=%d seeded=%d"),'; Repl = ' spawnClass=%d seeded=%d"),' }
     @{ Name = 'A15 RWG FIX B line keeps the false claim'; Key = 'sub'; Expect = 'G6'; Find = '(rwg: form follows the card)"),'; Repl = ('(no liquid card on a solid slot by ' + 'construction)"),') }
     @{ Name = 'A16 marker reverted'; Key = 'nsmod'; Expect = 'G7'; Find = ('2026-10-31-rwg-' + 'farspawn-1f'); Repl = ('2026-10-31-rwg-' + 'farspawn-1e') }
     @{ Name = 'A17 Rung 3 reads NodeClassPath on RWG'; Key = 'sub'; Expect = 'G8'; Find = '? PreSubstituteSpawnPath(E) : E.NodeClassPath;'; Repl = '? E.NodeClassPath : E.NodeClassPath;' }
