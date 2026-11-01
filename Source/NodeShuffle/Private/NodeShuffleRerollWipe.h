@@ -20,7 +20,8 @@ struct FNodeShuffleRerollWipeTally
     int32 InvalidSlotsNull = 0;     // review F2: invalid slots whose pointer was null (cannot be compared)
     int32 InvalidInManagerAtWipe = 0;     // review F2: non-null invalid slots whose address was in mResourceNodes (Contains, before the removal)
     int32 InvalidRemovedFromManager = 0;  // review F2: sum of mResourceNodes.RemoveSingleSwap returns for non-null invalid slots
-    int32 NoManager = 0;            // destroyed nodes for which GetNodeManager() returned null
+    int32 DestroyRefused = 0;       // review F4: valid slots whose Destroy() returned false (node left live; its registrations already dropped)
+    int32 NoManager = 0;           // destroyed nodes for which GetNodeManager() returned null
     int32 NoRepManager = 0;         // destroyed nodes for which the representation manager was null
     int32 ManagerCountBefore = -1;  // mResourceNodes.Num() at RerollWipeBegin (-1: no manager)
     int32 PerNodeLogged = 0;        // gated per-node lines printed (cap in NodeShuffleRerollWipe.cpp)

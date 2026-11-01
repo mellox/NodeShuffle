@@ -47,9 +47,9 @@ function Span([string]$t, [string]$a, [string]$b) {
     return $t.Substring($i, $j - $i)
 }
 
-$censusFmt = 'TEXT("REROLLWIPE: destroyed=%d removedFromManager=%d staleInManagerAfter=%d representationsRemoved=%d managerCountBefore=%d managerCountAfter=%d kept=%d repByActor=%d repByNode=%d invalidSlots=%d invalidSlotsStillInManager=%d noManager=%d noRepManager=%d invalidSlotsNull=%d invalidInManagerAtWipe=%d invalidRemovedFromManager=%d")'
-$censusArgs = "        T.Destroyed, T.RemovedFromManager, StaleAfter, T.RepAny, T.ManagerCountBefore, ManagerCountAfter, T.Kept,`n        T.RepByActor, T.RepByNode, T.InvalidSlots, InvalidStillIn, T.NoManager, T.NoRepManager, T.InvalidSlotsNull, T.InvalidInManagerAtWipe, T.InvalidRemovedFromManager);"
-$teardownLine = '            if (IsValid(It->Value)) { RerollWipeTeardownRegistrations(It->Value, WipeTally); It->Value->Destroy(); }'
+$censusFmt = 'TEXT("REROLLWIPE: destroyed=%d removedFromManager=%d staleInManagerAfter=%d representationsRemoved=%d managerCountBefore=%d managerCountAfter=%d kept=%d repByActor=%d repByNode=%d invalidSlots=%d invalidSlotsStillInManager=%d noManager=%d noRepManager=%d invalidSlotsNull=%d invalidInManagerAtWipe=%d invalidRemovedFromManager=%d destroyRefused=%d")'
+$censusArgs = "        T.Destroyed, T.RemovedFromManager, StaleAfter, T.RepAny, T.ManagerCountBefore, ManagerCountAfter, T.Kept,`n        T.RepByActor, T.RepByNode, T.InvalidSlots, InvalidStillIn, T.NoManager, T.NoRepManager, T.InvalidSlotsNull, T.InvalidInManagerAtWipe, T.InvalidRemovedFromManager,`n        T.DestroyRefused);"
+$teardownLine = '            if (IsValid(It->Value)) { RerollWipeTeardownRegistrations(It->Value, WipeTally); if (!It->Value->Destroy()) { ++WipeTally.DestroyRefused; } }'
 $staleLoop = "        StaleAfter = 0;`n        for (AFGResourceNode* Ptr : T.DestroyedPtrs) { if (Mgr->mResourceNodes.Contains(Ptr)) { ++StaleAfter; } }"
 $invalidLoop = "        InvalidStillIn = 0;`n        for (AFGResourceNode* Ptr : T.InvalidPtrs) { if (Mgr->mResourceNodes.Contains(Ptr)) { ++InvalidStillIn; } }"
 $marker = '2026-10-31-rwg-' + 'rerollwipe-1'
@@ -65,7 +65,7 @@ function Invoke-RerollWipeChecks($T) {
         if (-not (Ordered $wipeBlock @('RerollWipeBegin(WipeTally);', 'SpawnedNodes.CreateIterator()', '{ ++WipeTally.Kept; continue; }', $teardownLine,
             '            else { RerollWipeNoteInvalidSlot(It->Value, WipeTally); }', '            FNodeShuffleModule::UnregisterManagedNode(It->Value);',
             '            It.RemoveCurrent();', '        MeshActorCache.Reset();'))) { $f += '(R1) wipe order: Begin, teardown-then-Destroy under IsValid, Unregister, RemoveCurrent, Reset' }
-        if ((Count $wipeBlock $teardownLine) -ne 1 -or (Count $wipeBlock ('->Dest' + 'roy();')) -ne 1) { $f += '(R1) exactly one Destroy, preceded on its line by the teardown helper' }
+        if ((Count $wipeBlock $teardownLine) -ne 1 -or (Count $wipeBlock ('->Dest' + 'roy()')) -ne 1) { $f += '(R1) exactly one Destroy, preceded on its line by the teardown helper' }
     }
     if ((Count $T.sub 'RerollWipeTeardownRegistrations(') -ne 1 -or (Count $T.sub 'RerollWipeEmitCensus(') -ne 1 -or (Count $T.sub 'RerollWipeBegin(') -ne 1) { $f += '(R1) one call site each for Begin, teardown and census' }
     # R2
@@ -87,7 +87,7 @@ function Invoke-RerollWipeChecks($T) {
     }
     # R4
     if ((Count $T.wipe $censusFmt) -ne 1 -or (Count $T.wipe $censusArgs) -ne 1) { $f += '(R4) census field list / argument order' }
-    foreach ($tok in @('destroyed=', 'removedFromManager=', 'staleInManagerAfter=', 'representationsRemoved=', 'managerCountBefore=', 'managerCountAfter=', 'invalidSlotsNull=', 'invalidInManagerAtWipe=', 'invalidRemovedFromManager=')) {
+    foreach ($tok in @('destroyed=', 'removedFromManager=', 'staleInManagerAfter=', 'representationsRemoved=', 'managerCountBefore=', 'managerCountAfter=', 'invalidSlotsNull=', 'invalidInManagerAtWipe=', 'invalidRemovedFromManager=', 'destroyRefused=')) {
         if ((Count $T.wipe $tok) -ne 1) { $f += "(R4) census token $tok must appear once in the file (no legend echo)" }
     }
     # R5
@@ -135,8 +135,10 @@ if ($base.Count -gt 0) { Write-Host 'FAIL (baseline):'; $base | ForEach-Object {
 Write-Host 'PASS baseline: R1-R10 hold'
 
 $mutants = @(
-    @{ Name = 'Q1 teardown call dropped'; Key = 'sub'; Expect = 'R1'; Find = 'RerollWipeTeardownRegistrations(It->Value, WipeTally); It->Value->Destroy();'; Repl = 'It->Value->Destroy();' }
-    @{ Name = 'Q2 teardown after Destroy'; Key = 'sub'; Expect = 'R1'; Find = 'RerollWipeTeardownRegistrations(It->Value, WipeTally); It->Value->Destroy();'; Repl = 'It->Value->Destroy(); RerollWipeTeardownRegistrations(It->Value, WipeTally);' }
+    @{ Name = 'Q1 teardown call dropped'; Key = 'sub'; Expect = 'R1'; Find = 'RerollWipeTeardownRegistrations(It->Value, WipeTally); if (!It->Value->Destroy())'; Repl = 'if (!It->Value->Destroy())' }
+    @{ Name = 'Q2 teardown after Destroy'; Key = 'sub'; Expect = 'R1'; Find = '{ RerollWipeTeardownRegistrations(It->Value, WipeTally); if (!It->Value->Destroy()) { ++WipeTally.DestroyRefused; } }'; Repl = '{ if (!It->Value->Destroy()) { ++WipeTally.DestroyRefused; } RerollWipeTeardownRegistrations(It->Value, WipeTally); }' }
+    @{ Name = 'Q26 Destroy return ignored'; Key = 'sub'; Expect = 'R1'; Find = 'if (!It->Value->Destroy()) { ++WipeTally.DestroyRefused; }'; Repl = 'It->Value->Destroy();' }
+    @{ Name = 'Q27 destroyRefused dropped from census'; Key = 'wipe'; Expect = 'R4'; Find = ' destroyRefused=%d'; Repl = '' }
     @{ Name = 'Q3 snap-list removal dropped'; Key = 'wipe'; Expect = 'R2'; Find = 'Removed = Mgr->mResourceNodes.RemoveSingleSwap(Node); '; Repl = 'Removed = 0; ' }
     @{ Name = 'Q4 representation-by-actor removal dropped'; Key = 'wipe'; Expect = 'R2'; Find = 'bByActor = RepMgr->RemoveRepresentationOfActor(Node);'; Repl = 'bByActor = false;' }
     @{ Name = 'Q5 scan reveal removal dropped'; Key = 'wipe'; Expect = 'R2'; Find = "    Node->RemoveResourceNodeScan_Local();`n"; Repl = '' }

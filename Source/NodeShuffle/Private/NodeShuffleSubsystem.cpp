@@ -1994,7 +1994,8 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
             // for our own intentional wipe; the FObjectKey stays computable (index/serial unchanged).
             // rwg-rerollwipe-1: BEFORE Destroy, drop the node from the manager's raw Mk1 snap list (a dangling pointer otherwise),
             // its map/compass representation and its scan reveal -- the teardown RwgRedealLiveEntry and RwgProvisionalDespawn do.
-            if (IsValid(It->Value)) { RerollWipeTeardownRegistrations(It->Value, WipeTally); It->Value->Destroy(); }
+            // review F4: Destroy()'s return is counted (destroyRefused on REROLLWIPE); a refused node stays live but already unlisted.
+            if (IsValid(It->Value)) { RerollWipeTeardownRegistrations(It->Value, WipeTally); if (!It->Value->Destroy()) { ++WipeTally.DestroyRefused; } }
             else { RerollWipeNoteInvalidSlot(It->Value, WipeTally); }
             FNodeShuffleModule::UnregisterManagedNode(It->Value);
             It.RemoveCurrent();
