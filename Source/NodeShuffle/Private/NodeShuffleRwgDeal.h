@@ -11,7 +11,7 @@
 // known. Spec: _team/nodeshuffle-followups/rwg-purity-spec.md.
 // Spec + measurements: _team/test-logs/2026-10-19-nodeshuffle-inactive-entries.md (deck exhaustion, 134 undealt cards).
 //
-// Dealable(kind) := generic resource (/Game/ or /Script/FactoryGame.) OR rank-2 own node class (latch/registry)
+// Dealable(kind) := generic resource (/Game/ or /Script/FactoryGame.) OR a spawnable chosen node class (RollLayout's SpawnClassForResource)
 //                   OR an authored/captured look (ResourceHasAuthoredLook).
 // A NEW slot takes only Dealable cards. An EXISTING slot takes any Dealable card of either form, and a
 // non-Dealable card only when its form equals the slot's pre-deal form (the FIX B behaviour for existing slots).
@@ -26,9 +26,10 @@ namespace NodeShuffleRwgDeal
     {
         uint8 Form = 1;          // EResourceForm numeric value of the card (FormSolid when unknown)
         bool bGeneric = false;   // NodeShuffleRepClass::IsGenericNodeClassPath(kind)
-        bool bOwnClass = false;  // latched/registry class is rank-2 own-mount for this kind
+        bool bSpawnClass = false; // rwg-thoriumclass-1: the roll chose a spawnable class for this kind (RollLayout's SpawnClassForResource:
+                                  // the class its originals used when spawnable, else the registry's own-mount class); was the rank-2 own-mount test
         bool bLook = false;      // ResourceHasAuthoredLook(kind)
-        bool Dealable() const { return bGeneric || bOwnClass || bLook; }
+        bool Dealable() const { return bGeneric || bSpawnClass || bLook; }
     };
 
     // rwg-purity-1: per-class purity sources. Built once per roll by BuildPurityDecks (all RNG use happens there, in

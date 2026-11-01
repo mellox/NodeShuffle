@@ -5,6 +5,8 @@
 #include "AssetRegistry/IAssetRegistry.h"
 #include "UObject/TopLevelAssetPath.h"
 #include "Resources/FGResourceNodeBase.h"
+#include "Resources/FGResourceNode.h" // rwg-thoriumclass-1: IsSpawnableNodeClass tests the AFGResourceNode subclass
+#include "Resources/FGResourceDeposit.h" // rwg-thoriumclass-1 review F5: a deposit (pickup) Blueprint is never a spawn class
 #include "Resources/FGResourceDescriptor.h"
 #include "HAL/PlatformTime.h"
 
@@ -54,6 +56,22 @@ namespace NodeShuffleRepClass
         return Rank == 2 ? TEXT("own-mount") : (Rank == 1 ? TEXT("non-generic") : TEXT("generic"));
     }
 
+    // rwg-thoriumclass-1: the same three tests the deal-kind table, the Phase-2 RWG stamp and the conversion restamp applied
+    // in-line before this packet (rwg-deal-1 F1), in that order, named so a REPCLASS line can print which one failed.
+    const TCHAR* UnspawnableNodeClassReason(const UClass* NodeClass)
+    {
+        if (!NodeClass) { return TEXT("NotResident"); }
+        if (!NodeClass->IsChildOf(AFGResourceNode::StaticClass())) { return TEXT("NotNodeSubclass"); }
+        if (NodeClass->IsChildOf(AFGResourceDeposit::StaticClass())) { return TEXT("Deposit"); }
+        if (NodeClass->HasAnyClassFlags(CLASS_Abstract)) { return TEXT("Abstract"); }
+        return nullptr;
+    }
+
+    bool IsSpawnableNodeClass(const UClass* NodeClass)
+    {
+        return UnspawnableNodeClassReason(NodeClass) == nullptr;
+    }
+
     void QueryDerivedNodeClasses(FRegistryQuery& Out)
     {
         const double T0 = FPlatformTime::Seconds();
@@ -91,7 +109,7 @@ namespace NodeShuffleRepClass
             else { Cls = FindObject<UClass>(nullptr, *Path); if (!Cls) { if (Out.FreshLoads >= RegistryLoadCap) { continue; } Out.FreshLoads++; Cls = LoadObject<UClass>(nullptr, *Path, nullptr, LOAD_NoWarn | LOAD_Quiet); } LoadCache.Add(Path, Cls); }
             if (!Cls) { Out.Failed++; continue; }
             Out.Loaded++;
-            if (Cls->HasAnyClassFlags(CLASS_Abstract) || !Cls->IsChildOf(AFGResourceNodeBase::StaticClass())) { Out.Rejected++; continue; }
+            if (Cls->HasAnyClassFlags(CLASS_Abstract) || !Cls->IsChildOf(AFGResourceNodeBase::StaticClass()) || Cls->IsChildOf(AFGResourceDeposit::StaticClass())) { Out.Rejected++; continue; }
             const AFGResourceNodeBase* Cdo = Cls->GetDefaultObject<AFGResourceNodeBase>();
             const UClass* CdoRes = Cdo ? Cdo->GetResourceClass().Get() : nullptr;
             if (!CdoRes || CdoRes->GetPathName() != ResourcePath) { Out.Rejected++; continue; }

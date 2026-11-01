@@ -231,8 +231,9 @@ struct FNodeShuffleEntry
     // Keep its original identity above; this optional representative is only for spawning.
     UPROPERTY(SaveGame) FString SpawnNodeClassPath;
 
-    // rwg-repclass-2: the dealt modded resource's own node class (rank 2, NodeShuffleRepClass::IsOwnNodeClass),
-    // set by the Hide & Replace conversion when it differs from the slot's class. Spawn-only: NodeClassPath above
+    // rwg-repclass-2: the spawn class the roll chose for the dealt modded resource (rwg-thoriumclass-1: the class its
+    // captured originals used when that class is spawnable, else the registry's own-mount class -- see RollLayout's
+    // SpawnClassForResource), set by the Hide & Replace conversion when it differs from the slot's class. Spawn-only: NodeClassPath above
     // stays the ORIGINAL's class (suppression/late-node identity, re-roll latch input). Never carried through the
     // re-roll rebuild, so each roll recomputes it. Read first by PreSubstituteSpawnPath.
     UPROPERTY(SaveGame) FString RepClassSpawnPath;
@@ -1471,6 +1472,17 @@ private:
     // OVERLAPGATE-PINNED line prints once per entry per session.
     TSet<FGuid> PinnedBuildingSkipLogged;
     TSet<FGuid> PinnedGateHoldLogged; // rwg-pinnedspawn-2 R1: OVERLAPGATE-PINNEDHOLD once per entry per session
+    // rwg-thoriumclass-1 (2026-11-01): REPCLASS-CLEARANCE -- one Display line per (resource, role, class) at roll time printing
+    // the class CDO's clearance boxes, its native box component and its Blueprint-added primitive templates. It reads the
+    // private AFGResourceNodeBase::mClearanceData through the Config/AccessTransformers.ini friend grant, so it is a member.
+    // Defined in NodeShuffleRepClassDiag.cpp. Reports what it measured; asserts no cause.
+    void EmitRepClassClearanceLine(const FString& ResourcePath, const TCHAR* Role, const FString& ClassPath) const;
+    // rwg-thoriumclass-1: REPCLASS-STALE -- once per load (latched on a non-empty Layout), counts the active spawned entries
+    // whose stamped spawn class differs from the class the rule would now choose. COUNT ONLY: no entry is restamped; the
+    // saved classes change only when a re-roll recomputes them. Called from PostLoadGame_Implementation. Defined in
+    // NodeShuffleRepClassDiag.cpp.
+    bool bRepClassStaleCensusDone = false;
+    void EmitRepClassStaleCensusOnce();
     // redesign-3 BUG C: originals already deregistered from the scanner this session (path set, so we
     // call RemoveResourceNodeScan_Local/UpdateNodeRepresentation once per original, not every pass) + a
     // running count for the log evidence (redesign-2's calls were silent).
