@@ -93,9 +93,10 @@
 // two-ladders bug (ns-review-h2 F3) and the two-copies-of-the-health-rule bug (h3), so it is now one
 // copy that both callers share.
 //
-// Order matters: every registration is dropped BEFORE Destroy(), while the object is still addressable
-// -- the ordinary node path documents that constraint for UnregisterManagedNode (the hard reference is
-// what keeps a destroyed object's memory addressable for the key computation).
+// Order matters: every registration except the veto registry entry is dropped BEFORE Destroy(), while the
+// object is still addressable; the veto registry entry (UnregisterManagedNode) is dropped right AFTER it
+// (rwg-rerollwipe-1 re-review E1, coexist-veto-1 order, as the re-roll wipe), so a requirement judged inside
+// Destroy() still sees a managed node. FObjectKey stays computable on the pending-kill object until GC.
 //
 // Returns true when the actor is gone (or was already). On a refusal, OutWhy names WHICH occupancy
 // signal fired, so an ABANDONED IN PLACE line is diagnosable rather than merely alarming.
@@ -110,9 +111,7 @@ bool ANodeShuffleSubsystem::DestroyWellMemberIfUnused(AFGResourceNodeBase* Membe
     // NodeShuffleWellRelocate.h for why the weaker test is unsafe on a destructive path.
     if (IsWellMemberInUse(Member, OutWhy)) { return false; }
 
-    // THE one teardown sequence (F4). All four registrations are dropped BEFORE Destroy(), while the
-    // object is still addressable.
-    FNodeShuffleModule::UnregisterManagedNode(Member);
+    // THE one teardown sequence (F4). All other registrations are dropped BEFORE Destroy(); the veto registry entry AFTER it (coexist-veto-1).
     DeregisterNodeFromManager(Member);
     // rwg-rerollwipe-1 review F1: DeregisterNodeFromManager refuses OUR nodes (NodeShuffleIsOurNode) and a dressed well member carries the
     // identity component, so drop the raw Mk1 snap-list pointer and the representation here (a no-op where Deregister already acted).
@@ -128,6 +127,7 @@ bool ANodeShuffleSubsystem::DestroyWellMemberIfUnused(AFGResourceNodeBase* Membe
     Member->UpdateNodeRepresentation();
 
     Member->Destroy();
+    FNodeShuffleModule::UnregisterManagedNode(Member); // coexist-veto-1 order, as the re-roll wipe: a requirement judged inside Destroy() still sees a managed node; FObjectKey stays computable until GC.
     return true;
 }
 
