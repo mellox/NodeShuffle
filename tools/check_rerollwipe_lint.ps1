@@ -169,6 +169,8 @@ $mutants = @(
     @{ Name = 'Q13 stale count derived by formula'; Key = 'wipe'; Expect = 'R3'; Find = "        StaleAfter = 0;`n"; Repl = ("        StaleAfter = " + "T.Destroyed - T.RemovedFromManager; StaleAfter = 0;`n") }
     @{ Name = 'Q14 removal inlined at the wipe (third copy in Subsystem.cpp)'; Key = 'sub'; Expect = 'R7'; Find = "        MeshActorCache.Reset();`n        RerollWipeEmitCensus"; Repl = ("        if (AFGResourceNodeManager* M = GetNodeManager()) { M->mResourceNodes.RemoveSingle" + "Swap(nullptr); }`n        MeshActorCache.Reset();`n        RerollWipeEmitCensus") }
     @{ Name = 'Q15 legend echoes a census token'; Key = 'wipe'; Expect = 'R4'; Find = '    // UNGATED: once per re-roll'; Repl = '    // staleInManagerAfter= counts survivors. UNGATED: once per re-roll' }
+    @{ Name = 'Q34 (review F7) representation-by-node removal dropped'; Key = 'wipe'; Expect = 'R2'; Find = 'RepMgr->RemoveRepresentation(NodeRep); bByNode = true;'; Repl = 'bByNode = true;' }
+    @{ Name = 'Q35 (review F7) UpdateNodeRepresentation dropped'; Key = 'wipe'; Expect = 'R2'; Find = "    Node->UpdateNodeRepresentation();`n"; Repl = '' }
     @{ Name = 'Q16 invalid-slot snap-list removal dropped'; Key = 'wipe'; Expect = 'R10'; Find = ('T.InvalidRemovedFromManager += Mgr->mResourceNodes.RemoveSingle' + 'Swap(Node);'); Repl = 'T.InvalidRemovedFromManager += 0;' }
     @{ Name = 'Q23 invalid-slot Contains measured after the removal'; Key = 'wipe'; Expect = 'R10'; Find = "        if (Mgr->mResourceNodes.Contains(Node)) { ++T.InvalidInManagerAtWipe; }`n"; Repl = ''
        Find2 = ("Swap(Node);`n    }`n}"); Repl2 = ("Swap(Node);`n        if (Mgr->mResourceNodes.Contains(Node)) { ++T.InvalidInManagerAtWipe; }`n    }`n}") }
