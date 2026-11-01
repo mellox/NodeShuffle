@@ -1463,6 +1463,7 @@ private:
     // rwg-pinnedspawn-1 I1: pinned entries whose building overlap the occupancy gate ignored, so the
     // OVERLAPGATE-PINNED line prints once per entry per session.
     TSet<FGuid> PinnedBuildingSkipLogged;
+    TSet<FGuid> PinnedGateHoldLogged; // rwg-pinnedspawn-2 R1: OVERLAPGATE-PINNEDHOLD once per entry per session
     // redesign-3 BUG C: originals already deregistered from the scanner this session (path set, so we
     // call RemoveResourceNodeScan_Local/UpdateNodeRepresentation once per original, not every pass) + a
     // running count for the log evidence (redesign-2's calls were silent).
@@ -1570,9 +1571,10 @@ private:
     // ground-truth line: bound object validity, resolved resource, node-at-location match).
     TSet<TWeakObjectPtr<const AActor>> ExtractorsDumped;
     // rwg-pinnedspawn-1 I4: the EXTRACTOR-RELINK census prints only when its tuple changes (it runs every
-    // pass); the key of the last printed tuple, and the extractors already named by EXTRACTOR-NONODE.
+    // pass); the key of the last printed tuple, and the extractors already named by EXTRACTOR-UNBOUND-NOSPAWNEDNODE.
     FString RelinkCensusLastKey;
     TSet<TWeakObjectPtr<const AActor>> ExtractorsNoNodeLogged;
+    TSet<TWeakObjectPtr<const AActor>> ExtractorsLinkNoEffectLogged;
     // knowledge-1 item 1: on authority, once per load after the layout is applied, register the
     // DISTINCT modded resources the shuffle actively manages with the game's scanner-unlock list
     // (AFGUnlockSubsystem::UnlockScannableResource — SaveGame + Replicated, so it persists). This is

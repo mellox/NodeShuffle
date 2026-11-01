@@ -94,9 +94,9 @@ $setter      = '            Extractor->SetResourceNode(Orphan);'
 $readBack    = "            const bool bBoundAfter = Extractor->GetExtractableResource().GetObject() == Orphan;`n            if (bBoundAfter) { ++RelinkLinked; } else { ++RelinkLinkNoEffect; }"
 $linkFmt     = 'TEXT("EXTRACTOR-RELINK-LINK extractor=%s node=%s at=%s nodeDistM=%.1f boundAfter=%d"),'
 $noNodeCount = "        else`n        {`n            // rwg-pinnedspawn-1 I4: no binding and no spawned node within ExtractorSnapDistance. Named once per`n            // extractor per session (capped), so a miner standing without a node is visible in the log.`n            ++RelinkNoNode;"
-$noNodeFmt   = 'TEXT("EXTRACTOR-NONODE extractor=%s class=%s at=%s spawnedNodes=%d snapRadiusM=%.0f"),'
+$noNodeFmt   = 'TEXT("EXTRACTOR-UNBOUND-NOSPAWNEDNODE extractor=%s class=%s at=%s spawnedNodes=%d snapRadiusM=%.0f"),'
 $relinkKey   = "        const FString RelinkKey = FString::Printf(TEXT(""%d|%d|%d|%d|%d""),`n            RelinkLinked, RelinkNoNode, RelinkAlreadyLinked, RelinkLinkNoEffect, RelinkExtractors);`n        if (RelinkKey != RelinkCensusLastKey)`n        {`n            RelinkCensusLastKey = RelinkKey;"
-$relinkFmt   = 'TEXT("EXTRACTOR-RELINK linked=%d noNodeUnderExtractor=%d alreadyLinked=%d linkNoEffect=%d extractors=%d spawnedNodes=%d"),'
+$relinkFmt   = 'TEXT("EXTRACTOR-RELINK linked=%d unboundNoSpawnedNodeInSnap=%d bindingPresent=%d linkNoEffect=%d extractors=%d spawnedNodes=%d"),'
 $relinkArgs  = '                RelinkLinked, RelinkNoNode, RelinkAlreadyLinked, RelinkLinkNoEffect, RelinkExtractors, SpawnedNodes.Num());'
 $portable    = '    for (TActorIterator<AFGPortableMiner> It(GetWorld()); It; ++It)'
 $marker      = '2026-11-01-rwg-' + 'pinnedspawn-1'
@@ -114,6 +114,7 @@ function Invoke-PinnedSpawnChecks($T) {
     if ((Count $s $pinLogGuard) -ne 1 -or (Count $s '            PinnedBuildingSkipLogged.Add(Entry.EntryGuid);') -ne 1 -or (Count $s $pinLogFmt) -ne 1) { $f += '(S1) OVERLAPGATE-PINNED guard, latch or format missing' }
     $pl = Span $s $pinLogGuard '        const bool bSpotEnclosed = '
     if (-not $pl -or $pl.Contains($diagGate)) { $f += '(S1) OVERLAPGATE-PINNED must be ungated' }
+    if ((Count $s '        if (Entry.bPinned && bSpotOccupied) { return; } // R1: spawn held this visit; no nudge, no strike, no drop') -ne 1 -or (Count $s '        const bool bSpotEnclosed = bSpotEnclosedRaw && !Entry.bPinned;') -ne 1) { $f += '(S1) R1: a pinned entry must hold on an occupied spot and never apply the enclosure verdict' }
     # S2
     if ((Count $s ($primCall + "`n" + $primPair + "`n")) -ne 1) { $f += '(S2) the primary census if/else pair must stay adjacent (an inserted block captures its else)' }
     if ((Count $s $bldReject) -ne 1) { $f += '(S2) the buildable refusal must record kind, class and path before returning' }
@@ -131,6 +132,9 @@ function Invoke-PinnedSpawnChecks($T) {
     if ($h.Contains($diagGate)) { $f += '(S3) the heal lines must be ungated' }
     if ((Count $s $healCall) -ne 1 -or -not (Ordered $s @($adoptBlock, $healCall, $applyLoop, $rwgSpawn))) { $f += '(S3) one call, after the adopt block and before the apply loop and RwgSpawnPass' }
     if ((Count $T.hdr $hdrFlag) -ne 1 -or (Count $T.hdr $hdrDecl) -ne 1 -or (Count $T.hdr $hdrSkipSet) -ne 1 -or (Count $T.hdr $hdrKey) -ne 1) { $f += '(S3) header members missing' }
+    $healSite = Span $s $adoptBlock $healCall
+    if (-not $healSite -or $healSite.Contains($diagGate) -or $healSite.Contains('if (')) { $f += '(S3) the heal call must be unconditional, directly after the adopt block' }
+    if ((Count $h ("                E.OverlapNudges = 0;`n                ++ActivePinnedStrikesCleared;")) -ne 1) { $f += '(S3) an active pinned entry must have its strike count cleared' }
     # S4
     $rb = Span $s $relinkSig 'void ANodeShuffleSubsystem::RefreshScannersAndRadarTowers()'
     if (-not $rb) { $f += '(S4) relink function not found' }
@@ -145,7 +149,7 @@ function Invoke-PinnedSpawnChecks($T) {
     if ((Count $T.nsmod ('    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle packet marker (' + $marker + ')====="));')) -ne 1 -or (Count $T.nsmod $marker) -ne 1) { $f += '(S5) marker missing or not on its own line' }
     if ((Count $s $marker) -ne 0 -or (Count $h $marker) -ne 0) { $f += '(S5) marker must not appear in the packet sources' }
     # S6 (anchored on a non-letter before the token, so a legend's "(tok=" or " tok=" both count and "alreadyLinked=" is not "linked=")
-    foreach ($tok in @('overlapKind=', 'overlapClass=', 'overlapPath=', 'strike=', 'buildingOverlapHitsIgnored=', 'noNodeUnderExtractor=', 'alreadyLinked=', 'linkNoEffect=', 'boundAfter=', 'linked=')) {
+    foreach ($tok in @('overlapKind=', 'overlapClass=', 'overlapPath=', 'strike=', 'buildingOverlapHitsIgnored=', 'unboundNoSpawnedNodeInSnap=', 'bindingPresent=', 'linkNoEffect=', 'boundAfter=', 'linked=')) {
         if ((TokCount $s $tok) -ne 1) { $f += "(S6) field token echoed or missing in the subsystem: $tok" }
     }
     foreach ($tok in @('reactivated=', 'pinnedTotal=', 'pinnedInactiveBefore=', 'strikesBefore=')) {
@@ -165,6 +169,7 @@ $mutants = @(
     @{ Name = 'X4 non-pinned refusal dropped (everyone exempt)'; Key = 'sub'; Expect = 'S1'; Find = '                            if (Entry.bPinned)' + "`n"; Repl = '                            if (true)' + "`n" }
     @{ Name = 'X5 pinned line gated'; Key = 'sub'; Expect = 'S1'; Find = $pinLogGuard; Repl = $pinLogGuard.Replace('if (Entry.bPinned', 'if (FNodeShuffleModule::' + $diagGate + '() && Entry.bPinned') }
     @{ Name = 'X28 block inserted between the primary census if and its else'; Key = 'sub'; Expect = 'S2'; Find = $primPair; Repl = "        if (bSpotOccupied) { ++NodeGatePrimaryOccupiedRejected; }`n        if (Entry.bPinned) { }`n        else { ++NodeGatePrimaryEnclosedReached; }" }
+    @{ Name = 'X29 pinned entry applies the enclosure verdict (R1 dropped)'; Key = 'sub'; Expect = 'S1'; Find = '        const bool bSpotEnclosed = bSpotEnclosedRaw && !Entry.bPinned;'; Repl = '        const bool bSpotEnclosed = bSpotEnclosedRaw;' }
     @{ Name = 'X6 buildable hit not recorded'; Key = 'sub'; Expect = 'S2'; Find = "                            GateHitPath = HitActor->GetPathName();`n"; Repl = '' }
     @{ Name = 'X7 resource-node hit not recorded'; Key = 'sub'; Expect = 'S2'; Find = "                    GateHitPath = Other->GetPathName();`n"; Repl = '' }
     @{ Name = 'X8 OVERLAPGATE drops overlapPath'; Key = 'sub'; Expect = 'S2'; Find = '*PrimaryHitKind, *PrimaryHitClass, *PrimaryHitPath,'; Repl = '*PrimaryHitKind, *PrimaryHitClass, TEXT("-"),' }
@@ -184,7 +189,7 @@ $mutants = @(
     @{ Name = 'X21 census printed every pass'; Key = 'sub'; Expect = 'S4'; Find = '        if (RelinkKey != RelinkCensusLastKey)'; Repl = '        if (true)' }
     @{ Name = 'X22 no-node extractors not counted'; Key = 'sub'; Expect = 'S4'; Find = "            ++RelinkNoNode;`n"; Repl = '' }
     @{ Name = 'X23 already-linked not counted'; Key = 'sub'; Expect = 'S4'; Find = '            ++RelinkAlreadyLinked; // rwg-pinnedspawn-1 I4'; Repl = '            // counter removed' }
-    @{ Name = 'X24 census field dropped'; Key = 'sub'; Expect = 'S4'; Find = ' noNodeUnderExtractor=%d'; Repl = '' }
+    @{ Name = 'X24 census field dropped'; Key = 'sub'; Expect = 'S4'; Find = ' unboundNoSpawnedNodeInSnap=%d'; Repl = '' }
     @{ Name = 'X25 marker reverted'; Key = 'nsmod'; Expect = 'S5'; Find = $marker; Repl = ('2026-11-01-rwg-' + 'pinnedspawn-0') }
     @{ Name = 'X26 legend echoes a gate field'; Key = 'sub'; Expect = 'S6'; Find = '            // the entry''s nudge counter after this visit;'; Repl = ('            // the entry''s nudge counter after this visit (' + 'strike=' + 'N/8);') }
     @{ Name = 'X27 legend echoes a heal field'; Key = 'heal'; Expect = 'S6'; Find = '// ONCE PER LOAD.'; Repl = ('// ONCE PER LOAD (' + 'reactivated=' + 'N).') }

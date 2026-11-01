@@ -5133,7 +5133,23 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
                 *Entry.EntryGuid.ToString(), *ResourceClass->GetName(), *Entry.Location.ToCompactString(),
                 PinnedBuildingHitsIgnored, *PinnedFirstBuildingClass, *PinnedFirstBuildingPath, bSpotOccupied ? 1 : 0);
         }
-        const bool bSpotEnclosed = !bSpotOccupied && IsEnclosed(Entry.Location);
+        // rwg-pinnedspawn-2 R1: a PINNED entry spawns at its saved Location or not at all. The spiral's first probe is
+        // LandRelocationStepCm out, so a nudge moves the node off the player's miner (coal 6333A826 moved 155 m on 2026-11-01).
+        // For a pinned entry the enclosure verdict is printed and not applied; a resource-node hit holds this visit's spawn
+        // with no nudge and no strike, and the next visit tests again. Non-pinned entries take the unchanged path below.
+        const bool bSpotEnclosedRaw = !bSpotOccupied && IsEnclosed(Entry.Location);
+        if (Entry.bPinned && (bSpotOccupied || bSpotEnclosedRaw) && !PinnedGateHoldLogged.Contains(Entry.EntryGuid))
+        {
+            PinnedGateHoldLogged.Add(Entry.EntryGuid);
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("OVERLAPGATE-PINNEDHOLD entry=%s res=%s at=%s holdOccupied=%d holdEnclosedAtSavedSpot=%d holdOverlapKind=%s holdOverlapClass=%s holdOverlapPath=%s holdStrike=%d/%d"),
+                *Entry.EntryGuid.ToString(), *ResourceClass->GetName(), *Entry.Location.ToCompactString(),
+                bSpotOccupied ? 1 : 0, bSpotEnclosedRaw ? 1 : 0, *PrimaryHitKind,
+                *PrimaryHitClass, *PrimaryHitPath, // own line break: lint X8 anchors on the OVERLAPGATE argument run
+                static_cast<int32>(Entry.OverlapNudges), static_cast<int32>(MaxOverlapNudges));
+        }
+        if (Entry.bPinned && bSpotOccupied) { return; } // R1: spawn held this visit; no nudge, no strike, no drop
+        const bool bSpotEnclosed = bSpotEnclosedRaw && !Entry.bPinned;
         if (bSpotEnclosed) { ++NodeGatePrimaryEnclosedRejected; }
         if (bSpotOccupied || bSpotEnclosed)
         {
@@ -5260,7 +5276,13 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
         const bool bGateRefuses = EvaluateInsideShadowGate(Entry.Location, /*Subject=*/nullptr, GateWho,
                                                            /*bAdoptedNotPlaced=*/false,
                                                            /*bCaveFlagged=*/RwgInsideCaveExempt(Entry)); // RWG P5: an RWG cave floor is a dealt cave cell too; the same predicate option B tests
-        if (bGateRefuses)
+        if (bGateRefuses && Entry.bPinned)
+        {
+            // rwg-pinnedspawn-2 R2: R1's rule on this gate's side: a pinned entry spawns at its saved Location, never dropped here.
+            UE_LOG(LogNodeShuffle, Display, TEXT("INSIDEGATE-PINNED entry=%s res=%s at=%s pinnedSpawnProceeds=1"),
+                *Entry.EntryGuid.ToString(), *ResourceClass->GetName(), *Entry.Location.ToCompactString());
+        }
+        else if (bGateRefuses)
         {
             // ns-t54 cold review F11 -- ONE EVALUATION, THEN DROP. NO RETRY.
             // The earlier version spent the shared OverlapNudges cap: it incremented the counter and
@@ -8476,11 +8498,11 @@ void ANodeShuffleSubsystem::ReassociateOrphanedExtractors()
 
     // rwg-pinnedspawn-1 I4: the EXTRACTOR-RELINK census, a partition of this pass's extractors by the branch
     // below that handled them: linked (no binding, a spawned node within ExtractorSnapDistance, binding present
-    // after SetResourceNode), linkNoEffect (same, binding still absent after the call), noNodeUnderExtractor
+    // after SetResourceNode), linkNoEffect (same, binding still absent after the call), unboundNoSpawnedNodeInSnap
     // (no binding and no SpawnedNodes actor within ExtractorSnapDistance -- vanilla nodes are not searched),
-    // alreadyLinked (a binding object is present, valid or not). Printed only when the tuple changes.
+    // bindingPresent (a binding object is present, valid or not). Printed only when the tuple changes.
     int32 RelinkExtractors = 0, RelinkLinked = 0, RelinkLinkNoEffect = 0, RelinkNoNode = 0, RelinkAlreadyLinked = 0;
-    constexpr int32 RelinkNoNodeLinesMax = 40; // EXTRACTOR-NONODE lines per session; the census carries the full count
+    constexpr int32 RelinkNoNodeLinesMax = 40; // EXTRACTOR-UNBOUND-NOSPAWNEDNODE lines per session; the census carries the full count
     for (TActorIterator<AFGBuildableResourceExtractorBase> It(GetWorld()); It; ++It)
     {
         AFGBuildableResourceExtractorBase* Extractor = *It;
@@ -8590,9 +8612,13 @@ void ANodeShuffleSubsystem::ReassociateOrphanedExtractors()
             // rwg-pinnedspawn-1 I4: read the binding back after the setter; one Display line per link event.
             const bool bBoundAfter = Extractor->GetExtractableResource().GetObject() == Orphan;
             if (bBoundAfter) { ++RelinkLinked; } else { ++RelinkLinkNoEffect; }
-            UE_LOG(LogNodeShuffle, Display, TEXT("EXTRACTOR-RELINK-LINK extractor=%s node=%s at=%s nodeDistM=%.1f boundAfter=%d"),
-                *Extractor->GetName(), *Orphan->GetName(), *Loc.ToCompactString(),
-                FVector::Dist(Orphan->GetActorLocation(), Loc) / 100.0f, bBoundAfter ? 1 : 0);
+            if (bBoundAfter || !ExtractorsLinkNoEffectLogged.Contains(Extractor)) // rwg-pinnedspawn-2: no-effect named once per extractor per session
+            {
+                if (!bBoundAfter) { ExtractorsLinkNoEffectLogged.Add(Extractor); }
+                UE_LOG(LogNodeShuffle, Display, TEXT("EXTRACTOR-RELINK-LINK extractor=%s node=%s at=%s nodeDistM=%.1f boundAfter=%d"),
+                    *Extractor->GetName(), *Orphan->GetName(), *Loc.ToCompactString(),
+                    FVector::Dist(Orphan->GetActorLocation(), Loc) / 100.0f, bBoundAfter ? 1 : 0);
+            }
         }
         else
         {
@@ -8602,7 +8628,7 @@ void ANodeShuffleSubsystem::ReassociateOrphanedExtractors()
             if (ExtractorsNoNodeLogged.Num() < RelinkNoNodeLinesMax && !ExtractorsNoNodeLogged.Contains(Extractor))
             {
                 ExtractorsNoNodeLogged.Add(Extractor);
-                UE_LOG(LogNodeShuffle, Display, TEXT("EXTRACTOR-NONODE extractor=%s class=%s at=%s spawnedNodes=%d snapRadiusM=%.0f"),
+                UE_LOG(LogNodeShuffle, Display, TEXT("EXTRACTOR-UNBOUND-NOSPAWNEDNODE extractor=%s class=%s at=%s spawnedNodes=%d snapRadiusM=%.0f"),
                     *Extractor->GetName(), *Extractor->GetClass()->GetName(), *Loc.ToCompactString(),
                     SpawnedNodes.Num(), ExtractorSnapDistance / 100.0f);
             }
@@ -8615,7 +8641,7 @@ void ANodeShuffleSubsystem::ReassociateOrphanedExtractors()
         if (RelinkKey != RelinkCensusLastKey)
         {
             RelinkCensusLastKey = RelinkKey;
-            UE_LOG(LogNodeShuffle, Display, TEXT("EXTRACTOR-RELINK linked=%d noNodeUnderExtractor=%d alreadyLinked=%d linkNoEffect=%d extractors=%d spawnedNodes=%d"),
+            UE_LOG(LogNodeShuffle, Display, TEXT("EXTRACTOR-RELINK linked=%d unboundNoSpawnedNodeInSnap=%d bindingPresent=%d linkNoEffect=%d extractors=%d spawnedNodes=%d"),
                 RelinkLinked, RelinkNoNode, RelinkAlreadyLinked, RelinkLinkNoEffect, RelinkExtractors, SpawnedNodes.Num());
         }
     }
