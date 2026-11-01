@@ -83,8 +83,8 @@ void ANodeShuffleSubsystem::RwgSteepArmForInside(const FNodeShuffleEntry& Entry)
     RwgSteepGuid = Entry.EntryGuid;
     RwgSteepLoc = Entry.Location;
     RwgSteepNormalRiseRun = -1.0;
-    RwgSteepApiRiseRun = 0.0;
-    RwgSteepHitMesh = TEXT("<inside gate all-solid: no probe hit>");
+    RwgSteepApiRiseRun = -1.0; // NOT measured on this arm (no ground query here); prints apiRiseRun=-1.00, as normalRiseRun for a solid stop
+    RwgSteepHitMesh = TEXT("insideGateNoProbe");
 }
 
 bool ANodeShuffleSubsystem::RwgSteepTryRing(const NodeShuffleMapMode::FRwgGroundQuery& Q, FNodeShuffleEntry& Entry, float SpacingCm)

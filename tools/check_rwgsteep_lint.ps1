@@ -9,7 +9,7 @@
 #       draw; RwgSteepTryRing returns the ring's own result; the map-wide span hashes to its affc801 text.
 #   S4  Ring on occluded (rwg-clifftop-1, BY DESIGN): the re-probe's solid flag is copied into bRwgSteepOccluded; steep AND occluded
 #       entries run RwgLocalRedraw (one unconditional call); the outcome splits occludedRing / occludedMapwide / steepRing / steepMapwide.
-#   S5  Slope print: RWGSTEEP exact format (normalRiseRun from the smoothed normal, apiRiseRun from RwgApiSlopeTooSteep), arity.
+#   S5  Slope print: RWGSTEEP exact format (normalRiseRun from the smoothed normal, apiRiseRun from RwgApiSlopeTooSteep (-1 on the inside-gate arm: not measured)), arity.
 #   S6  Censuses: PLACECENSUS ends with steepRing/steepMapwide/steepOccludedMapwide and its specifier count == argument count;
 #       RWGSTEEPSUM exact format + arity (13, ringPassedFromOriginZ last); its re-print signature includes guidMismatch; the
 #       ringPassedFromOriginZ discriminator re-traces the passing XY from the ORIGIN's API Z and only counts; the per-pass steep
@@ -127,6 +127,7 @@ function Invoke-RwgsteepChecks($T) {
     if ((Count $s 'FVector::Dist2D(RwgSteepLoc, Entry.Location) / 100.0) : FString(TEXT("-"));') -ne 1) { $f += '(S5) ringDistM must be the 2-D distance from the original spot to the accepted candidate, a dash when none' }
     if ((Count $s 'RwgSteepNormalRiseRun = bRwgSteepOccluded ? -1.0 : RwgSteepRiseRunOf(Normal);') -ne 1 -or (Count $s 'RwgApiSlopeTooSteep(Q, Entry.Location.X, Entry.Location.Y, RwgSteepApiRiseRun);') -ne 1) { $f += '(S5) the printed slopes must be the smoothed-normal rise/run and the API rise/run at the entry' }
     if ((Count $s '*RwgSteepHitMesh, RwgSteepNormalRiseRun, RwgSteepApiRiseRun,') -ne 1) { $f += '(S5) the slope values must be the RWGSTEEP arguments' }
+    if ((Count $armIn '    RwgSteepApiRiseRun = -1.0; // NOT measured on this arm') -ne 1 -or (Count $armIn '    RwgSteepHitMesh = TEXT("insideGateNoProbe");') -ne 1) { $f += '(S5) rwg-farspawn-1f re-review F2: the inside-gate arm prints apiRiseRun -1 (not measured) and a hitMesh value without spaces' }
     # S6 censuses
     $pc = @(Get-Logs $p 'PLACECENSUS: pass=')
     if ($pc.Count -ne 1) { $f += "(S6) expected 1 PLACECENSUS pass statement, found $($pc.Count)" }
@@ -195,6 +196,8 @@ $mutants = @(
     @{ Name = 'B26 inside-gate arm drops the guid (rwg-farspawn-1f OPTION B)'; Key = 'steep'; Expect = 'S8'; Find = '    RwgSteepGuid = Entry.EntryGuid;' + "`n" + '    RwgSteepLoc = Entry.Location;' + "`n" + '    RwgSteepNormalRiseRun = -1.0;'; Repl = '    RwgSteepLoc = Entry.Location;' + "`n" + '    RwgSteepNormalRiseRun = -1.0;' }
     @{ Name = 'B27 inside-gate arm not a solid stop (rwg-farspawn-1f OPTION B)'; Key = 'steep'; Expect = 'S4'; Find = '    bRwgSteepOccluded = true;'; Repl = '    bRwgSteepOccluded = false;' }
     @{ Name = 'B28 inside-gate arm left set after the redeal (rwg-farspawn-1f OPTION B)'; Key = 'move'; Expect = 'S8'; Find = '    bRwgSteepArmed = false; // a refused redeal'; Repl = '    // a refused redeal' }
+    @{ Name = 'B29 inside-gate arm prints an unmeasured flat API slope (re-review F2)'; Key = 'steep'; Expect = 'S5'; Find = '    RwgSteepApiRiseRun = -1.0; // NOT measured'; Repl = ('    RwgSteepApiRiseRun = ' + '0.0; // NOT measured') }
+    @{ Name = 'B30 inside-gate hitMesh value with spaces (re-review F2)'; Key = 'steep'; Expect = 'S5'; Find = 'TEXT("insideGateNoProbe")'; Repl = ('TEXT("inside gate' + ' no probe")') }
     @{ Name = 'B25 non-finite candidate Z traced'; Key = 'steep'; Expect = 'S8'; Find = 'if (!FMath::IsFinite(C.Z)) { ++OutRejLand; continue; }'; Repl = '' }
     @{ Name = 'B26 discriminator traces from the candidate Z'; Key = 'steep'; Expect = 'S6'; Find = 'RaycastGroundAt(C, O.Z, nullptr'; Repl = 'RaycastGroundAt(C, C.Z, nullptr' }
     @{ Name = 'B21 marker reverted'; Key = 'nsmod'; Expect = 'S9'; Find = ('2026-10-31-rwg-' + 'farspawn-1f'); Repl = ('2026-10-31-rwg-' + 'farspawn-1e') }
