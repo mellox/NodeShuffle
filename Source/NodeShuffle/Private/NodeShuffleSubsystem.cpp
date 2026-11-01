@@ -4548,6 +4548,8 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
         // coexist-veto-1: drop the dead actor from the veto registry BEFORE the slot goes away (the
         // UPROPERTY hard ref in SpawnedNodes is what keeps the destroyed object's memory addressable
         // for the key computation).
+        const int32 DeadSnapDropped = RerollWipeDropDeadSlotAddress(*Existing); // re-review S1: the review-F2 rule on its other side, before the hard ref goes
+        if (FNodeShuffleModule::AreDiagnosticsEnabled()) { UE_LOG(LogNodeShuffle, Display, TEXT("EXTDESTROY-SNAP %s: slotNull %d snapListRemoved %d"), *Entry.EntryGuid.ToString(), (*Existing == nullptr) ? 1 : 0, DeadSnapDropped); }
         FNodeShuffleModule::UnregisterManagedNode(*Existing);
         SpawnedNodes.Remove(Entry.EntryGuid);
         SteadyAliveNodes.Remove(Entry.EntryGuid);

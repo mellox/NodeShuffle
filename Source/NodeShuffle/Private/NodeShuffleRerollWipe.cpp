@@ -111,6 +111,8 @@ void ANodeShuffleSubsystem::RerollWipeEmitCensus(const FNodeShuffleRerollWipeTal
         T.DestroyRefused, T.RepPresentAfterUpdate);
 }
 
+int32 ANodeShuffleSubsystem::RerollWipeDropDeadSlotAddress(AFGResourceNode* Node) { if (!Node) { return 0; } AFGResourceNodeManager* Mgr = GetNodeManager(); return Mgr ? Mgr->mResourceNodes.RemoveSingleSwap(Node) : 0; } // re-review S1: by address, never dereferenced
+
 void ANodeShuffleSubsystem::RerollWipeCollectNotYielded(TSet<const AFGResourceNode*>& Out)
 {
     // re-review A1: the before-wipe half of REROLLAUDIT. Same predicate (list entry matching no AFGResourceNode the default-flag TActorIterator yields); pointer compares only, no dereference.

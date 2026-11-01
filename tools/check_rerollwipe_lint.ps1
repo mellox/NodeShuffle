@@ -16,6 +16,7 @@
 #      against TActorIterator, no dereference, no gate; exact format/args
 #   R12 (re-review A1) before-wipe snapshot RerollWipeCollectNotYielded: one call ahead of the wipe block and the audit call; same predicate, no
 #      dereference, no gate; REROLLAUDIT's notYieldedNewSinceWipe excludes it (the per-roll control, same frame)
+#   R13 (re-review S1) EnsureNewNodeSpawned external-destroy: dead address dropped from the snap list via the helper before Unregister/slot removal
 #   R10 (review F2) RerollWipeNoteInvalidSlot: null counted; non-null: Contains measured BEFORE RemoveSingleSwap, by address, no dereference, no Destroy
 #   R9 (review F1) DestroyWellMemberIfUnused: after DeregisterNodeFromManager (which refuses OUR nodes), an explicit snap-list RemoveSingleSwap
 #      and representation removal (by actor, by node), all BEFORE Destroy; the WELLDESPAWN-SNAP line is diagnostics-gated; the three includes
@@ -62,6 +63,9 @@ $auditFmt = 'TEXT("REROLLAUDIT: reroll=%d managerEntries=%d entriesNotYieldedByA
 $auditArgs = '        bIsReroll ? 1 : 0, Mgr->mResourceNodes.Num(), NotIterated, NotYieldedBeforeWipe.Num(), NewSinceWipe, Iterated.Num());'
 # re-review A1: the before-wipe snapshot call (R12), ordered before the wipe block and the audit call
 $snapCall = '    RerollWipeCollectNotYielded(AuditNotYieldedBeforeWipe);'
+# re-review S1
+$s1Call = '        const int32 DeadSnapDropped = RerollWipeDropDeadSlotAddress(*Existing);'
+$s1Helper = ('{ if (!Node) { return 0; } AFGResourceNodeManager* Mgr = GetNodeManager(); return Mgr ? Mgr->mResourceNodes.RemoveSingle' + 'Swap(Node) : 0; }')
 $auditLoop = 'for (const AFGResourceNode* Ptr : Mgr->mResourceNodes) { if (!Iterated.Contains(Ptr)) { ++NotIterated; if (!NotYieldedBeforeWipe.Contains(Ptr)) { ++NewSinceWipe; } } }'
 # review F1: the WHOLE well-member snap-list drop line, so mutant Q20 moves the identical text after Destroy (order, not presence)
 $wellSnapLine = "    if (AFGResourceNode* AsNode = Cast<AFGResourceNode>(Member)) { if (AFGResourceNodeManager* Mgr = GetNodeManager()) { SnapDropped = Mgr->mResourceNodes.RemoveSingle" + "Swap(AsNode); } }`n"
@@ -112,7 +116,7 @@ function Invoke-RerollWipeChecks($T) {
     if ((Count $T.sub ('RemoveSingle' + 'Swap(')) -ne 1) { $f += '(R7) Subsystem.cpp keeps one RemoveSingleSwap (DeregisterNodeFromManager); the wipe goes through the helper' }
     # R8
     foreach ($d in @('void RerollWipeBegin(struct FNodeShuffleRerollWipeTally& T);', 'void RerollWipeTeardownRegistrations(class AFGResourceNode* Node, struct FNodeShuffleRerollWipeTally& T);',
-        'void RerollWipeNoteInvalidSlot(class AFGResourceNode* Node, struct FNodeShuffleRerollWipeTally& T);', 'void RerollWipeEmitCensus(const struct FNodeShuffleRerollWipeTally& T);', 'void RerollWipeCollectNotYielded(TSet<const class AFGResourceNode*>& Out);',
+        'void RerollWipeNoteInvalidSlot(class AFGResourceNode* Node, struct FNodeShuffleRerollWipeTally& T);', 'void RerollWipeEmitCensus(const struct FNodeShuffleRerollWipeTally& T);', 'void RerollWipeCollectNotYielded(TSet<const class AFGResourceNode*>& Out);', 'int32 RerollWipeDropDeadSlotAddress(class AFGResourceNode* Node);',
         'void RerollWipeEmitListAudit(bool bIsReroll, const TSet<const class AFGResourceNode*>& NotYieldedBeforeWipe);')) {
         if ((Count $T.subh $d) -ne 1) { $f += "(R8) header declaration missing: $d" }
     }
@@ -138,6 +142,11 @@ function Invoke-RerollWipeChecks($T) {
         if ((Count $coll ('IsVal' + 'id(')) -ne 0 -or (Count $coll ('Ptr' + '->')) -ne 0 -or (Count $coll ('(*' + 'Ptr')) -ne 0 -or (Count $coll ('Ptr' + '.')) -ne 0) { $f += '(R12) snapshot dereferences a list entry' }
         if ((Count $coll ('AreDiagnostics' + 'Enabled')) -ne 0) { $f += '(R12) snapshot must be ungated' }
     }
+    # R13 (re-review S1) EnsureNewNodeSpawned's external-destroy branch: the dead address leaves the snap list through the helper (R7 keeps
+    #     Subsystem.cpp at one RemoveSingleSwap), BEFORE the veto Unregister and the slot removal that drops the hard ref; helper by address
+    if ((Count $T.sub 'RerollWipeDropDeadSlotAddress(') -ne 1 -or -not (Ordered $T.sub @($s1Call, '        FNodeShuffleModule::UnregisterManagedNode(*Existing);', '        SpawnedNodes.Remove(Entry.EntryGuid);'))) { $f += '(R13) external-destroy branch: one dead-address snap drop, before Unregister and the slot removal' }
+    if ((Count $T.wipe $s1Helper) -ne 1) { $f += '(R13) RerollWipeDropDeadSlotAddress body: null-guarded RemoveSingleSwap by address' }
+    if ((Count $T.sub ('TEXT("EXTDESTROY-SNAP %s: slotNull %d snapListRemoved %d"), *Entry.EntryGuid.ToString(), (*Existing == nullptr) ? 1 : 0, DeadSnapDropped); }')) -ne 1) { $f += '(R13) EXTDESTROY-SNAP line, arity 3' }
     # R10 (review F2)
     $inv = Span $T.wipe 'void ANodeShuffleSubsystem::RerollWipeNoteInvalidSlot(' 'void ANodeShuffleSubsystem::RerollWipeEmitCensus('
     if ($inv -eq '') { $f += '(R10) invalid-slot span missing' }
@@ -166,7 +175,7 @@ function Invoke-RerollWipeChecks($T) {
 
 $base = Invoke-RerollWipeChecks $text
 if ($base.Count -gt 0) { Write-Host 'FAIL (baseline):'; $base | ForEach-Object { Write-Host "  $_" }; exit 1 }
-Write-Host 'PASS baseline: R1-R12 hold'
+Write-Host 'PASS baseline: R1-R13 hold'
 
 $mutants = @(
     @{ Name = 'Q1 teardown call dropped'; Key = 'sub'; Expect = 'R1'; Find = 'RerollWipeTeardownRegistrations(It->Value, WipeTally); if (!It->Value->Destroy())'; Repl = 'if (!It->Value->Destroy())' }
@@ -206,6 +215,9 @@ $mutants = @(
     @{ Name = 'Q38 (re-review A1) new-since-wipe ignores the snapshot'; Key = 'wipe'; Expect = 'R11'; Find = 'if (!NotYieldedBeforeWipe.Contains(Ptr)) { ++NewSinceWipe; }'; Repl = '++NewSinceWipe;' }
     @{ Name = 'Q39 (re-review A1) snapshot dereferences an entry'; Key = 'wipe'; Expect = 'R12'; Find = "    Out.Reset();`n"; Repl = ("    Out.Reset();`n    for (const AFGResourceNode* P : Mgr->mResourceNodes) { if (IsVal" + "id(P)) { } }`n") }
     @{ Name = 'Q40 (re-review A1) snapshot predicate dropped'; Key = 'wipe'; Expect = 'R12'; Find = 'if (!Iterated.Contains(Ptr)) { Out.Add(Ptr); }'; Repl = 'Out.Add(Ptr);' }
+    @{ Name = 'Q43 (re-review S1) external-destroy snap drop removed'; Key = 'sub'; Expect = 'R13'; Find = ($s1Call + ' // re-review S1'); Repl = '        const int32 DeadSnapDropped = 0; // re-review S1' }
+    @{ Name = 'Q44 (re-review S1) snap drop moved after the slot removal'; Key = 'sub'; Expect = 'R13'; Find = ($s1Call + ' // re-review S1: the review-F2 rule on its other side, before the hard ref goes' + "`n"); Repl = ''
+       Find2 = "        SteadyAliveNodes.Remove(Entry.EntryGuid);`n        Existing = nullptr; // Remove() invalidated the slot pointer`n"; Repl2 = ("        SteadyAliveNodes.Remove(Entry.EntryGuid);`n" + $s1Call + "`n        Existing = nullptr; // Remove() invalidated the slot pointer`n") }
     @{ Name = 'Q17 well-member snap-list drop removed'; Key = 'welld'; Expect = 'R9'; Find = ('SnapDropped = Mgr->mResourceNodes.RemoveSingle' + 'Swap(AsNode);'); Repl = 'SnapDropped = 0;' }
     @{ Name = 'Q18 well-member rep-by-actor drop removed'; Key = 'welld'; Expect = 'R9'; Find = "        RepMgr->RemoveRepresentationOfActor(Member);`n"; Repl = '' }
     @{ Name = 'Q19 well-member rep-by-node drop removed'; Key = 'welld'; Expect = 'R9'; Find = '{ RepMgr->RemoveRepresentation(NodeRep); }'; Repl = '{ }' }

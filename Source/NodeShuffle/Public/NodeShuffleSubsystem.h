@@ -1205,6 +1205,7 @@ private:
     void RerollWipeTeardownRegistrations(class AFGResourceNode* Node, struct FNodeShuffleRerollWipeTally& T); // snap list, representation, scan; caller Destroys after
     void RerollWipeNoteInvalidSlot(class AFGResourceNode* Node, struct FNodeShuffleRerollWipeTally& T);  // invalid slot: address recorded, dropped from the snap list by address; no Destroy
     void RerollWipeEmitCensus(const struct FNodeShuffleRerollWipeTally& T);                             // REROLLWIPE, ungated, pointer compares only
+    int32 RerollWipeDropDeadSlotAddress(class AFGResourceNode* Node);                                  // re-review S1: EnsureNewNodeSpawned's external-destroy branch drops the dead address from the snap list
     void RerollWipeCollectNotYielded(TSet<const class AFGResourceNode*>& Out);                          // re-review A1: before-wipe snapshot, same predicate
     void RerollWipeEmitListAudit(bool bIsReroll, const TSet<const class AFGResourceNode*>& NotYieldedBeforeWipe); // review F3 / re-review A1: REROLLAUDIT, every roll, whole snap list vs TActorIterator
     // Coordinator addendum (water diagnostics, measured only, gates nothing): ROLLCENSUS / WELLROLL splits + bounded samples.
