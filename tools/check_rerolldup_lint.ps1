@@ -46,7 +46,7 @@ function Span([string]$t, [string]$a, [string]$b) {
 
 # ---- anchors (unique context) ----
 $fillGuid    = '        RerollCarriedGuids.Add(C.EntryGuid);'
-$fillPath    = '        if (!C.VanillaNodePath.IsEmpty()) { RerollCarriedPaths.Add(C.VanillaNodePath); }'
+$fillPath    = '        if (!C.VanillaNodePath.IsEmpty() && !C.OriginalResourceClassPath.IsEmpty()) { RerollCarriedPaths.Add(C.VanillaNodePath); }'
 $fillExtra   = '        if (C.OriginalResourceClassPath.IsEmpty()) { ++RerollCarriedExtras; } else { ++RerollCarriedWithOriginal; }'
 $carriedFlag = '            const bool bCarriedOld = RerollCarriedGuids.Contains(Old.EntryGuid);'
 $dupePred    = '            if (!bCarriedOld && !Old.VanillaNodePath.IsEmpty() && RerollCarriedPaths.Contains(Old.VanillaNodePath))'
@@ -68,8 +68,8 @@ $hideDedupe  = "            CarriedRecordPaths.Add(C.VanillaNodePath, &bPathReco
 $removeAll   = '    NewLayout.RemoveAll([](const FNodeShuffleEntry& E){ return !E.bIsNewNode && !E.bPinned; });'
 $appendCarry = '    NewLayout.Append(CarriedEntries);'
 $helperSig   = 'static FNodeShuffleSuppressedOriginal NsMakeSuppressedOriginalRecord(const FNodeShuffleEntry& E)'
-$censusFmt   = 'TEXT("REROLLPOOL-CARRY carried=%d carriedWithOriginal=%d carriedExtras=%d excludedFromPool=%d pathDupesDropped=%d carriedSamePathComposition=%d poolPathRepeats=%d hideRecordsForCarried=%d hideRecordPathDupes=%d carriedOrigLiveOccupied=%d carriedAvoidAdded=%d newQuotaEffective=%d newQuotaConfig=%d poolAfter=%d"),'
-$censusArgs  = "            CarriedEntries.Num(), RerollCarriedWithOriginal, RerollCarriedExtras, RerollExcludedFromPool, RerollPathDupesDropped,`n            RerollCarriedSamePathComposition, RerollPoolPathRepeats, RerollHideRecordsForCarried, RerollHideRecordPathDupes,`n            RerollCarriedOrigLiveOccupied, RerollCarriedAvoidAdded, RerollNewQuotaEffective, Config.NewNodeCount, PoolSize);"
+$censusFmt   = 'TEXT("REROLLPOOL-CARRY carried=%d carriedWithOriginal=%d carriedExtras=%d excludedFromPool=%d pathDupesDropped=%d carriedSamePathComposition=%d poolPathRepeats=%d hideRecordsForCarried=%d hideRecordPathDupes=%d carriedOrigLiveOccupied=%d carriedZombieRuleNoRecord=%d carriedAvoidAdded=%d newQuotaEffective=%d newQuotaConfig=%d customLocations=%d poolAfter=%d"),'
+$censusArgs  = "            CarriedEntries.Num(), RerollCarriedWithOriginal, RerollCarriedExtras, RerollExcludedFromPool, RerollPathDupesDropped,`n            RerollCarriedSamePathComposition, RerollPoolPathRepeats, RerollHideRecordsForCarried, RerollHideRecordPathDupes,`n            RerollCarriedOrigLiveOccupied, RerollCarriedZombieRuleNoRecord, RerollCarriedAvoidAdded, RerollNewQuotaEffective, Config.NewNodeCount, bRerollCustomLocations ? 1 : 0, PoolSize);"
 $rolledLine  = 'TEXT("Rolled layout: seed %d, pool %d (vanilla %d, new %d), active %d, pinned %d"),'
 $marker      = '2026-11-01-rwg-' + 'rerolldup-1'
 $twinsFmt    = 'TEXT("LAYOUTDUMP-TWINS dumpId=%d pathsOnMultipleActiveEntries=%d entriesOnSharedPaths=%d pinnedOnSharedPaths=%d activeWithPath=%d"),'
@@ -78,6 +78,12 @@ $twinFmt     = 'TEXT("LAYOUTDUMP-TWIN dumpId=%d path=%s entries=%d pinned=%d gui
 $twinPred    = '        if (!E.bActive || E.VanillaNodePath.IsEmpty()) { continue; }'
 $twinShared  = '        if (KV.Value.Num() < 2) { continue; }'
 $chatLine    = 'TEXT("LAYOUTDUMP-CHAT: dumpId=%d posted=%d"), DumpId, bPosted ? 1 : 0);'
+$occSkip     = "                ++RerollCarriedOrigLiveOccupied;`n                continue;"
+$twinAdd     = '                if (!Old.VanillaNodePath.IsEmpty()) { RerollCarriedCompositionPaths.Add(Old.VanillaNodePath, &bPathAlreadyCounted); }'
+$recGuard    = '            if (C.VanillaNodePath.IsEmpty() || C.OriginalResourceClassPath.IsEmpty()) { continue; }'
+$dedupeUse   = 'ExistingPaths.' + 'Contains('
+# review F2: the record-site zombie skip (X28)
+$zombieSkip  = "            if (!IsValid(LiveOrig) && !C.OriginalResourceClassPath.StartsWith(TEXT(""/Game/"")) && C.OriginalTrueLocation.IsNearlyZero())`n            {`n                ++RerollCarriedZombieRuleNoRecord;`n                continue;`n            }"
 
 function Invoke-RerollDupChecks($T) {
     $f = @()
@@ -88,11 +94,15 @@ function Invoke-RerollDupChecks($T) {
     $loop = Span $s $carriedFlag 'Re-roll pool (redesign-6)'
     if (-not $loop -or (Count $loop ('NewLayout.' + 'Add(')) -ne 1) { $f += '(U1) the rebuild loop must hold exactly one NewLayout Add, the guarded one' }
     if ((Count $s $augAppend) -ne 1 -or -not (Ordered $s @('TSet<FString> ExistingPaths;', $augAppend, 'Non-solid augment', 'Full re-scan augment'))) { $f += '(U1) the augments dedupe set must carry the carried paths before both augments' }
+    $ai = $s.IndexOf($augAppend); $ui = $s.IndexOf($dedupeUse)
+    if ((Count $s $dedupeUse) -ne 2 -or $ai -lt 0 -or $ui -lt 0 -or $ai -gt $ui) { $f += '(U1) the carried paths must enter the dedupe set before its first Contains (both augments read it)' }
     # U2
     if ((Count $s $fillPath) -ne 1 -or (Count $s $dupePred) -ne 1 -or (Count $s $dupeFmt) -ne 1) { $f += '(U2) carried path set, path-dupe predicate or its Display line missing' }
     if (-not (Ordered $s @($carriedFlag, $dupePred, $dupeCount, $dupeFmt, '                continue;', $guardedAdd))) { $f += '(U2) path dupe must count, log and continue before the pool Add' }
     # U3
     if ((Count $s $helperSig) -ne 1 -or (Count $s $convRec) -ne 1 -or (Count $s $hideAdd) -ne 1 -or (Count $s $hideCount) -ne 1 -or (Count $s $hideDedupe) -ne 1) { $f += '(U3) helper, conversion helper use, carried record write, its count or its path dedupe missing' }
+    if ((Count $s $occSkip) -ne 1 -or (Count $s $recGuard) -ne 1 -or -not (Ordered $s @($recGuard, $hideDedupe, $occSkip, $hideAdd))) { $f += '(U3) carried record: resource-leg guard, path dedupe, live-occupied skip, then the write' }
+    if ((Count $s $zombieSkip) -ne 1 -or -not (Ordered $s @($hideDedupe, $zombieSkip, $occSkip))) { $f += '(U3) carried record: the rehide-1 zombie skip must sit between the path dedupe and the live-occupied skip' }
     if ((Count $s ('FNodeShuffleSuppressedOriginal ' + 'Rec;')) -ne 1) { $f += '(U3) the record field set must be built in the helper only (no second inline copy)' }
     $hb = Span $s $helperSig 'void ANodeShuffleSubsystem::RollLayout('
     foreach ($fld in @('Rec.VanillaNodePath = E.VanillaNodePath;', 'Rec.Location = E.Location;', 'Rec.TrueLocation = !E.OriginalTrueLocation.IsNearlyZero() ? E.OriginalTrueLocation : E.Location;', 'Rec.bModdedOrigin = !E.OriginalResourceClassPath.StartsWith(TEXT("/Game/"));', 'Rec.OriginalResourceClassPath = E.OriginalResourceClassPath;', 'if (!E.OriginalTrueLocation.IsNearlyZero()) { Rec.OriginalNodeClassPath = E.NodeClassPath; }')) {
@@ -103,6 +113,7 @@ function Invoke-RerollDupChecks($T) {
     # U4
     $comp = Span $s $guardedAdd '            VanillaCount++;'
     if (-not $comp -or (Count $comp 'bCarriedOld') -ne 1 -or (Count $comp 'VanillaResourceCounts.FindOrAdd(Old.OriginalResourceClassPath)++;') -ne 1 -or (Count $comp 'PurityDeckSource.Add(Old.OriginalPurity);') -ne 1 -or (Count $comp 'VanillaLocations.Add(Old.Location);') -ne 1) { $f += '(U4) composition after the guarded Add must count carried originals (no carried-flag guard)' }
+    if ((Count $s $twinAdd) -ne 1 -or -not (Ordered $s @($carriedFlag, $twinAdd, $twinCompose, $guardedAdd))) { $f += '(U4) carried twins: the composition-path set must be filled before its already-counted test' }
     if ((Count $s $zombiePred) -ne 1 -or (Count $s $twinCompose) -ne 1) { $f += '(U4) zombie predicate must skip carried; carried twins count once' }
     # U5
     if ((Count $s $fillExtra) -ne 1 -or (Count $s $quotaLine) -ne 1 -or (Count $s $quotaCall) -ne 1) { $f += '(U5) carried-extras count, effective quota or its use at the extras call missing' }
@@ -162,6 +173,12 @@ $mutants = @(
     @{ Name = 'X21 twins counts singletons'; Key = 'dump'; Expect = 'U8'; Find = $twinShared; Repl = '        if (KV.Value.Num() < 1) { continue; }' }
     @{ Name = 'X22 twins counts inactive entries'; Key = 'dump'; Expect = 'U8'; Find = $twinPred; Repl = '        if (E.VanillaNodePath.IsEmpty()) { continue; }' }
     @{ Name = 'X23 path added to every E line (the flood)'; Key = 'dump'; Expect = 'U8'; Find = 'pinned=%d"),' + "`n" + '            I, *E.EntryGuid.ToString()'; Repl = 'pinned=%d path=%s"),' + "`n" + '            I, *E.EntryGuid.ToString()' }
+    @{ Name = 'X24 carried paths appended after the non-solid scan loop'; Key = 'sub'; Expect = 'U1'; Find = ($augAppend + "`n"); Repl = ''
+       Find2 = "            UE_LOG(LogNodeShuffle, Display,`n                TEXT(""Non-solid augment: added"; Repl2 = ("    " + $augAppend + "`n            UE_LOG(LogNodeShuffle, Display,`n                TEXT(""Non-solid augment: added") }
+    @{ Name = 'X25 live-occupied original still recorded'; Key = 'sub'; Expect = 'U3'; Find = $occSkip; Repl = '                ++RerollCarriedOrigLiveOccupied;' }
+    @{ Name = 'X26 carried twins counted twice'; Key = 'sub'; Expect = 'U4'; Find = $twinAdd; Repl = '                (void)RerollCarriedCompositionPaths;' }
+    @{ Name = 'X27 record written for a carried entry with no original resource'; Key = 'sub'; Expect = 'U3'; Find = $recGuard; Repl = '            if (C.VanillaNodePath.IsEmpty()) { continue; }' }
+    @{ Name = 'X28 (review F2) zombie-eligible carried entry still recorded'; Key = 'sub'; Expect = 'U3'; Find = "                ++RerollCarriedZombieRuleNoRecord;`n                continue;"; Repl = '                ++RerollCarriedZombieRuleNoRecord;' }
 )
 $bad = 0
 foreach ($m in $mutants) {
