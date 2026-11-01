@@ -139,7 +139,7 @@ function Invoke-CliffChecks($T) {
     if ((Count $T.dump 'I, *E.EntryGuid.ToString(), *LayoutDumpShortName(E.AssignedResourceClassPath), static_cast<int32>(E.AssignedPurity.GetValue()),') -ne 1) { $f += '(C13) the LAYOUTDUMP-E purity argument must be live code' }
     if ((Count $T.dens 'Moved += TEXT("unplaceableNew"); }') -ne 1 -or (Count $T.dens ('Moved += TEXT("water' + 'LockedNew")')) -ne 0) { $f += '(C13) the RWGSTUCK moved token must be unplaceableNew' }
     # C12 marker
-    if ((Count $T.nsmod ('LOADED (2026-10-31-rwg-' + 'farspawn-1d)')) -ne 1 -or (Count $T.nsmod ('2026-10-31-rwg-' + 'farspawn-1c)')) -ne 0 -or (Count $T.nsmod ('2026-10-31-rwg-' + 'seedgas-1b)')) -ne 0 -or (Count $T.nsmod ('2026-10-31-rwg-' + 'seedgas-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-30-rwg-' + 'clifftop-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-29-rwg-' + 'layout-dump-1)')) -ne 0) { $f += '(C12) marker rwg-clifftop-1 must be present once and rwg-layout-dump-1 absent' }
+    if ((Count $T.nsmod ('LOADED (2026-10-31-rwg-' + 'farspawn-1e)')) -ne 1 -or (Count $T.nsmod ('2026-10-31-rwg-' + 'farspawn-1d)')) -ne 0 -or (Count $T.nsmod ('2026-10-31-rwg-' + 'seedgas-1b)')) -ne 0 -or (Count $T.nsmod ('2026-10-31-rwg-' + 'seedgas-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-30-rwg-' + 'clifftop-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-29-rwg-' + 'layout-dump-1)')) -ne 0) { $f += '(C12) marker rwg-clifftop-1 must be present once and rwg-layout-dump-1 absent' }
     if ($c.Contains('LOADED' + ' (')) { $f += '(C12) no build-marker string in the new file' }
     return $f
 }
@@ -168,7 +168,7 @@ $mutants = @(
     @{ Name = 'M20 literal start height'; Key = 'sub'; Expect = 'C9'; Find = 'StartZ + NodeShuffleMapMode::RwgPrimaryTraceUpCm);'; Repl = ('StartZ + ' + '20000.f);') }
     @{ Name = 'M21 RWGCLIFFTOP drops a field'; Key = 'cliff'; Expect = 'C10'; Find = ' outerProbesSameMesh=%d/4 steepOuterProbes=%d accepted=%d'; Repl = ' accepted=%d' }
     @{ Name = 'M22 RWGCLIFFTOP uncapped'; Key = 'cliff'; Expect = 'C10'; Find = 'if (RwgCliffTopSamples < RwgCliffTopSampleCap && '; Repl = 'if (' }
-    @{ Name = 'M23 marker reverted'; Key = 'nsmod'; Expect = 'C12'; Find = ('2026-10-31-rwg-' + 'farspawn-1d'); Repl = ('2026-10-31-rwg-' + 'farspawn-1c') }
+    @{ Name = 'M23 marker reverted'; Key = 'nsmod'; Expect = 'C12'; Find = ('2026-10-31-rwg-' + 'farspawn-1e'); Repl = ('2026-10-31-rwg-' + 'farspawn-1d') }
     @{ Name = 'M25 vanilla solid gate widened'; Key = 'sub'; Expect = 'C11'; Find = 'const bool bSolidBlocks = bTerrainOnly && bOutTooSteep != nullptr;'; Repl = 'const bool bSolidBlocks = bOutTooSteep != nullptr;' }
     @{ Name = 'M26 LayoutDump E purity argument commented out'; Key = 'dump'; Expect = 'C13'; Find = '*LayoutDumpShortName(E.AssignedResourceClassPath), static_cast<int32>(E.AssignedPurity.GetValue()),'; Repl = ('*LayoutDumpShortName(E.AssignedResourceClassPath), ' + '/' + '/ static_cast<int32>(E.AssignedPurity.GetValue()),') }
     @{ Name = 'M27 stuck moved token back to the old name'; Key = 'dens'; Expect = 'C13'; Find = 'Moved += TEXT("unplaceableNew"); }'; Repl = ('Moved += TEXT("water' + 'LockedNew"); }') }
