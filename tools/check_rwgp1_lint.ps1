@@ -73,6 +73,11 @@ foreach ($k in $files.Keys) {
     }
     $text[$k] = Get-Content -Raw -Path $p
 }
+# rwg-farspawn-1f F10: RwgSpawnPass + RwgEmitPlaceCensus moved VERBATIM from NodeShuffleMapModePlace.cpp to NodeShuffleMapModeSpawnPass.cpp;
+# the 'place' text is both files, Place.cpp first (every pin keyed on 'place' still reads the moved code).
+$spPath = Join-Path $src 'NodeShuffle\Private\NodeShuffleMapModeSpawnPass.cpp'
+if (-not (Test-Path $spPath)) { Write-Host "FAIL(load): pinned file 'NodeShuffleMapModeSpawnPass.cpp' does not exist"; exit 2 }
+$text['place'] = $text['place'] + "`n" + ((Get-Content -Raw -Encoding utf8 -Path $spPath))
 $fails = @()
 
 # Body of one function, anchored on its full signature line (unique to its site), up to the next

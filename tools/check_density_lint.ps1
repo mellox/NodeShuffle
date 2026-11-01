@@ -34,6 +34,11 @@ foreach ($k in $files.Keys) {
     if (-not (Test-Path $p)) { Write-Host "FAIL(load): pinned file '$($files[$k])' does not exist"; exit 2 }
     $text[$k] = (Get-Content -Raw -Path $p) -replace "`r`n", "`n"
 }
+# rwg-farspawn-1f F10: RwgSpawnPass + RwgEmitPlaceCensus moved VERBATIM from NodeShuffleMapModePlace.cpp to NodeShuffleMapModeSpawnPass.cpp;
+# the 'place' text is both files, Place.cpp first (every pin keyed on 'place' still reads the moved code).
+$spPath = Join-Path $src 'NodeShuffle\Private\NodeShuffleMapModeSpawnPass.cpp'
+if (-not (Test-Path $spPath)) { Write-Host "FAIL(load): pinned file 'NodeShuffleMapModeSpawnPass.cpp' does not exist"; exit 2 }
+$text['place'] = $text['place'] + "`n" + ((Get-Content -Raw -Encoding utf8 -Path $spPath) -replace "`r`n", "`n")
 function Count([string]$t, [string]$n) { return ([regex]::Matches($t, [regex]::Escape($n))).Count }
 function Ordered([string]$t, [string[]]$needles) {
     $at = 0
@@ -134,7 +139,7 @@ function Invoke-DensityChecks($T) {
     $roll = Body $T.den 'void ANodeShuffleSubsystem::RwgDensityOnRoll('
     if (-not (Ordered $roll @('RwgStuckTracker.Reset();', 'RwgEmitDensityCensus(TEXT("roll"));'))) { $f += '(D7) the roll trigger must clear the stuck tracker then print' }
     # D8
-    if ((Count $T.nsmod ('LOADED (2026-10-31-rwg-' + 'farspawn-1e)')) -ne 1 -or (Count $T.nsmod ('2026-10-31-rwg-' + 'farspawn-1d)')) -ne 0 -or (Count $T.nsmod ('2026-10-31-rwg-' + 'seedgas-1b)')) -ne 0 -or (Count $T.nsmod ('2026-10-31-rwg-' + 'seedgas-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-30-rwg-' + 'clifftop-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-29-rwg-' + 'layout-dump-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-28-rwg-' + 'trace-diag-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-27-rwg-' + 'trace-diag-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-26-rwg-' + '0-1-12-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-26-rwg-' + '0-1-12-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'deal-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'density-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'density-1')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'rockcache-2')) -ne 0) { $f += '(D8) marker must be rwg-steep-2 with rwg-steep-1, rwg-deal-1, rwg-density-2, rwg-density-1 and rwg-rockcache-2 absent' }
+    if ((Count $T.nsmod ('LOADED (2026-10-31-rwg-' + 'farspawn-1f)')) -ne 1 -or (Count $T.nsmod ('2026-10-31-rwg-' + 'farspawn-1e)')) -ne 0 -or (Count $T.nsmod ('2026-10-31-rwg-' + 'seedgas-1b)')) -ne 0 -or (Count $T.nsmod ('2026-10-31-rwg-' + 'seedgas-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-30-rwg-' + 'clifftop-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-29-rwg-' + 'layout-dump-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-28-rwg-' + 'trace-diag-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-27-rwg-' + 'trace-diag-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-26-rwg-' + '0-1-12-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-26-rwg-' + '0-1-12-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'deal-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'density-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'density-1')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'rockcache-2')) -ne 0) { $f += '(D8) marker must be rwg-steep-2 with rwg-steep-1, rwg-deal-1, rwg-density-2, rwg-density-1 and rwg-rockcache-2 absent' }
     # D9
     if ((Count $T.den ('constexpr int32 RwgDensityGridN = ' + '10;')) -ne 1 -or (Count $T.den ('constexpr int32 RwgDensitySubSample = ' + '8;')) -ne 1) { $f += '(D9) grid constants must be 10 cells per side and an 8 x 8 sub-sample' }
     # D10
@@ -183,7 +188,7 @@ $mutants = @(
     @{ Name = 'Y17 diagnostic redeals an entry'; Key = 'den'; Expect = 'D6'; Find = '        ++StuckMap;'; Repl = ('        ++StuckMap; TryRedeal' + 'WaterLockedEntry(Layout[I]);') }
     @{ Name = 'Y18 load latch dropped (prints every pass)'; Key = 'den'; Expect = 'D7'; Find = "{`n    bRwgDensityEmitted = true;`n"; Repl = "{`n" }
     @{ Name = 'Y19 roll keeps the old tracker'; Key = 'den'; Expect = 'D7'; Find = '    RwgStuckTracker.Reset();'; Repl = '' }
-    @{ Name = 'Y20 marker reverted'; Key = 'nsmod'; Expect = 'D8'; Find = ('2026-10-31-rwg-' + 'farspawn-1e'); Repl = ('2026-10-31-rwg-' + 'farspawn-1d') }
+    @{ Name = 'Y20 marker reverted'; Key = 'nsmod'; Expect = 'D8'; Find = ('2026-10-31-rwg-' + 'farspawn-1f'); Repl = ('2026-10-31-rwg-' + 'farspawn-1e') }
     @{ Name = 'Y21 sub-sample shrunk to 4'; Key = 'den'; Expect = 'D9'; Find = ('constexpr int32 RwgDensitySubSample = ' + '8;'); Repl = ('constexpr int32 RwgDensitySubSample = ' + '4;') }
     @{ Name = 'Y22 HERE-LAND loses an argument'; Key = 'den'; Expect = 'D1'; Find = 'bRwgKillboxKnown ? 1 : 0, (FPlatformTime::Seconds() - T0) * 1000.0);'; Repl = 'bRwgKillboxKnown ? 1 : 0);' }
     @{ Name = 'Y23 HERE-LAND lattice spacing doubled'; Key = 'den'; Expect = 'D10'; Find = 'constexpr double Step = 10000.0;'; Repl = 'constexpr double Step = 20000.0;' }

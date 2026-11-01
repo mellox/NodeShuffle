@@ -86,6 +86,11 @@ foreach ($k in $files.Keys) {
     if (-not (Test-Path $p)) { Write-Host "FAIL(load): pinned file '$($files[$k])' does not exist"; exit 2 }
     $text[$k] = (Get-Content -Raw -Path $p) -replace "`r`n", "`n"
 }
+# rwg-farspawn-1f F10: RwgSpawnPass + RwgEmitPlaceCensus moved VERBATIM from NodeShuffleMapModePlace.cpp to NodeShuffleMapModeSpawnPass.cpp;
+# the 'place' text is both files, Place.cpp first (every pin keyed on 'place' still reads the moved code).
+$spPath = Join-Path $src 'NodeShuffle\Private\NodeShuffleMapModeSpawnPass.cpp'
+if (-not (Test-Path $spPath)) { Write-Host "FAIL(load): pinned file 'NodeShuffleMapModeSpawnPass.cpp' does not exist"; exit 2 }
+$text['place'] = $text['place'] + "`n" + ((Get-Content -Raw -Encoding utf8 -Path $spPath) -replace "`r`n", "`n")
 $fails = @()
 $cls = 'ANodeShuffleSubsystem::'
 $notV = 'GetMapMode() != ENodeShuffleMapMode::' + 'Vanilla'
@@ -441,7 +446,7 @@ if (-not $d1x) { $fails += 'D9: RwgDealOneSpot body not found' } else {
 }
 if (-not $text.place.Contains('rejectedWater=%d rejectedWaterSurfaceZBelow0=%d rejectedWaterSurfaceZAtOrAbove0=%d dealt' + 'BelowZ0=%d ')) { $fails += 'D9: ROLLCENSUS must carry the surface-Z split and dealtBelowZ0' }
 if (-not $text.place.Contains('if (N >= ' + '8) { return; }')) { $fails += 'D9: the water samples must be capped at 8 per kind' }
-if ((Count $text.nsmod ('LOADED (2026-10-31-rwg-' + 'farspawn-1e)')) -ne 1 -or (Count $text.nsmod ('2026-10-31-rwg-' + 'farspawn-1d)')) -ne 0 -or (Count $text.nsmod ('2026-10-31-rwg-' + 'seedgas-1b)')) -ne 0 -or (Count $text.nsmod ('2026-10-31-rwg-' + 'seedgas-1)')) -ne 0 -or (Count $text.nsmod ('2026-10-30-rwg-' + 'clifftop-1)')) -ne 0 -or (Count $text.nsmod ('2026-10-29-rwg-' + 'layout-dump-1)')) -ne 0 -or (Count $text.nsmod ('2026-10-28-rwg-' + 'trace-diag-2)')) -ne 0 -or (Count $text.nsmod ('2026-10-27-rwg-' + 'trace-diag-1)')) -ne 0 -or (Count $text.nsmod ('2026-10-26-rwg-' + '0-1-12-2)')) -ne 0 -or (Count $text.nsmod ('2026-10-26-rwg-' + '0-1-12-1)')) -ne 0 -or (Count $text.nsmod ('2026-10-19-rwg-' + 'steep-2)')) -ne 0 -or (Count $text.nsmod ('2026-10-19-rwg-' + 'steep-1)')) -ne 0 -or (Count $text.nsmod ('2026-10-19-rwg-' + 'deal-1)')) -ne 0 -or (Count $text.nsmod ('2026-10-19-rwg-' + 'density-2)')) -ne 0 -or (Count $text.nsmod ('2026-10-19-rwg-' + 'rockcache-2')) -ne 0 -or (Count $text.nsmod ('2026-10-18-rwg-' + 'p4c-2')) -ne 0) { $fails += 'D10: the current marker (RWG 0.1.9 accept list, rwg-repclass-3 (rwg-repclass-2 absent)) must be present and rwg-p4c-2 absent' }
+if ((Count $text.nsmod ('LOADED (2026-10-31-rwg-' + 'farspawn-1f)')) -ne 1 -or (Count $text.nsmod ('2026-10-31-rwg-' + 'farspawn-1e)')) -ne 0 -or (Count $text.nsmod ('2026-10-31-rwg-' + 'seedgas-1b)')) -ne 0 -or (Count $text.nsmod ('2026-10-31-rwg-' + 'seedgas-1)')) -ne 0 -or (Count $text.nsmod ('2026-10-30-rwg-' + 'clifftop-1)')) -ne 0 -or (Count $text.nsmod ('2026-10-29-rwg-' + 'layout-dump-1)')) -ne 0 -or (Count $text.nsmod ('2026-10-28-rwg-' + 'trace-diag-2)')) -ne 0 -or (Count $text.nsmod ('2026-10-27-rwg-' + 'trace-diag-1)')) -ne 0 -or (Count $text.nsmod ('2026-10-26-rwg-' + '0-1-12-2)')) -ne 0 -or (Count $text.nsmod ('2026-10-26-rwg-' + '0-1-12-1)')) -ne 0 -or (Count $text.nsmod ('2026-10-19-rwg-' + 'steep-2)')) -ne 0 -or (Count $text.nsmod ('2026-10-19-rwg-' + 'steep-1)')) -ne 0 -or (Count $text.nsmod ('2026-10-19-rwg-' + 'deal-1)')) -ne 0 -or (Count $text.nsmod ('2026-10-19-rwg-' + 'density-2)')) -ne 0 -or (Count $text.nsmod ('2026-10-19-rwg-' + 'rockcache-2')) -ne 0 -or (Count $text.nsmod ('2026-10-18-rwg-' + 'p4c-2')) -ne 0) { $fails += 'D10: the current marker (RWG 0.1.9 accept list, rwg-repclass-3 (rwg-repclass-2 absent)) must be present and rwg-p4c-2 absent' }
 
 if ($fails.Count -gt 0) { $fails | ForEach-Object { Write-Host "FAIL $_" }; exit 1 }
 Write-Host "PASS: RWG P4/P2c/P2d lint -- W1..W17, C1..C14 and D1..D11 hold across $($files.Count) loaded files"
