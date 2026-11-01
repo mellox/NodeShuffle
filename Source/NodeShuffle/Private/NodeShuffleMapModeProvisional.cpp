@@ -19,18 +19,29 @@ namespace
         TEXT("NodeShuffle.RwgSpawnAllAtRoll"),
         1,
         // fix F9 (2026-10-31): every clause states what RwgProvisionalSpawnPass / the attempt loop do; no universal or simultaneous claim.
-        TEXT("RWG maps only. 1 (default): new node spots that have no node yet and are farther than the attempt radius (1 km, or the ")
-        TEXT("spawn radius if smaller) from every player get a node placed, up to a batch per spawn pass, once the sea check has ")
-        TEXT("cleared them (or without it where this world has no usable sea check); spots set aside this session (parked, dormant, refused, pinned, or already fitted to the ground) are skipped. ")
-        TEXT("They are placed at the world generator's surface height (cave spots at their dealt cave floor). When a player comes ")
-        TEXT("within that radius, the normal spawn check tries to re-fit each one to the ground, which can also move it. 0: no new far ")
-        TEXT("nodes are placed; nodes already placed stay and are still re-fitted on approach. Read each spawn pass."),
+        // rwg-farspawn-1e C1: also the within-radius spots whose ground fit this pass left no node (RwgProvisionalSpawnPass FreshNoActor).
+        TEXT("RWG maps only. 1 (default): new node spots that have no node yet, farther than the attempt radius (1 km, or the ")
+        TEXT("spawn radius if smaller) from every player or within it after this pass's ground fit left no node there, get a node placed, up to a batch per spawn pass, once the sea check has ")
+        TEXT("cleared them (or without it where this world has no usable sea check); spots set aside this session (parked, dormant, refused, pinned, or already fitted to the ground) are skipped, ")
+        TEXT("and so are spots still where a ground fit this session found them unplaceable, and underground spots within the radius. ")
+        TEXT("They are placed at the world generator's surface height (cave spots at their dealt cave floor). On each later spawn pass with a player ")
+        TEXT("within that radius, the normal spawn check tries to re-fit each one to the ground, which can also move it. 0: no new ")
+        TEXT("nodes are placed this way; nodes already placed stay and are still re-fitted on approach. Read each spawn pass."),
         ECVF_Default);
     TAutoConsoleVariable<int32> CVarNodeShuffleRwgProvisionalBatch(
         TEXT("NodeShuffle.RwgProvisionalBatchPerPass"),
         16, // rwg-farspawn-1c C2: was 64 (run 1 measured 44-63 ms per 64-node batch)
         TEXT("RWG maps only. How many far node spots get their node placed per spawn pass (about every 5 seconds) while ")
-        TEXT("NodeShuffle.RwgSpawnAllAtRoll is 1. Default 16. Values are clamped to 8..512. Read each spawn pass."),
+        TEXT("NodeShuffle.RwgSpawnAllAtRoll is 1. Default 16. Values are clamped to 8..512. A hard cap: the time budget ")
+        TEXT("NodeShuffle.RwgProvisionalBatchMs can end a pass's batch sooner. Read each spawn pass."),
+        ECVF_Default);
+    // rwg-farspawn-1e C2: the time budget beside the count cap.
+    TAutoConsoleVariable<float> CVarNodeShuffleRwgProvisionalBatchMs(
+        TEXT("NodeShuffle.RwgProvisionalBatchMs"),
+        8.0f,
+        TEXT("RWG maps only. Milliseconds a spawn pass may spend placing nodes while NodeShuffle.RwgSpawnAllAtRoll is 1, counted from ")
+        TEXT("the start of the pass's candidate scan. Placing stops when this is spent or NodeShuffle.RwgProvisionalBatchPerPass nodes ")
+        TEXT("are placed, whichever comes first; the first node of a pass is always tried. Default 8. Values are clamped to 1..50. Read each spawn pass."),
         ECVF_Default);
 
     FString ProvShort(const FString& P) { int32 Dot = INDEX_NONE; return P.FindLastChar(TEXT('.'), Dot) ? P.Mid(Dot + 1) : P; }
@@ -58,6 +69,34 @@ bool NodeShuffleMapMode::RwgSpawnAllAtRollOn() { return CVarNodeShuffleRwgSpawnA
 int32 NodeShuffleMapMode::RwgProvisionalBatchPerPass()
 {
     return FMath::Clamp(CVarNodeShuffleRwgProvisionalBatch.GetValueOnGameThread(), RwgProvisionalBatchMin, RwgProvisionalBatchMax);
+}
+
+float NodeShuffleMapMode::RwgProvisionalBatchMs()
+{
+    return FMath::Clamp(CVarNodeShuffleRwgProvisionalBatchMs.GetValueOnGameThread(), RwgProvisionalBatchMsMin, RwgProvisionalBatchMsMax);
+}
+
+void ANodeShuffleSubsystem::RwgNoteWetSpot(const FNodeShuffleEntry& E)
+{
+    // rwg-farspawn-1e C1: called beside every WaterLockedThisSession.Add (the fresh spawn path, settle-near-players, branch (b)
+    // below) BEFORE the redeal moves the entry, so the recorded spot is the one the ground fit found unplaceable.
+    RwgWetSpotThisSession.Add(E.EntryGuid, E.Location);
+}
+
+bool ANodeShuffleSubsystem::RwgProvisionalAtWetSpot(const FNodeShuffleEntry& E) const
+{
+    // Water-locked this session AND still at the lock spot (2-D, RwgProvisionalMoveTolCm), or locked with no recorded spot
+    // (conservative). A redeal that moved the entry off the spot makes it eligible at its new spot.
+    if (!WaterLockedThisSession.Contains(E.EntryGuid)) { return false; }
+    const FVector* At = RwgWetSpotThisSession.Find(E.EntryGuid);
+    return !At || FVector::Dist2D(*At, E.Location) <= NodeShuffleMapMode::RwgProvisionalMoveTolCm;
+}
+
+const TCHAR* ANodeShuffleSubsystem::RwgProvisionalOriginName(const FGuid& G) const
+{
+    // notThisSession = the actor was provisioned before this session's load (the origin map is session-only, never saved).
+    const bool* W = RwgProvOriginWithin.Find(G);
+    return !W ? TEXT("notThisSession") : *W ? TEXT("withinRadius") : TEXT("far");
 }
 
 void ANodeShuffleSubsystem::RwgProvisionalDespawn(FNodeShuffleEntry& E)
@@ -102,8 +141,8 @@ bool ANodeShuffleSubsystem::RwgProvisionalPinWins(FNodeShuffleEntry& E)
     {
         ++RwgProvSettleSamples;
         const double Z = IsValid(Node) ? Node->GetActorLocation().Z : E.Location.Z;
-        UE_LOG(LogNodeShuffle, Display, TEXT("PROVSETTLE: entry=%s res=%s provZ=%.0f settledZ=%.0f dzCm=0 movedXYm=0.0 outcome=pinnedKept hitClass=-1 pinned=%d occupied=%d"),
-            *E.EntryGuid.ToString(), *ProvShort(E.AssignedResourceClassPath), Z, Z, E.bPinned ? 1 : 0, bOccupied ? 1 : 0);
+        UE_LOG(LogNodeShuffle, Display, TEXT("PROVSETTLE: entry=%s res=%s provZ=%.0f settledZ=%.0f dzCm=0 movedXYm=0.0 outcome=pinnedKept hitClass=-1 pinned=%d occupied=%d origin=%s"),
+            *E.EntryGuid.ToString(), *ProvShort(E.AssignedResourceClassPath), Z, Z, E.bPinned ? 1 : 0, bOccupied ? 1 : 0, RwgProvisionalOriginName(E.EntryGuid));
     }
     return true;
 }
@@ -187,6 +226,7 @@ void ANodeShuffleSubsystem::RwgSettleProvisional(FNodeShuffleEntry& E, bool& bCh
     {
         // (b) unplaceable here: despawn BEFORE the redeal moves the entry, then the spawn path's own redeal (ring, else map-wide).
         // settledZ stays nan: a redeal is not a settle. redealNotMoved = the redeal call returned false (the entry did not move).
+        RwgNoteWetSpot(E); // rwg-farspawn-1e C1: the lock spot, before the redeal moves the entry
         RwgProvisionalDespawn(E);
         E.bRwgProvisional = false;
         ++NodeGateSettleRejectedWater;
@@ -204,6 +244,7 @@ void ANodeShuffleSubsystem::RwgSettleProvisional(FNodeShuffleEntry& E, bool& bCh
         ++NodeGateSettleRejectedNoWater;
         ++DeferredThisPass;
         ++RwgProvSessDeferred;
+        RwgProvSessDeferredEntries.Add(E.EntryGuid); // rwg-farspawn-1e C4: distinct entries (deferredEntries) beside the event count
     }
     bRwgSteepArmed = false; // as the attempt loop: an arm never outlives the attempt that set it
     if (RwgProvSettleSamplePass != RwgPcPasses) { RwgProvSettleSamplePass = RwgPcPasses; RwgProvSettleSamples = 0; }
@@ -212,14 +253,14 @@ void ANodeShuffleSubsystem::RwgSettleProvisional(FNodeShuffleEntry& E, bool& bCh
         ++RwgProvSettleSamples;
         // movedXYm: from the provisional actor to the respawned actor (inPlace), else to the entry's location after this call.
         const FVector MovedTo = bFresh ? FreshAt : E.Location;
-        UE_LOG(LogNodeShuffle, Display, TEXT("PROVSETTLE: entry=%s res=%s provZ=%.0f settledZ=%.0f dzCm=%.0f movedXYm=%.1f outcome=%s hitClass=%d apiUsed=%d onSolidTop=%d localMapRevealsBefore=%d localMapRevealsAfter=%d serverMapRevealsBefore=%d serverMapRevealsAfter=%d moveCheck=%s"),
+        UE_LOG(LogNodeShuffle, Display, TEXT("PROVSETTLE: entry=%s res=%s provZ=%.0f settledZ=%.0f dzCm=%.0f movedXYm=%.1f outcome=%s hitClass=%d apiUsed=%d onSolidTop=%d localMapRevealsBefore=%d localMapRevealsAfter=%d serverMapRevealsBefore=%d serverMapRevealsAfter=%d moveCheck=%s origin=%s"),
             *E.EntryGuid.ToString(), *ProvShort(E.AssignedResourceClassPath), ProvAt.Z, SettledZ, SettledZ - ProvAt.Z,
             FVector::Dist2D(MovedTo, ProvAt) / 100.0, Outcome, HitClass, bApiUsed ? 1 : 0, E.bRwgOnSolidTop ? 1 : 0,
-            LocalRevealsBefore, LocalRevealsAfter, ServerRevealsBefore, ServerRevealsAfter, MoveCheck);
+            LocalRevealsBefore, LocalRevealsAfter, ServerRevealsBefore, ServerRevealsAfter, MoveCheck, RwgProvisionalOriginName(E.EntryGuid));
     }
 }
 
-void ANodeShuffleSubsystem::RwgProvisionalSpawnPass(const TArray<FVector>& Pawns, float AttemptRadiusCm, bool& bChangedWorld)
+void ANodeShuffleSubsystem::RwgProvisionalSpawnPass(const TArray<FVector>& Pawns, float AttemptRadiusCm, const TSet<int32>& FreshNoActor, bool& bChangedWorld)
 {
     if (GetMapMode() != ENodeShuffleMapMode::Rwg) { return; } // RWG-only gate
     if ((RwgPcPasses % 12) == 1) { RwgProvisionalEmitCensus(); } // fix F5: before the toggle/pawn/query returns, so spawnAllAtRoll=0 can print
@@ -232,7 +273,8 @@ void ANodeShuffleSubsystem::RwgProvisionalSpawnPass(const TArray<FVector>& Pawns
     const bool bVoidMaybe = !(bRwgVoidCheckDone && bRwgKillboxDone) || RwgVoidPassTermsOn();
     const bool bSeaPassIdle = bRwgSeaCheckDone && !bRwgSeaUsable;
     TArray<TPair<double, int32>> Cands;
-    int32 SeaPending = 0, CaveDealtZ = 0, RayCastedNoActor = 0, SeaDealFailed = 0;
+    TSet<int32> WithinCands; // rwg-farspawn-1e C1: candidates within the attempt radius (origin=withinRadius)
+    int32 SeaPending = 0, CaveDealtZ = 0, RayCastedNoActor = 0, SeaDealFailed = 0, WetSpot = 0, WithinUnderground = 0;
     for (int32 I = 0; I < Layout.Num(); ++I)
     {
         const FNodeShuffleEntry& E = Layout[I];
@@ -241,22 +283,31 @@ void ANodeShuffleSubsystem::RwgProvisionalSpawnPass(const TArray<FVector>& Pawns
         if (SpawnParkedThisSession.Num() > 0 && SpawnParkedThisSession.Contains(E.EntryGuid)) { continue; }
         if (RwgProvRefused.Contains(E.EntryGuid)) { continue; }
         if (IsValid(SpawnedNodes.FindRef(E.EntryGuid))) { continue; }
-        if (IsLocationNearAnyPlayer(E.Location, AttemptRadiusCm)) { continue; } // within: the attempt loop spawns it (settled)
+        // rwg-farspawn-1e C1: within the attempt radius, only an entry whose FRESH attempt this pass (the attempt loop, which ran
+        // first) left no actor; a within entry that loop did not reach this pass (budget) is left to it, so the fresh attempt comes first.
+        const bool bWithin = IsLocationNearAnyPlayer(E.Location, AttemptRadiusCm);
+        if (bWithin && !FreshNoActor.Contains(I)) { continue; } // within: the attempt loop spawns it (settled)
+        if (bWithin && E.bUnderground) { ++WithinUnderground; continue; } // the fresh path's close-miss cave escape (8 misses) counts only there
         if (E.bRayCasted) { ++RayCastedNoActor; continue; } // fix F7 (V7): a settled entry keeps its settled spot; it spawns through the attempt loop
         if (RwgSeaDealFailed.Contains(E.EntryGuid)) { ++SeaPending; ++SeaDealFailed; continue; } // fix F7 (V7b): flagged by the sea pass, not re-dealt: no provisional node
         const bool bSeaDone = bSeaPassIdle || (E.bRwgSeaChecked && (E.bRwgVoidChecked || !bVoidMaybe));
         if (!bSeaDone) { ++SeaPending; continue; }
+        if (RwgProvisionalAtWetSpot(E)) { ++WetSpot; continue; } // rwg-farspawn-1e C1, both origins: never at a spot a ground fit found unplaceable
         double Best = TNumericLimits<double>::Max();
         for (const FVector& P : Pawns) { Best = FMath::Min(Best, FVector::DistSquared2D(P, E.Location)); }
         Cands.Emplace(Best, I);
+        if (bWithin) { WithinCands.Add(I); }
     }
     Cands.Sort([](const TPair<double, int32>& A, const TPair<double, int32>& B) { return A.Key < B.Key; }); // nearest to any player first
     const int32 Batch = NodeShuffleMapMode::RwgProvisionalBatchPerPass();
     const int32 N = FMath::Min(Cands.Num(), Batch);
-    int32 Spawned = 0, Refused = 0;
+    const double BudgetMs = NodeShuffleMapMode::RwgProvisionalBatchMs(); // rwg-farspawn-1e C2
+    const TCHAR* BudgetHit = TEXT("none");
+    int32 Spawned = 0, Refused = 0, WithinSpawned = 0, K = 0;
     FString ZSource = TEXT("api");
-    for (int32 K = 0; K < N; ++K)
+    for (; K < N; ++K)
     {
+        if (K > 0 && (FPlatformTime::Seconds() - T0) * 1000.0 >= BudgetMs) { BudgetHit = TEXT("time"); break; } // rwg-farspawn-1e C2: the first is always tried
         FNodeShuffleEntry& E = Layout[Cands[K].Value];
         // A provisional attempt never changes the entry unless it produced an actor: snapshot, restore on no actor (an overlap nudge
         // counter, an inside-gate or overlap give-up, a moved location are all undone; the normal spawn on approach runs them for real).
@@ -290,20 +341,29 @@ void ANodeShuffleSubsystem::RwgProvisionalSpawnPass(const TArray<FVector>& Pawns
         if (Node->IsHidden()) { Node->SetActorHiddenInGame(false); } // provisional actors are NOT hidden (scanner hook, radar, marker)
         if (!Node->GetActorEnableCollision()) { Node->SetActorEnableCollision(true); } // and keep collision ON (scanner hook test)
         ++Spawned; ++RwgProvSessSpawned; ++RwgPcProvSpawned;
+        const bool bWithinCand = WithinCands.Contains(Cands[K].Value);
+        RwgProvOriginWithin.Add(E.EntryGuid, bWithinCand); // PROVSETTLE origin (session)
+        if (bWithinCand) { ++WithinSpawned; ++RwgProvSessWithinRadius; }
     }
+    if (K == N && Cands.Num() > N) { BudgetHit = TEXT("count"); } // rwg-farspawn-1e C2: the count cap ended the batch with candidates left
     const double MsBatch = (FPlatformTime::Seconds() - T0) * 1000.0;
     if (Spawned > 0 || Refused > 0)
     {
         int32 Total = 0;
         for (const FNodeShuffleEntry& E : Layout) { if (E.bRwgProvisional && IsValid(SpawnedNodes.FindRef(E.EntryGuid))) { ++Total; } }
-        // remainingCandidates (fix F10): far entries that passed every skip and the sea check this pass, minus this pass's spawned and
-        // refused; it does NOT include seaPending entries or unspawned entries within the attempt radius.
-        // seaPending (re-review R7): far entries held back for the sea/void pass -- those it has not checked yet, PLUS the entries whose
+        // remainingCandidates (fix F10): entries that passed every skip and the sea check this pass, minus this pass's spawned and
+        // refused; it does NOT include seaPending entries. rwg-farspawn-1e (prose only): it includes the within-radius candidates (fresh
+        // attempts this pass that left no actor), whose count is withinRadiusCandidates; withinRadiusProvisioned counts those given a node
+        // this pass; wetSpotSkipped counts entries skipped because they are water-locked and still at their lock spot; withinUndergroundSkipped
+        // counts within-radius underground entries left to the fresh path. budgetHit names what ended the batch: time (the time budget),
+        // count (the count cap, with candidates left) or none (candidates ran out first); msBatch and budgetMs share one clock, started
+        // before the candidate scan.
+        // seaPending (re-review R7): entries (far, or within after a fresh attempt that left no actor) held back for the sea/void pass -- those it has not checked yet, PLUS the entries whose
         // sea re-deal found no spot (RwgSeaDealFailed), which the sea pass skips for the rest of the session, so the sea pass never clears them from this count
         // this session; seaDealFailed prints that subset.
-        UE_LOG(LogNodeShuffle, Display, TEXT("PROVSPAWN: pass=%d spawnedThisPass=%d remainingCandidates=%d provisionalTotal=%d zSource=%s msBatch=%.1f refusedThisPass=%d refusedSession=%d batch=%d seaPending=%d caveDealtZ=%d rayCastedNoActor=%d seaDealFailed=%d"),
+        UE_LOG(LogNodeShuffle, Display, TEXT("PROVSPAWN: pass=%d spawnedThisPass=%d remainingCandidates=%d provisionalTotal=%d zSource=%s msBatch=%.1f refusedThisPass=%d refusedSession=%d batch=%d seaPending=%d caveDealtZ=%d rayCastedNoActor=%d seaDealFailed=%d withinRadiusProvisioned=%d withinRadiusCandidates=%d wetSpotSkipped=%d withinUndergroundSkipped=%d budgetHit=%s budgetMs=%.1f"),
             RwgPcPasses, Spawned, Cands.Num() - Spawned - Refused, Total, *ZSource, MsBatch, Refused, RwgProvSessRefused, Batch, SeaPending, CaveDealtZ,
-            RayCastedNoActor, SeaDealFailed);
+            RayCastedNoActor, SeaDealFailed, WithinSpawned, WithinCands.Num(), WetSpot, WithinUnderground, BudgetHit, BudgetMs);
     }
 }
 
@@ -326,9 +386,13 @@ void ANodeShuffleSubsystem::RwgProvisionalEmitCensus()
     // moveNotApplied counts moves whose readback found the actor more than 10 cm from the settled spot (each was then respawned,
     // so it is NOT in the movedInPlace count). movedEnclosed and movedShadowInside count kept-and-moved settles whose shadow
     // measurement at the settled spot read enclosed, and read totally inside by the inside gate's instrument; neither refused the move.
-    UE_LOG(LogNodeShuffle, Display, TEXT("PROVCENSUS: pass=%d provisional=%d settledFromProvisional=%d redealtFromProvisional=%d deferredProvisional=%d pinnedProvisional=%d dzP50Cm=%.0f dzP90Cm=%.0f dzMaxCm=%.0f movedXYmMax=%.1f spawnedSession=%d refusedSession=%d staleFlagCleared=%d flagNoActor=%d spawnAllAtRoll=%d settledNoActor=%d redealNotMoved=%d movedInPlace=%d moveNotApplied=%d movedEnclosed=%d movedShadowInside=%d"),
-        RwgPcPasses, Live, RwgProvSessSettled, RwgProvSessRedealt, RwgProvSessDeferred, RwgProvSessPinned,
+    // rwg-farspawn-1e C1/C4 (prose only): deferredProvisional counts deferred-branch settles, one per attempt, so an entry deferred on
+    // several passes is counted each time; deferredEntries counts the distinct entries among them this session.
+    // withinRadiusProvisionedSession counts this session's provisional spawns of entries within the attempt radius (fresh attempts
+    // that left no actor); it is a subset of spawnedSession.
+    UE_LOG(LogNodeShuffle, Display, TEXT("PROVCENSUS: pass=%d provisional=%d settledFromProvisional=%d redealtFromProvisional=%d deferredProvisional=%d deferredEntries=%d pinnedProvisional=%d dzP50Cm=%.0f dzP90Cm=%.0f dzMaxCm=%.0f movedXYmMax=%.1f spawnedSession=%d withinRadiusProvisionedSession=%d refusedSession=%d staleFlagCleared=%d flagNoActor=%d spawnAllAtRoll=%d settledNoActor=%d redealNotMoved=%d movedInPlace=%d moveNotApplied=%d movedEnclosed=%d movedShadowInside=%d"),
+        RwgPcPasses, Live, RwgProvSessSettled, RwgProvSessRedealt, RwgProvSessDeferred, RwgProvSessDeferredEntries.Num(), RwgProvSessPinned,
         ProvPercentile(RwgProvSessDzCm, 0.5f), ProvPercentile(RwgProvSessDzCm, 0.9f), ProvPercentile(RwgProvSessDzCm, 1.0f), RwgProvSessMovedXYmMax,
-        RwgProvSessSpawned, RwgProvSessRefused, RwgProvSessStale, FlagNoActor, NodeShuffleMapMode::RwgSpawnAllAtRollOn() ? 1 : 0, RwgProvSessSettledNoActor, RwgProvSessRedealNotMoved,
+        RwgProvSessSpawned, RwgProvSessWithinRadius, RwgProvSessRefused, RwgProvSessStale, FlagNoActor, NodeShuffleMapMode::RwgSpawnAllAtRollOn() ? 1 : 0, RwgProvSessSettledNoActor, RwgProvSessRedealNotMoved,
         RwgProvSessMovedInPlace, RwgProvSessMoveNotApplied, RwgProvSessMovedEnclosed, RwgProvSessMovedShadowInside);
 }

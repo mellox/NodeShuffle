@@ -4806,6 +4806,7 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
         // host a mineable node) — re-deal the entry instead of retrying the same spot every 5 s.
         if (!bSettled && bWaterNoLand)
         {
+            RwgNoteWetSpot(Entry); // rwg-farspawn-1e C1: the lock spot (provisioning skips an entry still there)
             WaterLockedThisSession.Add(Entry.EntryGuid);
             // fixes-3: the redeal MOVES the entry to a random deal-box spot (grid-filtered) but does
             // NOT settle it — it materializes via normal spawn-on-discovery at the new location.
@@ -5380,6 +5381,7 @@ void ANodeShuffleSubsystem::SettleNewNodesNearPlayers()
         {
             // fixes-3: same unanchored redeal on the legacy settle-near-players path — the moved
             // entry settles (and its live actor relocates) when a player nears the NEW spot.
+            RwgNoteWetSpot(Entry); // rwg-farspawn-1e C1: the lock spot (provisioning skips an entry still there)
             WaterLockedThisSession.Add(Entry.EntryGuid);
             TryRedealWaterLockedEntry(Entry);
         }

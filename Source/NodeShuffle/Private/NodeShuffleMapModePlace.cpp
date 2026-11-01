@@ -400,6 +400,7 @@ void ANodeShuffleSubsystem::RwgSpawnPass(float SpawnRadiusCm, bool& bChangedWorl
     }
     Cands.Sort([](const TPair<double, int32>& A, const TPair<double, int32>& B) { return A.Key < B.Key; });
     const int32 N = FMath::Min(Cands.Num(), NodeShuffleMapMode::RwgMaxSpawnAttemptsPerPass);
+    TSet<int32> FreshNoActor; // rwg-farspawn-1e C1: fresh attempts this pass that ended with no actor (RwgProvisionalSpawnPass filters them)
     int32 K = 0;
     for (; K < N && K + RwgPcSteepRingRuns < NodeShuffleMapMode::RwgMaxSpawnAttemptsPerPass; ++K) // rwg-steep-1: each local ring run spends one more slot of the attempt budget
     {
@@ -410,12 +411,12 @@ void ANodeShuffleSubsystem::RwgSpawnPass(float SpawnRadiusCm, bool& bChangedWorl
         EnsureNewNodeSpawned(E, bChangedWorld);
         bRwgSteepArmed = false; // rwg-steep-1: an arm never outlives the attempt that set it (a redeal that returned at !Q.IsUsable() did not consume it)
         AFGResourceNode* const* Now = SpawnedNodes.Find(E.EntryGuid);
-        if (Now && IsValid(*Now)) { ++RwgPcSpawned; }
+        if (Now && IsValid(*Now)) { ++RwgPcSpawned; } else { FreshNoActor.Add(Cands[K].Value); } // rwg-farspawn-1e C1
         RwgStuckAfterAttempt(E); // rwg-density-1: per-entry failed-attempt count (reads only)
     }
     RwgPcBudgetSkipped += Cands.Num() - K;
     ++RwgPcPasses;
-    RwgProvisionalSpawnPass(Pawns, AttemptRadiusCm, bChangedWorld); // rwg-farspawn-1: unspawned entries beyond the attempt radius (NodeShuffleMapModeProvisional.cpp)
+    RwgProvisionalSpawnPass(Pawns, AttemptRadiusCm, FreshNoActor, bChangedWorld); // rwg-farspawn-1 (+1e C1 fresh no-actor): unspawned entries beyond the attempt radius (NodeShuffleMapModeProvisional.cpp)
     RwgResettlePass(); // RWG P2c: entries placed at the API Z by builds <= rwg-p4-2 (NodeShuffleMapModeResettle.cpp)
     RwgRockOcclusionPass(); // RWG P2d: placed entries under a SOLID mesh are redealt (NodeShuffleMapModeRock.cpp)
     RwgKillboxResettlePass(); // RWG P2f: placed entries whose actor stands below the killbox top are torn down + redealt (NodeShuffleMapModeVoid.cpp)

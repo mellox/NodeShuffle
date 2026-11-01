@@ -1142,7 +1142,7 @@ private:
     int32 RwgPcSteepOccludedRing = 0, RwgSteepSessOccludedRing = 0; // rwg-clifftop-1: occluded entries the ring moved (PLACECENSUS per pass / RWGSTEEPSUM session)
     int32 RwgSteepSessPassedFromOriginZ = 0;      // rwg-steep-2: ring passes that also pass when re-traced from the origin's API Z (RWGSTEEPSUM)
     // ---- rwg-farspawn-1 (2026-10-31): provisional far spawn + settle on approach. NodeShuffleMapModeProvisional.cpp (subsystem .cpp is over 500 lines).
-    void RwgProvisionalSpawnPass(const TArray<FVector>& Pawns, float AttemptRadiusCm, bool& bChangedWorld); // spawns unspawned entries beyond the attempt radius
+    void RwgProvisionalSpawnPass(const TArray<FVector>& Pawns, float AttemptRadiusCm, const TSet<int32>& FreshNoActor, bool& bChangedWorld); // spawns unspawned entries beyond the attempt radius + (1e C1) the fresh attempts that left no actor
     void RwgSettleProvisional(FNodeShuffleEntry& E, bool& bChangedWorld); // settle-on-approach of one provisional entry (the spawn pass's attempt loop)
     bool RwgProvisionalPinWins(FNodeShuffleEntry& E);                     // true = pinned/occupied: flag cleared, never moved
     void RwgProvisionalDespawn(FNodeShuffleEntry& E);                     // the RwgRedealLiveEntry teardown, without a redeal
@@ -1169,6 +1169,14 @@ private:
     double RwgProvSessMovedXYmMax = 0.0;
     TArray<float> RwgProvSessDzCm;                                         // |settled Z - provisional Z| of in-place settles, session
     TSet<FGuid> RwgProvRefused;                                            // session: a provisional spawn produced no actor (normal spawn on approach)
+    // rwg-farspawn-1e (NodeShuffleMapModeProvisional.cpp): within-radius provisioning, wet-spot record, PROVSETTLE origin, distinct deferrals.
+    void RwgNoteWetSpot(const FNodeShuffleEntry& E);                      // called beside every WaterLockedThisSession.Add: records where the lock was decided
+    bool RwgProvisionalAtWetSpot(const FNodeShuffleEntry& E) const;       // water-locked and still within RwgProvisionalMoveTolCm of the recorded lock spot (or none recorded)
+    const TCHAR* RwgProvisionalOriginName(const FGuid& G) const;          // PROVSETTLE origin: withinRadius / far / notThisSession
+    TMap<FGuid, FVector> RwgWetSpotThisSession;                            // session: entry location when it was water-locked (last lock wins)
+    TMap<FGuid, bool> RwgProvOriginWithin;                                 // session: true = provisioned within the attempt radius, false = beyond it
+    TSet<FGuid> RwgProvSessDeferredEntries;                                // session: distinct entries counted by RwgProvSessDeferred (PROVCENSUS deferredEntries)
+    int32 RwgProvSessWithinRadius = 0;                                     // session: provisional spawns of within-radius entries (PROVCENSUS withinRadiusProvisionedSession)
     // Coordinator addendum (water diagnostics, measured only, gates nothing): ROLLCENSUS / WELLROLL splits + bounded samples.
     void RwgNoteWaterSample(const NodeShuffleMapMode::FRwgGroundQuery& Q, const FVector& P, bool bVolumeWet, const TCHAR* Caller);
     int32 RwgRcWaterZBelow0 = 0, RwgRcWaterZAtOrAbove0 = 0, RwgRcDealtBelowZ0 = 0; // per roll (GenerateRwgLocations)
