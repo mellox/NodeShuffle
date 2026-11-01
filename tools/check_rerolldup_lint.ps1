@@ -68,8 +68,8 @@ $hideDedupe  = "            CarriedRecordPaths.Add(C.VanillaNodePath, &bPathReco
 $removeAll   = '    NewLayout.RemoveAll([](const FNodeShuffleEntry& E){ return !E.bIsNewNode && !E.bPinned; });'
 $appendCarry = '    NewLayout.Append(CarriedEntries);'
 $helperSig   = 'static FNodeShuffleSuppressedOriginal NsMakeSuppressedOriginalRecord(const FNodeShuffleEntry& E)'
-$censusFmt   = 'TEXT("REROLLPOOL-CARRY carried=%d carriedWithOriginal=%d carriedExtras=%d excludedFromPool=%d pathDupesDropped=%d carriedSamePathComposition=%d poolPathRepeats=%d hideRecordsForCarried=%d hideRecordPathDupes=%d carriedOrigLiveOccupied=%d carriedZombieRuleNoRecord=%d carriedAvoidAdded=%d newQuotaEffective=%d newQuotaConfig=%d customLocations=%d poolAfter=%d"),'
-$censusArgs  = "            CarriedEntries.Num(), RerollCarriedWithOriginal, RerollCarriedExtras, RerollExcludedFromPool, RerollPathDupesDropped,`n            RerollCarriedSamePathComposition, RerollPoolPathRepeats, RerollHideRecordsForCarried, RerollHideRecordPathDupes,`n            RerollCarriedOrigLiveOccupied, RerollCarriedZombieRuleNoRecord, RerollCarriedAvoidAdded, RerollNewQuotaEffective, Config.NewNodeCount, bRerollCustomLocations ? 1 : 0, PoolSize);"
+$censusFmt   = 'TEXT("REROLLPOOL-CARRY carried=%d carriedWithOriginal=%d carriedExtras=%d excludedFromPool=%d pathDupesDropped=%d carriedSamePathComposition=%d poolPathRepeats=%d hideRecordsForCarried=%d hideRecordPathDupes=%d carriedOrigLiveOccupied=%d carriedZombieRuleNoRecord=%d carriedAvoidAdded=%d newQuotaEffective=%d newQuotaConfig=%d customLocations=%d poolAfter=%d identityDupesDropped=%d carriedTwinsUnified=%d pathTransfers=%d pathsWithoutPriorRecord=%d vanillaRestampedConversion=%d vanillaRestampedCarried=%d"),'
+$censusArgs  = "            CarriedEntries.Num(), RerollCarriedWithOriginal, RerollCarriedExtras, RerollExcludedFromPool, RerollPathDupesDropped,`n            RerollCarriedSamePathComposition, RerollPoolPathRepeats, RerollHideRecordsForCarried, RerollHideRecordPathDupes,`n            RerollCarriedOrigLiveOccupied, RerollCarriedZombieRuleNoRecord, RerollCarriedAvoidAdded, RerollNewQuotaEffective, Config.NewNodeCount, bRerollCustomLocations ? 1 : 0, PoolSize,`n            RerollIdentityDupesDropped, RerollIdentity.CarriedTwinsUnified, RerollIdentity.PathTransfers, RerollPathsWithoutPriorRecord, RerollVanillaRestampConv.Restamped, RerollVanillaRestampCarried.Restamped);"
 $rolledLine  = 'TEXT("Rolled layout: seed %d, pool %d (vanilla %d, new %d), active %d, pinned %d"),'
 $marker      = '2026-11-01-rwg-' + 'rerolldup-1'
 $twinsFmt    = 'TEXT("LAYOUTDUMP-TWINS dumpId=%d pathsOnMultipleActiveEntries=%d entriesOnSharedPaths=%d pinnedOnSharedPaths=%d activeWithPath=%d"),'
@@ -122,7 +122,7 @@ function Invoke-RerollDupChecks($T) {
     # U6
     if ((Count $s $censusFmt) -ne 1 -or (Count $s ($censusFmt + "`n" + $censusArgs)) -ne 1) { $f += '(U6) census format or argument list changed' }
     $ci = $s.IndexOf($censusFmt); $ri = $s.IndexOf($rolledLine)
-    if ($ci -lt 0 -or $ri -lt $ci -or ($ri - $ci) -gt 1200) { $f += '(U6) census must sit directly before the Rolled layout line' }
+    if ($ci -lt 0 -or $ri -lt $ci -or ($ri - $ci) -gt 1800) { $f += '(U6) census must sit directly before the Rolled layout line' } # 1200 -> 1800: rwg-rerolldup-2 added six fields
     else {
         $pre = $s.Substring([Math]::Max(0, $ci - 400), $ri - [Math]::Max(0, $ci - 400))
         if ($pre.Contains('AreDiagnostics' + 'Enabled')) { $f += '(U6) census must be ungated' }

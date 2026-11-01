@@ -14,6 +14,7 @@
 #include "NodeShuffleResourceNode.h"
 #include "NodeShuffleNodeComponent.h"
 #include "Resources/FGResourceNode.h"
+#include "Misc/PackageName.h" // rwg-rerolldup-2: ADOPTCLASS prints the short class name
 
 namespace
 {
@@ -121,5 +122,29 @@ void ANodeShuffleSubsystem::AdoptAuditEmit(int32 AdoptLineAdopted)
         PreRegistered, AdoptedPre, MatchedNotBound, Unmatched, AlreadyBound, Fracking, Component, Gone, EntryInactive, ResMismatch, Distance,
         BoundNotPre, AdoptLineAdopted, FlagUnbound, (PreRegistered == AdoptedPre + MatchedNotBound + Unmatched) ? 1 : 0,
         (AdoptLineAdopted == AdoptedPre + BoundNotPre) ? 1 : 0);
+    // rwg-rerolldup-2 ADOPTCLASS: per resolved spawn class, how many active spawn entries exist and how many hold a valid actor after
+    // the two adopt passes. One line per class, every load, ungated. Measured on the user's save before this packet: the lead_C
+    // class had entries and no bound actor at all, which is the population the vanilla-deal restamp targets.
+    {
+        struct FClassRow { int32 Entries = 0; int32 Bound = 0; int32 Provisional = 0; };
+        TMap<FString, FClassRow> ByClass;
+        for (const FNodeShuffleEntry& E : Layout)
+        {
+            if (!E.bIsNewNode || !E.bActive) { continue; }
+            FClassRow& Row = ByClass.FindOrAdd(ResolveSpawnNodeClassPath(E));
+            ++Row.Entries;
+            if (IsValid(SpawnedNodes.FindRef(E.EntryGuid))) { ++Row.Bound; }
+            if (E.bRwgProvisional) { ++Row.Provisional; }
+        }
+        TArray<FString> Classes;
+        ByClass.GetKeys(Classes);
+        Classes.Sort();
+        for (const FString& C : Classes)
+        {
+            const FClassRow& Row = ByClass.FindChecked(C);
+            UE_LOG(LogNodeShuffle, Display, TEXT("ADOPTCLASS class=%s entries=%d bound=%d unbound=%d provisional=%d"),
+                *FPackageName::ObjectPathToObjectName(C), Row.Entries, Row.Bound, Row.Entries - Row.Bound, Row.Provisional);
+        }
+    }
     RwgProvCandMarkDirty(TEXT("reload")); // rwg-farspawn-1f C3: the provisional candidate list is rebuilt after adopt-on-load
 }
