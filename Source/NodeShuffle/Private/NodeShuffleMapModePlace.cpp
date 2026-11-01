@@ -8,6 +8,7 @@
 #include "NodeShuffleConfig.h"
 #include "NodeShuffleRwgTraceDiag.h" // rwg-trace-diag-1: RWGTRACEMISS / RWGTRACECENSUS (diagnostics only)
 #include "NodeShuffleMapModeProvisional.h" // rwg-farspawn-1: provisional far spawn + settle on approach
+#include "NodeShuffleRwgDensityBudget.h" // rwg-density-1 (2026-11-01, budget): per-1-km-cell land-share caps on the deal
 #include "EngineUtils.h"
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
@@ -194,6 +195,8 @@ bool ANodeShuffleSubsystem::GenerateRwgLocations(FRandomStream& Rng, const TArra
     }
     RwgBuildWaterVolumeCache();
     const double H = Q.HalfExtent();
+    FNodeShuffleRwgDensityState* const Density = RwgDensityState.Get(); // rwg-density-1 (2026-11-01, budget): non-null only inside RollLayout's Begin/End window; null = the pre-packet draw (late-node deal)
+    if (Density) { Density->BeginCall(Count); }
     RwgRcWaterZBelow0 = RwgRcWaterZAtOrAbove0 = RwgRcDealtBelowZ0 = 0; // coordinator addendum: this roll only
     RwgRcRejectedSea = RwgRcApiLevelOnly = 0; // RWG P2e: this roll only
     RwgRcRejectedVoid = RwgRcRejectedKillbox = RwgRcDealtBelowKillbox = 0; // RWG P2f: this roll only
@@ -210,6 +213,7 @@ bool ANodeShuffleSubsystem::GenerateRwgLocations(FRandomStream& Rng, const TArra
     while (OutLocations.Num() < Count && Attempts-- > 0)
     {
         ++Drawn;
+        if (Density) { Density->MaybeOpen(Attempts, Count - OutLocations.Num()); } // rwg-density-1 budget: the fallback test (every cap lifts once the draws left reach the reserve per spot still needed)
         FVector C;
         bool bCavePick = false; // RWG P5: a failed cave draw falls through to a surface draw in the SAME iteration (vanilla: TryPickRawCaveCell's else)
         if (CaveSlot != OutLocations.Num()) { CaveSlot = OutLocations.Num(); bSlotIsCave = CaveChance > 0.0f && Rng.FRand() < CaveChance; }
@@ -222,6 +226,7 @@ bool ANodeShuffleSubsystem::GenerateRwgLocations(FRandomStream& Rng, const TArra
             if (!bCavePick) { ++RwgRcCaveDealFailed; bSlotIsCave = false; bRwgRcCaveBudgetSpent = RwgRcCaveAnyNearCalls >= CaveRollBudget; }
         }
         if (!bCavePick && !RwgDealOneSpot(Q, Rng, C, Outside, Water, Disagree, Slope)) { continue; }
+        if (Density && !Density->Admit(C)) { if (bCavePick) { bSlotIsCave = false; } continue; } // rwg-density-1 (2026-11-01, budget): the cell's accepted count is at its cap -> counted rejectedCellFull, redrawn; a cave pick falls back to a surface draw as on a spacing reject
         // Spacing: identical to the vanilla deal's rule (MinNodeSpacing, Avoid then Out; 2D, or 3D for a cave pick as in cave-nodes-2).
         bool bTooClose = false;
         const auto Near = [&](const FVector& E) { return bCavePick ? FVector::DistSquared(E, C) < SpacingSq : FVector::DistSquared2D(E, C) < SpacingSq; };
@@ -230,12 +235,14 @@ bool ANodeShuffleSubsystem::GenerateRwgLocations(FRandomStream& Rng, const TArra
         if (bTooClose) { ++Spacing; if (bCavePick) { ++RwgRcCaveRejSpacing; bSlotIsCave = false; } continue; }
         if (bCavePick) { OutCaveIndices->Add(OutLocations.Num()); ++RwgRcCaveSpots; }
         OutLocations.Add(C);
+        if (Density) { Density->Accept(C); } // rwg-density-1 budget: the spot fills its cell
         if (C.Z < 0.0) { ++RwgRcDealtBelowZ0; RwgNoteWaterSample(Q, C, false, TEXT("nodeDeal")); } // coordinator addendum, measured only
         if (bRwgKillboxKnown && C.Z < RwgKillboxTopZ) { ++RwgRcDealtBelowKillbox; } // RWG P2f: measured control (v3 rejects these; expect 0)
         ZSum += C.Z;
         ZMin = FMath::Min(ZMin, C.Z);
         ZMax = FMath::Max(ZMax, C.Z);
     }
+    if (Density) { Density->EndCall(Drawn, Outside, Water, RwgRcRejectedVoid, RwgRcRejectedKillbox, Slope, Spacing); } // rwg-density-1 budget: ROLLDENSITY-CALL (closes this call's drawn sum with rejectedCellFull)
     // The redeal (TryRedealRwgEntry) and the fallback redeal read these, as on vanilla.
     DealBoundsMin = FVector(-H, -H, 0.0);
     DealBoundsMax = FVector(H, H, 0.0);

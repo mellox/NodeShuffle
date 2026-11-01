@@ -195,6 +195,12 @@ void UNodeShuffleConfig::PostInitProperties()
         TEXT("Spawn-On-Discovery Radius (m)"),
         TEXT("New node locations only materialize (their rock + minable node appear) once you come within this many metres AND the terrain there has streamed in, so they always settle correctly on the ground. Smaller = more exploration, fewer live actors at once; larger = nodes pop in from further away. Far, undiscovered nodes stay as data until you reach them."));
 
+    // rwg-density-1 (2026-11-01, budget): THE SHUFFLE group, after the spawn radius. Logic in NodeShuffleRwgDensityBudget.cpp (this file is over
+    // the 500-line rule: call sites only). Every sentence of the tooltip is graded in the packet handoff.
+    AddBool(TEXT("RwgDensityBudget"), true,
+        TEXT("Spread Nodes Evenly By Land (Random World Generator)"),
+        TEXT("ON by default. Random World Generator maps only, when a layout is rolled or re-rolled: the map is divided into 1 km squares and each square gets a share of the dealt spots in proportion to the land it holds that the shuffle can place on (not sea, void or too steep). Nodes you have built on count toward their square's share first, so a square full of them gets few or no fresh spots. A share that cannot be filled goes to squares that still have room, so the configured total is still dealt. OFF: spots land anywhere on placeable land with no per-square limit, as before. Takes effect at the next roll or Re-roll Layout; loading a save changes nothing; other maps are not affected."));
+
     // ---------------------------------- OTHER MODS ----------------------------------------------------
     AddBool(TEXT("IncludeModdedNodes"), true,
         TEXT("Include Modded Nodes"),

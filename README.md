@@ -63,7 +63,7 @@ confirmed working with NodeShuffle, **before** the update, were KBFL 2026.2.267,
 
 All settings are in the in-game **Mods → Node Shuffle** panel (and persist to
 `<game>/FactoryGame/Configs/NodeShuffle.cfg`), in three groups: **the shuffle**,
-**other mods**, and **troubleshooting** — 16 settings plus two lists: the protected-resource list and the modded-resource vanilla-count table. There is no resource-wells group: since 1.4.0 wells are part of the shuffle
+**other mods**, and **troubleshooting** — 17 settings plus two lists: the protected-resource list and the modded-resource vanilla-count table. There is no resource-wells group: since 1.4.0 wells are part of the shuffle
 and have no switches of their own (see **Resource wells** below).
 
 ### The shuffle
@@ -81,6 +81,7 @@ and have no switches of their own (see **Resource wells** below).
 | Starter Nodes Near Spawn | on | New game only: place a small starter set (2 Iron, 2 Limestone, 1 Copper, Pure) near spawn. |
 | Starter Node Radius (m) | 200 | How far from spawn the starter nodes may sit. |
 | Spawn-On-Discovery Radius (m) | 600 | New nodes materialize once you come within this range and the terrain has streamed in. |
+| Spread Nodes Evenly By Land (Random World Generator) | on | Random World Generator maps only, when a layout is rolled or re-rolled: the map is divided into 1 km squares and each square gets a share of the dealt spots in proportion to the land it holds that the shuffle can place on (not sea, void or too steep). Nodes you have built on count toward their square's share first, so a square full of them gets few or no fresh spots. A share that cannot be filled goes to squares that still have room, so the configured total is still dealt. Off: spots land anywhere on placeable land with no per-square limit, as before. Takes effect at the next roll or Re-roll Layout; loading a save changes nothing; other maps are not affected. |
 
 ### Other mods
 

@@ -205,6 +205,11 @@ struct NODESHUFFLE_API FNodeShuffleConfigStruct
     UPROPERTY(BlueprintReadWrite)
     TArray<FNodeShuffleModdedCountRow> ModdedVanillaCountRows;
 
+    // rwg-density-1 (2026-11-01, budget): per-1-km-cell land-share caps on the RWG deal, carried + pinned entries pre-filling their cell.
+    // Default ON. Read by RollLayout (RwgDensityBudgetBegin); OFF = the pre-packet uniform-over-land draw (same seed, same layout as before).
+    UPROPERTY(BlueprintReadWrite)
+    bool RwgDensityBudget{true};
+
     static FNodeShuffleConfigStruct GetActiveConfig(UObject* WorldContext);
 };
 

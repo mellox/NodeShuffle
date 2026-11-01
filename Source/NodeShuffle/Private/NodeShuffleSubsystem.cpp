@@ -1365,6 +1365,16 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     // rwg-rerolldup-1 I5: a carried EXTRA (no original resource) already fills one of the configured extra slots, so this roll
     // deals that many fewer fresh ones. RerollCarriedExtras is 0 on an initial roll (CarriedEntries is empty), so it is unchanged.
     const int32 RerollNewQuotaEffective = FMath::Max(0, Config.NewNodeCount - RerollCarriedExtras);
+    // rwg-density-1 (2026-11-01, budget): the cells' pre-fill = every carried entry (pinned by construction: Kept.bPinned above) + every
+    // pinned original in the rebuilt pool -- the same population PinnedCount counts below (carried + NewLayout bPinned). RWG only;
+    // both GenerateNewLocations calls of this roll read the state, and RwgDensityBudgetEnd at the tail prints the census and drops it.
+    if (GetMapMode() == ENodeShuffleMapMode::Rwg)
+    {
+        TArray<FVector> DensityPrefill;
+        for (const FNodeShuffleEntry& E : CarriedEntries) { DensityPrefill.Add(E.Location); }
+        for (const FNodeShuffleEntry& E : NewLayout) { if (E.bPinned) { DensityPrefill.Add(E.Location); } }
+        RwgDensityBudgetBegin(Config.RwgDensityBudget, DensityPrefill);
+    }
     const bool bRerollCustomLocations = ReadCustomLocationsJson(NewLocations);
     if (!bRerollCustomLocations)
     {
@@ -2172,6 +2182,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
         TEXT("Rolled layout: seed %d, pool %d (vanilla %d, new %d), active %d, pinned %d"),
         Seed, PoolSize, VanillaCount, NewLocations.Num(), ActiveCount, PinnedCount);
 
+    if (GetMapMode() == ENodeShuffleMapMode::Rwg) { RwgDensityBudgetEnd(); } // rwg-density-1 (2026-11-01, budget): ROLLDENSITY census, then the state is dropped so the late-node deal stays uniform
     EmitRollCensus(Seed, bIsReroll, PoolSize, TargetActive, VanillaCount, NewLocations.Num(),
                    VanillaResourceCounts);
     if (GetMapMode() == ENodeShuffleMapMode::Rwg) { RwgDensityOnRoll(); } // rwg-density-1: RWGDENSITY trigger=roll (diagnostics only)

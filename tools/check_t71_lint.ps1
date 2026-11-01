@@ -178,8 +178,8 @@ function Invoke-T71Checks([hashtable]$T) {
     # H4b: the panel row count claim has to agree with the number of Add* registrations actually made.
     # A count asserted in prose and never re-measured is this repo's named stale-figure class.
     $rows = ([regex]::Matches($T.cfg, 'Add(Bool|Int)\(TEXT\("')).Count
-    if ($rows -ne 16) {
-        $f += "FAIL(H4b): NodeShuffleConfig.cpp registers $rows panel rows, not the 16 that the README states (15 at 1.4.0 plus rwg-seedgas-1's toggle). Fix the count or fix the docs -- do not leave them disagreeing."
+    if ($rows -ne 17) {
+        $f += "FAIL(H4b): NodeShuffleConfig.cpp registers $rows panel rows, not the 17 that the README states (15 at 1.4.0 plus rwg-seedgas-1's toggle plus rwg-density-1's 2026-11-01 budget toggle). Fix the count or fix the docs -- do not leave them disagreeing."
     }
 
     # ---- H5: no deleted display name survives in player-facing text (panel copy, README table, uplugin).

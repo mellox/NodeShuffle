@@ -7,6 +7,7 @@
 #include "NodeShuffle.h" // ns-h1b-notice: FNodeShufflePendingEntry, held by value in a member below
 #include "NodeShuffleMapMode.h" // RWG P1: ENodeShuffleMapMode, held by value in a member below
 #include "UObject/ObjectKey.h"  // RWG P4: FObjectKey, RwgClaimedOriginals
+struct FNodeShuffleRwgDensityState; // rwg-density-1 (2026-11-01, budget): NodeShuffleRwgDensityBudget.h, held by TSharedPtr below
 class AFGWaterVolume; // RWG P2b: RwgWaterVolumes cache (weak pointers only)
 #include "NodeShuffleSubsystem.generated.h"
 
@@ -1245,6 +1246,12 @@ private:
     // ---- RWG density / stuck census (2026-10-19, rwg-density-1): DIAGNOSTICS ONLY, gates nothing -- EXCEPT RwgDensityLandSample, which
     // rwg-steep-1 (2026-10-19) also uses as the local redraw ring's land test (NodeShuffleMapModeSteep.cpp). NodeShuffleMapModeDensity.cpp; every
     // caller is behind an Rwg map-mode test (RollLayout, RwgSpawnPass, LogHereCensus), so none of these runs on vanilla.
+    // rwg-density-1 (2026-11-01, PER-CELL BUDGET; NodeShuffleRwgDensityBudget.h): a THIRD consumer of RwgDensityLandSample, and a GATING one --
+    // the roll's per-1-km-cell land fractions come from it. The state is non-null only between RwgDensityBudgetBegin (RollLayout, RWG,
+    // before the extras deal) and RwgDensityBudgetEnd (RollLayout tail); GenerateRwgLocations reads it and runs the pre-packet draw when it is null.
+    TSharedPtr<FNodeShuffleRwgDensityState> RwgDensityState;
+    void RwgDensityBudgetBegin(bool bToggleOn, const TArray<FVector>& Prefill); // samples the land lattice, pre-fills the cells with carried + pinned entries
+    void RwgDensityBudgetEnd();                                                 // ROLLDENSITY census + ROLLDENSITY-CELL lines, then drops the state
     void RwgDensityOnRoll();                                        // RWGDENSITY trigger=roll + clears the stuck tracker (new layout guids)
     void RwgEmitDensityCensus(const TCHAR* Trigger);                // RWGDENSITY: 10 x 10 grid of active entries / land samples
     bool RwgDensityLandSample(const NodeShuffleMapMode::FRwgGroundQuery& Q, double X, double Y); // the deal's land test (Outside, v3, slope)

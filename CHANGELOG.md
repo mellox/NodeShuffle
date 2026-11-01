@@ -19,6 +19,18 @@
   its next **Re-roll Layout**. Loading a save changes nothing, and other maps are not affected. Turn off **Use
   Vanilla Counts For Modded Resources** before re-rolling to keep the counts Random World Generator planned.
 
+### Changed
+
+- **Random World Generator maps: new node spots are spread by land, and nodes you have built on count first.** The
+  map is divided into 1 km squares and each square gets a share of the dealt spots in proportion to the land it holds
+  that the shuffle can place on (not sea, void or too steep). Nodes you have built on fill their square's share before
+  any fresh spot is dealt there, so a built-up base no longer gets a fresh cluster on top of its kept nodes, and an
+  island square gets an island's share rather than a whole one. A share that cannot be filled goes to squares that
+  still have room, so the configured total is still dealt. New setting **Spread Nodes Evenly By Land (Random World
+  Generator)**, on by default; off restores the previous anywhere-on-land draw. Takes effect at the next roll or
+  **Re-roll Layout**; loading a save changes nothing. **A fixed Seed Override now gives a different layout than earlier
+  builds did** on Random World Generator maps while this is on; the same seed still repeats on this build.
+
 ## 1.4.0 — 2026-08-13
 
 ### New
