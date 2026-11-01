@@ -103,7 +103,7 @@ bool ANodeShuffleSubsystem::RwgSteepTryRing(const NodeShuffleMapMode::FRwgGround
     const float RadiusCm = RwgSteepRingRadiusCmNow();
     // rwg-clifftop-1: steep AND occluded entries both run the ring (the occluded -> map-wide exception is removed); the outcome splits by
     // the re-probe's solid flag and the ring result. A ring miss falls through to the map-wide draw in TryRedealRwgEntry.
-    ++RwgPcSteepRingRuns; // charged against this pass's spawn-attempt budget by RwgSpawnPass
+    ++RwgPcSteepRingRuns; // read only by RwgSpawnPass's attempt-loop condition (K + this < cap): a run counted before that loop ends costs one attempt slot; a run after it (the provisional spawn pass's inside redeal) is zeroed unread by RwgEmitPlaceCensus at the end of the same pass
     const bool bMoved = RwgLocalRedraw(Q, Entry, SpacingCm, RadiusCm, Tried, Passed, RejLand, RejSpacing, RejTrace);
     const TCHAR* Outcome = TEXT("-");
     if (bRwgSteepOccluded)
