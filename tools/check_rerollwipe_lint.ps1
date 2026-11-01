@@ -12,6 +12,7 @@
 #   R6 marker rwg-rerollwipe-1 once on its own line in NodeShuffle.cpp, farspawn-1f LOADED line still once; no marker in the new files
 #   R7 new .cpp under 500 lines; RemoveSingleSwap stays a single (DeregisterNodeFromManager) site in Subsystem.cpp
 #   R8 header declarations + the include
+#   R10 (review F2) RerollWipeNoteInvalidSlot: null counted; non-null: Contains measured BEFORE RemoveSingleSwap, by address, no dereference, no Destroy
 #   R9 (review F1) DestroyWellMemberIfUnused: after DeregisterNodeFromManager (which refuses OUR nodes), an explicit snap-list RemoveSingleSwap
 #      and representation removal (by actor, by node), all BEFORE Destroy; the WELLDESPAWN-SNAP line is diagnostics-gated; the three includes
 # Mutants run in-file. Exit 0 = all hold; 1 = at least one does not; 2 = a pinned FILE is missing.
@@ -46,8 +47,8 @@ function Span([string]$t, [string]$a, [string]$b) {
     return $t.Substring($i, $j - $i)
 }
 
-$censusFmt = 'TEXT("REROLLWIPE: destroyed=%d removedFromManager=%d staleInManagerAfter=%d representationsRemoved=%d managerCountBefore=%d managerCountAfter=%d kept=%d repByActor=%d repByNode=%d invalidSlots=%d invalidSlotsStillInManager=%d noManager=%d noRepManager=%d")'
-$censusArgs = "        T.Destroyed, T.RemovedFromManager, StaleAfter, T.RepAny, T.ManagerCountBefore, ManagerCountAfter, T.Kept,`n        T.RepByActor, T.RepByNode, T.InvalidSlots, InvalidStillIn, T.NoManager, T.NoRepManager);"
+$censusFmt = 'TEXT("REROLLWIPE: destroyed=%d removedFromManager=%d staleInManagerAfter=%d representationsRemoved=%d managerCountBefore=%d managerCountAfter=%d kept=%d repByActor=%d repByNode=%d invalidSlots=%d invalidSlotsStillInManager=%d noManager=%d noRepManager=%d invalidSlotsNull=%d invalidInManagerAtWipe=%d invalidRemovedFromManager=%d")'
+$censusArgs = "        T.Destroyed, T.RemovedFromManager, StaleAfter, T.RepAny, T.ManagerCountBefore, ManagerCountAfter, T.Kept,`n        T.RepByActor, T.RepByNode, T.InvalidSlots, InvalidStillIn, T.NoManager, T.NoRepManager, T.InvalidSlotsNull, T.InvalidInManagerAtWipe, T.InvalidRemovedFromManager);"
 $teardownLine = '            if (IsValid(It->Value)) { RerollWipeTeardownRegistrations(It->Value, WipeTally); It->Value->Destroy(); }'
 $staleLoop = "        StaleAfter = 0;`n        for (AFGResourceNode* Ptr : T.DestroyedPtrs) { if (Mgr->mResourceNodes.Contains(Ptr)) { ++StaleAfter; } }"
 $invalidLoop = "        InvalidStillIn = 0;`n        for (AFGResourceNode* Ptr : T.InvalidPtrs) { if (Mgr->mResourceNodes.Contains(Ptr)) { ++InvalidStillIn; } }"
@@ -77,7 +78,7 @@ function Invoke-RerollWipeChecks($T) {
         if ((Count $helper ('->Dest' + 'roy();')) -ne 0 -or (Count $helper 'SpawnedNodes') -ne 0) { $f += '(R2) the helper must not Destroy or write SpawnedNodes' }
     }
     # R3
-    $census = Span $T.wipe 'void ANodeShuffleSubsystem::RerollWipeEmitCensus(' 'T.NoManager, T.NoRepManager);'
+    $census = Span $T.wipe 'void ANodeShuffleSubsystem::RerollWipeEmitCensus(' 'TEXT("REROLLWIPE: '
     if ($census -eq '') { $f += '(R3) census span missing' }
     else {
         if ((Count $census $staleLoop) -ne 1 -or (Count $census $invalidLoop) -ne 1) { $f += '(R3) stale counts must be Contains over the recorded addresses' }
@@ -86,7 +87,7 @@ function Invoke-RerollWipeChecks($T) {
     }
     # R4
     if ((Count $T.wipe $censusFmt) -ne 1 -or (Count $T.wipe $censusArgs) -ne 1) { $f += '(R4) census field list / argument order' }
-    foreach ($tok in @('destroyed=', 'removedFromManager=', 'staleInManagerAfter=', 'representationsRemoved=', 'managerCountBefore=', 'managerCountAfter=')) {
+    foreach ($tok in @('destroyed=', 'removedFromManager=', 'staleInManagerAfter=', 'representationsRemoved=', 'managerCountBefore=', 'managerCountAfter=', 'invalidSlotsNull=', 'invalidInManagerAtWipe=', 'invalidRemovedFromManager=')) {
         if ((Count $T.wipe $tok) -ne 1) { $f += "(R4) census token $tok must appear once in the file (no legend echo)" }
     }
     # R5
@@ -104,6 +105,15 @@ function Invoke-RerollWipeChecks($T) {
         if ((Count $T.subh $d) -ne 1) { $f += "(R8) header declaration missing: $d" }
     }
     if ((Count $T.sub '#include "NodeShuffleRerollWipe.h"') -ne 1 -or (Count $T.wipeh 'struct FNodeShuffleRerollWipeTally') -ne 1) { $f += '(R8) include / tally struct' }
+    # R10 (review F2)
+    $inv = Span $T.wipe 'void ANodeShuffleSubsystem::RerollWipeNoteInvalidSlot(' 'void ANodeShuffleSubsystem::RerollWipeEmitCensus('
+    if ($inv -eq '') { $f += '(R10) invalid-slot span missing' }
+    else {
+        if (-not (Ordered $inv @('++T.InvalidSlots;', 'if (!Node) { ++T.InvalidSlotsNull; return; }', 'T.InvalidPtrs.Add(Node);',
+            'if (Mgr->mResourceNodes.Contains(Node)) { ++T.InvalidInManagerAtWipe; }', ('T.InvalidRemovedFromManager += Mgr->mResourceNodes.RemoveSingle' + 'Swap(Node);')))) {
+            $f += '(R10) invalid slot: null counted, Contains measured before the by-address RemoveSingleSwap' }
+        if ((Count $inv 'Node->') -ne 0 -or (Count $inv ('IsVal' + 'id(')) -ne 0 -or (Count $inv '(*Node') -ne 0 -or (Count $inv ('Dest' + 'roy(')) -ne 0) { $f += '(R10) invalid slot: dereferenced or destroyed' }
+    }
     # R9 (review F1)
     $well = Span $T.welld 'bool ANodeShuffleSubsystem::DestroyWellMemberIfUnused(' 'bool ANodeShuffleSubsystem::DespawnWellGroup('
     if ($well -eq '') { $f += '(R9) DestroyWellMemberIfUnused span missing' }
@@ -122,7 +132,7 @@ function Invoke-RerollWipeChecks($T) {
 
 $base = Invoke-RerollWipeChecks $text
 if ($base.Count -gt 0) { Write-Host 'FAIL (baseline):'; $base | ForEach-Object { Write-Host "  $_" }; exit 1 }
-Write-Host 'PASS baseline: R1-R9 hold'
+Write-Host 'PASS baseline: R1-R10 hold'
 
 $mutants = @(
     @{ Name = 'Q1 teardown call dropped'; Key = 'sub'; Expect = 'R1'; Find = 'RerollWipeTeardownRegistrations(It->Value, WipeTally); It->Value->Destroy();'; Repl = 'It->Value->Destroy();' }
@@ -140,6 +150,11 @@ $mutants = @(
     @{ Name = 'Q13 stale count derived by formula'; Key = 'wipe'; Expect = 'R3'; Find = "        StaleAfter = 0;`n"; Repl = ("        StaleAfter = " + "T.Destroyed - T.RemovedFromManager; StaleAfter = 0;`n") }
     @{ Name = 'Q14 removal inlined at the wipe (third copy in Subsystem.cpp)'; Key = 'sub'; Expect = 'R7'; Find = "        MeshActorCache.Reset();`n        RerollWipeEmitCensus"; Repl = ("        if (AFGResourceNodeManager* M = GetNodeManager()) { M->mResourceNodes.RemoveSingle" + "Swap(nullptr); }`n        MeshActorCache.Reset();`n        RerollWipeEmitCensus") }
     @{ Name = 'Q15 legend echoes a census token'; Key = 'wipe'; Expect = 'R4'; Find = '    // UNGATED: once per re-roll'; Repl = '    // staleInManagerAfter= counts survivors. UNGATED: once per re-roll' }
+    @{ Name = 'Q16 invalid-slot snap-list removal dropped'; Key = 'wipe'; Expect = 'R10'; Find = ('T.InvalidRemovedFromManager += Mgr->mResourceNodes.RemoveSingle' + 'Swap(Node);'); Repl = 'T.InvalidRemovedFromManager += 0;' }
+    @{ Name = 'Q23 invalid-slot Contains measured after the removal'; Key = 'wipe'; Expect = 'R10'; Find = "        if (Mgr->mResourceNodes.Contains(Node)) { ++T.InvalidInManagerAtWipe; }`n"; Repl = ''
+       Find2 = ("Swap(Node);`n    }`n}"); Repl2 = ("Swap(Node);`n        if (Mgr->mResourceNodes.Contains(Node)) { ++T.InvalidInManagerAtWipe; }`n    }`n}") }
+    @{ Name = 'Q24 invalid slot dereferenced'; Key = 'wipe'; Expect = 'R10'; Find = 'if (!Node) { ++T.InvalidSlotsNull; return; }'; Repl = ('if (!Node) { ++T.InvalidSlotsNull; return; } if (!IsVal' + 'id(Node)) { }') }
+    @{ Name = 'Q25 invalid-slot field dropped from census'; Key = 'wipe'; Expect = 'R4'; Find = ' invalidInManagerAtWipe=%d'; Repl = '' }
     @{ Name = 'Q17 well-member snap-list drop removed'; Key = 'welld'; Expect = 'R9'; Find = ('SnapDropped = Mgr->mResourceNodes.RemoveSingle' + 'Swap(AsNode);'); Repl = 'SnapDropped = 0;' }
     @{ Name = 'Q18 well-member rep-by-actor drop removed'; Key = 'welld'; Expect = 'R9'; Find = "        RepMgr->RemoveRepresentationOfActor(Member);`n"; Repl = '' }
     @{ Name = 'Q19 well-member rep-by-node drop removed'; Key = 'welld'; Expect = 'R9'; Find = '{ RepMgr->RemoveRepresentation(NodeRep); }'; Repl = '{ }' }

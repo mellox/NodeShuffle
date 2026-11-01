@@ -66,9 +66,17 @@ void ANodeShuffleSubsystem::RerollWipeTeardownRegistrations(AFGResourceNode* Nod
 
 void ANodeShuffleSubsystem::RerollWipeNoteInvalidSlot(AFGResourceNode* Node, FNodeShuffleRerollWipeTally& T)
 {
-    // Unchanged behaviour: an invalid slot gets no teardown and no Destroy. Recorded by address only (pointer compare in the census).
+    // No Destroy (unchanged). review F2: a NON-NULL invalid slot is a node another mod destroyed; the wipe's RemoveCurrent drops the UPROPERTY
+    // hard ref that kept its address uncollected, so drop it from the raw snap list now. Address compare only (Contains/RemoveSingleSwap
+    // test element == Node and never dereference). Contains is measured BEFORE the removal.
     ++T.InvalidSlots;
-    if (Node) { T.InvalidPtrs.Add(Node); }
+    if (!Node) { ++T.InvalidSlotsNull; return; }
+    T.InvalidPtrs.Add(Node);
+    if (AFGResourceNodeManager* Mgr = GetNodeManager())
+    {
+        if (Mgr->mResourceNodes.Contains(Node)) { ++T.InvalidInManagerAtWipe; }
+        T.InvalidRemovedFromManager += Mgr->mResourceNodes.RemoveSingleSwap(Node);
+    }
 }
 
 void ANodeShuffleSubsystem::RerollWipeEmitCensus(const FNodeShuffleRerollWipeTally& T)
@@ -87,9 +95,11 @@ void ANodeShuffleSubsystem::RerollWipeEmitCensus(const FNodeShuffleRerollWipeTal
         InvalidStillIn = 0;
         for (AFGResourceNode* Ptr : T.InvalidPtrs) { if (Mgr->mResourceNodes.Contains(Ptr)) { ++InvalidStillIn; } }
     }
+    // review F2: the invalid-slot still-listed count likewise re-reads a list the invalid-slot path just removed those addresses from;
+    // invalidInManagerAtWipe (Contains before the removal) is the measurement for that population, read not graded.
     // UNGATED: once per re-roll; it is the packet's control line.
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("REROLLWIPE: destroyed=%d removedFromManager=%d staleInManagerAfter=%d representationsRemoved=%d managerCountBefore=%d managerCountAfter=%d kept=%d repByActor=%d repByNode=%d invalidSlots=%d invalidSlotsStillInManager=%d noManager=%d noRepManager=%d"),
+        TEXT("REROLLWIPE: destroyed=%d removedFromManager=%d staleInManagerAfter=%d representationsRemoved=%d managerCountBefore=%d managerCountAfter=%d kept=%d repByActor=%d repByNode=%d invalidSlots=%d invalidSlotsStillInManager=%d noManager=%d noRepManager=%d invalidSlotsNull=%d invalidInManagerAtWipe=%d invalidRemovedFromManager=%d"),
         T.Destroyed, T.RemovedFromManager, StaleAfter, T.RepAny, T.ManagerCountBefore, ManagerCountAfter, T.Kept,
-        T.RepByActor, T.RepByNode, T.InvalidSlots, InvalidStillIn, T.NoManager, T.NoRepManager);
+        T.RepByActor, T.RepByNode, T.InvalidSlots, InvalidStillIn, T.NoManager, T.NoRepManager, T.InvalidSlotsNull, T.InvalidInManagerAtWipe, T.InvalidRemovedFromManager);
 }
