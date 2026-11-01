@@ -155,7 +155,7 @@ function Invoke-RerollWipeChecks($T) {
         if (-not (Ordered $well @('DeregisterNodeFromManager(Member);', ('SnapDropped = Mgr->mResourceNodes.RemoveSingle' + 'Swap(AsNode);'),
             'RepMgr->RemoveRepresentationOfActor(Member);', 'RepMgr->FindResourceNodeRepresentation(Member)) { RepMgr->RemoveRepresentation(NodeRep); }',
             ('Member->Dest' + 'roy();')))) { $f += '(R9) well-member order: Deregister, snap-list drop, rep by actor, rep by node, then Destroy' }
-        if ((Count $well ('if (FNodeShuffleModule::AreDiagnostics' + 'Enabled()) { UE_LOG(LogNodeShuffle, Display, TEXT("WELLDESPAWN-SNAP %s: snapListRemovedAfterDeregister %d"), *Member->GetName(), SnapDropped); }')) -ne 1) { $f += '(R9) WELLDESPAWN-SNAP line, diagnostics-gated, arity 2' }
+        if ((Count $well ('if (FNodeShuffleModule::AreDiagnostics' + 'Enabled()) { UE_LOG(LogNodeShuffle, Display, TEXT("WELLDESPAWN-SNAP %s: isSnapListType %d snapListRemovedAfterDeregister %d"), *Member->GetName(), Cast<AFGResourceNode>(Member) ? 1 : 0, SnapDropped); }')) -ne 1) { $f += '(R9) WELLDESPAWN-SNAP line, diagnostics-gated, arity 3 (re-review D1: the Cast predicate printed)' }
     }
     foreach ($inc in @('#include "Resources/FGResourceNodeManager.h"', '#include "FGActorRepresentationManager.h"', '#include "Representation/FGResourceNodeRepresentation.h"')) {
         if ((Count $T.welld $inc) -ne 1) { $f += "(R9) WellDespawn include missing: $inc" }
@@ -211,6 +211,7 @@ $mutants = @(
     @{ Name = 'Q20 well-member snap-list drop moved after Destroy'; Key = 'welld'; Expect = 'R9'; Find = $wellSnapLine; Repl = ''
        Find2 = ("    Member->Dest" + "roy();`n"); Repl2 = ("    Member->Dest" + "roy();`n" + $wellSnapLine) }
     @{ Name = 'Q21 WELLDESPAWN-SNAP ungated'; Key = 'welld'; Expect = 'R9'; Find = ('    if (FNodeShuffleModule::AreDiagnostics' + 'Enabled()) { UE_LOG(LogNodeShuffle, Display, TEXT("WELLDESPAWN-SNAP'); Repl = '    { UE_LOG(LogNodeShuffle, Display, TEXT("WELLDESPAWN-SNAP' }
+    @{ Name = 'Q41 (re-review D1) WELLDESPAWN-SNAP Cast predicate hard-coded'; Key = 'welld'; Expect = 'R9'; Find = 'Cast<AFGResourceNode>(Member) ? 1 : 0, SnapDropped'; Repl = '1, SnapDropped' }
     @{ Name = 'Q22 WellDespawn manager include dropped'; Key = 'welld'; Expect = 'R9'; Find = '#include "Resources/FGResourceNodeManager.h"'; Repl = '' }
 )
 $bad = 0

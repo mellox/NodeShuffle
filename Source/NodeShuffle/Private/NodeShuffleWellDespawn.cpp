@@ -123,7 +123,7 @@ bool ANodeShuffleSubsystem::DestroyWellMemberIfUnused(AFGResourceNodeBase* Membe
         RepMgr->RemoveRepresentationOfActor(Member);
         if (UFGResourceNodeRepresentation* NodeRep = RepMgr->FindResourceNodeRepresentation(Member)) { RepMgr->RemoveRepresentation(NodeRep); }
     }
-    if (FNodeShuffleModule::AreDiagnosticsEnabled()) { UE_LOG(LogNodeShuffle, Display, TEXT("WELLDESPAWN-SNAP %s: snapListRemovedAfterDeregister %d"), *Member->GetName(), SnapDropped); }
+    if (FNodeShuffleModule::AreDiagnosticsEnabled()) { UE_LOG(LogNodeShuffle, Display, TEXT("WELLDESPAWN-SNAP %s: isSnapListType %d snapListRemovedAfterDeregister %d"), *Member->GetName(), Cast<AFGResourceNode>(Member) ? 1 : 0, SnapDropped); }
     Member->RemoveResourceNodeScan_Local();
     Member->UpdateNodeRepresentation();
 
