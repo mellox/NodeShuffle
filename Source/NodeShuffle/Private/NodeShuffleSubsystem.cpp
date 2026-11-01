@@ -1511,7 +1511,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     }
 
     // rwg-deal-1 (2026-10-19): the registry fallback + REPCLASS census block below MOVED here from just before the
-    // Phase-2 stamp loop, so the RWG deal can read rank-2 own classes. It reads nothing the deal writes
+    // Phase-2 stamp loop, so the RWG deal can read the chosen spawn class. It reads nothing the deal writes
     // (VanillaResourceCounts, NodeClassByResource, RepClassStats, SpawnRefusedClassSubstitute) and draws no RNG, so
     // Vanilla deal outcomes are unchanged; only its log lines now print before the FIX B line.
     // rwg-repclass-1 (b) REGISTRY FALLBACK + REPCLASS census. Runs once per roll, BEFORE the Phase-2 stamp loop

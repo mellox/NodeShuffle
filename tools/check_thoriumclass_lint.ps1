@@ -143,6 +143,7 @@ function Invoke-ThoriumClassChecks($T) {
     # T2
     if (-not (Ordered $rc @('const TCHAR* UnspawnableNodeClassReason(const UClass* NodeClass)', 'if (!NodeClass) { return TEXT("NotResident"); }', 'if (!NodeClass->IsChildOf(AFGResourceNode::StaticClass())) { return TEXT("NotNodeSubclass"); }', 'if (NodeClass->IsChildOf(AFGResourceDeposit::StaticClass())) { return TEXT("Deposit"); }', 'if (NodeClass->HasAnyClassFlags(CLASS_Abstract)) { return TEXT("Abstract"); }', 'return nullptr;', 'bool IsSpawnableNodeClass(const UClass* NodeClass)', 'return UnspawnableNodeClassReason(NodeClass) == nullptr;'))) { $f += '(T2) spawnable predicate: NotResident, NotNodeSubclass, Deposit, Abstract, else null; IsSpawnableNodeClass is the null test' }
     if ((Count $rc '#include "Resources/FGResourceNode.h"') -ne 1 -or (Count $rc '#include "Resources/FGResourceDeposit.h"') -ne 1) { $f += '(T2) NodeShuffleRepClass.cpp must include FGResourceNode.h and FGResourceDeposit.h' }
+    if ((Count $rc 'if (Cls->HasAnyClassFlags(CLASS_Abstract) || !Cls->IsChildOf(AFGResourceNodeBase::StaticClass()) || Cls->IsChildOf(AFGResourceDeposit::StaticClass())) { Out.Rejected++; continue; }') -ne 1) { $f += '(T2) MatchByRegistry must reject deposit classes before they reach NodeClassByResource (review r2 F2)' }
     if ((Count $rch 'const TCHAR* UnspawnableNodeClassReason(const UClass* NodeClass);') -ne 1 -or (Count $rch 'bool IsSpawnableNodeClass(const UClass* NodeClass);') -ne 1) { $f += '(T2) both predicates must be declared' }
     foreach ($m in @('FString OriginalsClass;', 'FString OriginalsReason;', 'bool bOriginalsSpawnable = false;', 'FString RegistryClass;', 'bool bChosenSpawnable = false;')) { if ((Count $rch $m) -ne 1) { $f += "(T2) FStat must declare: $m" } }
     # T3
@@ -178,7 +179,7 @@ function Invoke-ThoriumClassChecks($T) {
     $staleBody = Span $d 'void ANodeShuffleSubsystem::EmitRepClassStaleCensusOnce()' 'TEXT("REPCLASS-STALE '
     if ($staleBody -eq '') { $f += '(T7) EmitRepClassStaleCensusOnce body not found' }
     else {
-        if ((Count $staleBody ('LoadClass' + 'ByPath')) -ne 0 -or (Count $staleBody 'LoadObject') -ne 0 -or (Count $staleBody 'StaticLoad') -ne 0) { $f += '(T7) the stale census tests the RESIDENT originals class (review F2); it never loads one' }
+        if ((Count $staleBody ('Lo' + 'ad')) -ne 0) { $f += '(T7) the stale census tests the RESIDENT originals class (review F2); it never loads one' }
         if (-not (Ordered $staleBody @($staleLatch, 'bRepClassStaleCensusDone = true;', $staleOrig, 'NodeShuffleRepClass::RepClassShouldReplace(*Existing, E.NodeClassPath, E.OriginalResourceClassPath)', 'if (!E.bIsNewNode || !E.bActive) { continue; }', 'NodeShuffleRepClass::IsSpawnableNodeClass(FindObject<UClass>(nullptr, **Orig))', $staleUnres, $staleRes, 'if (Stamped == *Orig) { continue; }', '++Stale;', 'if (E.bPinned) { ++StalePinned; }'))) { $f += '(T7) stale census: latch on a non-empty Layout, originals rebuilt from recording entries with the roll ranking, active spawned entries only, unresolved when absent/unspawnable, stamped class via the resolver, pinned counted apart' }
         foreach ($w in $entryWrites) { if ((Count $staleBody $w) -ne 0) { $f += "(T7) the stale census must not write an entry field: $w" } }
         if ((Count $staleBody 'for (const FNodeShuffleEntry& E : Layout)') -ne 2) { $f += '(T7) both Layout walks must be const' }
@@ -220,6 +221,8 @@ $mutants = @(
     @{ Name = 'X33 stale census loads the originals class'; Key = 'diag'; Expect = 'T7'; Find = 'NodeShuffleRepClass::IsSpawnableNodeClass(FindObject<UClass>(nullptr, **Orig))'; Repl = ('NodeShuffleRepClass::IsSpawnableNodeClass(' + 'LoadClass' + 'ByPath(*Orig))') }
     @{ Name = 'X34 spawnable admits deposits'; Key = 'rc'; Expect = 'T2'; Find = "        if (NodeClass->IsChildOf(AFGResourceDeposit::StaticClass())) { return TEXT(""Deposit""); }`n"; Repl = '' }
     @{ Name = 'X35 RWGDEAL-STAMP field name reverts'; Key = 'sub'; Expect = 'T9'; Find = 'convFormSpawnClass=%d'; Repl = ('convForm' + 'OwnClass=%d') }
+    @{ Name = 'X36 stale census loads with LoadObject (review r2 F1)'; Key = 'diag'; Expect = 'T7'; Find = $staleUnres; Repl = ('if (Orig) { (void)Load' + 'Object<UClass>(nullptr, **Orig); } ' + $staleUnres) }
+    @{ Name = 'X37 stale census loads with LoadClass<> (review r2 F1)'; Key = 'diag'; Expect = 'T7'; Find = $staleUnres; Repl = ('if (Orig) { (void)Load' + 'Class<UObject>(nullptr, **Orig); } ' + $staleUnres) }
     @{ Name = 'X16 REPCLASS-REGISTRY drops applied'; Key = 'sub'; Expect = 'T5'; Find = ' matched=%s applied=%d ms=%.1f"),'; Repl = ' matched=%s ms=%.1f"),' }
     @{ Name = 'X17 CLEARANCE demoted below Display'; Key = 'diag'; Expect = 'T5'; Find = "    UE_LOG(LogNodeShuffle, Display,`n        TEXT(""REPCLASS-CLEARANCE "; Repl = "    UE_LOG(LogNodeShuffle, Verbose,`n        TEXT(""REPCLASS-CLEARANCE " }
     @{ Name = 'X18 STALE drops a field'; Key = 'diag'; Expect = 'T5'; Find = ' unresolved=%d byClass=[%s]"),'; Repl = ' byClass=[%s]"),' }

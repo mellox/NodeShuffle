@@ -109,7 +109,7 @@ namespace NodeShuffleRepClass
             else { Cls = FindObject<UClass>(nullptr, *Path); if (!Cls) { if (Out.FreshLoads >= RegistryLoadCap) { continue; } Out.FreshLoads++; Cls = LoadObject<UClass>(nullptr, *Path, nullptr, LOAD_NoWarn | LOAD_Quiet); } LoadCache.Add(Path, Cls); }
             if (!Cls) { Out.Failed++; continue; }
             Out.Loaded++;
-            if (Cls->HasAnyClassFlags(CLASS_Abstract) || !Cls->IsChildOf(AFGResourceNodeBase::StaticClass())) { Out.Rejected++; continue; }
+            if (Cls->HasAnyClassFlags(CLASS_Abstract) || !Cls->IsChildOf(AFGResourceNodeBase::StaticClass()) || Cls->IsChildOf(AFGResourceDeposit::StaticClass())) { Out.Rejected++; continue; }
             const AFGResourceNodeBase* Cdo = Cls->GetDefaultObject<AFGResourceNodeBase>();
             const UClass* CdoRes = Cdo ? Cdo->GetResourceClass().Get() : nullptr;
             if (!CdoRes || CdoRes->GetPathName() != ResourcePath) { Out.Rejected++; continue; }
