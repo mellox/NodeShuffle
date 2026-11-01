@@ -37,7 +37,7 @@ namespace NodeShuffleRepClass
         // IsSpawnableNodeClass -- the one flag the three consumer sites (deal-kind table, Phase-2 RWG stamp, conversion
         // restamp) read through RollLayout's SpawnClassForResource.
         FString OriginalsClass;
-        FString OriginalsReason;          // originalsSpawnable | originalsAbsent | originalsNotResident | originalsNotNodeSubclass | originalsAbstract
+        FString OriginalsReason;          // originalsSpawnable | originalsAbsent | originalsNotResident | originalsNotNodeSubclass | originalsDeposit | originalsAbstract
         bool bOriginalsSpawnable = false;
         FString RegistryClass;
         bool bChosenSpawnable = false;
@@ -74,7 +74,7 @@ namespace NodeShuffleRepClass
 
     // rwg-thoriumclass-1 (2026-11-01): the test every spawn consumer applies to a candidate class. Returns nullptr when the
     // AFGResourceNode placement pipeline can spawn it (resident, a non-abstract AFGResourceNode subclass), else the name of the
-    // FIRST failing predicate: "NotResident", "NotNodeSubclass", "Abstract". Never loads; a null class reads as NotResident.
+    // FIRST failing predicate: "NotResident", "NotNodeSubclass", "Deposit", "Abstract". Never loads; a null class reads as NotResident.
     const TCHAR* UnspawnableNodeClassReason(const UClass* NodeClass);
     bool IsSpawnableNodeClass(const UClass* NodeClass);
 

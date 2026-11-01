@@ -6,6 +6,7 @@
 #include "UObject/TopLevelAssetPath.h"
 #include "Resources/FGResourceNodeBase.h"
 #include "Resources/FGResourceNode.h" // rwg-thoriumclass-1: IsSpawnableNodeClass tests the AFGResourceNode subclass
+#include "Resources/FGResourceDeposit.h" // rwg-thoriumclass-1 review F5: a deposit (pickup) Blueprint is never a spawn class
 #include "Resources/FGResourceDescriptor.h"
 #include "HAL/PlatformTime.h"
 
@@ -61,6 +62,7 @@ namespace NodeShuffleRepClass
     {
         if (!NodeClass) { return TEXT("NotResident"); }
         if (!NodeClass->IsChildOf(AFGResourceNode::StaticClass())) { return TEXT("NotNodeSubclass"); }
+        if (NodeClass->IsChildOf(AFGResourceDeposit::StaticClass())) { return TEXT("Deposit"); }
         if (NodeClass->HasAnyClassFlags(CLASS_Abstract)) { return TEXT("Abstract"); }
         return nullptr;
     }

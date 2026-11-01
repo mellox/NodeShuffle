@@ -1525,8 +1525,8 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     // the spawn class whenever that class is spawnable (NodeShuffleRepClass::IsSpawnableNodeClass). The registry match is
     // APPLIED only when no original was seen or the seen class is unspawnable. The registry still RUNS for the same population
     // as before (modded, latched rank < 2) so REPCLASS-REGISTRY and REPCLASS-CLEARANCE measure its candidate whether or not it
-    // is used. Measured 2026-11-01: RP thorium originals are BP_ResourceNode_C; the registry's BP_Thorium_C (a class RP never
-    // places) was replacing them, and no Mk1 bound on any of those 61 nodes.
+    // is used. Measured 2026-11-01: RP thorium originals are BP_ResourceNode_C; the registry's BP_Thorium_C (a class RP placed
+    // on none of this save's originals) was replacing them, and no Mk1 bound on any of those 61 nodes.
     {
         TArray<FString> RegistryWanted;
         for (const TPair<FString, int32>& KV : VanillaResourceCounts)
@@ -1596,13 +1596,14 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
             const FString* Chosen = NodeClassByResource.Find(Res);
             const TCHAR* Source = !Chosen ? TEXT("none") : ((St && St->bFromRegistry) ? TEXT("registry") : TEXT("live"));
             UE_LOG(LogNodeShuffle, Display,
-                TEXT("REPCLASS res=%s chosen=%s rank=%s seen=%d replacedFirstSeen=%d source=%s originalsClass=%s reason=%s"),
+                TEXT("REPCLASS res=%s chosen=%s rank=%s seen=%d replacedFirstSeen=%d source=%s originalsClass=%s reason=%s chosenSpawnable=%d"),
                 *FPackageName::ObjectPathToObjectName(Res),
                 Chosen ? *FPackageName::ObjectPathToObjectName(*Chosen) : TEXT("none"),
                 Chosen ? NodeShuffleRepClass::RepClassRankName(NodeShuffleRepClass::RepClassRank(*Chosen, Res)) : TEXT("none"),
                 SeenN, (St && St->bReplacedFirstSeen) ? 1 : 0, Source,
                 (St && !St->OriginalsClass.IsEmpty()) ? *FPackageName::ObjectPathToObjectName(St->OriginalsClass) : TEXT("none"),
-                (St && !St->OriginalsReason.IsEmpty()) ? *St->OriginalsReason : TEXT("none"));
+                (St && !St->OriginalsReason.IsEmpty()) ? *St->OriginalsReason : TEXT("none"),
+                NodeShuffleRepClass::IsGenericNodeClassPath(Res) ? -1 : ((St && St->bChosenSpawnable) ? 1 : 0));
             // rwg-thoriumclass-1: REPCLASS-CLEARANCE for the chosen class, and for the originals' and registry classes when they differ.
             if (!NodeShuffleRepClass::IsGenericNodeClassPath(Res))
             {
@@ -1692,8 +1693,8 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     };
 
     // rwg-deal-1 (2026-10-19, user decision): on an RWG map the deal is SLOT-KIND-AGNOSTIC -- one merged deck,
-    // any card into any active slot, the card decides the form; a card whose resource has neither a rank-2 own
-    // node class nor an authored/captured look keeps the old restriction (never on a new slot; on an existing slot
+    // any card into any active slot, the card decides the form; a card whose resource has neither a spawnable chosen
+    // class (SpawnClassForResource, rwg-thoriumclass-1) nor an authored/captured look keeps the old restriction (never on a new slot; on an existing slot
     // only in its own form). Contract: NodeShuffleRwgDeal.h. The merged-deck shuffle happens INSIDE Deal(), so the
     // Vanilla RNG stream is untouched; the Vanilla deal is the unchanged loop after `else`.
     const bool bRwgDeal = (GetMapMode() == ENodeShuffleMapMode::Rwg);
@@ -1853,7 +1854,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     // to empty where the pre-fix code produced a class).
     int32 StampedByResource = 0;
     int32 StampedByFormFallback = 0;
-    int32 RwgNewFormRepStamps = 0; // rwg-deal-1: RWG new slots holding a modded card with no rank-2 class
+    int32 RwgNewFormRepStamps = 0; // rwg-deal-1: RWG new slots holding a modded card with no spawnable chosen class
     for (FNodeShuffleEntry& E : NewLayout)
     {
         if (!E.bIsNewNode || !E.bActive || E.bPinned || E.AssignedResourceClassPath.IsEmpty())
@@ -1862,8 +1863,8 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
         }
         const uint8 Form = FormByResource.FindRef(E.AssignedResourceClassPath);
         E.ResourceForm = Form != 0 ? Form : FormSolid;
-        // rwg-deal-1: an RWG new slot can now hold a MODDED card. Without a rank-2 own class it spawns the vanilla
-        // donor class for its form (form representative) and is dressed by its look -- never a foreign mod's class.
+        // rwg-deal-1: an RWG new slot can hold a MODDED card. Without a spawnable chosen class (SpawnClassForResource) it
+        // spawns the vanilla donor class for its form and is dressed by its look.
         if (bRwgDeal && !NodeShuffleRepClass::IsGenericNodeClassPath(E.AssignedResourceClassPath))
         {
             // rwg-deal-1 F1 (2026-10-19): a class that is not loaded / not an AFGResourceNode / abstract takes the form representative.
@@ -1944,7 +1945,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
         int32 Converted = 0, Dropped = 0, KeptOccupied = 0, Recorded = 0;
         int32 ConvSpawnClassAvailable = 0, ConvRestamped = 0, ConvAlreadySpawnClass = 0, ConvKept = 0; // rwg-repclass-2 REPCLASS-CONVERT census (rwg-thoriumclass-1 field names)
         TMap<FString, TPair<int32, int32>> ConvRestampByRes; // modded dealt resource -> (restamped, kept)
-        int32 RwgConvFormRestamped = 0, RwgConvFormOwnClass = 0, RwgConvFormKept = 0; // rwg-deal-1 RWGDEAL-STAMP census
+        int32 RwgConvFormRestamped = 0, RwgConvFormSpawnClass = 0, RwgConvFormKept = 0; // rwg-deal-1 RWGDEAL-STAMP census (rwg-thoriumclass-1 review F3 field name)
         for (FNodeShuffleEntry& E : NewLayout)
         {
             if (E.bIsNewNode) { continue; }
@@ -2009,12 +2010,12 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                     else { ConvKept++; PerRes.Value++; }
                 }
                 // rwg-deal-1 FORM RESTAMP: on RWG the card decides the form, so an original whose card changed form
-                // (solid slot dealt oil, or the reverse) spawns the form representative unless the rank-2 restamp
-                // above already chose the resource's own class. Writes only E.RepClassSpawnPath, like the restamp.
+                // (solid slot dealt oil, or the reverse) spawns the form representative unless the spawn-class restamp
+                // above already set RepClassSpawnPath. Writes only E.RepClassSpawnPath, like the restamp.
                 if (bRwgDeal && RwgDeal.FormChanged.Contains(E.EntryGuid))
                 {
                     const FString& FormRep = (E.ResourceForm == FormLiquid) ? SpawnableLiquidNodeClassPath : SpawnableNodeClassPath;
-                    if (!E.RepClassSpawnPath.IsEmpty()) { RwgConvFormOwnClass++; }
+                    if (!E.RepClassSpawnPath.IsEmpty()) { RwgConvFormSpawnClass++; }
                     else if (!FormRep.IsEmpty() && FormRep != E.NodeClassPath)
                     {
                         E.RepClassSpawnPath = FormRep;
@@ -2040,8 +2041,8 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
         if (bRwgDeal)
         {
             UE_LOG(LogNodeShuffle, Display,
-                TEXT("RWGDEAL-STAMP newFormRep=%d convFormChanged=%d convFormRestamped=%d convFormOwnClass=%d convFormKept=%d"),
-                RwgNewFormRepStamps, RwgDeal.FormChanged.Num(), RwgConvFormRestamped, RwgConvFormOwnClass, RwgConvFormKept);
+                TEXT("RWGDEAL-STAMP newFormRep=%d convFormChanged=%d convFormRestamped=%d convFormSpawnClass=%d convFormKept=%d"),
+                RwgNewFormRepStamps, RwgDeal.FormChanged.Num(), RwgConvFormRestamped, RwgConvFormSpawnClass, RwgConvFormKept);
         }
         TArray<FString> ConvResKeys;
         ConvRestampByRes.GetKeys(ConvResKeys);

@@ -17,8 +17,9 @@
 //                       is reconstructed from the saved Layout alone: every entry that records an original (VanillaNodePath
 //                       non-empty) still carries that original's class in NodeClassPath (the restamp never writes it; lint
 //                       check_repclass R8 trap i), latched per resource with the roll's own ranking. A resource whose
-//                       originals' class is absent or unspawnable would consult the asset registry at roll time; that is not
-//                       run at load, so such entries are counted as unresolved, not as stale. COUNT ONLY -- no entry is
+//                       originals' class is absent or unspawnable (tested on the RESIDENT class, as the roll does; a class not
+//                       resident at load counts as unspawnable here) would consult the asset registry at roll time; that is
+//                       not run at load, so such entries are counted as unresolved, not as stale. COUNT ONLY -- no entry is
 //                       restamped here; the saved classes change only when a re-roll recomputes them.
 #include "NodeShuffleSubsystem.h"
 #include "NodeShuffle.h"
@@ -136,7 +137,7 @@ void ANodeShuffleSubsystem::EmitRepClassStaleCensusOnce()
         if (Orig)
         {
             if (const bool* Cached = SpawnableCache.Find(*Orig)) { bSpawnable = *Cached; }
-            else { bSpawnable = NodeShuffleRepClass::IsSpawnableNodeClass(LoadClassByPath(*Orig)); SpawnableCache.Add(*Orig, bSpawnable); }
+            else { bSpawnable = NodeShuffleRepClass::IsSpawnableNodeClass(FindObject<UClass>(nullptr, **Orig)); SpawnableCache.Add(*Orig, bSpawnable); }
         }
         if (!Orig || !bSpawnable) { ++Unresolved; continue; } // the rule would consult the registry here; not run at load
         const FString Stamped = ResolveSpawnNodeClassPath(E);

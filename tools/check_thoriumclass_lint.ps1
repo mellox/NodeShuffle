@@ -1,6 +1,6 @@
 # THORIUMCLASS lint (2026-11-01, packet rwg-thoriumclass-1; handoff _team/test-logs/2026-11-01-nodeshuffle-thoriumclass-handoff.md).
-# Measured 2026-11-01 on an RWG save with RefinedPower: all 61 relocated thorium entries spawned as BP_Thorium_C, a class RP never
-# places (the captured originals are BP_ResourceNode_C), because the rwg-repclass registry fallback replaced the originals' class
+# Measured 2026-11-01 on an RWG save with RefinedPower: all 61 relocated thorium entries spawned as BP_Thorium_C, a class RP placed
+# on none of that save's originals (the captured originals are BP_ResourceNode_C), because the rwg-repclass registry fallback replaced the originals' class
 # with the first own-mount class whose CDO resource matched; no Miner Mk1 bound on any of them (hologram: encroaching clearance).
 # LOADS and PINS every source file the packet touched:
 #   sub   NodeShuffleSubsystem.cpp   decision block, registry apply gate, chosen-spawnable flag, SpawnClassForResource, 3 consumers, census, PostLoadGame call
@@ -12,7 +12,8 @@
 #   T1 Decision precedes the registry: the originals' class is the live latch only when St.Seen holds it; spawnability is
 #      UnspawnableNodeClassReason on the RESIDENT class (no load); the registry population is unchanged (modded, rank < 2); the
 #      candidate is recorded whether or not it is applied; a registry match is APPLIED only when the originals' class is not spawnable
-#   T2 Spawnable predicate: NotResident, NotNodeSubclass (AFGResourceNode), Abstract -- in that order; IsSpawnableNodeClass is the null test
+#   T2 Spawnable predicate: NotResident, NotNodeSubclass (AFGResourceNode), Deposit (AFGResourceDeposit, review F5), Abstract -- in that
+#      order; IsSpawnableNodeClass is the null test
 #   T3 The chosen class's spawnability is computed once, from the resident class, into FStat.bChosenSpawnable; SpawnClassForResource
 #      returns the map entry only through that flag and sits between the census and the deal
 #   T4 The three roll-time consumers (deal-kind table, Phase-2 RWG stamp, conversion restamp) read SpawnClassForResource and nothing
@@ -23,7 +24,7 @@
 #      control; reads mClearanceData and the native box on the CDO; never loads a class; never calls the FactoryGame-exported GetBoxExtent
 #   T7 REPCLASS-STALE: once per load, latched on a non-empty Layout, called once from PostLoadGame_Implementation; originals' class
 #      rebuilt from entries that record an original; stamped class read through the spawner's resolver; absent/unspawnable originals
-#      count as unresolved; the function writes NO entry field
+#      count as unresolved; spawnability is tested on the RESIDENT class (review F2: never a load); the function writes NO entry field
 #   T8 Marker 2026-11-01-rwg-thoriumclass-1 once on its own line in NodeShuffle.cpp and nowhere in the packet sources
 #   T9 Every new field token appears exactly once in its file (no legend echoes a field in field=value form)
 # Every forbidden or superseded needle is BUILT BY CONCATENATION so this file cannot satisfy or trip its own checks.
@@ -140,8 +141,8 @@ function Invoke-ThoriumClassChecks($T) {
     if ((Count $s $seenPin) -ne 1 -or (Count $s $regApply) -ne 1 -or (Count $s 'RegSt.bOriginalsSpawnable') -ne 1) { $f += '(T1) the originals-seen test and the apply gate must each appear exactly once' }
     if ((Count $s 'UnspawnableNodeClassReason(FindObject<UClass>(nullptr, **Latched))') -ne 1 -or (Count $s 'UnspawnableNodeClassReason(LoadObject') -ne 0 -or (Count $s 'UnspawnableNodeClassReason(LoadClassByPath') -ne 0) { $f += '(T1) the originals class is tested RESIDENT (FindObject), never loaded' }
     # T2
-    if (-not (Ordered $rc @('const TCHAR* UnspawnableNodeClassReason(const UClass* NodeClass)', 'if (!NodeClass) { return TEXT("NotResident"); }', 'if (!NodeClass->IsChildOf(AFGResourceNode::StaticClass())) { return TEXT("NotNodeSubclass"); }', 'if (NodeClass->HasAnyClassFlags(CLASS_Abstract)) { return TEXT("Abstract"); }', 'return nullptr;', 'bool IsSpawnableNodeClass(const UClass* NodeClass)', 'return UnspawnableNodeClassReason(NodeClass) == nullptr;'))) { $f += '(T2) spawnable predicate: NotResident, NotNodeSubclass, Abstract, else null; IsSpawnableNodeClass is the null test' }
-    if ((Count $rc '#include "Resources/FGResourceNode.h"') -ne 1) { $f += '(T2) NodeShuffleRepClass.cpp must include FGResourceNode.h' }
+    if (-not (Ordered $rc @('const TCHAR* UnspawnableNodeClassReason(const UClass* NodeClass)', 'if (!NodeClass) { return TEXT("NotResident"); }', 'if (!NodeClass->IsChildOf(AFGResourceNode::StaticClass())) { return TEXT("NotNodeSubclass"); }', 'if (NodeClass->IsChildOf(AFGResourceDeposit::StaticClass())) { return TEXT("Deposit"); }', 'if (NodeClass->HasAnyClassFlags(CLASS_Abstract)) { return TEXT("Abstract"); }', 'return nullptr;', 'bool IsSpawnableNodeClass(const UClass* NodeClass)', 'return UnspawnableNodeClassReason(NodeClass) == nullptr;'))) { $f += '(T2) spawnable predicate: NotResident, NotNodeSubclass, Deposit, Abstract, else null; IsSpawnableNodeClass is the null test' }
+    if ((Count $rc '#include "Resources/FGResourceNode.h"') -ne 1 -or (Count $rc '#include "Resources/FGResourceDeposit.h"') -ne 1) { $f += '(T2) NodeShuffleRepClass.cpp must include FGResourceNode.h and FGResourceDeposit.h' }
     if ((Count $rch 'const TCHAR* UnspawnableNodeClassReason(const UClass* NodeClass);') -ne 1 -or (Count $rch 'bool IsSpawnableNodeClass(const UClass* NodeClass);') -ne 1) { $f += '(T2) both predicates must be declared' }
     foreach ($m in @('FString OriginalsClass;', 'FString OriginalsReason;', 'bool bOriginalsSpawnable = false;', 'FString RegistryClass;', 'bool bChosenSpawnable = false;')) { if ((Count $rch $m) -ne 1) { $f += "(T2) FStat must declare: $m" } }
     # T3
@@ -154,8 +155,8 @@ function Invoke-ThoriumClassChecks($T) {
     if ((Count $T.dealh 'bool Dealable() const { return bGeneric || bSpawnClass || bLook; }') -ne 1) { $f += '(T4) Dealable reads bSpawnClass' }
     if (-not (Ordered $s @('if (bSpawnAvailable) { ConvSpawnClassAvailable++; }', 'if (bSpawnAvailable && *SpawnByRes != E.NodeClassPath)', 'E.RepClassSpawnPath = *SpawnByRes;', 'else if (bSpawnAvailable) { ConvAlreadySpawnClass++; }', 'else { ConvKept++; PerRes.Value++; }'))) { $f += '(T4) restamp branches: available, restamp when it differs from the slot class, already, kept' }
     # T5
-    $f += Check-Log $T 'T5' 'sub' 'REPCLASS res=' 'REPCLASS res=%s chosen=%s rank=%s seen=%d replacedFirstSeen=%d source=%s originalsClass=%s reason=%s' `
-        @('*FPackageName::ObjectPathToObjectName(Res)', 'Chosen ? *FPackageName::ObjectPathToObjectName(*Chosen) : TEXT("none")', 'Chosen ? NodeShuffleRepClass::RepClassRankName(NodeShuffleRepClass::RepClassRank(*Chosen, Res)) : TEXT("none")', 'SeenN', '(St && St->bReplacedFirstSeen) ? 1 : 0', 'Source', '(St && !St->OriginalsClass.IsEmpty()) ? *FPackageName::ObjectPathToObjectName(St->OriginalsClass) : TEXT("none")', '(St && !St->OriginalsReason.IsEmpty()) ? *St->OriginalsReason : TEXT("none")') 1
+    $f += Check-Log $T 'T5' 'sub' 'REPCLASS res=' 'REPCLASS res=%s chosen=%s rank=%s seen=%d replacedFirstSeen=%d source=%s originalsClass=%s reason=%s chosenSpawnable=%d' `
+        @('*FPackageName::ObjectPathToObjectName(Res)', 'Chosen ? *FPackageName::ObjectPathToObjectName(*Chosen) : TEXT("none")', 'Chosen ? NodeShuffleRepClass::RepClassRankName(NodeShuffleRepClass::RepClassRank(*Chosen, Res)) : TEXT("none")', 'SeenN', '(St && St->bReplacedFirstSeen) ? 1 : 0', 'Source', '(St && !St->OriginalsClass.IsEmpty()) ? *FPackageName::ObjectPathToObjectName(St->OriginalsClass) : TEXT("none")', '(St && !St->OriginalsReason.IsEmpty()) ? *St->OriginalsReason : TEXT("none")', 'NodeShuffleRepClass::IsGenericNodeClassPath(Res) ? -1 : ((St && St->bChosenSpawnable) ? 1 : 0)') 1
     $f += Check-Log $T 'T5' 'sub' 'REPCLASS-REGISTRY res=' 'REPCLASS-REGISTRY res=%s derived=%d mountFiltered=%d loaded=%d failed=%d rejected=%d cap=%d matched=%s applied=%d ms=%.1f' `
         @('*FPackageName::ObjectPathToObjectName(Res)', 'RegQuery.Derived', 'RegMatch.MountFiltered', 'RegMatch.Loaded', 'RegMatch.Failed', 'RegMatch.Rejected', 'NodeShuffleRepClass::RegistryLoadCap', 'RegMatch.Matched.IsEmpty() ? TEXT("none") : *FPackageName::ObjectPathToObjectName(RegMatch.Matched)', 'bRegApplied ? 1 : 0', 'RegMatch.Ms') 1
     $f += Check-Log $T 'T5' 'sub' 'REPCLASS-CONVERT ' 'REPCLASS-CONVERT converted=%d spawnClassAvailable=%d restamped=%d alreadySpawnClass=%d kept=%d' @('Converted', 'ConvSpawnClassAvailable', 'ConvRestamped', 'ConvAlreadySpawnClass', 'ConvKept') 1
@@ -177,7 +178,8 @@ function Invoke-ThoriumClassChecks($T) {
     $staleBody = Span $d 'void ANodeShuffleSubsystem::EmitRepClassStaleCensusOnce()' 'TEXT("REPCLASS-STALE '
     if ($staleBody -eq '') { $f += '(T7) EmitRepClassStaleCensusOnce body not found' }
     else {
-        if (-not (Ordered $staleBody @($staleLatch, 'bRepClassStaleCensusDone = true;', $staleOrig, 'NodeShuffleRepClass::RepClassShouldReplace(*Existing, E.NodeClassPath, E.OriginalResourceClassPath)', 'if (!E.bIsNewNode || !E.bActive) { continue; }', 'NodeShuffleRepClass::IsSpawnableNodeClass(LoadClassByPath(*Orig))', $staleUnres, $staleRes, 'if (Stamped == *Orig) { continue; }', '++Stale;', 'if (E.bPinned) { ++StalePinned; }'))) { $f += '(T7) stale census: latch on a non-empty Layout, originals rebuilt from recording entries with the roll ranking, active spawned entries only, unresolved when absent/unspawnable, stamped class via the resolver, pinned counted apart' }
+        if ((Count $staleBody ('LoadClass' + 'ByPath')) -ne 0 -or (Count $staleBody 'LoadObject') -ne 0 -or (Count $staleBody 'StaticLoad') -ne 0) { $f += '(T7) the stale census tests the RESIDENT originals class (review F2); it never loads one' }
+        if (-not (Ordered $staleBody @($staleLatch, 'bRepClassStaleCensusDone = true;', $staleOrig, 'NodeShuffleRepClass::RepClassShouldReplace(*Existing, E.NodeClassPath, E.OriginalResourceClassPath)', 'if (!E.bIsNewNode || !E.bActive) { continue; }', 'NodeShuffleRepClass::IsSpawnableNodeClass(FindObject<UClass>(nullptr, **Orig))', $staleUnres, $staleRes, 'if (Stamped == *Orig) { continue; }', '++Stale;', 'if (E.bPinned) { ++StalePinned; }'))) { $f += '(T7) stale census: latch on a non-empty Layout, originals rebuilt from recording entries with the roll ranking, active spawned entries only, unresolved when absent/unspawnable, stamped class via the resolver, pinned counted apart' }
         foreach ($w in $entryWrites) { if ((Count $staleBody $w) -ne 0) { $f += "(T7) the stale census must not write an entry field: $w" } }
         if ((Count $staleBody 'for (const FNodeShuffleEntry& E : Layout)') -ne 2) { $f += '(T7) both Layout walks must be const' }
     }
@@ -187,7 +189,8 @@ function Invoke-ThoriumClassChecks($T) {
     if ((Count $T.nsmod ('    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle packet marker (' + $marker + ')====="));')) -ne 1 -or (Count $T.nsmod $marker) -ne 1) { $f += '(T8) marker missing or not on its own line' }
     foreach ($k in @('sub', 'diag', 'rc', 'rch', 'hdr')) { if ((Count $T[$k] $marker) -ne 0) { $f += "(T8) marker must not appear in the packet sources ($k)" } }
     # T9
-    foreach ($tok in @('originalsClass=', 'spawnClassAvailable=', 'alreadySpawnClass=', 'matched=%s applied=')) { if ((TokCount $s $tok) -ne 1) { $f += "(T9) field token echoed or missing in the subsystem: $tok" } }
+    foreach ($tok in @('originalsClass=', 'chosenSpawnable=', 'spawnClassAvailable=', 'alreadySpawnClass=', 'convFormSpawnClass=', 'matched=%s applied=')) { if ((TokCount $s $tok) -ne 1) { $f += "(T9) field token echoed or missing in the subsystem: $tok" } }
+    if ((Count $s ('convForm' + 'OwnClass=')) -ne 0) { $f += '(T9) the superseded RWGDEAL-STAMP field name must be gone (review F3)' }
     foreach ($tok in @('role=', 'resident=', 'nodeBase=', 'clearN=', 'boxExtent=', 'boxProfile=', 'boxCollision=', 'scsPrims=', 'scs=', 'count=', 'pinned=', 'spawned=', 'modded=', 'unresolved=', 'byClass=')) { if ((TokCount $d $tok) -ne 1) { $f += "(T9) field token echoed or missing in the diagnostics file: $tok" } }
     if ((TokCount $T.dealc 'spawnClass=') -ne 1) { $f += '(T9) field token echoed or missing in the deal: spawnClass=' }
     return ,$f
@@ -212,7 +215,11 @@ $mutants = @(
     @{ Name = 'X12 restamp reads the map directly'; Key = 'sub'; Expect = 'T4'; Find = $restampPin; Repl = $restampPin.Replace('SpawnClassForResource(E.AssignedResourceClassPath)', 'NodeClassByResource.Find(E.AssignedResourceClassPath)') }
     @{ Name = 'X13 a consumer re-adds the rank-2 own-mount test'; Key = 'sub'; Expect = 'T4'; Find = $kindPin; Repl = ('K.bSpawnClass = SpawnClassForResource(Kind) != nullptr && ' + $ownNeedle + 'NodeClassByResource.FindRef(Kind), Kind);') }
     @{ Name = 'X14 old CONVERT field name returns'; Key = 'sub'; Expect = 'T5'; Find = 'spawnClassAvailable=%d'; Repl = ($oldConvA + '%d') }
-    @{ Name = 'X15 REPCLASS drops reason'; Key = 'sub'; Expect = 'T5'; Find = ' originalsClass=%s reason=%s"),'; Repl = ' originalsClass=%s"),' }
+    @{ Name = 'X15 REPCLASS drops reason'; Key = 'sub'; Expect = 'T5'; Find = ' originalsClass=%s reason=%s chosenSpawnable=%d"),'; Repl = ' originalsClass=%s chosenSpawnable=%d"),' }
+    @{ Name = 'X32 REPCLASS drops chosenSpawnable'; Key = 'sub'; Expect = 'T5'; Find = ' originalsClass=%s reason=%s chosenSpawnable=%d"),'; Repl = ' originalsClass=%s reason=%s"),' }
+    @{ Name = 'X33 stale census loads the originals class'; Key = 'diag'; Expect = 'T7'; Find = 'NodeShuffleRepClass::IsSpawnableNodeClass(FindObject<UClass>(nullptr, **Orig))'; Repl = ('NodeShuffleRepClass::IsSpawnableNodeClass(' + 'LoadClass' + 'ByPath(*Orig))') }
+    @{ Name = 'X34 spawnable admits deposits'; Key = 'rc'; Expect = 'T2'; Find = "        if (NodeClass->IsChildOf(AFGResourceDeposit::StaticClass())) { return TEXT(""Deposit""); }`n"; Repl = '' }
+    @{ Name = 'X35 RWGDEAL-STAMP field name reverts'; Key = 'sub'; Expect = 'T9'; Find = 'convFormSpawnClass=%d'; Repl = ('convForm' + 'OwnClass=%d') }
     @{ Name = 'X16 REPCLASS-REGISTRY drops applied'; Key = 'sub'; Expect = 'T5'; Find = ' matched=%s applied=%d ms=%.1f"),'; Repl = ' matched=%s ms=%.1f"),' }
     @{ Name = 'X17 CLEARANCE demoted below Display'; Key = 'diag'; Expect = 'T5'; Find = "    UE_LOG(LogNodeShuffle, Display,`n        TEXT(""REPCLASS-CLEARANCE "; Repl = "    UE_LOG(LogNodeShuffle, Verbose,`n        TEXT(""REPCLASS-CLEARANCE " }
     @{ Name = 'X18 STALE drops a field'; Key = 'diag'; Expect = 'T5'; Find = ' unresolved=%d byClass=[%s]"),'; Repl = ' byClass=[%s]"),' }

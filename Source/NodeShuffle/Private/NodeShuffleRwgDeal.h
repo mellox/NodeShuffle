@@ -11,7 +11,7 @@
 // known. Spec: _team/nodeshuffle-followups/rwg-purity-spec.md.
 // Spec + measurements: _team/test-logs/2026-10-19-nodeshuffle-inactive-entries.md (deck exhaustion, 134 undealt cards).
 //
-// Dealable(kind) := generic resource (/Game/ or /Script/FactoryGame.) OR rank-2 own node class (latch/registry)
+// Dealable(kind) := generic resource (/Game/ or /Script/FactoryGame.) OR a spawnable chosen node class (RollLayout's SpawnClassForResource)
 //                   OR an authored/captured look (ResourceHasAuthoredLook).
 // A NEW slot takes only Dealable cards. An EXISTING slot takes any Dealable card of either form, and a
 // non-Dealable card only when its form equals the slot's pre-deal form (the FIX B behaviour for existing slots).
