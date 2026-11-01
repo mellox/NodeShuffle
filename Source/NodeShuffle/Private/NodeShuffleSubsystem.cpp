@@ -13,6 +13,7 @@
 #include "NodeShuffleRwgDeal.h" // rwg-deal-1: the slot-kind-agnostic RWG card deal
 #include "NodeShuffleRwgSeedGas.h" // rwg-seedgas-1: the RWG modded vanilla-count table
 #include "NodeShuffleRerollWipe.h" // rwg-rerollwipe-1: the re-roll wipe's per-wipe tally (REROLLWIPE census)
+#include "NodeShuffleRerollIdentity.h" // rwg-rerolldup-2: original identity beyond the path (anchor leg), vanilla-deal class restamp
 
 #include "EngineUtils.h"
 #include "TimerManager.h"
@@ -727,6 +728,26 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
             }
         }
     }
+    // rwg-rerolldup-2: ORIGINAL IDENTITY beyond the path. A runtime-spawned original is renamed every session and the load-time
+    // rematch rebinds only one of its rows, so two rows of one original can hold two different stale names (measured: 7 lead_C
+    // originals on the user's save). Group every row carrying an original by path OR by resource + anchor within
+    // AdoptMatchRadiusCm BEFORE the carried sets below are filled (the pre-pass may give a carried row its original's live
+    // name). The rebuild loop skips the rows this pre-pass lists; a carried twin of a carried row is renamed, never dropped.
+    // The previous roll's record paths are snapshotted here, before the rebuild resets the record, for the NORECORD census.
+    NodeShuffleRerollIdentity::FResult RerollIdentity;
+    NodeShuffleRerollIdentity::FVanillaRestamp RerollVanillaRestampConv, RerollVanillaRestampCarried;
+    TSet<FString> RerollPriorRecordPaths;
+    int32 RerollPathsWithoutPriorRecord = 0;
+    if (bIsReroll)
+    {
+        for (const FNodeShuffleSuppressedOriginal& R : OriginalNodeRecord) { if (!R.VanillaNodePath.IsEmpty()) { RerollPriorRecordPaths.Add(R.VanillaNodePath); } }
+        NodeShuffleRerollIdentity::DedupeOriginals(Layout, CarriedEntries, AdoptMatchRadiusCm,
+            [this](const FString& Path) { return IsValid(FindOriginalBaseByPath(Path)); }, RerollIdentity);
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("REROLLPOOL-IDENTITY candidates=%d candidatesWithoutAnchor=%d groups=%d anchorDrops=%d pathDrops=%d carriedTwinsUnified=%d pathTransfers=%d radiusCm=%.0f thirdRowDrops=%d pathPairsApart=%d anchorPairsBothLive=%d"),
+            RerollIdentity.Candidates, RerollIdentity.CandidatesWithoutAnchor, RerollIdentity.Groups, RerollIdentity.AnchorDrops,
+            RerollIdentity.PathDrops, RerollIdentity.CarriedTwinsUnified, RerollIdentity.PathTransfers, AdoptMatchRadiusCm, RerollIdentity.ThirdRowDrops, RerollIdentity.PathPairsApart, RerollIdentity.AnchorPairsBothLive);
+    }
     // rwg-rerolldup-1: a carried entry keeps its slot under the miner, so it must NOT also re-enter the original pool below
     // (it did: every carried relocated original carries OriginalResourceClassPath, so the rebuild re-dealt it at a fresh spot).
     // Identity sets for the pool rebuild (I1 by guid, I2 by original path); counts feed the REROLLPOOL-CARRY census.
@@ -735,6 +756,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     TSet<FString> RerollCarriedCompositionPaths; // carried original paths already counted toward the composition (twin dedupe)
     int32 RerollCarriedWithOriginal = 0, RerollCarriedExtras = 0, RerollExcludedFromPool = 0, RerollPathDupesDropped = 0;
     int32 RerollCarriedSamePathComposition = 0, RerollPoolPathRepeats = 0;
+    int32 RerollIdentityDupesDropped = 0; // rwg-rerolldup-2: rows the identity pre-pass listed and the rebuild skipped
     for (const FNodeShuffleEntry& C : CarriedEntries)
     {
         RerollCarriedGuids.Add(C.EntryGuid);
@@ -891,6 +913,19 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                     Old.bActive ? 1 : 0, Old.bPinned ? 1 : 0, Old.bIsNewNode ? 1 : 0);
                 continue;
             }
+            // rwg-rerolldup-2: a row the identity pre-pass grouped under another row's original (by anchor, or by path where the
+            // keeper is not carried) leaves the pool; the keeper counts the original once below. Never a carried row.
+            if (const NodeShuffleRerollIdentity::FDrop* Drop = RerollIdentity.Drops.Find(Old.EntryGuid))
+            {
+                ++RerollIdentityDupesDropped;
+                UE_LOG(LogNodeShuffle, Display,
+                    TEXT("REROLLPOOL-IDENTITYDUPE dropped path='%s' res='%s' guid=%s anchor=%s keeperGuid=%s keeperPath='%s' keeperAnchor=%s match=%s distCm=%.0f active=%d pinned=%d newNode=%d"),
+                    *Old.VanillaNodePath, *Old.OriginalResourceClassPath, *Old.EntryGuid.ToString(),
+                    *NodeShuffleRerollIdentity::OriginalAnchor(Old).ToCompactString(), *Drop->KeeperGuid.ToString(), *Drop->KeeperPath,
+                    *Drop->KeeperAnchor.ToCompactString(), Drop->bByPath ? TEXT("path") : (Drop->DistCm >= 0.0f ? TEXT("anchor") : TEXT("throughThirdRow")),
+                    Drop->DistCm, Old.bActive ? 1 : 0, Old.bPinned ? 1 : 0, Old.bIsNewNode ? 1 : 0);
+                continue;
+            }
             if (bCarriedOld)
             {
                 ++RerollExcludedFromPool;
@@ -996,12 +1031,15 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
             }
             VanillaCount++;
         }
+        // rwg-rerolldup-2: name every rebuilt original path the previous roll's record did not cover (one line each, capped).
+        RerollPathsWithoutPriorRecord = NodeShuffleRerollIdentity::ReportPathsWithoutPriorRecord(NewLayout, CarriedEntries, RerollPriorRecordPaths, 48);
         // A re-roll starts a clean record (the conversion below re-populates OriginalNodeRecord for the
         // unoccupied originals it re-detaches). Without this, stale records from the prior layout linger.
         OriginalNodeRecord.Reset();
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("Re-roll pool (redesign-6): rebuilt %d original entries from the FULL saved layout (pinned + all relocated), %d resource kinds — no collapse (rehide-1: %d pre-fix un-anchorable zombie(s) dropped; rwg-rerolldup-1: %d of the rebuilt count are carried entries counted toward the composition but kept out of the pool, %d same-path entries dropped)"),
-            VanillaCount, VanillaResourceCounts.Num(), ZombiesDropped, RerollExcludedFromPool - RerollCarriedSamePathComposition, RerollPathDupesDropped);
+            TEXT("Re-roll pool (redesign-6): rebuilt %d original entries from the FULL saved layout (pinned + all relocated), %d resource kinds — no collapse (rehide-1: %d pre-fix un-anchorable zombie(s) dropped; rwg-rerolldup-1: %d of the rebuilt count are carried entries counted toward the composition but kept out of the pool, %d same-path entries dropped; rwg-rerolldup-2: %d rows dropped as grouped with a keeper (REROLLPOOL-IDENTITY grades the pre-pass drops by leg: pathDrops, anchorDrops, thirdRowDrops; an earlier skip can take a listed row), %d rebuilt paths had no record in the previous roll)"),
+            VanillaCount, VanillaResourceCounts.Num(), ZombiesDropped, RerollExcludedFromPool - RerollCarriedSamePathComposition, RerollPathDupesDropped,
+            RerollIdentityDupesDropped, RerollPathsWithoutPriorRecord);
         if (GetMapMode() == ENodeShuffleMapMode::Rwg)
         {
             UE_LOG(LogNodeShuffle, Display, TEXT("RWGDEAL-REROLL rebuilt=%d slotFormRestoredFromOriginal=%d originalLoadNull=%d"),
@@ -1039,6 +1077,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
         // hidden originals stay live level actors and the two live-scan augments below dedupe on this set, so it carries them
         // explicitly (not relying on whether IsEligibleVanillaNode would also reject a hidden original).
         ExistingPaths.Append(RerollCarriedPaths);
+        ExistingPaths.Append(RerollIdentity.DroppedPaths); // rwg-rerolldup-2: a dropped row's name (dead or live) never re-enters through the live scans
         {
             // Liquid (oil) + gas (e.g. lithium) live scan — these forms join the re-roll pool. Solids are
             // already in the rebuilt pool; this captures liquid/gas the saved layout did not.
@@ -1687,9 +1726,23 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     // which draws only when the RWG table SEEDED a kind (one shuffle per seeded kind); seeds re-roll differently from
     // this commit on, on Vanilla and RWG alike. Contract: NodeShuffleRwgDeal.h.
     NodeShuffleRwgDeal::FPurityDecks PurityDecks;
-    NodeShuffleRwgDeal::BuildPurityDecks(NewLayout, PurityDeckSource, SolidDeck, LiquidDeck, Rng, PurityDecks);
+    // rwg-rerolldup-2: carried originals left the pool (rerolldup-1 I1) but stay originals of the composition; they join the per-class
+    // purity sources as a pinned original does on the initial roll. One entry per original path (twins once).
+    TArray<FNodeShuffleEntry> PuritySourceEntries = NewLayout;
+    TSet<FString> PuritySourceCarriedPaths;
+    for (const FNodeShuffleEntry& C : CarriedEntries)
+    {
+        if (C.OriginalResourceClassPath.IsEmpty()) { continue; }
+        bool bSeen = false;
+        if (!C.VanillaNodePath.IsEmpty()) { PuritySourceCarriedPaths.Add(C.VanillaNodePath, &bSeen); }
+        if (bSeen) { continue; }
+        FNodeShuffleEntry P = C;
+        P.bIsNewNode = false; // read as an original by both source builders; never dealt, never saved
+        PuritySourceEntries.Add(P);
+    }
+    NodeShuffleRwgDeal::BuildPurityDecks(PuritySourceEntries, PurityDeckSource, SolidDeck, LiquidDeck, Rng, PurityDecks);
     // rwg-seedgas-1b F2 (D3): SEEDED kinds draw purity from the /Game/ solid originals, not the map-wide deck; draws only when seeded.
-    NodeShuffleRwgSeedGas::AddSeededPuritySources(ModQuota, NewLayout, FormByResource, FormSolid, Rng, PurityDecks);
+    NodeShuffleRwgSeedGas::AddSeededPuritySources(ModQuota, PuritySourceEntries, FormByResource, FormSolid, Rng, PurityDecks);
     NodeShuffleRwgSeedGas::LogRoll(ModQuota, Quota, PinnedPerResource, SolidDeck, LiquidDeck, PurityDecks); // rwg-seedgas-1 MODQUOTA
 
     // Per-pile draw cursors (purity cursors are per class, inside PurityDecks).
@@ -2034,6 +2087,10 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                     }
                     else { RwgConvFormKept++; }
                 }
+                // rwg-rerolldup-2: a VANILLA deal on a slot whose class is not a base-game class spawns the vanilla representative of
+                // its form (writes E.RepClassSpawnPath only, inside the helper). Runs after both restamps above: a slot they already
+                // restamped to a base-game class is left as it is.
+                NodeShuffleRerollIdentity::RestampVanillaDealOffForeignClass(E, ResolvedSolidRepresentative, ResolvedLiquidRepresentative, FormLiquid, RerollVanillaRestampConv);
                 Converted++;
             }
             else
@@ -2064,6 +2121,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
             UE_LOG(LogNodeShuffle, Display, TEXT("REPCLASS-CONVERT-RES res=%s restamped=%d kept=%d"),
                 *FPackageName::ObjectPathToObjectName(Res), PerRes.Key, PerRes.Value);
         }
+        NodeShuffleRerollIdentity::EmitVanillaRestampCensus(TEXT("conversion"), RerollVanillaRestampConv); // rwg-rerolldup-2: every roll
     }
     // rwg-rerolldup-1 I3: a carried relocated original's hidden level node was recorded only through its pool duplicate's
     // conversion just above; with the duplicate gone (I1) it is recorded here, AFTER both OriginalNodeRecord.Reset() sites
@@ -2113,6 +2171,20 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
         bStarterNodesPlaced = true;
     }
 
+    // rwg-rerolldup-2: before this session's adopt nothing is changed; after it, a carried entry with no live actor, or whose live actor's class is in AdoptUnboundSpawnClasses (ADOPTCLASS), gets the vanilla-deal class rule and any other live actor keeps its class.
+    // Writes RepClassSpawnPath only; the carried hide records above are already written. The conversion restamp is unconditional: its rows' live actors are destroyed by the wipe below.
+    if (bIsReroll)
+    {
+        int32 RerollVanillaRestampLiveKept = 0, RerollVanillaRestampEligibleKept = 0, RerollVanillaRestampPreAdoptKept = 0;
+        for (FNodeShuffleEntry& C : CarriedEntries)
+        {
+            if (!bAdoptedRestoredNodes) { ++RerollVanillaRestampPreAdoptKept; continue; } // adopt-on-load has not run: SpawnedNodes holds no restored actor yet
+            AFGResourceNode* const* LiveC = SpawnedNodes.Find(C.EntryGuid); if (LiveC && IsValid(*LiveC) && !AdoptUnboundSpawnClasses.Contains(ResolveSpawnNodeClassPath(C))) { ++RerollVanillaRestampLiveKept; FNodeShuffleEntry RestampProbe = C; NodeShuffleRerollIdentity::FVanillaRestamp RestampProbeCensus; if (NodeShuffleRerollIdentity::RestampVanillaDealOffForeignClass(RestampProbe, ResolvedSolidRepresentative, ResolvedLiquidRepresentative, FormLiquid, RestampProbeCensus)) { ++RerollVanillaRestampEligibleKept; } continue; } // a live actor whose class is not in the set keeps its class
+            NodeShuffleRerollIdentity::RestampVanillaDealOffForeignClass(C, ResolvedSolidRepresentative, ResolvedLiquidRepresentative, FormLiquid, RerollVanillaRestampCarried);
+        }
+        NodeShuffleRerollIdentity::EmitVanillaRestampCensus(TEXT("carried"), RerollVanillaRestampCarried);
+        UE_LOG(LogNodeShuffle, Display, TEXT("REPCLASS-VANRESTAMP-LIVEKEPT carriedTotal=%d liveNotInUnboundSet=%d eligibleKept=%d unboundClassesAtAdopt=%d adoptRan=%d preAdoptKept=%d"), CarriedEntries.Num(), RerollVanillaRestampLiveKept, RerollVanillaRestampEligibleKept, AdoptUnboundSpawnClasses.Num(), bAdoptedRestoredNodes ? 1 : 0, RerollVanillaRestampPreAdoptKept); // carriedTotal, not carried: the CARRY census owns that token (rerolldup U6)
+    }
     NewLayout.Append(CarriedEntries);
     Layout = MoveTemp(NewLayout);
     SavedSeed = Seed;
@@ -2221,10 +2293,11 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     if (bIsReroll)
     {
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("REROLLPOOL-CARRY carried=%d carriedWithOriginal=%d carriedExtras=%d excludedFromPool=%d pathDupesDropped=%d carriedSamePathComposition=%d poolPathRepeats=%d hideRecordsForCarried=%d hideRecordPathDupes=%d carriedOrigLiveOccupied=%d carriedZombieRuleNoRecord=%d carriedAvoidAdded=%d newQuotaEffective=%d newQuotaConfig=%d customLocations=%d poolAfter=%d"),
+            TEXT("REROLLPOOL-CARRY carried=%d carriedWithOriginal=%d carriedExtras=%d excludedFromPool=%d pathDupesDropped=%d carriedSamePathComposition=%d poolPathRepeats=%d hideRecordsForCarried=%d hideRecordPathDupes=%d carriedOrigLiveOccupied=%d carriedZombieRuleNoRecord=%d carriedAvoidAdded=%d newQuotaEffective=%d newQuotaConfig=%d customLocations=%d poolAfter=%d identityDupesDropped=%d carriedTwinsUnified=%d pathTransfers=%d pathsWithoutPriorRecord=%d vanillaRestampedConversion=%d vanillaRestampedCarried=%d"),
             CarriedEntries.Num(), RerollCarriedWithOriginal, RerollCarriedExtras, RerollExcludedFromPool, RerollPathDupesDropped,
             RerollCarriedSamePathComposition, RerollPoolPathRepeats, RerollHideRecordsForCarried, RerollHideRecordPathDupes,
-            RerollCarriedOrigLiveOccupied, RerollCarriedZombieRuleNoRecord, RerollCarriedAvoidAdded, RerollNewQuotaEffective, Config.NewNodeCount, bRerollCustomLocations ? 1 : 0, PoolSize);
+            RerollCarriedOrigLiveOccupied, RerollCarriedZombieRuleNoRecord, RerollCarriedAvoidAdded, RerollNewQuotaEffective, Config.NewNodeCount, bRerollCustomLocations ? 1 : 0, PoolSize,
+            RerollIdentityDupesDropped, RerollIdentity.CarriedTwinsUnified, RerollIdentity.PathTransfers, RerollPathsWithoutPriorRecord, RerollVanillaRestampConv.Restamped, RerollVanillaRestampCarried.Restamped);
     }
     UE_LOG(LogNodeShuffle, Display,
         TEXT("Rolled layout: seed %d, pool %d (vanilla %d, new %d), active %d, pinned %d"),

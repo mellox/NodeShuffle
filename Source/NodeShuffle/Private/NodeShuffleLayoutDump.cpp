@@ -27,6 +27,7 @@
 // TODO(2026-10-29, rwg-layout-dump-1): diagnostic command -- gate behind EnableDiagnostics or strip before release.
 #include "NodeShuffleSubsystem.h"
 #include "NodeShuffleMapMode.h"
+#include "NodeShuffleRerollIdentity.h" // rwg-rerolldup-2: identity twins (resource + anchor) the path-keyed census cannot see
 #include "NodeShuffle.h"
 
 #include "EngineUtils.h"
@@ -248,4 +249,10 @@ void ANodeShuffleSubsystem::DumpLayout()
         UE_LOG(LogNodeShuffle, Display, TEXT("LAYOUTDUMP-TWIN dumpId=%d path=%s entries=%d pinned=%d guids=%s"),
             DumpId, *FPackageName::ObjectPathToObjectName(P), Idx.Num(), Pinned, *Guids);
     }
+    // rwg-rerolldup-2: the path-keyed census above cannot see two rows of one original that hold two different stale names (a
+    // renamed runtime original whose load-time rematch rebound only one row). Count them by resource + anchor within the identity
+    // radius; pathsOnMultipleActiveEntries alone is a lower bound on the twin population.
+    const int32 IdentityTwinPaths = NodeShuffleRerollIdentity::ReportIdentityTwins(Layout, NodeShuffleRerollIdentity::OriginalIdentityRadiusCm, DumpId, 32);
+    UE_LOG(LogNodeShuffle, Display, TEXT("LAYOUTDUMP-IDTWINS dumpId=%d identityTwinPaths=%d radiusCm=%.0f"),
+        DumpId, IdentityTwinPaths, NodeShuffleRerollIdentity::OriginalIdentityRadiusCm);
 }
