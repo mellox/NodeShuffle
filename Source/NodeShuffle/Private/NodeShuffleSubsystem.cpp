@@ -1037,7 +1037,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
         // unoccupied originals it re-detaches). Without this, stale records from the prior layout linger.
         OriginalNodeRecord.Reset();
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("Re-roll pool (redesign-6): rebuilt %d original entries from the FULL saved layout (pinned + all relocated), %d resource kinds — no collapse (rehide-1: %d pre-fix un-anchorable zombie(s) dropped; rwg-rerolldup-1: %d of the rebuilt count are carried entries counted toward the composition but kept out of the pool, %d same-path entries dropped; rwg-rerolldup-2: %d rows dropped as grouped with a keeper (same name within the radius, or same resource + anchors within the radius), %d rebuilt paths had no record in the previous roll)"),
+            TEXT("Re-roll pool (redesign-6): rebuilt %d original entries from the FULL saved layout (pinned + all relocated), %d resource kinds — no collapse (rehide-1: %d pre-fix un-anchorable zombie(s) dropped; rwg-rerolldup-1: %d of the rebuilt count are carried entries counted toward the composition but kept out of the pool, %d same-path entries dropped; rwg-rerolldup-2: %d rows dropped as grouped with a keeper (REROLLPOOL-IDENTITY splits them: pathDrops, anchorDrops, thirdRowDrops), %d rebuilt paths had no record in the previous roll)"),
             VanillaCount, VanillaResourceCounts.Num(), ZombiesDropped, RerollExcludedFromPool - RerollCarriedSamePathComposition, RerollPathDupesDropped,
             RerollIdentityDupesDropped, RerollPathsWithoutPriorRecord);
         if (GetMapMode() == ENodeShuffleMapMode::Rwg)
@@ -2171,18 +2171,19 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
         bStarterNodesPlaced = true;
     }
 
-    // rwg-rerolldup-2: a carried entry with no live actor, or whose live actor's class had no bound actor at this session's adopt (ADOPTCLASS), gets the vanilla-deal class rule; any other live actor keeps its class (its class was adopted this session).
-    // Writes RepClassSpawnPath only; the carried hide records above are already written.
+    // rwg-rerolldup-2: before this session's adopt nothing is changed; after it, a carried entry with no live actor, or whose live actor's class is in AdoptUnboundSpawnClasses (ADOPTCLASS), gets the vanilla-deal class rule and any other live actor keeps its class.
+    // Writes RepClassSpawnPath only; the carried hide records above are already written. The conversion restamp is unconditional: its rows' live actors are destroyed by the wipe below.
     if (bIsReroll)
     {
-        int32 RerollVanillaRestampLiveKept = 0;
+        int32 RerollVanillaRestampLiveKept = 0, RerollVanillaRestampEligibleKept = 0, RerollVanillaRestampPreAdoptKept = 0;
         for (FNodeShuffleEntry& C : CarriedEntries)
         {
-            AFGResourceNode* const* LiveC = SpawnedNodes.Find(C.EntryGuid); if (LiveC && IsValid(*LiveC) && !AdoptUnboundSpawnClasses.Contains(ResolveSpawnNodeClassPath(C))) { ++RerollVanillaRestampLiveKept; continue; } // a live actor of a class this session's adopt bound keeps its class
+            if (!bAdoptedRestoredNodes) { ++RerollVanillaRestampPreAdoptKept; continue; } // adopt-on-load has not run: SpawnedNodes holds no restored actor yet
+            AFGResourceNode* const* LiveC = SpawnedNodes.Find(C.EntryGuid); if (LiveC && IsValid(*LiveC) && !AdoptUnboundSpawnClasses.Contains(ResolveSpawnNodeClassPath(C))) { ++RerollVanillaRestampLiveKept; FNodeShuffleEntry RestampProbe = C; NodeShuffleRerollIdentity::FVanillaRestamp RestampProbeCensus; if (NodeShuffleRerollIdentity::RestampVanillaDealOffForeignClass(RestampProbe, ResolvedSolidRepresentative, ResolvedLiquidRepresentative, FormLiquid, RestampProbeCensus)) { ++RerollVanillaRestampEligibleKept; } continue; } // a live actor whose class is not in the set keeps its class
             NodeShuffleRerollIdentity::RestampVanillaDealOffForeignClass(C, ResolvedSolidRepresentative, ResolvedLiquidRepresentative, FormLiquid, RerollVanillaRestampCarried);
         }
         NodeShuffleRerollIdentity::EmitVanillaRestampCensus(TEXT("carried"), RerollVanillaRestampCarried);
-        UE_LOG(LogNodeShuffle, Display, TEXT("REPCLASS-VANRESTAMP-LIVEKEPT carriedTotal=%d liveNotInUnboundSet=%d unboundClassesAtAdopt=%d"), CarriedEntries.Num(), RerollVanillaRestampLiveKept, AdoptUnboundSpawnClasses.Num()); // carriedTotal, not carried: the CARRY census owns that token (rerolldup U6)
+        UE_LOG(LogNodeShuffle, Display, TEXT("REPCLASS-VANRESTAMP-LIVEKEPT carriedTotal=%d liveNotInUnboundSet=%d eligibleKept=%d unboundClassesAtAdopt=%d adoptRan=%d preAdoptKept=%d"), CarriedEntries.Num(), RerollVanillaRestampLiveKept, RerollVanillaRestampEligibleKept, AdoptUnboundSpawnClasses.Num(), bAdoptedRestoredNodes ? 1 : 0, RerollVanillaRestampPreAdoptKept); // carriedTotal, not carried: the CARRY census owns that token (rerolldup U6)
     }
     NewLayout.Append(CarriedEntries);
     Layout = MoveTemp(NewLayout);

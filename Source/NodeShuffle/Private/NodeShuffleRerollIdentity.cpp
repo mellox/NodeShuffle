@@ -80,7 +80,7 @@ namespace NodeShuffleRerollIdentity
             else { ByResource.FindOrAdd(E.OriginalResourceClassPath).Add(c); }
         }
         const float RadiusSq = FMath::Square(RadiusCm);
-        // review F2: one name at two anchored spots further apart than the radius is a swapped name (two originals), never united.
+        // review F2: one name at two anchored spots >= the radius apart is a swapped name: never united DIRECTLY (a zero-anchor third row can still join them).
         for (const TPair<FString, TArray<int32>>& KV : ByPath) { const TArray<int32>& Same = KV.Value; for (int32 x = 0; x < Same.Num(); ++x) { const FVector AX = OriginalAnchor(Layout[Cand[Same[x]]]); for (int32 y = x + 1; y < Same.Num(); ++y) { const FVector AY = OriginalAnchor(Layout[Cand[Same[y]]]); if (!AX.IsNearlyZero() && !AY.IsNearlyZero() && FVector::DistSquared(AX, AY) >= RadiusSq) { ++Out.PathPairsApart; continue; } Unite(Parent, Same[x], Same[y]); } } }
         for (const TPair<FString, TArray<int32>>& KV : ByResource)
         {
@@ -90,7 +90,7 @@ namespace NodeShuffleRerollIdentity
                 const FVector AnchorX = OriginalAnchor(Layout[Cand[Bucket[x]]]);
                 for (int32 y = x + 1; y < Bucket.Num(); ++y)
                 {
-                    // review F3: two different names that BOTH resolve live are two originals even inside the radius; never united.
+                    // review F3: two different names that BOTH resolve live are two originals: never united DIRECTLY (a third row in the radius can still join them; residual).
                     const FNodeShuffleEntry& EX = Layout[Cand[Bucket[x]]]; const FNodeShuffleEntry& EY = Layout[Cand[Bucket[y]]]; if (FVector::DistSquared(AnchorX, OriginalAnchor(EY)) >= RadiusSq) { continue; } if (!EX.VanillaNodePath.IsEmpty() && !EY.VanillaNodePath.IsEmpty() && EX.VanillaNodePath != EY.VanillaNodePath && PathResolvesLive(EX.VanillaNodePath) && PathResolvesLive(EY.VanillaNodePath)) { ++Out.AnchorPairsBothLive; continue; } Unite(Parent, Bucket[x], Bucket[y]);
                 }
             }

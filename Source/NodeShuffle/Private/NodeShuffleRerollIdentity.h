@@ -8,8 +8,9 @@
 // it got in an older session. The path-keyed dedupe of rwg-rerolldup-1 then compares two different stale names of one original
 // and keeps both (l.26467 / l.59375 / l.148600 of that copy: three names for one original, two entries, one twin pair).
 //
-// Identity here is: SAME PATH, or SAME ORIGINAL RESOURCE AND BOTH ANCHORS SET AND WITHIN OriginalIdentityRadiusCm. An entry
-// with no anchor (a relocated entry never stamped with OriginalTrueLocation) never matches by distance. All helpers are PURE
+// Identity here is: SAME PATH unless both rows are anchored >= OriginalIdentityRadiusCm apart, or SAME ORIGINAL RESOURCE AND BOTH
+// ANCHORS SET AND WITHIN OriginalIdentityRadiusCm unless the two names differ and both resolve live; both refusals are pairwise. An
+// entry with no anchor (a relocated entry never stamped with OriginalTrueLocation) never matches by distance. All helpers are PURE
 // over the layout arrays except DedupeOriginals, which renames VanillaNodePath in Layout and Carried; log lines are Display and
 // bounded by the caller's cap.
 
@@ -70,9 +71,11 @@ namespace NodeShuffleRerollIdentity
         const TSet<FString>& PriorRecordPaths, int32 LineCap);
 
     // A VANILLA resource dealt onto a slot whose spawn class is not a base-game class spawns the vanilla representative of its
-    // form instead. Measured reason: our lead_C-class actors (iron/coal/SAM dealt on bamrenew lead slots) never come back with
-    // the save (0 adopted at load, 41 of 41 load-time respawns lead_C), so a pinned one sat under its miner with no node every
-    // session. Writes E.RepClassSpawnPath only, and only when the representative itself is a base-game class.
+    // form instead. Measured on one class only: our lead_C-class actors (iron/coal/SAM dealt on bamrenew lead slots) never came
+    // back with the save (0 adopted at load; 92 of the 166 load-time respawns in the log were lead_C), so a pinned one sat under
+    // its miner with no node every session; the rule reaches every non-base-game slot class (Res_*2_C included), and ADOPTCLASS
+    // measures per class which ones the save restores. Writes E.RepClassSpawnPath only, and only when the representative itself
+    // is a base-game class.
     struct FVanillaRestamp
     {
         int32 Restamped = 0;

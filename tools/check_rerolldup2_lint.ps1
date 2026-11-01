@@ -75,11 +75,18 @@ $keeperBefore = '            const FNodeShuffleEntry KeeperBefore = Keeper;'
 $gradeBefore = '                SameOriginal(KeeperBefore, E, RadiusCm, bByPath, DistCm);'
 $thirdRow    = '                if (bByPath) { ++Out.PathDrops; } else if (DistCm >= 0.0f) { ++Out.AnchorDrops; } else { ++Out.ThirdRowDrops; }'
 # review F1 (verbatim, reviewer-authored): live carried actors keep their class unless ADOPTCLASS saw the class with no bound actor
-$liveKeptSkip = '            AFGResourceNode* const* LiveC = SpawnedNodes.Find(C.EntryGuid); if (LiveC && IsValid(*LiveC) && !AdoptUnboundSpawnClasses.Contains(ResolveSpawnNodeClassPath(C))) { ++RerollVanillaRestampLiveKept; continue; }'
-$liveKeptFmt = 'TEXT("REPCLASS-VANRESTAMP-LIVEKEPT carriedTotal=%d liveNotInUnboundSet=%d unboundClassesAtAdopt=%d"), CarriedEntries.Num(), RerollVanillaRestampLiveKept, AdoptUnboundSpawnClasses.Num());'
+$liveKeptSkip = '            AFGResourceNode* const* LiveC = SpawnedNodes.Find(C.EntryGuid); if (LiveC && IsValid(*LiveC) && !AdoptUnboundSpawnClasses.Contains(ResolveSpawnNodeClassPath(C))) { ++RerollVanillaRestampLiveKept; FNodeShuffleEntry RestampProbe = C; NodeShuffleRerollIdentity::FVanillaRestamp RestampProbeCensus; if (NodeShuffleRerollIdentity::RestampVanillaDealOffForeignClass(RestampProbe, ResolvedSolidRepresentative, ResolvedLiquidRepresentative, FormLiquid, RestampProbeCensus)) { ++RerollVanillaRestampEligibleKept; } continue; }'
+$liveKeptFmt = 'TEXT("REPCLASS-VANRESTAMP-LIVEKEPT carriedTotal=%d liveNotInUnboundSet=%d eligibleKept=%d unboundClassesAtAdopt=%d adoptRan=%d preAdoptKept=%d"), CarriedEntries.Num(), RerollVanillaRestampLiveKept, RerollVanillaRestampEligibleKept, AdoptUnboundSpawnClasses.Num(), bAdoptedRestoredNodes ? 1 : 0, RerollVanillaRestampPreAdoptKept);'
+# round 2 R2-2: no carried restamp before adopt-on-load has run (SpawnedNodes holds no restored actor yet)
+$preAdoptSkip = '            if (!bAdoptedRestoredNodes) { ++RerollVanillaRestampPreAdoptKept; continue; }'
 $adoptSetReset = '        AdoptUnboundSpawnClasses.Reset();'
-$adoptSetAdd = '            if (Row.Entries > 0 && Row.Bound == 0) { AdoptUnboundSpawnClasses.Add(C); }'
+# round 2 R2-1: restorability judged on pinned, settled rows only
+$adoptPinned = '            if (E.bPinned && !E.bRwgProvisional) { ++Row.PinnedSettled;'
+$adoptSetAdd = '            if (Row.PinnedSettled > 0 && Row.PinnedSettledBound == 0) { AdoptUnboundSpawnClasses.Add(C); }'
 $hdrSet      = 'TSet<FString> AdoptUnboundSpawnClasses;'
+# round 2 R2-5: the path leg's fill and loop header are pinned, not only the guard inside the loop
+$pathFill    = '            if (!E.VanillaNodePath.IsEmpty()) { ByPath.FindOrAdd(E.VanillaNodePath).Add(c); }'
+$pathLoop    = '        for (const TPair<FString, TArray<int32>>& KV : ByPath) { const TArray<int32>& Same = KV.Value;'
 $sameRes     = '        if (A.OriginalResourceClassPath.IsEmpty() || A.OriginalResourceClassPath != B.OriginalResourceClassPath) { return false; }'
 $sameZero    = '        if (AnchorA.IsNearlyZero() || AnchorB.IsNearlyZero()) { return false; } // an unanchored row never matches by distance'
 $sameRadius  = '        if (Dist >= RadiusCm) { return false; }'
@@ -96,7 +103,7 @@ $augDropped  = '        ExistingPaths.Append(RerollIdentity.DroppedPaths);'
 $noRecCall   = '        RerollPathsWithoutPriorRecord = NodeShuffleRerollIdentity::ReportPathsWithoutPriorRecord(NewLayout, CarriedEntries, RerollPriorRecordPaths, 48);'
 $recReset    = '        OriginalNodeRecord.Reset();'
 $poolLine    = 'Re-roll pool (redesign-6)'
-$poolTail    = 'rwg-rerolldup-2: %d rows dropped as grouped with a keeper (same name within the radius, or same resource + anchors within the radius), %d rebuilt paths had no record in the previous roll)"),'
+$poolTail    = 'rwg-rerolldup-2: %d rows dropped as grouped with a keeper (REROLLPOOL-IDENTITY splits them: pathDrops, anchorDrops, thirdRowDrops), %d rebuilt paths had no record in the previous roll)"),'
 $poolArgs    = "            RerollIdentityDupesDropped, RerollPathsWithoutPriorRecord);"
 $noRecFmt    = 'TEXT("REROLLPOOL-NORECORD path=''%s'' res=''%s'' guid=%s trueLoc=%s carried=%d pinnedNow=%d"),'
 $noRecPool   = '        for (const FNodeShuffleEntry& E : Pool) { if (!E.bIsNewNode) { Visit(E, false); } }'
@@ -110,7 +117,7 @@ $convForm    = '                    else { RwgConvFormKept++; }'
 $convCall    = '                NodeShuffleRerollIdentity::RestampVanillaDealOffForeignClass(E, ResolvedSolidRepresentative, ResolvedLiquidRepresentative, FormLiquid, RerollVanillaRestampConv);'
 $convDone    = '                Converted++;'
 $convEmit    = '        NodeShuffleRerollIdentity::EmitVanillaRestampCensus(TEXT("conversion"), RerollVanillaRestampConv);'
-$carrLoop    = "        int32 RerollVanillaRestampLiveKept = 0;`n        for (FNodeShuffleEntry& C : CarriedEntries)`n        {`n" + $liveKeptSkip + " // a live actor of a class this session's adopt bound keeps its class`n            NodeShuffleRerollIdentity::RestampVanillaDealOffForeignClass(C, ResolvedSolidRepresentative, ResolvedLiquidRepresentative, FormLiquid, RerollVanillaRestampCarried);`n        }`n        NodeShuffleRerollIdentity::EmitVanillaRestampCensus(TEXT(""carried""), RerollVanillaRestampCarried);`n        UE_LOG(LogNodeShuffle, Display, " + $liveKeptFmt
+$carrLoop    = "        int32 RerollVanillaRestampLiveKept = 0, RerollVanillaRestampEligibleKept = 0, RerollVanillaRestampPreAdoptKept = 0;`n        for (FNodeShuffleEntry& C : CarriedEntries)`n        {`n" + $preAdoptSkip + " // adopt-on-load has not run: SpawnedNodes holds no restored actor yet`n" + $liveKeptSkip + " // a live actor whose class is not in the set keeps its class`n            NodeShuffleRerollIdentity::RestampVanillaDealOffForeignClass(C, ResolvedSolidRepresentative, ResolvedLiquidRepresentative, FormLiquid, RerollVanillaRestampCarried);`n        }`n        NodeShuffleRerollIdentity::EmitVanillaRestampCensus(TEXT(""carried""), RerollVanillaRestampCarried);`n        UE_LOG(LogNodeShuffle, Display, " + $liveKeptFmt
 $appendCarry = '    NewLayout.Append(CarriedEntries);'
 $vanFmt      = 'TEXT("REPCLASS-VANRESTAMP role=%s slotClass=%s to=%s restamped=%d"),'
 $vanEndFmt   = 'TEXT("REPCLASS-VANRESTAMP-END role=%s restamped=%d repNotGeneric=%d slotClasses=%d"),'
@@ -130,7 +137,7 @@ $idtSame     = '                    if (A.VanillaNodePath == B.VanillaNodePath) 
 $idtAnchor   = '            if (OriginalAnchor(E).IsNearlyZero()) { continue; }'
 $adoptPred   = '            if (!E.bIsNewNode || !E.bActive) { continue; }'
 $adoptKey    = '            FClassRow& Row = ByClass.FindOrAdd(ResolveSpawnNodeClassPath(E));'
-$adoptFmt    = 'TEXT("ADOPTCLASS class=%s entries=%d bound=%d unbound=%d provisional=%d"),'
+$adoptFmt    = 'TEXT("ADOPTCLASS class=%s entries=%d bound=%d unbound=%d provisional=%d pinnedSettled=%d pinnedSettledBound=%d"),'
 $adoptMark   = '    RwgProvCandMarkDirty(TEXT("reload"));'
 $adoptCensus = 'TEXT("ADOPTCENSUS: preRegistered=%d'
 $marker      = '2026-11-01-rwg-' + 'rerolldup-2'
@@ -154,7 +161,7 @@ function Invoke-RerollDup2Checks($T) {
     if (-not (Ordered $c @($samePath, $sameRes, $sameZero, $sameRadius))) { $f += '(V3) SameOriginal: path leg, then resource, then both anchors set, then the radius' }
     if (-not (Ordered $c @($keeperBefore, $liveKeeper, $liveMember, $gradeBefore, $carriedKeep, $carriedSame, $dropAdd, $thirdRow))) { $f += '(V3) group loop: pre-transfer copy, live-name transfer, legs graded on the copy, carried member renamed and kept, carried-keeper same-path skip, the drop, three drop buckets' }
     foreach ($n in @($pathApart, $bothLive, $keeperBefore, $gradeBefore, $thirdRow)) { if ((Count $c $n) -ne 1) { $f += "(V3) review guard missing: $($n.Trim().Substring(0, 50))" } }
-    if (-not (Ordered $c @('const float RadiusSq = FMath::Square(RadiusCm);', $pathApart, $bothLive))) { $f += '(V3) union order: radius, same-name pairs (apart guard), same-resource pairs (both-live guard)' }
+    if ((Count $c $pathFill) -ne 1 -or (Count $c $pathLoop) -ne 1 -or -not (Ordered $c @($pathFill, 'const float RadiusSq = FMath::Square(RadiusCm);', $pathLoop, $pathApart, $bothLive))) { $f += '(V3) union order: path fill, radius, same-name loop over ByPath (apart guard), same-resource pairs (both-live guard)' }
     if ((Count $h $radiusH) -ne 1 -or (Count $s $radiusS) -ne 1) { $f += '(V3) both identity radius literals must read 300' }
     if ((Count $s ('AdoptMatchRadiusCm,' + "`n            [this]")) -ne 1) { $f += '(V3) the pre-pass must receive the subsystem radius' }
     # V4
@@ -170,10 +177,10 @@ function Invoke-RerollDup2Checks($T) {
     if ((Count $s ('RepClassSpawnPath =' + ' ')) -ne 2) { $f += '(V6) the subsystem keeps exactly two RepClassSpawnPath writes (repclass R8); the vanilla-deal write lives in the module' }
     if ((Count $s $convCall) -ne 1 -or -not (Ordered $s @($convForm, $convCall, $convDone))) { $f += '(V6) the conversion must call the restamp after the form restamp and before Converted++' }
     if ((Count $s $convEmit) -ne 1 -or (Count $s $carrLoop) -ne 1 -or -not (Ordered $s @($convEmit, "    if (bIsReroll)`n    {`n" + $carrLoop, $appendCarry))) { $f += '(V6) conversion census, then every carried entry restamped (re-roll only) before the carried append' }
-    if ((Count $s $liveKeptSkip) -ne 1 -or (Count $s $liveKeptFmt) -ne 1 -or (Count $T.hdr $hdrSet) -ne 1 -or (Count $T.hdr ('UPROPERTY' + '(SaveGame) TSet<FString> AdoptUnboundSpawnClasses')) -ne 0) { $f += '(V6) review F1: live carried actors skip the restamp unless their class is in the session-only unbound set; the set is a plain member, never saved' }
+    if ((Count $s $liveKeptSkip) -ne 1 -or (Count $s $liveKeptFmt) -ne 1 -or (Count $s $preAdoptSkip) -ne 1 -or (Count $T.hdr $hdrSet) -ne 1 -or (Count $T.hdr ("binds/destroys nothing`n    TSet<FString> AdoptUnboundSpawnClasses;")) -ne 1) { $f += '(V6) review F1/R2-2: no carried restamp before adopt ran; live carried actors skip it unless their class is in the session-only unbound set; the set is a plain member right after AdoptAuditEmit, never saved' }
     # V7
     if ((Count $s $censusTail) -ne 1 -or (Count $s $censusArgs2) -ne 1) { $f += '(V7) REROLLPOOL-CARRY must carry the six new fields with their arguments' }
-    foreach ($tok in @('identityDupesDropped=', 'pathsWithoutPriorRecord=', 'vanillaRestampedConversion=', 'vanillaRestampedCarried=', 'thirdRowDrops=', 'pathPairsApart=', 'anchorPairsBothLive=', 'liveNotInUnboundSet=', 'unboundClassesAtAdopt=')) {
+    foreach ($tok in @('identityDupesDropped=', 'pathsWithoutPriorRecord=', 'vanillaRestampedConversion=', 'vanillaRestampedCarried=', 'thirdRowDrops=', 'pathPairsApart=', 'anchorPairsBothLive=', 'liveNotInUnboundSet=', 'unboundClassesAtAdopt=', 'eligibleKept=', 'adoptRan=', 'preAdoptKept=')) {
         if ((Count $s (' ' + $tok)) -ne 1) { $f += "(V7) census token echoed or missing: $tok" }
     }
     foreach ($tok in @('carriedTwinsUnified=', 'pathTransfers=')) { # review F6: one counter, one name, printed by both the IDENTITY and the CARRY census
@@ -192,8 +199,9 @@ function Invoke-RerollDup2Checks($T) {
     if ((Count $c $idtFmt) -ne 1 -or (Count $c $idtSame) -ne 1 -or (Count $c $idtAnchor) -ne 1 -or -not (Ordered $c @($idtAnchor, $idtSame, $idtFmt))) { $f += '(V9) IDTWIN: anchors required, same-path pairs excluded, exact format' }
     # V10
     $emit = Span $a 'void ANodeShuffleSubsystem::AdoptAuditEmit(int32 AdoptLineAdopted)' $adoptMark
-    if (-not $emit -or (Count $emit $adoptPred) -ne 1 -or (Count $emit $adoptKey) -ne 1 -or (Count $emit $adoptFmt) -ne 1 -or -not (Ordered $emit @($adoptCensus, $adoptPred, $adoptKey, $adoptSetReset, $adoptFmt, $adoptSetAdd))) { $f += '(V10) ADOPTCLASS: active spawn entries, keyed by the resolved spawn class, after ADOPTCENSUS and before the provisional mark; the unbound set is reset then filled per class' }
-    if ((Count $emit $adoptSetReset) -ne 1 -or (Count $emit $adoptSetAdd) -ne 1) { $f += '(V10) review F1: the unbound-class set is reset once and filled by the entries>0 and bound==0 test' }
+    if (-not $emit -or (Count $emit $adoptPred) -ne 1 -or (Count $emit $adoptKey) -ne 1 -or (Count $emit $adoptFmt) -ne 1 -or -not (Ordered $emit @($adoptCensus, $adoptPred, $adoptKey, $adoptPinned, $adoptSetReset, $adoptFmt, $adoptSetAdd))) { $f += '(V10) ADOPTCLASS: active spawn entries, keyed by the resolved spawn class, pinned-settled counted per row, after ADOPTCENSUS and before the provisional mark; the unbound set is reset then filled per class' }
+    if ((Count $emit $adoptSetReset) -ne 1 -or (Count $emit $adoptSetAdd) -ne 1 -or (Count $emit $adoptPinned) -ne 1) { $f += '(V10) review F1/R2-1: the unbound-class set is reset once and filled only where pinned settled rows exist and none is bound' }
+    foreach ($tok in @('pinnedSettled=', 'pinnedSettledBound=', 'ADOPTCLASS class=')) { if ((Count $a (' ' + $tok)) -ne 1 -and (Count $a ('"' + $tok)) -ne 1) { $f += "(V10) ADOPTCLASS token echoed or missing: $tok" } }
     if ($a.Contains($diagGate)) { $f += '(V10) ADOPTCLASS must be ungated' }
     # V11
     if ((Count $T.nsmod ('    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle packet marker (' + $marker + ')====="));')) -ne 1 -or (Count $T.nsmod $marker) -ne 1) { $f += '(V11) marker missing or not on its own line' }
@@ -247,7 +255,11 @@ $mutants = @(
     @{ Name = 'M38 (review F3) two live names united'; Key = 'idc'; Expect = 'V3'; Find = $bothLive; Repl = 'Unite(Parent, Bucket[x], Bucket[y]);' }
     @{ Name = 'M39 (review F4) legs graded after the transfer'; Key = 'idc'; Expect = 'V3'; Find = $gradeBefore; Repl = '                SameOriginal(Keeper, E, RadiusCm, bByPath, DistCm);' }
     @{ Name = 'M40 (review F4) third-row drops counted as anchor drops'; Key = 'idc'; Expect = 'V3'; Find = $thirdRow; Repl = '                if (bByPath) { ++Out.PathDrops; } else { ++Out.AnchorDrops; }' }
-    @{ Name = 'M41 (review F1) live restorable actor restamped'; Key = 'sub'; Expect = 'V6'; Find = ($liveKeptSkip + " // a live actor of a class this session's adopt bound keeps its class`n"); Repl = '' }
+    @{ Name = 'M41 (review F1) live restorable actor restamped'; Key = 'sub'; Expect = 'V6'; Find = ($liveKeptSkip + " // a live actor whose class is not in the set keeps its class`n"); Repl = '' }
+    @{ Name = 'M45 (r2 R2-1) set judged on all entries'; Key = 'audit'; Expect = 'V10'; Find = $adoptSetAdd; Repl = '            if (Row.Entries > 0 && Row.Bound == 0) { AdoptUnboundSpawnClasses.Add(C); }' }
+    @{ Name = 'M46 (r2 R2-2) carried restamp before adopt'; Key = 'sub'; Expect = 'V6'; Find = ($preAdoptSkip + " // adopt-on-load has not run: SpawnedNodes holds no restored actor yet`n"); Repl = '' }
+    @{ Name = 'M47 (r2 R2-5) same-name loop retargeted at ByResource'; Key = 'idc'; Expect = 'V3'; Find = $pathLoop; Repl = '        for (const TPair<FString, TArray<int32>>& KV : ByResource) { const TArray<int32>& Same = KV.Value;' }
+    @{ Name = 'M48 (r2 R2-5) UPROPERTY on the line above the set'; Key = 'hdr'; Expect = 'V6'; Find = ("binds/destroys nothing`n    TSet<FString> AdoptUnboundSpawnClasses;"); Repl = ("binds/destroys nothing`n    UPROPERTY" + "(SaveGame)`n    TSet<FString> AdoptUnboundSpawnClasses;") }
     @{ Name = 'M42 (review F1) unbound set never filled'; Key = 'audit'; Expect = 'V10'; Find = ($adoptSetAdd + "`n"); Repl = '' }
     @{ Name = 'M43 (review F1) unbound set never reset'; Key = 'audit'; Expect = 'V10'; Find = ($adoptSetReset + "`n"); Repl = '' }
     @{ Name = 'M44 (review F1) unbound set saved'; Key = 'hdr'; Expect = 'V6'; Find = ('    ' + $hdrSet); Repl = ('    UPROPERTY' + '(SaveGame) ' + $hdrSet) }

@@ -126,7 +126,7 @@ void ANodeShuffleSubsystem::AdoptAuditEmit(int32 AdoptLineAdopted)
     // the two adopt passes. One line per class, every load, ungated. Measured on the user's save before this packet: the lead_C
     // class had entries and no bound actor at all, which is the population the vanilla-deal restamp targets.
     {
-        struct FClassRow { int32 Entries = 0; int32 Bound = 0; int32 Provisional = 0; };
+        struct FClassRow { int32 Entries = 0; int32 Bound = 0; int32 Provisional = 0; int32 PinnedSettled = 0; int32 PinnedSettledBound = 0; };
         TMap<FString, FClassRow> ByClass;
         for (const FNodeShuffleEntry& E : Layout)
         {
@@ -135,6 +135,7 @@ void ANodeShuffleSubsystem::AdoptAuditEmit(int32 AdoptLineAdopted)
             ++Row.Entries;
             if (IsValid(SpawnedNodes.FindRef(E.EntryGuid))) { ++Row.Bound; }
             if (E.bRwgProvisional) { ++Row.Provisional; }
+            if (E.bPinned && !E.bRwgProvisional) { ++Row.PinnedSettled; if (IsValid(SpawnedNodes.FindRef(E.EntryGuid))) { ++Row.PinnedSettledBound; } } // restorability is judged on pinned, settled rows only: an entry never spawned last session cannot be bound, whatever its class
         }
         TArray<FString> Classes;
         ByClass.GetKeys(Classes);
@@ -143,9 +144,9 @@ void ANodeShuffleSubsystem::AdoptAuditEmit(int32 AdoptLineAdopted)
         for (const FString& C : Classes)
         {
             const FClassRow& Row = ByClass.FindChecked(C);
-            UE_LOG(LogNodeShuffle, Display, TEXT("ADOPTCLASS class=%s entries=%d bound=%d unbound=%d provisional=%d"),
-                *FPackageName::ObjectPathToObjectName(C), Row.Entries, Row.Bound, Row.Entries - Row.Bound, Row.Provisional);
-            if (Row.Entries > 0 && Row.Bound == 0) { AdoptUnboundSpawnClasses.Add(C); }
+            UE_LOG(LogNodeShuffle, Display, TEXT("ADOPTCLASS class=%s entries=%d bound=%d unbound=%d provisional=%d pinnedSettled=%d pinnedSettledBound=%d"),
+                *FPackageName::ObjectPathToObjectName(C), Row.Entries, Row.Bound, Row.Entries - Row.Bound, Row.Provisional, Row.PinnedSettled, Row.PinnedSettledBound);
+            if (Row.PinnedSettled > 0 && Row.PinnedSettledBound == 0) { AdoptUnboundSpawnClasses.Add(C); }
         }
     }
     RwgProvCandMarkDirty(TEXT("reload")); // rwg-farspawn-1f C3: the provisional candidate list is rebuilt after adopt-on-load
