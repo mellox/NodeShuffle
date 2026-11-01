@@ -13,14 +13,15 @@
 #   nsmod  NodeShuffle.cpp              packet marker
 #   U1 POPULATION (decision): the class decision iterates ResourceKinds (generated once from VanillaResourceCounts after DecideAndApply,
 #      sorted, never mutated, and read after Restore), never VanillaResourceCounts; premise pins on the seed-gas state
-#   U2 POPULATION (census): the REPCLASS census keys are ResourceKinds too, so every dealable modded kind prints one REPCLASS line
+#   U2 POPULATION (census): the REPCLASS census keys are ResourceKinds too, so every non-/Game/ kind in the deal population (seeded kinds included) prints one REPCLASS line
 #   U3 SPAWNABILITY NEVER ASSUMED: bChosenSpawnable stays the rwg-thoriumclass-1 resident-class predicate for every stat, seeded kinds
 #      included; neither the chosen-flag loop nor SpawnClassForResource consults the seeded set
 #   U4 REPCLASS: exact format with the trailing seeded field, measured by IsSeededKind on the roll's seed state; source prints seeded
 #      for a seeded kind (it is neither a live latch nor a registry pick)
 #   U5 RWGDEAL-RES: exact format with the trailing seeded field; FKindInfo.bSeeded set from IsSeededKind after bLook; Dealable unchanged
 #   U6 DRESS-NATIVE: Display, exact format and arguments, diagnostics-gated, once per entry (NativeDressLogged), never loads; called from
-#      the spawn and the adopt native-visual branches (exactly two call sites); the Verbose native-visual spawn line is gone
+#      the spawn and the adopt native-visual branches (exactly two call sites); the Verbose native-visual spawn line is gone; the
+#      once-per-entry set is cleared at every roll beside ModdedVisualRebuilt (review F2), so a carried entry prints again after a re-roll
 #   U7 Marker 2026-11-01-rwg-thoriumclass-2 once on its own line in NodeShuffle.cpp and nowhere in the packet sources
 #   U8 Every new field token appears exactly once in its file (no legend echoes a field in field=value form)
 # Every forbidden or superseded needle is BUILT BY CONCATENATION so this file cannot satisfy or trip its own checks.
@@ -136,6 +137,7 @@ $adoptBranch = 'else if (NodeHasOwnVisual(*Existing, RockMC))'
 $adoptUnhide = 'if ((*Existing)->IsHidden()) { (*Existing)->SetActorHiddenInGame(false); }'
 $adoptCall  = 'EmitDressNativeOnce(TEXT("adopt"), Entry, *Existing, RockMC);'
 $hdrSet     = 'TSet<FGuid> NativeDressLogged;'
+$rollReset  = 'NativeDressLogged.Empty();'
 $hdrDecl    = 'void EmitDressNativeOnce(const TCHAR* Site, const FNodeShuffleEntry& Entry, class AActor* Node, class UStaticMeshComponent* ExcludeRock);'
 $sgRestore  = 'for (const FString& K : S.SeededKinds) { VanillaResourceCounts.Remove(K); }'
 $sgIsSeeded = 'return S.SeededKinds.Num() > 0 && S.SeededKinds.Contains(Kind);'
@@ -184,6 +186,7 @@ function Invoke-ThoriumClass2Checks($T) {
     if (-not (Ordered $s @($adoptBranch, $adoptUnhide, $adoptCall, $spawnBranch, 'if (Comp) { Comp->ForceVisible(); }', $spawnCall))) { $f += '(U6) the adopt call sits in the adopt native-visual branch and the spawn call in the spawn native-visual branch' }
     if ((Count $s $oldVerbose) -ne 0) { $f += '(U6) the Verbose native-visual spawn line must be gone (DRESS-NATIVE replaces it)' }
     if ((Count $h $hdrSet) -ne 1 -or (Count $h $hdrDecl) -ne 1) { $f += '(U6) NativeDressLogged and EmitDressNativeOnce must be declared' }
+    if ((Count $s $rollReset) -ne 1 -or -not (Ordered $s @('ModdedVisualRebuilt.Empty();', $rollReset))) { $f += '(U6) NativeDressLogged is cleared at every roll, right after ModdedVisualRebuilt (review F2)' }
     # U7
     if ((Count $T.nsmod ('    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle packet marker (' + $marker + ')====="));')) -ne 1 -or (Count $T.nsmod $marker) -ne 1) { $f += '(U7) marker missing or not on its own line' }
     foreach ($k in @('sub', 'diag', 'hdr', 'dealh', 'dealc', 'sg')) { if ((Count $T[$k] $marker) -ne 0) { $f += "(U7) marker must not appear in the packet sources ($k)" } }
@@ -222,6 +225,7 @@ $mutants = @(
     @{ Name = 'N21 header set removed'; Key = 'hdr'; Expect = 'U6'; Find = ("    " + $hdrSet + "`n"); Repl = '' }
     @{ Name = 'N22 Restore stops removing seeded kinds (premise)'; Key = 'sg'; Expect = 'U1'; Find = $sgRestore; Repl = '' }
     @{ Name = 'N23 decision block reads VanillaResourceCounts for the latch'; Key = 'sub'; Expect = 'U1'; Find = ($decStat + "`n            " + $decLatch); Repl = ($decStat + "`n            " + 'const FString* Latched = VanillaResourceCounts.Contains(Res) ? NodeClassByResource.Find(Res) : nullptr;') }
+    @{ Name = 'N25 once-per-entry set never cleared at a roll (review F2)'; Key = 'sub'; Expect = 'U6'; Find = ('    ' + $rollReset + ' // rwg-thoriumclass-2: DRESS-NATIVE is once per entry per ROLL, so a carried entry that still wears a foreign class prints again after a re-roll' + "`n"); Repl = '' }
     @{ Name = 'N24 DRESS-NATIVE loads the mesh'; Key = 'diag'; Expect = 'U6'; Find = 'MeshName = MC->GetStaticMesh()->GetName();'; Repl = ('MeshName = ' + $loadNeedle + 'Object<UStaticMesh>(nullptr, *MC->GetStaticMesh()->GetPathName())->GetName();') }
 )
 $bad = 0

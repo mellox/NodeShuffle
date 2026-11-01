@@ -688,6 +688,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     // real-class redesign: a new roll (initial OR re-roll) rebuilds the layout, so clear the once-per-roll
     // modded-visual guard — every modded node's native visual must be (re)built fresh for the new roll.
     ModdedVisualRebuilt.Empty();
+    NativeDressLogged.Empty(); // rwg-thoriumclass-2: DRESS-NATIVE is once per entry per ROLL, so a carried entry that still wears a foreign class prints again after a re-roll
 
     // FIX 4: name exactly which modded node classes shuffle (and why the rest do
     // not). Once per class per session. This is how "lithium never shuffles" stops
@@ -1485,7 +1486,9 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
         }
     }
 
-    // rwg-seedgas-1 (A1): quotas are final; the registry block, REPCLASS census and EmitRollCensus read captured counts.
+    // rwg-seedgas-1 (A1): quotas are final; EmitRollCensus reads the captured counts restored here. rwg-thoriumclass-2: the class
+    // decision, the registry block and the REPCLASS census do not read these counts -- they iterate ResourceKinds (captured kinds
+    // plus the SEEDED kinds); NodeShuffleRwgSeedGas.h's "REPCLASS census ... print captured originals" predates that.
     NodeShuffleRwgSeedGas::Restore(ModQuota, VanillaResourceCounts, VanillaCount);
 
     // 5. Choose the active set: pinned always; then random draws until TargetActive.
