@@ -20,6 +20,18 @@
 #   R10 (review F2) RerollWipeNoteInvalidSlot: null counted; non-null: Contains measured BEFORE RemoveSingleSwap, by address, no dereference, no Destroy
 #   R9 (review F1) DestroyWellMemberIfUnused: after DeregisterNodeFromManager (which refuses OUR nodes), an explicit snap-list RemoveSingleSwap
 #      and representation removal (by actor, by node), all BEFORE Destroy; the WELLDESPAWN-SNAP line is diagnostics-gated; the three includes
+# LOGFLOOD (2026-11-01, packet rwg-logflood-1; handoff _team/test-logs/2026-11-01-nodeshuffle-logflood-handoff.md). Extends this lint
+# because no lint loaded NodeShuffleWellMeshIndex.cpp and this one already pins the packet-marker banner. LOADS NodeShuffleWellMeshIndex.cpp
+# and NodeShuffleWellMeshIndexDump.cpp/.h. RebuildWellMeshIndex's per-entry Verbose lines print only when the signature changes:
+#   L1 flush: signature compare decides the dump; stored signature/entries/skip counter written only on a dump, after the census
+#   L2 census: exact format + args, Verbose, printed on every flush BEFORE the dump decision returns; each census token once (no legend echo)
+#   L3 reset-on-world: one ResetWellIndexDumpForWorld call right after ResetWellSnapBoxDiagForWorld; the body clears all stored state
+#   L4 gate: buffering active only when diagnostics on AND Verbose active; one flush call, before the pass summary
+#   L5 shortcut forbidden: neither per-entry literal inline in NodeShuffleWellMeshIndex.cpp; each once in the dump file, unchanged text
+#   L6 signature: every printed field except the location is hashed; order-independent sum; the entry count folded in
+#   L7 two buffering sites (accepted, REJECT) in route 3
+#   L8 marker rwg-logflood-1 once on its own line in NodeShuffle.cpp; never in the packet files
+#   L9 new files under 500 lines; L10 header declarations
 # Mutants run in-file. Exit 0 = all hold; 1 = at least one does not; 2 = a pinned FILE is missing.
 
 $ErrorActionPreference = 'Stop'
@@ -32,6 +44,9 @@ $files = [ordered]@{
     wipeh = 'NodeShuffle\Private\NodeShuffleRerollWipe.h'
     nsmod = 'NodeShuffle\Private\NodeShuffle.cpp'
     welld = 'NodeShuffle\Private\NodeShuffleWellDespawn.cpp'
+    wmi   = 'NodeShuffle\Private\NodeShuffleWellMeshIndex.cpp'       # rwg-logflood-1
+    wmid  = 'NodeShuffle\Private\NodeShuffleWellMeshIndexDump.cpp'   # rwg-logflood-1
+    wmidh = 'NodeShuffle\Private\NodeShuffleWellMeshIndexDump.h'     # rwg-logflood-1
 }
 $text = [ordered]@{}
 foreach ($k in $files.Keys) {
@@ -69,6 +84,78 @@ $s1Helper = ('{ if (!Node) { return 0; } AFGResourceNodeManager* Mgr = GetNodeMa
 $auditLoop = 'for (const AFGResourceNode* Ptr : Mgr->mResourceNodes) { if (!Iterated.Contains(Ptr)) { ++NotIterated; if (!NotYieldedBeforeWipe.Contains(Ptr)) { ++NewSinceWipe; } } }'
 # review F1: the WHOLE well-member snap-list drop line, so mutant Q20 moves the identical text after Destroy (order, not presence)
 $wellSnapLine = "    if (AFGResourceNode* AsNode = Cast<AFGResourceNode>(Member)) { if (AFGResourceNodeManager* Mgr = GetNodeManager()) { SnapDropped = Mgr->mResourceNodes.RemoveSingle" + "Swap(AsNode); } }`n"
+
+# ---------------- LOGFLOOD (rwg-logflood-1) needles; every one built by concatenation ----------------
+$lfMarker = '2026-11-01-rwg-' + 'logflood-1'
+$lfCensusFmt = '        TEXT("WELLH2B-INDEX spatial ' + 'CENSUS: pass=%d entries=%d accepted=%d rejected=%d narrowedByType=%d widenedByType=%d bystanderRejects=%d worldReset=%d sigChanged=%d dumping=%d prevEntries=%d skippedSinceDump=%d sig=%08x%08x"),'
+$lfCensusArgs = "        D.Pass, D.Entries.Num(), D.Accepted, D.Rejected, D.NarrowedByType, D.WidenedByType, D.BystanderRejects,`n" +
+    "        D.bWorldReset ? 1 : 0, bSigChanged ? 1 : 0, bDumping ? 1 : 0, WellIndexDumpEntries, WellIndexDumpSkipped,`n" +
+    '        static_cast<uint32>(Sig >> 32), static_cast<uint32>(Sig & 0xffffffffull));'
+$lfDecide = '    const bool bDumping = !bHasPrev ' + '|| bSigChanged;'
+$lfCensusHead = "    if (!bDumping) { ++WellIndexDumpSkipped; }`n    UE_LOG(LogNodeShuffle, Verbose,`n" + $lfCensusFmt
+$lfAcceptLit = 'TEXT("WELLH2B-INDEX spatial' + ': '''
+$lfRejectLit = 'TEXT("WELLH2B-INDEX spatial ' + 'REJECT: '
+$lfAcceptText = $lfAcceptLit + "%s' (nodeMeshType=%d) on actor '%s' at %s -> member `")`n" + '                TEXT("''%s'' at %.0f cm (runner-up %.0f cm, radius %.0f cm). Nearest-wins; a runner-up ")'
+$lfRejectText = $lfRejectLit + "'%s' (nodeMeshType=%d) on '%s' at %s -- nearest well `")`n" + '                TEXT("member ''%s'' is %.0f cm away, radius is %.0f cm, inRadius=%d. The type gate ")'
+$lfResetCall = '    const bool bDumpWorldReset = ResetWellIndex' + 'DumpForWorld(World); // rwg-logflood-1: a fresh world dumps once'
+$lfGate = '    SpatialDump.bActive = bDiag && UE_LOG_' + 'ACTIVE(LogNodeShuffle, Verbose);'
+$lfFlushCall = '        FlushWellIndex' + 'SpatialDump(SpatialDump);'
+function Invoke-LogFloodChecks($T) {
+    $f = @()
+    $flush = Span $T.wmid 'void ANodeShuffleSubsystem::FlushWellIndexSpatialDump(' 'for (const FNodeShuffleWellIndexSpatialEntry& E : D.Entries)'
+    # L1
+    if ($flush -eq '') { $f += '(L1) FlushWellIndexSpatialDump span missing or duplicated' }
+    elseif (-not (Ordered $flush @('    const uint64 Sig = D.Signature();', '    const bool bHasPrev = WellIndexDumpEntries >= 0;',
+        '    const bool bSigChanged = bHasPrev && Sig != WellIndexDumpSig;', $lfDecide, '    if (!bDumping) { ++WellIndexDumpSkipped; }',
+        $lfCensusFmt, '    if (!bDumping) { return; }', '    WellIndexDumpSig = Sig;', '    WellIndexDumpEntries = D.Entries.Num();', '    WellIndexDumpSkipped = 0;'))) {
+        $f += '(L1) flush: signature compare decides the dump; stored state written after the census, only on a dump' }
+    if ((Count $T.wmid $lfDecide) -ne 1 -or (Count $T.wmid ('if (!bDumping) { ' + 'return; }')) -ne 1 -or (Count $T.wmid ('WellIndexDumpSig = ' + 'Sig;')) -ne 1) {
+        $f += '(L1) one dump decision, one early return, one signature store' }
+    # L2
+    if ((Count $T.wmid $lfCensusHead) -ne 1 -or (Count $T.wmid $lfCensusArgs) -ne 1) { $f += '(L2) census: Verbose, exact format and args, printed before the dump decision returns' }
+    foreach ($tok in @(' pass=', ' entries=', ' accepted=', ' rejected=', ' narrowedByType=', ' widenedByType=', ' bystanderRejects=', ' worldReset=',
+        ' sigChanged=', ' dumping=', ' prevEntries=', ' skippedSinceDump=', ' sig=')) {
+        if ((Count $T.wmid $tok) -ne 1 -or (Count $T.wmi $tok) -ne 0 -or (Count $T.wmidh $tok) -ne 0) { $f += "(L2) census token '$tok' must appear once, in the census only (no legend echo)" }
+    }
+    # L3
+    if ((Count $T.wmi ('ResetWellIndex' + 'DumpForWorld(')) -ne 1 -or -not (Ordered $T.wmi @('    ResetWellSnapBoxDiagForWorld(World);', $lfResetCall,
+        '    SpatialDump.bWorldReset = bDumpWorldReset;'))) { $f += '(L3) one reset call right after ResetWellSnapBoxDiagForWorld, its result on the census' }
+    $reset = Span $T.wmid 'bool ANodeShuffleSubsystem::ResetWellIndexDumpForWorld(' 'void ANodeShuffleSubsystem::FlushWellIndexSpatialDump('
+    if ($reset -eq '' -or -not (Ordered $reset @('if (WellIndexDumpWorld.HasSameIndexAndSerialNumber(Incoming)) { return false; }', '    WellIndexDumpWorld = Incoming;',
+        '    WellIndexDumpSig = 0;', ('    WellIndexDumpEntries = ' + '-1;'), '    WellIndexDumpSkipped = 0;', '    return true;'))) { $f += '(L3) reset body: index+serial compare, then clears signature, entries and skip counter' }
+    # L4
+    if ((Count $T.wmi $lfGate) -ne 1) { $f += '(L4) buffering gate: diagnostics AND Verbose active' }
+    if ((Count $T.wmi ('FlushWellIndex' + 'SpatialDump(')) -ne 1 -or -not (Ordered $T.wmi @('    if (SpatialDump.bActive) // rwg-logflood-1: census every rebuild', $lfFlushCall,
+        'TEXT("WELLH2B-INDEX pass %d: '))) { $f += '(L4) one gated flush call, before the pass summary' }
+    # L5
+    if ((Count $T.wmi $lfAcceptLit) -ne 0 -or (Count $T.wmi $lfRejectLit) -ne 0) { $f += '(L5) a per-entry spatial line is printed inline in NodeShuffleWellMeshIndex.cpp (bypasses the dedupe)' }
+    if ((Count $T.wmid $lfAcceptText) -ne 1 -or (Count $T.wmid $lfRejectText) -ne 1 -or (Count $T.wmid $lfAcceptLit) -ne 1 -or (Count $T.wmid $lfRejectLit) -ne 1) {
+        $f += '(L5) each per-entry line once in the dump file with its original text' }
+    # L6
+    $add = Span $T.wmid '    uint64 H = NsFnvOffset;' '    SigSum += H;'
+    if ($add -eq '' -or -not (Ordered $add @('bInAccepted ? 1ull : 2ull', 'InMeshType', 'NsFnvStr(H, InMeshName);', 'NsFnvStr(H, InActorName);', 'NsFnvStr(H, InMemberShort);',
+        'FMath::RoundToInt(InDistCm)', 'FMath::RoundToInt(InRunnerUpCm)', 'bInInRadius ? 1ull : 0ull'))) { $f += '(L6) the signature must hash every printed field but the location' }
+    if ($add -ne '' -and (Count $add ('In' + 'Loc')) -ne 0) { $f += '(L6) the location must not be hashed' }
+    if ((Count $T.wmid '    SigSum += H;') -ne 1 -or (Count $T.wmid 'return NsFnvU64(SigSum, static_cast<uint64>(Entries.Num()));') -ne 1) { $f += '(L6) order-independent sum with the entry count folded in' }
+    $sigBody = Span $T.wmid 'uint64 FNodeShuffleWellIndexSpatialDump::Signature() const' '// Forget the last printed signature'
+    if ($sigBody -eq '' -or ($sigBody -replace '\s+', ' ').Trim() -ne 'uint64 FNodeShuffleWellIndexSpatialDump::Signature() const { return NsFnvU64(SigSum, static_cast<uint64>(Entries.Num())); }') { $f += '(L6) Signature() body must be exactly the folded sum (a constant signature never re-dumps)' }
+    # L7
+    if ((Count $T.wmi 'SpatialDump.Add(/*bAccepted=*/true,') -ne 1 -or (Count $T.wmi 'SpatialDump.Add(/*bAccepted=*/false,') -ne 1 -or (Count $T.wmi 'SpatialDump.Add(') -ne 2 -or
+        (Count $T.wmi '                if (SpatialDump.bActive) // rwg-logflood-1: the accepted-piece line') -ne 1 -or
+        (Count $T.wmi '            else if (SpatialDump.bActive && Best != nullptr) // rwg-logflood-1: the REJECT line') -ne 1) { $f += '(L7) two gated buffering sites (accepted, REJECT)' }
+    # L8
+    if ((Count $T.nsmod ('    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle packet marker (' + $lfMarker + ')====="));')) -ne 1 -or (Count $T.nsmod $lfMarker) -ne 1) {
+        $f += '(L8) marker rwg-logflood-1 once on its own line' }
+    if ((Count $T.wmi $lfMarker) -ne 0 -or (Count $T.wmid $lfMarker) -ne 0 -or (Count $T.wmidh $lfMarker) -ne 0) { $f += '(L8) no marker inside the packet files' }
+    # L9 / L10
+    if (($T.wmid -split "`n").Count -ge 500 -or ($T.wmidh -split "`n").Count -ge 500) { $f += '(L9) new files must stay under 500 lines' }
+    foreach ($d in @('bool ResetWellIndexDumpForWorld(const class UWorld* World);', 'void FlushWellIndexSpatialDump(const struct FNodeShuffleWellIndexSpatialDump& D);',
+        'TWeakObjectPtr<const UWorld> WellIndexDumpWorld;', ('int32 WellIndexDumpEntries = ' + '-1;'))) {
+        if ((Count $T.subh $d) -ne 1) { $f += "(L10) header declaration missing: $d" }
+    }
+    if ((Count $T.wmi '#include "NodeShuffleWellMeshIndexDump.h"') -ne 1 -or (Count $T.wmid '#include "NodeShuffleWellMeshIndexDump.h"') -ne 1) { $f += '(L10) include' }
+    return $f
+}
 
 function Invoke-RerollWipeChecks($T) {
     $f = @()
@@ -170,12 +257,13 @@ function Invoke-RerollWipeChecks($T) {
     foreach ($inc in @('#include "Resources/FGResourceNodeManager.h"', '#include "FGActorRepresentationManager.h"', '#include "Representation/FGResourceNodeRepresentation.h"')) {
         if ((Count $T.welld $inc) -ne 1) { $f += "(R9) WellDespawn include missing: $inc" }
     }
+    $f += @(Invoke-LogFloodChecks $T) # rwg-logflood-1
     return $f
 }
 
 $base = Invoke-RerollWipeChecks $text
 if ($base.Count -gt 0) { Write-Host 'FAIL (baseline):'; $base | ForEach-Object { Write-Host "  $_" }; exit 1 }
-Write-Host 'PASS baseline: R1-R13 hold'
+Write-Host 'PASS baseline: R1-R13 and L1-L10 hold'
 
 $mutants = @(
     @{ Name = 'Q1 teardown call dropped'; Key = 'sub'; Expect = 'R1'; Find = 'RerollWipeTeardownRegistrations(It->Value, WipeTally); if (!It->Value->Destroy())'; Repl = 'if (!It->Value->Destroy())' }
@@ -227,6 +315,22 @@ $mutants = @(
     @{ Name = 'Q41 (re-review D1) WELLDESPAWN-SNAP Cast predicate hard-coded'; Key = 'welld'; Expect = 'R9'; Find = 'Cast<AFGResourceNode>(Member) ? 1 : 0, SnapDropped'; Repl = '1, SnapDropped' }
     @{ Name = 'Q42 (re-review E1) well-member Unregister moved back before Destroy'; Key = 'welld'; Expect = 'R9'; Find = ("    Member->Dest" + "roy();`n    FNodeShuffleModule::UnregisterManagedNode(Member);"); Repl = ("    FNodeShuffleModule::UnregisterManagedNode(Member);`n    Member->Dest" + "roy();") }
     @{ Name = 'Q22 WellDespawn manager include dropped'; Key = 'welld'; Expect = 'R9'; Find = '#include "Resources/FGResourceNodeManager.h"'; Repl = '' }
+    # rwg-logflood-1 (L1..L10)
+    @{ Name = 'F1 signature compare removed (always dump)'; Key = 'wmid'; Expect = 'L1'; Find = $lfDecide; Repl = '    const bool bDumping = true;' }
+    @{ Name = 'F2 census line removed'; Key = 'wmid'; Expect = 'L2'; Find = ($lfCensusFmt + "`n"); Repl = '' }
+    @{ Name = 'F3 reset-on-world call removed'; Key = 'wmi'; Expect = 'L3'; Find = $lfResetCall; Repl = '    const bool bDumpWorldReset = false; // rwg-logflood-1: a fresh world dumps once' }
+    @{ Name = 'F4 reset body keeps the stored entry count'; Key = 'wmid'; Expect = 'L3'; Find = ('    WellIndexDumpEntries = ' + "-1;`n"); Repl = '' }
+    @{ Name = 'F5 census printed only on a dump'; Key = 'wmid'; Expect = 'L2'; Find = "    if (!bDumping) { ++WellIndexDumpSkipped; }`n    UE_LOG(LogNodeShuffle, Verbose,`n"; Repl = "    if (!bDumping) { ++WellIndexDumpSkipped; }`n    if (bDumping) UE_LOG(LogNodeShuffle, Verbose,`n" }
+    @{ Name = 'F6 buffering ungated by verbosity'; Key = 'wmi'; Expect = 'L4'; Find = $lfGate; Repl = '    SpatialDump.bActive = bDiag;' }
+    @{ Name = 'F7 flush call dropped'; Key = 'wmi'; Expect = 'L4'; Find = ($lfFlushCall + "`n"); Repl = '' }
+    @{ Name = 'F8 per-entry line printed inline again (the shortcut)'; Key = 'wmi'; Expect = 'L5'; Find = '                if (SpatialDump.bActive) // rwg-logflood-1: the accepted-piece line';
+       Repl = ('                UE_LOG(LogNodeShuffle, Verbose, ' + $lfAcceptLit + '%s''"), *MeshName);' + "`n" + '                if (SpatialDump.bActive) // rwg-logflood-1: the accepted-piece line') }
+    @{ Name = 'F9 signature drops the member field'; Key = 'wmid'; Expect = 'L6'; Find = "    H = NsFnvStr(H, InMemberShort);`n"; Repl = '' }
+    @{ Name = 'F10 signature hashes the location'; Key = 'wmid'; Expect = 'L6'; Find = "    uint64 H = NsFnvOffset;`n"; Repl = ("    uint64 H = NsFnvOffset;`n    H = NsFnvU64(H, static_cast<uint64>(In" + "Loc.X));`n") }
+    @{ Name = 'F11 legend echoes a census token'; Key = 'wmid'; Expect = 'L2'; Find = '// Called by RebuildWellMeshIndex only when D.bActive.'; Repl = ('// Called by RebuildWellMeshIndex only when D.bActive; sig' + 'Changed=1 means re-dump.') }
+    @{ Name = 'F12 REJECT buffering site dropped'; Key = 'wmi'; Expect = 'L7'; Find = 'SpatialDump.Add(/*bAccepted=*/false,'; Repl = '(void)(/*bAccepted=*/false,' }
+    @{ Name = 'F14 constant signature (never re-dumps on change)'; Key = 'wmid'; Expect = 'L6'; Find = "    return NsFnvU64(SigSum, static_cast<uint64>(Entries.Num()));`n"; Repl = "    return 0;`n    return NsFnvU64(SigSum, static_cast<uint64>(Entries.Num()));`n" }
+    @{ Name = 'F13 logflood marker reverted'; Key = 'nsmod'; Expect = 'L8'; Find = $lfMarker; Repl = ('2026-11-01-rwg-' + 'logflood-0') }
 )
 $bad = 0
 foreach ($m in $mutants) {

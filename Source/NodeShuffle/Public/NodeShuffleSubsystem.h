@@ -3213,6 +3213,15 @@ private:
     TSet<FString> WellVisualCompDumped;    // per-actor component dump, re-fires when the piece count changes
     int32 WellMeshIndexMembers = 0;        // diagnostics: members indexed on the last rebuild
     int32 WellMeshIndexPieces = 0;         // diagnostics: pieces indexed on the last rebuild
+    // rwg-logflood-1 (2026-11-01): RebuildWellMeshIndex's per-entry Verbose dump prints only when its signature changes in this
+    // UWorld; a census line prints every rebuild. Defined in NodeShuffleWellMeshIndexDump.cpp. Diagnostics only: touched by nothing
+    // but ResetWellIndexDumpForWorld and FlushWellIndexSpatialDump; no control flow reads them. Instance fields (this subsystem is per-world) PLUS an explicit world compare.
+    TWeakObjectPtr<const UWorld> WellIndexDumpWorld;
+    uint64 WellIndexDumpSig = 0;           // signature of the last dump printed in WellIndexDumpWorld
+    int32 WellIndexDumpEntries = -1;       // entry count of that dump; -1 = nothing printed in this world yet
+    int32 WellIndexDumpSkipped = 0;        // rebuilds that printed only the census since that dump
+    bool ResetWellIndexDumpForWorld(const class UWorld* World);
+    void FlushWellIndexSpatialDump(const struct FNodeShuffleWellIndexSpatialDump& D);
 
     // ---- T3 SNAP-BOX OVERLAP DIAGNOSTIC (docs/TECH-DEBT.md T3, PARKED/watch-only) ----
     // Promoted by ns-t7-split from `namespace NodeShuffleWellSnapBoxDiag` (function-local statics

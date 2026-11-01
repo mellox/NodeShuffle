@@ -585,6 +585,7 @@ void FNodeShuffleModule::StartupModule()
     // action as the build, never after it.
     UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle 1.4.0 LOADED (2026-10-31-rwg-farspawn-1f)====="));
     UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle packet marker (2026-10-31-rwg-rerollwipe-1)=====")); // own line: check_rwgp4 W14 allows one tag in the line above
+    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle packet marker (2026-11-01-rwg-logflood-1)=====")); // own line: check_rwgp4 W14 allows one tag in the LOADED line
     FNodeShuffleModule::LogAutoAllowExtractorsState(); // Packet G: log the CVar state once at startup
 
 #if !WITH_EDITOR

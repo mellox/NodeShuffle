@@ -53,6 +53,7 @@
 #include "NodeShuffle.h"
 #include "NodeShuffleWellCensus.h"   // AFGResourceNodeFrackingCore / ...Satellite
 #include "NodeShuffleWellRetype.h"   // WellPathOf / WellShort
+#include "NodeShuffleWellMeshIndexDump.h" // rwg-logflood-1: the buffered per-entry Verbose dump
 
 #include "Resources/FGResourceNodeBase.h" // AFGNodeMeshActor / ENodeMeshType
 
@@ -110,7 +111,11 @@ void ANodeShuffleSubsystem::RebuildWellMeshIndex()
     // and idempotent; ApplyWellGroupVisuals calls the same function, so whichever writer runs first in
     // a new world does the reset. See the declaration in NodeShuffleSubsystem.h.
     ResetWellSnapBoxDiagForWorld(World);
+    const bool bDumpWorldReset = ResetWellIndexDumpForWorld(World); // rwg-logflood-1: a fresh world dumps once
     const bool bDiag = FNodeShuffleModule::AreDiagnosticsEnabled();
+    FNodeShuffleWellIndexSpatialDump SpatialDump; // rwg-logflood-1: route 3's per-entry Verbose lines, buffered; same gate as before
+    SpatialDump.bActive = bDiag && UE_LOG_ACTIVE(LogNodeShuffle, Verbose);
+    SpatialDump.bWorldReset = bDumpWorldReset;
 
     // OUR OWN spawned well actors are never "vanilla members" and their pieces are never indexed --
     // otherwise a relocated well landing within 12 m of a vanilla one could have ITS OWN new visual
@@ -426,33 +431,25 @@ void ANodeShuffleSubsystem::RebuildWellMeshIndex()
             if (bOwned && AddPiece(Best->Path, C, /*Route=*/2))
             {
                 ++BySpatial;
-                if (bDiag)
+                if (SpatialDump.bActive) // rwg-logflood-1: the accepted-piece line, buffered (printed by the flush)
                 {
-                    UE_LOG(LogNodeShuffle, Verbose,
-                        TEXT("WELLH2B-INDEX spatial: '%s' (nodeMeshType=%d) on actor '%s' at %s -> member ")
-                        TEXT("'%s' at %.0f cm (runner-up %.0f cm, radius %.0f cm). Nearest-wins; a runner-up ")
-                        TEXT("close to the winner means the H0 spacing measurement no longer holds. ")
-                        TEXT("nodeMeshType is ENodeMeshType: 1=MT_Core 2=MT_Crack 3=MT_Satellite ")
-                        TEXT("4=MT_DesertCore 5=MT_DesertCrack 6=MT_DesertSatellite."),
-                        *MeshName, static_cast<int32>(MeshType), *SMA->GetName(), *Loc.ToCompactString(),
-                        *WellShort(Best->Path),
-                        FMath::Sqrt(BestSq), NextSq < TNumericLimits<float>::Max() ? FMath::Sqrt(NextSq) : -1.0f,
-                        WellMeshOwnerRadiusCm);
+                    SpatialDump.Add(/*bAccepted=*/true, static_cast<int32>(MeshType), MeshName, SMA->GetName(), WellShort(Best->Path), Loc,
+                        FMath::Sqrt(BestSq), NextSq < TNumericLimits<float>::Max() ? FMath::Sqrt(NextSq) : -1.0f, bInRadius);
                 }
             }
-            else if (bDiag && Best != nullptr)
+            else if (SpatialDump.bActive && Best != nullptr) // rwg-logflood-1: the REJECT line, buffered
             {
-                UE_LOG(LogNodeShuffle, Verbose,
-                    TEXT("WELLH2B-INDEX spatial REJECT: '%s' (nodeMeshType=%d) on '%s' at %s -- nearest well ")
-                    TEXT("member '%s' is %.0f cm away, radius is %.0f cm, inRadius=%d. The type gate ")
-                    TEXT("accepted this piece and this pass did not claim it; the fields above are what ")
-                    TEXT("was measured, classify from them. A piece the TYPE gate rejected appears on a ")
-                    TEXT("NARROWED line instead, one it newly ADMITTED on a WIDENED line. If well pieces ")
-                    TEXT("are being missed, read all three."),
-                    *MeshName, static_cast<int32>(MeshType), *SMA->GetName(), *Loc.ToCompactString(),
-                    *WellShort(Best->Path), FMath::Sqrt(BestSq), WellMeshOwnerRadiusCm, bInRadius ? 1 : 0);
+                SpatialDump.Add(/*bAccepted=*/false, static_cast<int32>(MeshType), MeshName, SMA->GetName(),
+                    WellShort(Best->Path), Loc, FMath::Sqrt(BestSq), -1.0f, bInRadius);
             }
         }
+    }
+
+    if (SpatialDump.bActive) // rwg-logflood-1: census every rebuild, per-entry dump only on a changed signature; summary stays last
+    {
+        SpatialDump.Pass = WellAuditPasses; SpatialDump.RadiusCm = WellMeshOwnerRadiusCm; SpatialDump.NarrowedByType = NarrowedByType;
+        SpatialDump.WidenedByType = WidenedByType; SpatialDump.BystanderRejects = RejectedBystander;
+        FlushWellIndexSpatialDump(SpatialDump);
     }
 
     UE_LOG(LogNodeShuffle, Display,
