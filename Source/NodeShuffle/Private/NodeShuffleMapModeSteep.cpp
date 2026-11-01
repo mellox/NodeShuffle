@@ -31,7 +31,7 @@ namespace
         TEXT("NodeShuffle.RwgRingRadiusM"),
         300,
         TEXT("RWG maps only. Radius in metres of the local search tried before a new node spot is redrawn anywhere on the map, when the ")
-        TEXT("spot it was dealt and the nearby spots tried around it are too steep, or rock or cliff it cannot stand on, and when a node being placed ahead of players, or settled as a player approaches it, meets solid geometry in every probed direction at a spot not dealt as a cave (not used for water, nor for any other spot refused after it settled). Default 300. Values are clamped to 50..1000. Read each time the search runs."),
+        TEXT("spot it was dealt and the nearby spots tried around it are too steep, or rock or cliff it cannot stand on, and when a node being placed ahead of players, or moved (within 3 m) onto its settled spot as a player approaches it, meets solid geometry in every probed direction at a spot not dealt as a cave (not used for water, nor for any other spot refused after it settled). Default 300. Values are clamped to 50..1000. Read each time the search runs."),
         ECVF_Default);
     float RwgSteepRingRadiusCmNow() { return 100.0f * static_cast<float>(FMath::Clamp(CVarNodeShuffleRwgRingRadiusM.GetValueOnGameThread(), 50, 1000)); }
     constexpr int32 RwgSteepRingCandidates = 12;       // candidate cap per ring run
