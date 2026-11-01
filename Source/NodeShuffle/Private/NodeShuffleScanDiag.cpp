@@ -13,6 +13,7 @@
 #include "Equipment/FGResourceScanner.h"
 #include "Resources/FGResourceNode.h"
 #include "Resources/FGResourceNodeBase.h"
+#include "Resources/FGResourceDeposit.h" // rwg-farspawn-1e C3: deposits are reported apart from the live set
 #include "Buildables/FGBuildableRadarTower.h"
 #include "GameFramework/Pawn.h"
 #include "Misc/OutputDevice.h"
@@ -63,8 +64,17 @@ void ANodeShuffleSubsystem::EmitScanPing(AFGResourceScanner* Scanner, const TArr
     int32 ForRes = 0;
     for (const FNodeClusterData& C : Scanner->mNodeClusters) { if (C.ResourceDescriptor.Get() == Res) { ++ForRes; } }
     constexpr double None = TNumericLimits<double>::Max();
-    double Marked = None, Live = None, Prov = None, NoActor = None;
-    for (const FNodeClusterData& C : Closest) { for (const AFGResourceNodeBase* N : C.Nodes) { if (IsValid(N)) { Marked = NsNearestM(PawnAt, N->GetActorLocation(), Marked); } } }
+    double Marked = None, Live = None, Prov = None, NoActor = None, Deposit = None;
+    const AFGResourceNodeBase* MarkedNearest = nullptr; // rwg-farspawn-1e C3: the node that set nearestMarkedM
+    for (const FNodeClusterData& C : Closest)
+    {
+        for (const AFGResourceNodeBase* N : C.Nodes)
+        {
+            if (!IsValid(N)) { continue; }
+            const double D = NsNearestM(PawnAt, N->GetActorLocation(), Marked);
+            if (D < Marked) { Marked = D; MarkedNearest = N; }
+        }
+    }
     const FString ResPath = Res ? Res->GetPathName() : FString();
     TSet<const AActor*> ProvActors;
     for (const FNodeShuffleEntry& E : Layout)
@@ -74,22 +84,34 @@ void ANodeShuffleSubsystem::EmitScanPing(AFGResourceScanner* Scanner, const TArr
         if (IsValid(A)) { if (E.bRwgProvisional) { ProvActors.Add(A); Prov = NsNearestM(PawnAt, A->GetActorLocation(), Prov); } }
         else if (E.bActive) { NoActor = NsNearestM(PawnAt, E.Location, NoActor); }
     }
-    // Live = any world node of this resource the scanner hook keeps (valid, not hidden, collision on), minus our provisional actors.
+    // Live = any world node of this resource the scanner hook keeps (valid, not hidden, collision on), minus our provisional actors
+    // and (rwg-farspawn-1e C3) minus resource deposits (AFGResourceDeposit subclasses), whose nearest is printed on its own.
+    const AFGResourceNodeBase* LiveNearest = nullptr;
     for (TActorIterator<AFGResourceNodeBase> It(GetWorld()); It; ++It)
     {
         const AFGResourceNodeBase* N = *It;
         const UClass* NRes = IsValid(N) ? N->GetResourceClass() : nullptr;
         if (!IsValid(N) || NRes != Res || N->IsHidden() || !N->GetActorEnableCollision() || ProvActors.Contains(N)) { continue; }
-        Live = NsNearestM(PawnAt, N->GetActorLocation(), Live);
+        const double D = NsNearestM(PawnAt, N->GetActorLocation(), TNumericLimits<double>::Max());
+        if (N->IsA<AFGResourceDeposit>()) { Deposit = FMath::Min(Deposit, D); continue; }
+        if (D < Live) { Live = D; LiveNearest = N; }
     }
+    // nearestLiveInLayout: the managed-node registry (FNodeShuffleModule::IsManagedSpawnedNode: nodes this mod spawned or adopted
+    // this world), never a position match; -1 when the live set is empty.
+    const int32 LiveInLayout = LiveNearest ? (FNodeShuffleModule::IsManagedSpawnedNode(LiveNearest) ? 1 : 0) : -1;
     // Legend (prose only): distances are 3-D metres from the scanning pawn; -1 means none exists in that set. marked counts the
     // clusters the scanner's pick returned; the nearest-live set is the world's scanner-eligible nodes of this resource other than
     // our provisional actors; the provisional set is our provisional actors; the no-actor set is our active new-node entries
     // with no live actor. pawn is the scanner's instigator location, or the scanner's own location when it has no instigator;
-    // pawnFrom names which of the two was read (rwg-farspawn-1d F10).
-    UE_LOG(LogNodeShuffle, Display, TEXT("SCANPING: resource=%s clustersForResource=%d clustersTotal=%d marked=%d nearestMarkedM=%.0f nearestLiveActorM=%.0f nearestProvisionalM=%.0f nearestNoActorM=%.0f pawn=%s pawnFrom=%s"),
+    // pawnFrom names which of the two was read (rwg-farspawn-1d F10). rwg-farspawn-1e C3: nearestLiveClass and markedNearestClass are the
+    // short class names of the nodes that set nearestLiveActorM and nearestMarkedM (<none> when that set is empty); nearestLiveInLayout
+    // is 1 when that live node is in this mod's managed-node registry, 0 when not, -1 when the set is empty; nearestDepositM is the
+    // nearest scanner-eligible resource deposit of this resource, which the live set no longer contains.
+    UE_LOG(LogNodeShuffle, Display, TEXT("SCANPING: resource=%s clustersForResource=%d clustersTotal=%d marked=%d nearestMarkedM=%.0f nearestLiveActorM=%.0f nearestProvisionalM=%.0f nearestNoActorM=%.0f pawn=%s pawnFrom=%s nearestLiveClass=%s nearestLiveInLayout=%d markedNearestClass=%s nearestDepositM=%.0f"),
         Res ? *Res->GetName() : TEXT("<none>"), ForRes, Scanner->mNodeClusters.Num(), Closest.Num(), NsOrNeg(Marked), NsOrNeg(Live), NsOrNeg(Prov),
-        NsOrNeg(NoActor), *PawnAt.ToCompactString(), P ? TEXT("instigator") : TEXT("scanner"));
+        NsOrNeg(NoActor), *PawnAt.ToCompactString(), P ? TEXT("instigator") : TEXT("scanner"),
+        LiveNearest ? *LiveNearest->GetClass()->GetName() : TEXT("<none>"), LiveInLayout,
+        MarkedNearest ? *MarkedNearest->GetClass()->GetName() : TEXT("<none>"), NsOrNeg(Deposit));
 }
 
 void ANodeShuffleSubsystem::EmitCompassWarnCensus(int32 TowersRescanned)
