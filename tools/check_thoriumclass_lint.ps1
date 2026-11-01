@@ -27,6 +27,8 @@
 #      count as unresolved; spawnability is tested on the RESIDENT class (review F2: never a load); the function writes NO entry field
 #   T8 Marker 2026-11-01-rwg-thoriumclass-1 once on its own line in NodeShuffle.cpp and nowhere in the packet sources
 #   T9 Every new field token appears exactly once in its file (no legend echoes a field in field=value form)
+# rwg-thoriumclass-2 (2026-11-01) re-pinned: the decision loop iterates ResourceKinds (loop variable Res); REPCLASS and RWGDEAL-RES
+# each carry a trailing seeded field. check_thoriumclass2_lint.ps1 pins the new behaviour; this file keeps the thoriumclass-1 rules.
 # Every forbidden or superseded needle is BUILT BY CONCATENATION so this file cannot satisfy or trip its own checks.
 # Mutants run in-file. Exit 0 = all hold; 1 = a rule or mutant fails; 2 = a pinned FILE is missing.
 
@@ -105,7 +107,7 @@ $marker    = '2026-11-01-rwg-' + 'thoriumclass-1'
 $seenPin   = 'const bool bSeenOnOriginal = Latched && St.Seen.Contains(*Latched);'
 $whyPin    = 'const TCHAR* Why = bSeenOnOriginal ? NodeShuffleRepClass::UnspawnableNodeClassReason(FindObject<UClass>(nullptr, **Latched)) : TEXT("Absent");'
 $origSpawn = 'St.bOriginalsSpawnable = bSeenOnOriginal && Why == nullptr;'
-$regPop    = 'if (!Latched || NodeShuffleRepClass::RepClassRank(*Latched, KV.Key) < 2) { RegistryWanted.Add(KV.Key); }'
+$regPop    = 'if (!Latched || NodeShuffleRepClass::RepClassRank(*Latched, Res) < 2) { RegistryWanted.Add(Res); }'
 $regRecord = 'RegSt.RegistryClass = RegMatch.Matched;'
 $regApply  = "if (!RegMatch.Matched.IsEmpty() && !RegSt.bOriginalsSpawnable`n                    && (!Latched || NodeShuffleRepClass::RepClassShouldReplace(*Latched, RegMatch.Matched, Res)))"
 $chosenPin = 'StatKV.Value.bChosenSpawnable = Chosen && NodeShuffleRepClass::IsSpawnableNodeClass(FindObject<UClass>(nullptr, **Chosen));'
@@ -137,7 +139,7 @@ function Invoke-ThoriumClassChecks($T) {
     $f = @()
     $s = $T.sub; $d = $T.diag; $rc = $T.rc; $rch = $T.rch; $h = $T.hdr
     # T1
-    if (-not (Ordered $s @('TArray<FString> RegistryWanted;', 'NodeShuffleRepClass::FStat& St = RepClassStats.FindOrAdd(KV.Key);', $seenPin, 'St.OriginalsClass = bSeenOnOriginal ? *Latched : FString();', $whyPin, $origSpawn, 'St.OriginalsReason = FString(TEXT("originals")) + (Why ? Why : TEXT("Spawnable"));', $regPop, 'NodeShuffleRepClass::MatchByRegistry(Res, RegQuery, SpawnRefusedClassSubstitute, RegLoadCache, RegMatch);', $regRecord, 'bool bRegApplied = false;', $regApply, 'NodeClassByResource.Add(Res, RegMatch.Matched);', 'RepClassStats.FindOrAdd(Res).bFromRegistry = true;', 'bRegApplied = true;'))) { $f += '(T1) decision block: originals class from the live latch (St.Seen), spawnability on the resident class, unchanged registry population, candidate recorded, match applied only when the originals class is not spawnable -- in that order' }
+    if (-not (Ordered $s @('TArray<FString> RegistryWanted;', 'NodeShuffleRepClass::FStat& St = RepClassStats.FindOrAdd(Res);', $seenPin, 'St.OriginalsClass = bSeenOnOriginal ? *Latched : FString();', $whyPin, $origSpawn, 'St.OriginalsReason = FString(TEXT("originals")) + (Why ? Why : TEXT("Spawnable"));', $regPop, 'NodeShuffleRepClass::MatchByRegistry(Res, RegQuery, SpawnRefusedClassSubstitute, RegLoadCache, RegMatch);', $regRecord, 'bool bRegApplied = false;', $regApply, 'NodeClassByResource.Add(Res, RegMatch.Matched);', 'RepClassStats.FindOrAdd(Res).bFromRegistry = true;', 'bRegApplied = true;'))) { $f += '(T1) decision block: originals class from the live latch (St.Seen), spawnability on the resident class, unchanged registry population, candidate recorded, match applied only when the originals class is not spawnable -- in that order' }
     if ((Count $s $seenPin) -ne 1 -or (Count $s $regApply) -ne 1 -or (Count $s 'RegSt.bOriginalsSpawnable') -ne 1) { $f += '(T1) the originals-seen test and the apply gate must each appear exactly once' }
     if ((Count $s 'UnspawnableNodeClassReason(FindObject<UClass>(nullptr, **Latched))') -ne 1 -or (Count $s 'UnspawnableNodeClassReason(LoadObject') -ne 0 -or (Count $s 'UnspawnableNodeClassReason(LoadClassByPath') -ne 0) { $f += '(T1) the originals class is tested RESIDENT (FindObject), never loaded' }
     # T2
@@ -156,14 +158,14 @@ function Invoke-ThoriumClassChecks($T) {
     if ((Count $T.dealh 'bool Dealable() const { return bGeneric || bSpawnClass || bLook; }') -ne 1) { $f += '(T4) Dealable reads bSpawnClass' }
     if (-not (Ordered $s @('if (bSpawnAvailable) { ConvSpawnClassAvailable++; }', 'if (bSpawnAvailable && *SpawnByRes != E.NodeClassPath)', 'E.RepClassSpawnPath = *SpawnByRes;', 'else if (bSpawnAvailable) { ConvAlreadySpawnClass++; }', 'else { ConvKept++; PerRes.Value++; }'))) { $f += '(T4) restamp branches: available, restamp when it differs from the slot class, already, kept' }
     # T5
-    $f += Check-Log $T 'T5' 'sub' 'REPCLASS res=' 'REPCLASS res=%s chosen=%s rank=%s seen=%d replacedFirstSeen=%d source=%s originalsClass=%s reason=%s chosenSpawnable=%d' `
-        @('*FPackageName::ObjectPathToObjectName(Res)', 'Chosen ? *FPackageName::ObjectPathToObjectName(*Chosen) : TEXT("none")', 'Chosen ? NodeShuffleRepClass::RepClassRankName(NodeShuffleRepClass::RepClassRank(*Chosen, Res)) : TEXT("none")', 'SeenN', '(St && St->bReplacedFirstSeen) ? 1 : 0', 'Source', '(St && !St->OriginalsClass.IsEmpty()) ? *FPackageName::ObjectPathToObjectName(St->OriginalsClass) : TEXT("none")', '(St && !St->OriginalsReason.IsEmpty()) ? *St->OriginalsReason : TEXT("none")', 'NodeShuffleRepClass::IsGenericNodeClassPath(Res) ? -1 : ((St && St->bChosenSpawnable) ? 1 : 0)') 1
+    $f += Check-Log $T 'T5' 'sub' 'REPCLASS res=' 'REPCLASS res=%s chosen=%s rank=%s seen=%d replacedFirstSeen=%d source=%s originalsClass=%s reason=%s chosenSpawnable=%d seeded=%d' `
+        @('*FPackageName::ObjectPathToObjectName(Res)', 'Chosen ? *FPackageName::ObjectPathToObjectName(*Chosen) : TEXT("none")', 'Chosen ? NodeShuffleRepClass::RepClassRankName(NodeShuffleRepClass::RepClassRank(*Chosen, Res)) : TEXT("none")', 'SeenN', '(St && St->bReplacedFirstSeen) ? 1 : 0', 'Source', '(St && !St->OriginalsClass.IsEmpty()) ? *FPackageName::ObjectPathToObjectName(St->OriginalsClass) : TEXT("none")', '(St && !St->OriginalsReason.IsEmpty()) ? *St->OriginalsReason : TEXT("none")', 'NodeShuffleRepClass::IsGenericNodeClassPath(Res) ? -1 : ((St && St->bChosenSpawnable) ? 1 : 0)', 'bSeededRes ? 1 : 0') 1
     $f += Check-Log $T 'T5' 'sub' 'REPCLASS-REGISTRY res=' 'REPCLASS-REGISTRY res=%s derived=%d mountFiltered=%d loaded=%d failed=%d rejected=%d cap=%d matched=%s applied=%d ms=%.1f' `
         @('*FPackageName::ObjectPathToObjectName(Res)', 'RegQuery.Derived', 'RegMatch.MountFiltered', 'RegMatch.Loaded', 'RegMatch.Failed', 'RegMatch.Rejected', 'NodeShuffleRepClass::RegistryLoadCap', 'RegMatch.Matched.IsEmpty() ? TEXT("none") : *FPackageName::ObjectPathToObjectName(RegMatch.Matched)', 'bRegApplied ? 1 : 0', 'RegMatch.Ms') 1
     $f += Check-Log $T 'T5' 'sub' 'REPCLASS-CONVERT ' 'REPCLASS-CONVERT converted=%d spawnClassAvailable=%d restamped=%d alreadySpawnClass=%d kept=%d' @('Converted', 'ConvSpawnClassAvailable', 'ConvRestamped', 'ConvAlreadySpawnClass', 'ConvKept') 1
     $f += Check-Log $T 'T5' 'diag' 'REPCLASS-CLEARANCE ' $clearFmt @('*FPackageName::ObjectPathToObjectName(ResourcePath)', 'RoleName', '*FPackageName::ObjectPathToObjectName(ClassPath)', 'Cls ? 1 : 0', 'Cdo ? 1 : 0', 'ClearN', '*Clear', '*BoxExtent', '*BoxProfile', 'BoxCollision', 'ScsPrims', '*FString::Join(ScsParts, TEXT(";"))') 1
     $f += Check-Log $T 'T5' 'diag' 'REPCLASS-STALE ' $staleFmt @('Stale', 'StalePinned', 'Spawned', 'Modded', 'Unresolved', '*FString::Join(Parts, TEXT(";"))') 1
-    $f += Check-Log $T 'T5' 'dealc' 'RWGDEAL-RES ' 'RWGDEAL-RES res=%s cards=%d dealt=%d dealable=%d spawnClass=%d look=%d' @('*FPackageName::ObjectPathToObjectName(Res)', 'C.Key', 'C.Value', 'K.Dealable() ? 1 : 0', 'K.bSpawnClass ? 1 : 0', 'K.bLook ? 1 : 0') 1
+    $f += Check-Log $T 'T5' 'dealc' 'RWGDEAL-RES ' 'RWGDEAL-RES res=%s cards=%d dealt=%d dealable=%d spawnClass=%d look=%d seeded=%d' @('*FPackageName::ObjectPathToObjectName(Res)', 'C.Key', 'C.Value', 'K.Dealable() ? 1 : 0', 'K.bSpawnClass ? 1 : 0', 'K.bLook ? 1 : 0', 'K.bSeeded ? 1 : 0') 1
     # T6
     if (-not (Ordered $s @('TEXT("REPCLASS res=', 'if (!NodeShuffleRepClass::IsGenericNodeClassPath(Res))', $emitChosen, $emitOrig, $emitReg, $emitCtl))) { $f += '(T6) CLEARANCE emitted for chosen, then originals and registry when they differ, then the control once per roll' }
     if ((Count $s 'EmitRepClassClearanceLine(') -ne 4) { $f += '(T6) exactly four CLEARANCE emission sites in the subsystem' }
@@ -216,8 +218,8 @@ $mutants = @(
     @{ Name = 'X12 restamp reads the map directly'; Key = 'sub'; Expect = 'T4'; Find = $restampPin; Repl = $restampPin.Replace('SpawnClassForResource(E.AssignedResourceClassPath)', 'NodeClassByResource.Find(E.AssignedResourceClassPath)') }
     @{ Name = 'X13 a consumer re-adds the rank-2 own-mount test'; Key = 'sub'; Expect = 'T4'; Find = $kindPin; Repl = ('K.bSpawnClass = SpawnClassForResource(Kind) != nullptr && ' + $ownNeedle + 'NodeClassByResource.FindRef(Kind), Kind);') }
     @{ Name = 'X14 old CONVERT field name returns'; Key = 'sub'; Expect = 'T5'; Find = 'spawnClassAvailable=%d'; Repl = ($oldConvA + '%d') }
-    @{ Name = 'X15 REPCLASS drops reason'; Key = 'sub'; Expect = 'T5'; Find = ' originalsClass=%s reason=%s chosenSpawnable=%d"),'; Repl = ' originalsClass=%s chosenSpawnable=%d"),' }
-    @{ Name = 'X32 REPCLASS drops chosenSpawnable'; Key = 'sub'; Expect = 'T5'; Find = ' originalsClass=%s reason=%s chosenSpawnable=%d"),'; Repl = ' originalsClass=%s reason=%s"),' }
+    @{ Name = 'X15 REPCLASS drops reason'; Key = 'sub'; Expect = 'T5'; Find = ' originalsClass=%s reason=%s chosenSpawnable=%d seeded=%d"),'; Repl = ' originalsClass=%s chosenSpawnable=%d seeded=%d"),' }
+    @{ Name = 'X32 REPCLASS drops chosenSpawnable'; Key = 'sub'; Expect = 'T5'; Find = ' originalsClass=%s reason=%s chosenSpawnable=%d seeded=%d"),'; Repl = ' originalsClass=%s reason=%s seeded=%d"),' }
     @{ Name = 'X33 stale census loads the originals class'; Key = 'diag'; Expect = 'T7'; Find = 'NodeShuffleRepClass::IsSpawnableNodeClass(FindObject<UClass>(nullptr, **Orig))'; Repl = ('NodeShuffleRepClass::IsSpawnableNodeClass(' + 'LoadClass' + 'ByPath(*Orig))') }
     @{ Name = 'X34 spawnable admits deposits'; Key = 'rc'; Expect = 'T2'; Find = "        if (NodeClass->IsChildOf(AFGResourceDeposit::StaticClass())) { return TEXT(""Deposit""); }`n"; Repl = '' }
     @{ Name = 'X35 RWGDEAL-STAMP field name reverts'; Key = 'sub'; Expect = 'T9'; Find = 'convFormSpawnClass=%d'; Repl = ('convForm' + 'OwnClass=%d') }
@@ -226,7 +228,7 @@ $mutants = @(
     @{ Name = 'X16 REPCLASS-REGISTRY drops applied'; Key = 'sub'; Expect = 'T5'; Find = ' matched=%s applied=%d ms=%.1f"),'; Repl = ' matched=%s ms=%.1f"),' }
     @{ Name = 'X17 CLEARANCE demoted below Display'; Key = 'diag'; Expect = 'T5'; Find = "    UE_LOG(LogNodeShuffle, Display,`n        TEXT(""REPCLASS-CLEARANCE "; Repl = "    UE_LOG(LogNodeShuffle, Verbose,`n        TEXT(""REPCLASS-CLEARANCE " }
     @{ Name = 'X18 STALE drops a field'; Key = 'diag'; Expect = 'T5'; Find = ' unresolved=%d byClass=[%s]"),'; Repl = ' byClass=[%s]"),' }
-    @{ Name = 'X19 RWGDEAL-RES field name reverts'; Key = 'dealc'; Expect = 'T5'; Find = ' spawnClass=%d look=%d"),'; Repl = ($oldDealF + ' look=%d"),') }
+    @{ Name = 'X19 RWGDEAL-RES field name reverts'; Key = 'dealc'; Expect = 'T5'; Find = ' spawnClass=%d look=%d seeded=%d"),'; Repl = ($oldDealF + ' look=%d seeded=%d"),') }
     @{ Name = 'X20 CLEARANCE skips the registry role'; Key = 'sub'; Expect = 'T6'; Find = ('                ' + $emitReg + "`n"); Repl = '' }
     @{ Name = 'X21 CLEARANCE control removed'; Key = 'sub'; Expect = 'T6'; Find = ('        ' + $emitCtl + "`n"); Repl = '' }
     @{ Name = 'X22 clearance line loads the class'; Key = 'diag'; Expect = 'T6'; Find = $clearFind; Repl = 'const UClass* Cls = LoadClassByPath(ClassPath);' }

@@ -1540,17 +1540,24 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     // on none of this save's originals) was replacing them, and no Mk1 bound on any of those 61 nodes.
     {
         TArray<FString> RegistryWanted;
-        for (const TPair<FString, int32>& KV : VanillaResourceCounts)
+        // rwg-thoriumclass-2 (2026-11-01): the decision runs over ResourceKinds, the DEAL population -- generated from
+        // VanillaResourceCounts after DecideAndApply and before Restore, so it is the post-Restore counts plus every kind the
+        // RWG table SEEDED (rwg-seedgas-1). Iterating VanillaResourceCounts here (as rwg-thoriumclass-1 did) ran AFTER Restore
+        // had removed the seeded kinds, so a seeded kind got no stat, SpawnClassForResource returned null for it and its cards
+        // kept whatever class their slot had. Measured 2026-11-01 on the real RWG save: 30 lithium cards, 0 on lithium's own
+        // class (16 lead_C, 6 Res_*2_C, 8 BP_ResourceNode_C). A seeded kind has no original, so its Seen set is empty and the
+        // rule below reads it as originals-absent; its latched class is the seed decision's (own-mount by that decision's gate).
+        for (const FString& Res : ResourceKinds)
         {
-            if (NodeShuffleRepClass::IsGenericNodeClassPath(KV.Key)) { continue; }
-            NodeShuffleRepClass::FStat& St = RepClassStats.FindOrAdd(KV.Key);
-            const FString* Latched = NodeClassByResource.Find(KV.Key);
+            if (NodeShuffleRepClass::IsGenericNodeClassPath(Res)) { continue; }
+            NodeShuffleRepClass::FStat& St = RepClassStats.FindOrAdd(Res);
+            const FString* Latched = NodeClassByResource.Find(Res);
             const bool bSeenOnOriginal = Latched && St.Seen.Contains(*Latched); // a seeded class (rwg-seedgas-1) was never seen on an original
             St.OriginalsClass = bSeenOnOriginal ? *Latched : FString();
             const TCHAR* Why = bSeenOnOriginal ? NodeShuffleRepClass::UnspawnableNodeClassReason(FindObject<UClass>(nullptr, **Latched)) : TEXT("Absent");
             St.bOriginalsSpawnable = bSeenOnOriginal && Why == nullptr;
             St.OriginalsReason = FString(TEXT("originals")) + (Why ? Why : TEXT("Spawnable"));
-            if (!Latched || NodeShuffleRepClass::RepClassRank(*Latched, KV.Key) < 2) { RegistryWanted.Add(KV.Key); }
+            if (!Latched || NodeShuffleRepClass::RepClassRank(*Latched, Res) < 2) { RegistryWanted.Add(Res); }
         }
         RegistryWanted.Sort();
         if (RegistryWanted.Num() > 0 || FNodeShuffleModule::AreDiagnosticsEnabled())
@@ -1596,8 +1603,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
         }
         // REPCLASS census: one line per modded resource in the pool, plus any base-game resource that was
         // observed on more than one class (that case printed the old diagnostics-gated CONFLICT line).
-        TArray<FString> CensusKeys;
-        VanillaResourceCounts.GetKeys(CensusKeys);
+        TArray<FString> CensusKeys = ResourceKinds; // rwg-thoriumclass-2: the deal population, seeded kinds included
         CensusKeys.Sort();
         for (const FString& Res : CensusKeys)
         {
@@ -1605,16 +1611,17 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
             const int32 SeenN = St ? St->Seen.Num() : 0;
             if (NodeShuffleRepClass::IsGenericNodeClassPath(Res) && SeenN < 2) { continue; }
             const FString* Chosen = NodeClassByResource.Find(Res);
-            const TCHAR* Source = !Chosen ? TEXT("none") : ((St && St->bFromRegistry) ? TEXT("registry") : TEXT("live"));
+            const bool bSeededRes = NodeShuffleRwgSeedGas::IsSeededKind(ModQuota, Res); // rwg-thoriumclass-2
+            const TCHAR* Source = !Chosen ? TEXT("none") : ((St && St->bFromRegistry) ? TEXT("registry") : (bSeededRes ? TEXT("seeded") : TEXT("live")));
             UE_LOG(LogNodeShuffle, Display,
-                TEXT("REPCLASS res=%s chosen=%s rank=%s seen=%d replacedFirstSeen=%d source=%s originalsClass=%s reason=%s chosenSpawnable=%d"),
+                TEXT("REPCLASS res=%s chosen=%s rank=%s seen=%d replacedFirstSeen=%d source=%s originalsClass=%s reason=%s chosenSpawnable=%d seeded=%d"),
                 *FPackageName::ObjectPathToObjectName(Res),
                 Chosen ? *FPackageName::ObjectPathToObjectName(*Chosen) : TEXT("none"),
                 Chosen ? NodeShuffleRepClass::RepClassRankName(NodeShuffleRepClass::RepClassRank(*Chosen, Res)) : TEXT("none"),
                 SeenN, (St && St->bReplacedFirstSeen) ? 1 : 0, Source,
                 (St && !St->OriginalsClass.IsEmpty()) ? *FPackageName::ObjectPathToObjectName(St->OriginalsClass) : TEXT("none"),
                 (St && !St->OriginalsReason.IsEmpty()) ? *St->OriginalsReason : TEXT("none"),
-                NodeShuffleRepClass::IsGenericNodeClassPath(Res) ? -1 : ((St && St->bChosenSpawnable) ? 1 : 0));
+                NodeShuffleRepClass::IsGenericNodeClassPath(Res) ? -1 : ((St && St->bChosenSpawnable) ? 1 : 0), bSeededRes ? 1 : 0);
             // rwg-thoriumclass-1: REPCLASS-CLEARANCE for the chosen class, and for the originals' and registry classes when they differ.
             if (!NodeShuffleRepClass::IsGenericNodeClassPath(Res))
             {
@@ -1723,6 +1730,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
             // spawnable, else the registry's own-mount class) -- the same read as the Phase-2 stamp and the conversion restamp.
             K.bSpawnClass = SpawnClassForResource(Kind) != nullptr;
             K.bLook = ResourceHasAuthoredLook(LoadClassByPath(Kind));
+            K.bSeeded = NodeShuffleRwgSeedGas::IsSeededKind(ModQuota, Kind); // rwg-thoriumclass-2: printed by RWGDEAL-RES; Dealable does not read it
             RwgKinds.Add(Kind, K);
         }
         NodeShuffleRwgDeal::FInputs In;
@@ -4922,6 +4930,7 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
             else if (NodeHasOwnVisual(*Existing, RockMC))
             {
                 if ((*Existing)->IsHidden()) { (*Existing)->SetActorHiddenInGame(false); }
+                EmitDressNativeOnce(TEXT("adopt"), Entry, *Existing, RockMC); // rwg-thoriumclass-2: once per entry per session
             }
             else
             {
@@ -5567,11 +5576,8 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
         else if (NodeHasOwnVisual(Node, Comp ? Comp->RockMesh : nullptr))
         {
             if (Comp) { Comp->ForceVisible(); }
-            if (bSpawnDiag)
-            {
-                UE_LOG(LogNodeShuffle, Verbose, TEXT("spawned MODDED node %s as real class %s (native visual)"),
-                    *ResourceClass->GetName(), *SpawnClass->GetName());
-            }
+            // rwg-thoriumclass-2: the node keeps a mesh of a class that is not the assigned resource's own class -- name it at Display.
+            EmitDressNativeOnce(TEXT("spawn"), Entry, Node, Comp ? Comp->RockMesh : nullptr);
         }
         else
         {

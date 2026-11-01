@@ -21,6 +21,14 @@
 //                       resident at load counts as unspawnable here) would consult the asset registry at roll time; that is
 //                       not run at load, so such entries are counted as unresolved, not as stale. COUNT ONLY -- no entry is
 //                       restamped here; the saved classes change only when a re-roll recomputes them.
+//
+// Packet rwg-thoriumclass-2 (2026-11-01):
+//   DRESS-NATIVE        once per entry per session, from the spawn and adopt native-visual branches: a modded-origin node that
+//                       keeps a mesh of its own class while that class is not the assigned resource's own (the own-class branch
+//                       runs first and never reaches here). Names the site, the node, the assigned resource, the node's class and
+//                       the mesh it shows (NodeHasOwnVisual's search: the first static-mesh component with a mesh, our rock
+//                       excluded, else the linked mesh actor). Measured 2026-11-01: 22 lithium nodes wearing lead_C / Res_*2_C
+//                       meshes printed only at Verbose before this line existed.
 #include "NodeShuffleSubsystem.h"
 #include "NodeShuffle.h"
 #include "NodeShuffleRepClass.h"
@@ -29,6 +37,8 @@
 #include "FGClearanceData.h"
 #include "Components/BoxComponent.h"
 #include "Components/PrimitiveComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
 #include "Engine/BlueprintGeneratedClass.h"
 #include "Engine/SimpleConstructionScript.h"
 #include "Engine/SCS_Node.h"
@@ -155,4 +165,32 @@ void ANodeShuffleSubsystem::EmitRepClassStaleCensusOnce()
     UE_LOG(LogNodeShuffle, Display,
         TEXT("REPCLASS-STALE count=%d pinned=%d spawned=%d modded=%d unresolved=%d byClass=[%s]"),
         Stale, StalePinned, Spawned, Modded, Unresolved, *FString::Join(Parts, TEXT(";")));
+}
+
+// rwg-thoriumclass-2 (2026-11-01): DRESS-NATIVE. Diagnostics-gated like its DRESS-SKIP siblings; once per entry (NativeDressLogged)
+// because the adopt branch re-runs every pass. The mesh name mirrors NodeHasOwnVisual's search so the line names what that
+// predicate accepted.
+void ANodeShuffleSubsystem::EmitDressNativeOnce(const TCHAR* Site, const FNodeShuffleEntry& Entry, AActor* Node, UStaticMeshComponent* ExcludeRock)
+{
+    if (!FNodeShuffleModule::AreDiagnosticsEnabled() || !IsValid(Node)) { return; }
+    bool bAlreadyLogged = false;
+    NativeDressLogged.Add(Entry.EntryGuid, &bAlreadyLogged);
+    if (bAlreadyLogged) { return; }
+    FString MeshName = TEXT("none");
+    TInlineComponentArray<UStaticMeshComponent*> Meshes(Node);
+    for (UStaticMeshComponent* MC : Meshes)
+    {
+        if (!IsValid(MC) || MC == ExcludeRock || MC->GetStaticMesh() == nullptr) { continue; }
+        MeshName = MC->GetStaticMesh()->GetName();
+        break;
+    }
+    if (MeshName == TEXT("none"))
+    {
+        if (const AFGResourceNodeBase* Base = Cast<AFGResourceNodeBase>(Node))
+        {
+            if (const AActor* MA = Base->mMeshActor.Get()) { if (IsValid(MA) && !MA->IsHidden()) { MeshName = FString(TEXT("actor:")) + MA->GetName(); } }
+        }
+    }
+    UE_LOG(LogNodeShuffle, Display, TEXT("DRESS-NATIVE site=%s node=%s resource=%s nodeClass=%s nativeMesh=%s"),
+        Site, *Node->GetName(), *FPackageName::ObjectPathToObjectName(Entry.AssignedResourceClassPath), *Node->GetClass()->GetName(), *MeshName);
 }

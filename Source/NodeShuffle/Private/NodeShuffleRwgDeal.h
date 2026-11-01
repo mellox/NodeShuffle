@@ -29,6 +29,7 @@ namespace NodeShuffleRwgDeal
         bool bSpawnClass = false; // rwg-thoriumclass-1: the roll chose a spawnable class for this kind (RollLayout's SpawnClassForResource:
                                   // the class its originals used when spawnable, else the registry's own-mount class); was the rank-2 own-mount test
         bool bLook = false;      // ResourceHasAuthoredLook(kind)
+        bool bSeeded = false;    // rwg-thoriumclass-2: NodeShuffleRwgSeedGas::IsSeededKind for this kind (rwg-seedgas-1); printed by RWGDEAL-RES only
         bool Dealable() const { return bGeneric || bSpawnClass || bLook; }
     };
 
