@@ -5120,7 +5120,7 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
                 TEXT("no retry is that nothing here MOVES the entry, so a second evaluation would probe ")
                 TEXT("the identical point; the overlap spiral retries because it relocates between ")
                 TEXT("attempts, and its nudge counter is left untouched by this branch. This is a DROP, ")
-                TEXT("not a re-deal: the entry does not come back this session, AND NOTHING HERE TOUCHES ")
+                TEXT("not a re-deal unless the caller restores the entry (the RWG provisional spawn pass does, then redeals it and prints PROVINSIDE); otherwise the entry does not come back this session, AND NOTHING HERE TOUCHES ")
                 TEXT("THE VANILLA ORIGINAL'S SUPPRESSION -- that node stays hidden, so this resource is ")
                 TEXT("absent at BOTH ends for the session. That is the same outcome as the pre-existing ")
                 TEXT("overlap/enclosure give-up and is not new behaviour, but it is the cost of turning ")
