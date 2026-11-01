@@ -1131,6 +1131,7 @@ private:
                         int32& OutTried, int32& OutPassed, int32& OutRejLand, int32& OutRejSpacing, int32& OutRejTrace);
     void RwgSteepEmitSession();                   // RWGSTEEPSUM: session totals (12th-pass census block)
     bool bRwgSteepArmed = false;
+    bool bRwgSteepArmInside = false; int32 RwgSteepSessInsideEvents = 0, RwgSteepSessInsideRing = 0; // rwg-farspawn-1f OPTION B: ring runs armed by RwgSteepArmForInside (RWGSTEEP trigger=, RWGSTEEPSUM insideGate*)
     bool bRwgSteepOccluded = false;               // the re-probed primary stopped on a SOLID mesh (class 4)
     FGuid RwgSteepGuid;
     FVector RwgSteepLoc = FVector::ZeroVector;

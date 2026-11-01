@@ -9,6 +9,7 @@
 // (NodeShuffleMapModeCliffTop.cpp) now runs the same ring (outcome occludedRing, or occludedMapwide when the ring finds nothing); the
 // 2026-10-19 (b) exception that sent it straight map-wide is removed. Ring radius: console variable NodeShuffle.RwgRingRadiusM (default
 // 300 m; the rwg-steep-1 value was 150 m), read once per ring run and printed.
+// rwg-farspawn-1f option B (2026-10-31): RwgSteepArmForInside arms the same ring as a solid stop for an inside-gate redeal (RwgProvisionalInsideRedeal); those runs print trigger=insideGate.
 // Every function here is reached only from RWG code (RwgResolveAtSpawn, TryRedealRwgEntry, RwgSpawnPass). Log lines report measured
 // values and the predicate that branched, never a cause.
 #include "NodeShuffleSubsystem.h"
@@ -57,6 +58,7 @@ void ANodeShuffleSubsystem::RwgSteepNoteUnplaceable(const NodeShuffleMapMode::FR
     if (bHit && bWater) { ++RwgSteepSessReprobeWater; return; } // the water label: map-wide redeal, unchanged, no ring
     if (!bHit || !bSteep) { ++RwgSteepSessReprobeOther; return; } // re-probe no longer steep (or no hit): map-wide, unchanged
     bRwgSteepArmed = true;
+    bRwgSteepArmInside = false;
     bRwgSteepOccluded = bRwgLastProbeSolid;
     RwgSteepGuid = Entry.EntryGuid;
     RwgSteepLoc = Entry.Location;
@@ -79,6 +81,7 @@ void ANodeShuffleSubsystem::RwgSteepArmForInside(const FNodeShuffleEntry& Entry)
     // PLACECENSUS / RWGSTEEPSUM occluded counts INCLUDE these runs (PROVCENSUS insideRedealSession / insideRedealRingSession count them apart);
     // the ring run is charged to RwgPcSteepRingRuns, i.e. against the near-player attempt budget of the pass it runs in.
     bRwgSteepArmed = true;
+    bRwgSteepArmInside = true;
     bRwgSteepOccluded = true;
     RwgSteepGuid = Entry.EntryGuid;
     RwgSteepLoc = Entry.Location;
@@ -93,6 +96,7 @@ bool ANodeShuffleSubsystem::RwgSteepTryRing(const NodeShuffleMapMode::FRwgGround
     // redeals, water label, vanilla fallback) -> false, and TryRedealRwgEntry continues byte-for-byte as at affc801.
     if (!bRwgSteepArmed) { return false; }
     bRwgSteepArmed = false;
+    const bool bInsideArm = bRwgSteepArmInside; bRwgSteepArmInside = false;
     if (RwgSteepGuid != Entry.EntryGuid) { ++RwgSteepSessGuidMismatch; return false; }
     ++RwgSteepSessEvents;
     int32 Tried = 0, Passed = 0, RejLand = 0, RejSpacing = 0, RejTrace = 0;
@@ -112,18 +116,21 @@ bool ANodeShuffleSubsystem::RwgSteepTryRing(const NodeShuffleMapMode::FRwgGround
         if (bMoved) { ++RwgPcSteepRing; ++RwgSteepSessRing; Outcome = TEXT("steepRing"); }
         else { ++RwgPcSteepMapwide; ++RwgSteepSessMapwide; Outcome = TEXT("steepMapwide"); }
     }
+    if (bInsideArm) { ++RwgSteepSessInsideEvents; if (bMoved) { ++RwgSteepSessInsideRing; } }
     RwgSteepSessRingTried += Tried;
     RwgSteepSessRingPassed += Passed;
     if (FNodeShuffleModule::AreDiagnosticsEnabled())
     {
         const FString To = bMoved ? FString::Printf(TEXT("%.0f/%.0f/%.0f"), Entry.Location.X, Entry.Location.Y, Entry.Location.Z) : FString(TEXT("-"));
         // ringDistM: 2-D distance from the original spot (RwgSteepLoc) to the accepted candidate; a dash when the ring moved nothing.
+        // trigger (rwg-farspawn-1f option B): insideGate when the ring was armed by an inside-gate redeal (RwgSteepArmForInside), spawnProbe
+        // when it was armed by the spawn settle's re-probe (RwgSteepNoteUnplaceable).
         const FString DistM = bMoved ? FString::Printf(TEXT("%.0f"), FVector::Dist2D(RwgSteepLoc, Entry.Location) / 100.0) : FString(TEXT("-"));
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("RWGSTEEP entry=%s res=%s loc=%.0f/%.0f/%.0f hitMesh=%s normalRiseRun=%.2f apiRiseRun=%.2f ringRadiusM=%.0f ringTried=%d ringPassed=%d ringRejLand=%d ringRejSpacing=%d ringRejTrace=%d ringTo=%s ringDistM=%s outcome=%s"),
+            TEXT("RWGSTEEP entry=%s res=%s loc=%.0f/%.0f/%.0f hitMesh=%s normalRiseRun=%.2f apiRiseRun=%.2f ringRadiusM=%.0f ringTried=%d ringPassed=%d ringRejLand=%d ringRejSpacing=%d ringRejTrace=%d ringTo=%s ringDistM=%s outcome=%s trigger=%s"),
             *Entry.EntryGuid.ToString().Left(8), *RwgSteepShortPath(Entry.AssignedResourceClassPath), RwgSteepLoc.X, RwgSteepLoc.Y, RwgSteepLoc.Z,
             *RwgSteepHitMesh, RwgSteepNormalRiseRun, RwgSteepApiRiseRun, RadiusCm / 100.0f, Tried, Passed, RejLand, RejSpacing, RejTrace,
-            *To, *DistM, Outcome);
+            *To, *DistM, Outcome, bInsideArm ? TEXT("insideGate") : TEXT("spawnProbe"));
     }
     return bMoved;
 }
@@ -189,9 +196,10 @@ void ANodeShuffleSubsystem::RwgSteepEmitSession()
 {
     // Session totals, printed on the first pass (the zero denominator) and then on 12th passes only when they changed.
     const int32 Sig = RwgSteepSessEvents + RwgSteepSessReprobeWater + RwgSteepSessReprobeOther + RwgSteepSessGuidMismatch; if (RwgSteepSessLastPrinted == Sig) { return; } RwgSteepSessLastPrinted = Sig;
+    // insideGateEvents counts the ring runs armed by an inside-gate redeal (rwg-farspawn-1f option B) and insideGateRing those the ring moved; both are INCLUDED in steepEvents and ringCandidates*, insideGateRing in occludedRing, the rest in occludedMapwide.
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("RWGSTEEPSUM: pass=%d steepEvents=%d ring=%d mapwide=%d occludedMapwide=%d ringCandidatesTried=%d ringCandidatesPassed=%d reprobeWater=%d reprobeNoHitOrNotSteep=%d guidMismatch=%d ringRadiusM=%.0f ringCap=%d ringPassedFromOriginZ=%d occludedRing=%d"),
+        TEXT("RWGSTEEPSUM: pass=%d steepEvents=%d ring=%d mapwide=%d occludedMapwide=%d ringCandidatesTried=%d ringCandidatesPassed=%d reprobeWater=%d reprobeNoHitOrNotSteep=%d guidMismatch=%d ringRadiusM=%.0f ringCap=%d ringPassedFromOriginZ=%d occludedRing=%d insideGateEvents=%d insideGateRing=%d"),
         RwgPcPasses, RwgSteepSessEvents, RwgSteepSessRing, RwgSteepSessMapwide, RwgSteepSessOccluded, RwgSteepSessRingTried, RwgSteepSessRingPassed,
         RwgSteepSessReprobeWater, RwgSteepSessReprobeOther, RwgSteepSessGuidMismatch, RwgSteepRingRadiusCmNow() / 100.f, RwgSteepRingCandidates, RwgSteepSessPassedFromOriginZ,
-        RwgSteepSessOccludedRing);
+        RwgSteepSessOccludedRing, RwgSteepSessInsideEvents, RwgSteepSessInsideRing);
 }
