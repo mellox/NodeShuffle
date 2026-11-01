@@ -1197,6 +1197,7 @@ private:
     void RerollWipeTeardownRegistrations(class AFGResourceNode* Node, struct FNodeShuffleRerollWipeTally& T); // snap list, representation, scan; caller Destroys after
     void RerollWipeNoteInvalidSlot(class AFGResourceNode* Node, struct FNodeShuffleRerollWipeTally& T);  // invalid slot: address recorded, dropped from the snap list by address; no Destroy
     void RerollWipeEmitCensus(const struct FNodeShuffleRerollWipeTally& T);                             // REROLLWIPE, ungated, pointer compares only
+    void RerollWipeEmitListAudit(bool bIsReroll);                                                        // review F3: REROLLAUDIT, every roll, whole snap list vs TActorIterator
     // Coordinator addendum (water diagnostics, measured only, gates nothing): ROLLCENSUS / WELLROLL splits + bounded samples.
     void RwgNoteWaterSample(const NodeShuffleMapMode::FRwgGroundQuery& Q, const FVector& P, bool bVolumeWet, const TCHAR* Caller);
     int32 RwgRcWaterZBelow0 = 0, RwgRcWaterZAtOrAbove0 = 0, RwgRcDealtBelowZ0 = 0; // per roll (GenerateRwgLocations)

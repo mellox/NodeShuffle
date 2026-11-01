@@ -2067,6 +2067,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     EmitRollCensus(Seed, bIsReroll, PoolSize, TargetActive, VanillaCount, NewLocations.Num(),
                    VanillaResourceCounts);
     if (GetMapMode() == ENodeShuffleMapMode::Rwg) { RwgDensityOnRoll(); } // rwg-density-1: RWGDENSITY trigger=roll (diagnostics only)
+    RerollWipeEmitListAudit(bIsReroll); // rwg-rerollwipe-1 review F3: every roll (reroll=0 is the baseline)
 }
 
 // ns-truth-diagnostics B. ONE line per roll carrying the numbers that two separate log-archaeology

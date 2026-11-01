@@ -19,6 +19,7 @@
 #include "NodeShuffleSubsystem.h"
 #include "NodeShuffle.h"
 #include "Engine/World.h"
+#include "EngineUtils.h" // review F3: TActorIterator (REROLLAUDIT)
 #include "Resources/FGResourceNode.h"
 #include "Resources/FGResourceNodeManager.h"
 #include "FGActorRepresentationManager.h"
@@ -85,6 +86,9 @@ void ANodeShuffleSubsystem::RerollWipeEmitCensus(const FNodeShuffleRerollWipeTal
 {
     // Every count below that reads the snap list is a POINTER COMPARE (TArray::Contains on raw addresses). The addresses are never
     // dereferenced: the destroyed ones are pending-kill actors by now. -1 = no resource-node manager this run.
+    // review F3: the stale-after count (staleInManagerAfter) re-reads the list RerollWipeTeardownRegistrations just edited for these same
+    // addresses, so it is 0 by construction barring a duplicate entry or an Add during the wipe; it is not evidence that the list holds
+    // no dead pointers. The whole-list check is REROLLAUDIT (RerollWipeEmitListAudit), run after every teardown of the roll.
     AFGResourceNodeManager* Mgr = GetNodeManager();
     int32 ManagerCountAfter = -1;
     int32 StaleAfter = -1;
@@ -105,4 +109,19 @@ void ANodeShuffleSubsystem::RerollWipeEmitCensus(const FNodeShuffleRerollWipeTal
         T.Destroyed, T.RemovedFromManager, StaleAfter, T.RepAny, T.ManagerCountBefore, ManagerCountAfter, T.Kept,
         T.RepByActor, T.RepByNode, T.InvalidSlots, InvalidStillIn, T.NoManager, T.NoRepManager, T.InvalidSlotsNull, T.InvalidInManagerAtWipe, T.InvalidRemovedFromManager,
         T.DestroyRefused, T.RepPresentAfterUpdate);
+}
+
+void ANodeShuffleSubsystem::RerollWipeEmitListAudit(bool bIsReroll)
+{
+    // review F3: the WHOLE raw snap list after every teardown this roll ran (node wipe and RollWellRelocation's well despawns). Pointer compares
+    // only: counts entries that match no AFGResourceNode the world's TActorIterator yields (default flags); no entry is dereferenced. UNGATED.
+    AFGResourceNodeManager* Mgr = GetNodeManager();
+    UWorld* World = GetWorld();
+    if (!Mgr || !World) { UE_LOG(LogNodeShuffle, Display, TEXT("REROLLAUDIT: reroll=%d noManagerOrWorld=1"), bIsReroll ? 1 : 0); return; }
+    TSet<const AFGResourceNode*> Iterated;
+    for (TActorIterator<AFGResourceNode> It(World); It; ++It) { Iterated.Add(*It); }
+    int32 NotIterated = 0;
+    for (const AFGResourceNode* Ptr : Mgr->mResourceNodes) { if (!Iterated.Contains(Ptr)) { ++NotIterated; } }
+    UE_LOG(LogNodeShuffle, Display, TEXT("REROLLAUDIT: reroll=%d managerEntries=%d entriesNotYieldedByActorIterator=%d actorsIterated=%d"),
+        bIsReroll ? 1 : 0, Mgr->mResourceNodes.Num(), NotIterated, Iterated.Num());
 }
