@@ -5079,6 +5079,10 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
         const FString GateWho = FString::Printf(TEXT("ordinary node entry '%s' (resource '%s')"),
                                                 *Entry.EntryGuid.ToString(),
                                                 *Entry.AssignedResourceClassPath);
+        // TODO(2026-10-31, rwg-farspawn-1f OPTION B): this near-player FRESH path still only MEASURES at the default CVar (and drops at
+        // NodeShuffle.InsideGateRefuse=1). Option B (an all-solid reading at a spot not dealt as a cave redeals the entry: ring, then map-wide)
+        // is applied on the provisional settle's move path and the provisional spawn path only (NodeShuffleMapModeProvisionalMove.cpp,
+        // RwgProvisionalInsideRedeal); bringing it here is its own packet (round-1f review, options table: "Near-player fresh ... own packet").
         const bool bGateRefuses = EvaluateInsideShadowGate(Entry.Location, /*Subject=*/nullptr, GateWho,
                                                            /*bAdoptedNotPlaced=*/false,
                                                            /*bCaveFlagged=*/Entry.bUnderground || Entry.bRwgCave); // RWG P5: an RWG cave floor is a dealt cave cell too (bRwgCave false on vanilla)

@@ -30,7 +30,7 @@ namespace
         TEXT("NodeShuffle.RwgRingRadiusM"),
         300,
         TEXT("RWG maps only. Radius in metres of the local search tried before a new node spot is redrawn anywhere on the map, when the ")
-        TEXT("spot it was dealt and the nearby spots tried around it are too steep, or rock or cliff it cannot stand on (not used for water, nor for a spot refused after it settled). Default 300. Values are clamped to 50..1000. Read each time the search runs."),
+        TEXT("spot it was dealt and the nearby spots tried around it are too steep, or rock or cliff it cannot stand on, and when a node being placed ahead of players, or settled as a player approaches it, meets solid geometry in every probed direction at a spot not dealt as a cave (not used for water, nor for any other spot refused after it settled). Default 300. Values are clamped to 50..1000. Read each time the search runs."),
         ECVF_Default);
     float RwgSteepRingRadiusCmNow() { return 100.0f * static_cast<float>(FMath::Clamp(CVarNodeShuffleRwgRingRadiusM.GetValueOnGameThread(), 50, 1000)); }
     constexpr int32 RwgSteepRingCandidates = 12;       // candidate cap per ring run
@@ -68,6 +68,23 @@ void ANodeShuffleSubsystem::RwgSteepNoteUnplaceable(const NodeShuffleMapMode::FR
     const UStaticMeshComponent* Smc = Cast<UStaticMeshComponent>(Hit.GetComponent());
     const UStaticMesh* Mesh = Smc ? Smc->GetStaticMesh() : nullptr;
     RwgSteepHitMesh = Mesh ? Mesh->GetName() : (Hit.GetComponent() ? Hit.GetComponent()->GetName() : FString(TEXT("<none>")));
+}
+
+void ANodeShuffleSubsystem::RwgSteepArmForInside(const FNodeShuffleEntry& Entry)
+{
+    // rwg-farspawn-1f OPTION B (2026-10-31): the second arm site. RwgProvisionalInsideRedeal (NodeShuffleMapModeProvisionalMove.cpp) calls this
+    // just before its RwgRedealLiveEntry, so an all-solid inside-gate reading tries the local ring (RwgSteepTryRing, read-and-clear, guid-checked)
+    // before the map-wide draw, as an occluded settle does (rwg-clifftop-1). No re-probe: the inside gate's reading is the trigger. It arms as a
+    // SOLID stop (occluded, rise/run -1), so the RWGSTEEP line reads occludedRing or occludedMapwide with hitMesh naming the inside gate, and the
+    // PLACECENSUS / RWGSTEEPSUM occluded counts INCLUDE these runs (PROVCENSUS insideRedealSession / insideRedealRingSession count them apart);
+    // the ring run is charged to RwgPcSteepRingRuns, i.e. against the near-player attempt budget of the pass it runs in.
+    bRwgSteepArmed = true;
+    bRwgSteepOccluded = true;
+    RwgSteepGuid = Entry.EntryGuid;
+    RwgSteepLoc = Entry.Location;
+    RwgSteepNormalRiseRun = -1.0;
+    RwgSteepApiRiseRun = 0.0;
+    RwgSteepHitMesh = TEXT("<inside gate all-solid: no probe hit>");
 }
 
 bool ANodeShuffleSubsystem::RwgSteepTryRing(const NodeShuffleMapMode::FRwgGroundQuery& Q, FNodeShuffleEntry& Entry, float SpacingCm)

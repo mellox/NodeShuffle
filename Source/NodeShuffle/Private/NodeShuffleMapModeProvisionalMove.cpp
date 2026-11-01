@@ -20,8 +20,10 @@
 //                                            spawn ran them at the provisional Z, so a settle that rose onto a cliff top was never gated.
 //   enclosure / T54 inside-shadow gates   -> MEASURED at the settled spot (rwg-farspawn-1d F2, round-1c review option c):
 //                                            IsSpotEnclosed + EvaluateInsideShadowGate, this actor excluded; printed on PROVMOVE and
-//                                            counted on PROVCENSUS. rwg-farspawn-1f C2: enclosed or allSolid refuses the MOVE
-//                                            (gatedRespawn): the caller despawns and respawns through the gated spawn path.
+//                                            counted on PROVCENSUS. rwg-farspawn-1f C2: enclosed refuses the MOVE (gatedRespawn):
+//                                            the caller despawns and respawns through the gated spawn path. rwg-farspawn-1f OPTION B:
+//                                            allSolid on an entry the gate does not exempt as a cave refuses it too (insideRedeal):
+//                                            the caller redeals the entry (RwgProvisionalInsideRedeal below), ring first then map-wide.
 // READBACK (rwg-farspawn-1d F1, the RESETTLE-REFUSED precedent, NodeShuffleMapModeResettle.cpp): whether the engine applies the move
 // is closed source (a non-Movable root refuses it with a warning only). A move the actor did not take returns moveNotApplied; the caller then
 // prints moveCheck=moveNotApplied and takes the despawn + respawn branch, so an entry is never committed settled at a Z its actor
@@ -66,13 +68,15 @@ const TCHAR* ANodeShuffleSubsystem::RwgProvisionalMoveInPlace(FNodeShuffleEntry&
     }
     // rwg-farspawn-1d F2: the respawn path's enclosure + inside gates at the settled spot, this actor excluded. shadowGate is read
     // from the inside gate's own per-pass counters (which one this call raised), so it is the instrument's verdict even while the
-    // refusal CVar is off; refuseIgnored is the gate's return (1 only while that CVar is set). rwg-farspawn-1f C2: a reading of
-    // enclosed or allSolid refuses the MOVE (gatedRespawn below); this call itself never refuses the node.
+    // refusal CVar is off; refuseIgnored is the gate's return (1 only while that CVar is set). rwg-farspawn-1f C2 + OPTION B: a reading of
+    // enclosed, or of allSolid on an entry the gate does not exempt as a cave, refuses the MOVE (gatedRespawn / insideRedeal below); this
+    // call itself never refuses the node.
+    const bool bCaveFlagged = RwgInsideCaveExempt(E); // the gate's own refusal exemption (InsideGate.cpp:134), the same predicate the gate is handed
     int32 EncBlocked = 0, EncTotal = 0;
     const bool bEnclosed = IsSpotEnclosed(E.Location, EncBlocked, EncTotal, nullptr, nullptr, Node);
     const int32 GateInsideBefore = InsideGateWouldRefuseThisPass, GateOutsideBefore = InsideGateNegativeThisPass;
     const bool bRefuseIgnored = EvaluateInsideShadowGate(E.Location, Node, FString::Printf(TEXT("provisional move '%s'"), *E.EntryGuid.ToString()),
-        /*bAdoptedNotPlaced=*/false, /*bCaveFlagged=*/E.bUnderground || E.bRwgCave);
+        /*bAdoptedNotPlaced=*/false, /*bCaveFlagged=*/bCaveFlagged);
     // allSolid = every probed direction met solid; escapeFound = at least one direction escaped (rwg-farspawn-1d F3, verbatim)
     const bool bAllSolid = InsideGateWouldRefuseThisPass > GateInsideBefore;
     const TCHAR* ShadowGate = bAllSolid ? TEXT("allSolid") : (InsideGateNegativeThisPass > GateOutsideBefore) ? TEXT("escapeFound") : TEXT("notMeasured");
@@ -85,15 +89,19 @@ const TCHAR* ANodeShuffleSubsystem::RwgProvisionalMoveInPlace(FNodeShuffleEntry&
     }
     if (bEnclosed) { ++RwgProvSessMovedEnclosed; }
     if (bAllSolid) { ++RwgProvSessMovedShadowInside; }
-    if (bEnclosed || bAllSolid)
+    const bool bInsideRedeal = bAllSolid && !bCaveFlagged; // rwg-farspawn-1f OPTION B (round-1f review F1/F2 option B predicate, word renamed)
+    if (bEnclosed || bInsideRedeal)
     {
-        // rwg-farspawn-1f C2: the measurement refuses the move in place. The caller despawns this actor and respawns the node at the settled
-        // spot through EnsureNewNodeSpawned, which runs the overlap and enclosure gates (nudge spiral) and the inside gate (it refuses only
-        // while NodeShuffle.InsideGateRefuse is set; at 0 it only measures, so an allSolid spot the other gates pass is respawned there). UNGATED, one per gated move.
-        ++RwgProvSessGatedRespawn;
-        UE_LOG(LogNodeShuffle, Display, TEXT("PROVMOVE: entry=%s moveCheck=gatedRespawn enclosed=%d encBlocked=%d/%d shadowGate=%s refuseIgnored=%d at=%s gatedRespawnSession=%d"),
-            *E.EntryGuid.ToString(), bEnclosed ? 1 : 0, EncBlocked, EncTotal, ShadowGate, bRefuseIgnored ? 1 : 0, *E.Location.ToCompactString(), RwgProvSessGatedRespawn);
-        return TEXT("gatedRespawn"); // nothing below ran (radiation, representation, rock): the caller's despawn tears the actor down
+        // rwg-farspawn-1f C2: an enclosed reading refuses the move in place; the caller despawns this actor and respawns the node at the
+        // settled spot through EnsureNewNodeSpawned, which runs the overlap and enclosure gates (nudge spiral). OPTION B: an allSolid reading
+        // on an entry the gate does not exempt as a cave takes precedence: the caller redeals the entry instead of placing it here (its
+        // PROVINSIDE line prints where it went). A cave-flagged allSolid reading is NOT refused (the author's cave ruling outranks the gate).
+        // UNGATED, one per refused move; it prints the measured readings for either word.
+        const TCHAR* Word = bInsideRedeal ? TEXT("insideRedeal") : TEXT("gatedRespawn");
+        if (!bInsideRedeal) { ++RwgProvSessGatedRespawn; }
+        UE_LOG(LogNodeShuffle, Display, TEXT("PROVMOVE: entry=%s moveCheck=%s enclosed=%d encBlocked=%d/%d shadowGate=%s refuseIgnored=%d caveFlagged=%d at=%s gatedRespawnSession=%d"),
+            *E.EntryGuid.ToString(), Word, bEnclosed ? 1 : 0, EncBlocked, EncTotal, ShadowGate, bRefuseIgnored ? 1 : 0, bCaveFlagged ? 1 : 0, *E.Location.ToCompactString(), RwgProvSessGatedRespawn);
+        return Word; // nothing below ran (radiation, representation, rock): the caller's despawn / redeal tears the actor down
     }
     MeshActorCache.Remove(TWeakObjectPtr<AFGResourceNodeBase>(Node)); // as RwgProvisionalDespawn
     AdoptRotRefit.Remove(E.EntryGuid);                                // as RwgProvisionalDespawn (the respawn never re-added it)
@@ -138,11 +146,45 @@ const TCHAR* ANodeShuffleSubsystem::RwgProvisionalMoveInPlace(FNodeShuffleEntry&
     return nullptr; // kept and moved
 }
 
+bool ANodeShuffleSubsystem::RwgProvisionalInsideRedeal(FNodeShuffleEntry& E, const TCHAR* Path, const FVector& From, int32 LocalRevealsBefore, int32 ServerRevealsBefore)
+{
+    // rwg-farspawn-1f OPTION B (2026-10-31, user decision; round-1f review options table). The ONE redeal both callers use: the settle's move
+    // path (Path settleMove: RwgProvisionalMoveInPlace returned insideRedeal) and the provisional spawn path (Path provisionalSpawn: the inside
+    // gate counted an all-solid reading during EnsureNewNodeSpawned). Each caller has tested !RwgInsideCaveExempt(E) first. The redeal is
+    // the rock pass's primitive, RwgRedealLiveEntry (teardown of the live actor if any: Mk1 snap list, representation, scan reveal, Destroy,
+    // unregister after, slot removal; then TryRedealWaterLockedEntry), with the ring armed first (RwgSteepArmForInside), so the order is
+    // the local ring, then map-wide, as rwg-clifftop-1 does for an occluded settle. BY DESIGN the torn-down actor's compass marker and any
+    // scanner / radar reveal are LOST (a fresh actor is spawned at the new spot later); revealLostOnRedeal prints whether the torn-down actor
+    // had a reveal count above zero (-1 = no actor existed). redealMoved is measured from the entry's location, never the redeal's return
+    // (RwgRedealLiveEntry returns true even when the deal did not move it). UNGATED, one line per redeal.
+    const FVector Before = E.Location;
+    const int32 OccludedRingBefore = RwgPcSteepOccludedRing;
+    RwgSteepArmForInside(E);
+    const bool bRedealt = RwgRedealLiveEntry(E, TEXT("inside gate all-solid (rwg-farspawn-1f option B)"));
+    bRwgSteepArmed = false; // a refused redeal, or a redeal that returned at !Q.IsUsable(), did not consume the arm
+    if (!bRedealt)
+    {
+        UE_LOG(LogNodeShuffle, Display, TEXT("PROVINSIDE: entry=%s path=%s moveCheck=insideRedeal redealRefused=1 pinned=%d at=%s (RwgRedealLiveEntry refused: the entry is pinned or its live actor is occupied; nothing was changed)"),
+            *E.EntryGuid.ToString(), Path, E.bPinned ? 1 : 0, *Before.ToCompactString());
+        return false;
+    }
+    const bool bRing = RwgPcSteepOccludedRing > OccludedRingBefore;
+    const bool bMoved = FVector::Dist2D(Before, E.Location) > 1.0;
+    ++RwgProvSessInsideRedeal;
+    if (bRing) { ++RwgProvSessInsideRedealRing; }
+    const int32 RevealLost = (LocalRevealsBefore < 0 && ServerRevealsBefore < 0) ? -1 : (LocalRevealsBefore > 0 || ServerRevealsBefore > 0) ? 1 : 0;
+    UE_LOG(LogNodeShuffle, Display, TEXT("PROVINSIDE: entry=%s res=%s path=%s moveCheck=insideRedeal from=%s to=%s redealRing=%d redealMoved=%d movedM=%.1f revealLostOnRedeal=%d localMapRevealsBefore=%d serverMapRevealsBefore=%d insideRedealSession=%d insideRedealRingSession=%d"),
+        *E.EntryGuid.ToString(), *E.AssignedResourceClassPath, Path, *From.ToCompactString(), *E.Location.ToCompactString(), bRing ? 1 : 0, bMoved ? 1 : 0,
+        FVector::Dist2D(From, E.Location) / 100.0, RevealLost, LocalRevealsBefore, ServerRevealsBefore, RwgProvSessInsideRedeal, RwgProvSessInsideRedealRing);
+    return true;
+}
+
 void ANodeShuffleSubsystem::RwgProvisionalLogRefusal(const FNodeShuffleEntry& E, const TCHAR* Reason)
 {
     // rwg-farspawn-1c C6: one line per provisional refusal (an entry is refused at most once per session: RwgProvRefused).
     // refusedReason is the predicate read this run: zNonFinite (the seam returned a non-finite Z), inactiveAfterSpawn (the spawn call
-    // left the entry inactive: overlap give-up, or the inside gate when NodeShuffle.InsideGateRefuse is set), overlapNudgeFailed (its nudge count rose), spawnActorNull (its spawn-failure count rose), noActorOtherReturn
+    // left the entry inactive: overlap give-up; since rwg-farspawn-1f OPTION B an inside-gate positive at a spot not dealt as a cave is redealt
+    // before this line can run, and the gate never refuses a cave-flagged spot), overlapNudgeFailed (its nudge count rose), spawnActorNull (its spawn-failure count rose), noActorOtherReturn
     // (none of those changed; another early return of the spawn call ran).
     UE_LOG(LogNodeShuffle, Display, TEXT("PROVSPAWN: refused entry=%s res=%s at=%s refusedReason=%s refusedSession=%d"),
         *E.EntryGuid.ToString(), *E.AssignedResourceClassPath, *E.Location.ToCompactString(), Reason, RwgProvSessRefused);

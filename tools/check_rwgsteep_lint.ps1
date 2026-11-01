@@ -15,7 +15,9 @@
 #       ringPassedFromOriginZ discriminator re-traces the passing XY from the ORIGIN's API Z and only counts; the per-pass steep
 #       counters are zeroed with the other PLACECENSUS counters.
 #   S7  Budget: every ring run increments RwgPcSteepRingRuns and the spawn loop charges it against the attempt cap.
-#   S8  Scope: armed in one place, cleared at every RwgResolveAtSpawn and read-and-cleared by RwgSteepTryRing; the re-probe hook runs
+#   S8  Scope: armed in two places (RwgSteepNoteUnplaceable; since rwg-farspawn-1f OPTION B also RwgSteepArmForInside, called only by
+#       RwgProvisionalInsideRedeal right before its RwgRedealLiveEntry, which clears the arm after), cleared at every RwgResolveAtSpawn and
+#       read-and-cleared by RwgSteepTryRing; the re-probe hook runs
 #       only on the unplaceable branch; the ring stream is separate from the map-wide stream and only READS the map-wide salt
 #       (RedealAttempts.Find); RwgSpawnPass clears the arm after every EnsureNewNodeSpawned; a non-finite candidate Z is a land reject.
 #   S9  Marker rwg-0-1-12-1 present once, rwg-steep-2, rwg-steep-1 and rwg-deal-1 absent; no marker string in the new file.
@@ -28,6 +30,7 @@ $files = [ordered]@{
     steep = 'NodeShuffle\Private\NodeShuffleMapModeSteep.cpp'
     place = 'NodeShuffle\Private\NodeShuffleMapModePlace.cpp'
     hdr   = 'NodeShuffle\Public\NodeShuffleSubsystem.h'
+    move  = 'NodeShuffle\Private\NodeShuffleMapModeProvisionalMove.cpp' # rwg-farspawn-1f OPTION B: the second arm site's only caller
     nsmod = 'NodeShuffle\Private\NodeShuffle.cpp'
 }
 $text = @{}
@@ -46,6 +49,12 @@ function Ordered([string]$t, [string[]]$needles) {
     $at = 0
     foreach ($n in $needles) { $i = $t.IndexOf($n, $at); if ($i -lt 0) { return $false }; $at = $i + $n.Length }
     return $true
+}
+function Span([string]$t, [string]$a, [string]$b) { # rwg-farspawn-1f OPTION B: function-anchored pins (same shape as the farspawn lint's Span)
+    if ((Count $t $a) -ne 1) { return '' }
+    $i = $t.IndexOf($a); $j = $t.IndexOf($b, $i + $a.Length)
+    if ($j -lt 0) { return '' }
+    return $t.Substring($i, $j - $i)
 }
 function Spec-Count([string]$fmt) { return ([regex]::Matches(($fmt -replace '%%', ''), '%[-+ #0]*\d*(?:\.\d+)?[a-zA-Z]')).Count }
 function Get-Logs([string]$t, [string]$prefix) {
@@ -106,7 +115,9 @@ function Invoke-RwgsteepChecks($T) {
         if ($sha -ne $MapwideSpanSha) { $f += "(S3) the map-wide redeal span changed (sha $sha) -- it must stay byte-identical to affc801" }
     }
     # S4 occluded exception
-    if ((Count $s 'bRwgSteepOccluded = bRwgLastProbeSolid;') -ne 1 -or (Count $s 'bRwgSteepOccluded =') -ne 1) { $f += '(S4) bRwgSteepOccluded must be the re-probe solid flag, assigned once' }
+    $armIn = Span $s 'void ANodeShuffleSubsystem::RwgSteepArmForInside(' 'bool ANodeShuffleSubsystem::RwgSteepTryRing('
+    $noteFn = Span $s 'void ANodeShuffleSubsystem::RwgSteepNoteUnplaceable(' 'void ANodeShuffleSubsystem::RwgSteepArmForInside('
+    if ((Count $noteFn 'bRwgSteepOccluded = bRwgLastProbeSolid;') -ne 1 -or (Count $s 'bRwgSteepOccluded =') -ne 2 -or (Count $armIn '    bRwgSteepOccluded = true;') -ne 1) { $f += '(S4) bRwgSteepOccluded must be the re-probe solid flag in the re-probe hook, and a solid stop in the inside-gate arm (rwg-farspawn-1f OPTION B); assigned nowhere else' }
     if (-not (Ordered $s @('&Normal, &Hit,', 'bRwgSteepOccluded = bRwgLastProbeSolid;'))) { $f += '(S4) the solid flag must be read after the re-probe' }
     $call = '    const bool bMoved = RwgLocalRedraw(Q, Entry, SpacingCm, RadiusCm, Tried, Passed, RejLand, RejSpacing, RejTrace);'
     if ((Count $s $call) -ne 1 -or -not (Ordered $s @('bRwgSteepArmed = false;', '++RwgPcSteepRingRuns;', $call, "    if (bRwgSteepOccluded)`n    {`n        if (bMoved) { ++RwgPcSteepOccludedRing; ++RwgSteepSessOccludedRing; Outcome = TEXT(`"occludedRing`"); }`n        else { ++RwgPcSteepOccluded; ++RwgSteepSessOccluded; Outcome = TEXT(`"occludedMapwide`"); }", "        if (bMoved) { ++RwgPcSteepRing; ++RwgSteepSessRing; Outcome = TEXT(`"steepRing`"); }"))) { $f += '(S4) steep and occluded entries must both run the ring (one unconditional RwgLocalRedraw call) before the outcome split' }
@@ -133,7 +144,10 @@ function Invoke-RwgsteepChecks($T) {
     if ((Count $s '++RwgPcSteepRingRuns;') -ne 1) { $f += '(S7) every ring run must count one RwgPcSteepRingRuns' }
     if ((Count $p 'for (; K < N && K + RwgPcSteepRingRuns < NodeShuffleMapMode::RwgMaxSpawnAttemptsPerPass; ++K)') -ne 1 -or (Count $p 'RwgPcBudgetSkipped += Cands.Num() - K;') -ne 1) { $f += '(S7) the spawn loop must charge ring runs against the attempt cap and count unattempted candidates' }
     # S8 scope
-    if ((Count ($s + $p) 'bRwgSteepArmed = true;') -ne 1 -or (Count $s 'bRwgSteepArmed = true;') -ne 1) { $f += '(S8) the ring is armed in exactly one place (RwgSteepNoteUnplaceable)' }
+    $mvRedeal = Span $T.move 'bool ANodeShuffleSubsystem::RwgProvisionalInsideRedeal(' 'void ANodeShuffleSubsystem::RwgProvisionalLogRefusal('
+    if ((Count ($s + $p + $T.move) 'bRwgSteepArmed = true;') -ne 2 -or (Count $noteFn 'bRwgSteepArmed = true;') -ne 1 -or (Count $armIn 'bRwgSteepArmed = true;') -ne 1 -or
+        (Count $armIn '    RwgSteepGuid = Entry.EntryGuid;') -ne 1 -or (Count $armIn '    RwgSteepLoc = Entry.Location;') -ne 1 -or
+        (Count ($s + $p + $T.move) 'RwgSteepArmForInside(E);') -ne 1 -or -not (Ordered $mvRedeal @('    RwgSteepArmForInside(E);', 'RwgRedealLiveEntry(E, ', '    bRwgSteepArmed = false;'))) { $f += '(S8) the ring is armed in exactly two places (RwgSteepNoteUnplaceable; RwgSteepArmForInside, guid + spot set, called once, right before RwgRedealLiveEntry and cleared after it)' }
     if ((Count $p 'bOutWaterNoLand = false; bRwgSteepArmed = false;') -ne 1) { $f += '(S8) RwgResolveAtSpawn must clear the arm on entry' }
     if (-not (Ordered $s @('if (!bRwgSteepArmed) { return false; }', 'bRwgSteepArmed = false;', 'if (RwgSteepGuid != Entry.EntryGuid)'))) { $f += '(S8) RwgSteepTryRing must read-and-clear the arm and match the entry guid' }
     if ((Count $p 'RwgSteepNoteUnplaceable(') -ne 1 -or (Count $p 'if (!bOutWaterNoLand) { ++RwgPcNoTerrainDefer; } else { RwgSteepNoteUnplaceable(Q, Entry); }') -ne 1) { $f += '(S8) the re-probe hook runs only on the unplaceable branch of the failed settle' }
@@ -178,6 +192,9 @@ $mutants = @(
     @{ Name = 'B22 ring writes the map-wide salt'; Key = 'steep'; Expect = 'S8'; Find = 'const int32* SaltP = RedealAttempts.Find(Entry.EntryGuid);'; Repl = ('const int32* SaltP = &++RedealAttempts.' + 'FindOrAdd(Entry.EntryGuid);') }
     @{ Name = 'B23 attempt loop keeps a stale arm'; Key = 'place'; Expect = 'S8'; Find = "`n        bRwgSteepArmed = false; // rwg-steep-1: an arm never outlives the attempt that set it (a redeal that returned at !Q.IsUsable() did not consume it)"; Repl = '' }
     @{ Name = 'B24 RWGSTEEPSUM signature ignores guidMismatch'; Key = 'steep'; Expect = 'S6'; Find = ' + RwgSteepSessGuidMismatch; if (RwgSteepSessLastPrinted == Sig)'; Repl = '; if (RwgSteepSessLastPrinted == Sig)' }
+    @{ Name = 'B26 inside-gate arm drops the guid (rwg-farspawn-1f OPTION B)'; Key = 'steep'; Expect = 'S8'; Find = '    RwgSteepGuid = Entry.EntryGuid;' + "`n" + '    RwgSteepLoc = Entry.Location;' + "`n" + '    RwgSteepNormalRiseRun = -1.0;'; Repl = '    RwgSteepLoc = Entry.Location;' + "`n" + '    RwgSteepNormalRiseRun = -1.0;' }
+    @{ Name = 'B27 inside-gate arm not a solid stop (rwg-farspawn-1f OPTION B)'; Key = 'steep'; Expect = 'S4'; Find = '    bRwgSteepOccluded = true;'; Repl = '    bRwgSteepOccluded = false;' }
+    @{ Name = 'B28 inside-gate arm left set after the redeal (rwg-farspawn-1f OPTION B)'; Key = 'move'; Expect = 'S8'; Find = '    bRwgSteepArmed = false; // a refused redeal'; Repl = '    // a refused redeal' }
     @{ Name = 'B25 non-finite candidate Z traced'; Key = 'steep'; Expect = 'S8'; Find = 'if (!FMath::IsFinite(C.Z)) { ++OutRejLand; continue; }'; Repl = '' }
     @{ Name = 'B26 discriminator traces from the candidate Z'; Key = 'steep'; Expect = 'S6'; Find = 'RaycastGroundAt(C, O.Z, nullptr'; Repl = 'RaycastGroundAt(C, C.Z, nullptr' }
     @{ Name = 'B21 marker reverted'; Key = 'nsmod'; Expect = 'S9'; Find = ('2026-10-31-rwg-' + 'farspawn-1f'); Repl = ('2026-10-31-rwg-' + 'farspawn-1e') }

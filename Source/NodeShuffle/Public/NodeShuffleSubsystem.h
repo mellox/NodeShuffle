@@ -1122,7 +1122,8 @@ private:
     TSet<FGuid> RwgRockRefused;                   // session: occluded but pinned/occupied (re-checked next session)
     TMap<FString, int32> RwgWellResettleSalt;     // session: resettle redeals per core path (salts the deal stream)
     // ---- rwg-steep-1 (2026-10-19): spawn-time steep hit -> LOCAL redraw ring before the map-wide API redeal. NodeShuffleMapModeSteep.cpp.
-    // Armed only by RwgResolveAtSpawn (an unplaceable settle whose re-probed primary hit is steep terrain or a solid stop), consumed and
+    // Armed by RwgResolveAtSpawn (an unplaceable settle whose re-probed primary hit is steep terrain or a solid stop) and, since rwg-farspawn-1f
+    // option B, by RwgSteepArmForInside (an all-solid inside-gate reading, armed as a solid stop), consumed and
     // cleared by the very next TryRedealRwgEntry for the SAME entry guid; every other redeal caller sees it clear (map-wide, unchanged).
     void RwgSteepNoteUnplaceable(const NodeShuffleMapMode::FRwgGroundQuery& Q, const FNodeShuffleEntry& Entry);
     bool RwgSteepTryRing(const NodeShuffleMapMode::FRwgGroundQuery& Q, FNodeShuffleEntry& Entry, float SpacingCm); // true = moved by the ring
@@ -1182,7 +1183,14 @@ private:
     void AdoptAuditEmit(int32 AdoptLineAdopted);                           // end of AdoptRestoredSpawnedNodes; diagnostic only, binds/destroys nothing
     TMap<TWeakObjectPtr<AFGResourceNode>, FGuid> AdoptPreRegistered;       // session: pre-registered node -> the entry its pre-registration matched
     // rwg-farspawn-1f C2: kept-and-moved settles measured enclosed or all-solid take the despawn + respawn branch instead.
-    int32 RwgProvSessGatedRespawn = 0;                                     // session: moves refused by the measurement (PROVCENSUS gatedRespawn)
+    int32 RwgProvSessGatedRespawn = 0;                                     // session: moves the enclosure reading refused (PROVCENSUS gatedRespawn)
+    // rwg-farspawn-1f OPTION B (2026-10-31, user decision; NodeShuffleMapModeProvisionalMove.cpp): an all-solid inside-gate reading on an entry
+    // the gate does not exempt as a cave redeals it (300 m ring first, then map-wide) on the settle's move path and the provisional spawn path.
+    // The near-player fresh path (EnsureNewNodeSpawned) still only measures (its own packet).
+    static bool RwgInsideCaveExempt(const FNodeShuffleEntry& E) { return E.bUnderground || E.bRwgCave; } // the inside gate's bCaveFlagged argument (its refusal exemption)
+    bool RwgProvisionalInsideRedeal(FNodeShuffleEntry& E, const TCHAR* Path, const FVector& From, int32 LocalRevealsBefore, int32 ServerRevealsBefore); // false = RwgRedealLiveEntry refused (pinned/occupied), nothing changed
+    void RwgSteepArmForInside(const FNodeShuffleEntry& E);                 // NodeShuffleMapModeSteep.cpp: arms the ring for the redeal that immediately follows
+    int32 RwgProvSessInsideRedeal = 0, RwgProvSessInsideRedealRing = 0;    // session (PROVCENSUS insideRedealSession / insideRedealRingSession)
     // rwg-farspawn-1f C3 (NodeShuffleMapModeProvisionalScan.cpp): the per-session provisional candidate list, rebuilt on a layout change or every 12 passes.
     void RwgProvCandMarkDirty(const TCHAR* Why);                           // the next provisional pass rebuilds the list (first reason since the last build wins)
     void RwgProvisionalCollectCandidates(const TArray<FVector>& Pawns, float AttemptRadiusCm, const TSet<int32>& FreshNoActor, TArray<int32>& OutCands,
