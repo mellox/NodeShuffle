@@ -186,11 +186,13 @@ void ANodeShuffleSubsystem::RwgSettleProvisional(FNodeShuffleEntry& E, bool& bCh
     // entry the gate does not exempt as a cave returns insideRedeal, and the branch below redeals the entry (ring first, then map-wide)
     // instead of moving or respawning it there; a redeal RwgRedealLiveEntry refuses (pinned / occupied) falls to a2 with the actor intact.
     if (bSettled && FCString::Strcmp(MoveCheck, TEXT("moved")) == 0) { if (const TCHAR* MoveRefused = RwgProvisionalMoveInPlace(E, Node)) { MoveCheck = MoveRefused; } }
-    if (bSettled && FCString::Strcmp(MoveCheck, TEXT("insideRedeal")) == 0 && RwgProvisionalInsideRedeal(E, TEXT("settleMove"), E.Location, LocalRevealsBefore, ServerRevealsBefore))
+    const FVector InsideBefore = E.Location; // rwg-farspawn-1f OPTION B: moved / not-moved split, as branch (b)
+    if (bSettled && FCString::Strcmp(MoveCheck, TEXT("insideRedeal")) == 0 && RwgProvisionalInsideRedeal(E, TEXT("settleMove"), InsideBefore, LocalRevealsBefore, ServerRevealsBefore))
     {
         // (a0) rwg-farspawn-1f OPTION B: the actor is torn down and the entry redealt; it has no actor until a later spawn pass places one
-        // at its new spot (settledZ stays nan: a redeal is not a settle). Counted in redealtFromProvisional and insideRedealSession.
-        E.bRwgProvisional = false; bChangedWorld = true; ++RwgProvSessRedealt;
+        // at its new spot (settledZ stays nan: a redeal is not a settle). Counted in insideRedealSession, and in redealtFromProvisional when
+        // the redeal moved the entry, else in redealNotMoved.
+        E.bRwgProvisional = false; bChangedWorld = true; if (FVector::Dist2D(InsideBefore, E.Location) > 1.0) { ++RwgProvSessRedealt; } else { ++RwgProvSessRedealNotMoved; }
         Outcome = TEXT("insideRedeal");
     }
     else if (bSettled && FCString::Strcmp(MoveCheck, TEXT("moved")) == 0)
@@ -401,7 +403,8 @@ void ANodeShuffleSubsystem::RwgProvisionalEmitCensus()
     }
     // Legend (re-review V-R3, prose only): the settledNoActor and redealNotMoved fields are session counts of two settle outcomes. settledNoActor counts settles
     // where the settle call returned true but no valid actor existed after the respawn. redealNotMoved counts unplaceable-branch
-    // settles where the redeal call returned false (the entry did not move); a redeal that returned true also leaves no actor until
+    // settles where the redeal call returned false (the entry did not move), and since rwg-farspawn-1f option B also settle inside redeals that
+    // left the entry within 1 cm of its spot (their PROVSETTLE outcome is insideRedeal); a redeal that returned true also leaves no actor until
     // the next spawn and is counted in redealtFromProvisional, not here. Both match the PROVSETTLE outcome strings of the same names,
     // which are a sample; these are the census.
     // rwg-farspawn-1c C1 (prose only): the movedInPlace tail is the session count of settles that kept and moved the same actor; it is a
@@ -414,7 +417,7 @@ void ANodeShuffleSubsystem::RwgProvisionalEmitCensus()
     // refused that were not inside-redealt (each then took the despawn + respawn branch, so it is NOT in the movedInPlace count).
     // rwg-farspawn-1f OPTION B (prose only): insideRedealSession counts this session's redeals of an all-solid reading at a spot not dealt as a
     // cave, on the settle's move path and on the provisional spawn path together; insideRedealRingSession counts those the local ring moved.
-    // The settle's share is also in redealtFromProvisional. A cave-flagged all-solid move is kept and moved (counted in gatedAllSolid only).
+    // The settle's share is also in redealtFromProvisional when the redeal moved the entry, else in redealNotMoved. A cave-flagged all-solid move is kept and moved (counted in gatedAllSolid only).
     // rwg-farspawn-1e C1/C4 (prose only): deferredProvisional counts deferred-branch settles, one per attempt, so an entry deferred on
     // several passes is counted each time; deferredEntries counts the distinct entries among them this session.
     // withinRadiusProvisionedSession counts this session's provisional spawns of entries within the attempt radius (fresh attempts
