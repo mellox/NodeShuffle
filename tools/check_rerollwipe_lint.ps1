@@ -14,6 +14,8 @@
 #   R8 header declarations + the include
 #   R11 (review F3) REROLLAUDIT: one ungated call after RollLayout's EmitRollCensus statement, as the function's last statement (every roll; after the density trigger, which check_density_lint D5 pins adjacent to EmitRollCensus); whole-list pointer compare
 #      against TActorIterator, no dereference, no gate; exact format/args
+#   R12 (re-review A1) before-wipe snapshot RerollWipeCollectNotYielded: one call ahead of the wipe block and the audit call; same predicate, no
+#      dereference, no gate; REROLLAUDIT's notYieldedNewSinceWipe excludes it (the per-roll control, same frame)
 #   R10 (review F2) RerollWipeNoteInvalidSlot: null counted; non-null: Contains measured BEFORE RemoveSingleSwap, by address, no dereference, no Destroy
 #   R9 (review F1) DestroyWellMemberIfUnused: after DeregisterNodeFromManager (which refuses OUR nodes), an explicit snap-list RemoveSingleSwap
 #      and representation removal (by actor, by node), all BEFORE Destroy; the WELLDESPAWN-SNAP line is diagnostics-gated; the three includes
@@ -55,9 +57,12 @@ $teardownLine = '            if (IsValid(It->Value)) { RerollWipeTeardownRegistr
 $staleLoop = "        StaleAfter = 0;`n        for (AFGResourceNode* Ptr : T.DestroyedPtrs) { if (Mgr->mResourceNodes.Contains(Ptr)) { ++StaleAfter; } }"
 $invalidLoop = "        InvalidStillIn = 0;`n        for (AFGResourceNode* Ptr : T.InvalidPtrs) { if (Mgr->mResourceNodes.Contains(Ptr)) { ++InvalidStillIn; } }"
 $marker = '2026-10-31-rwg-' + 'rerollwipe-1'
-$auditCall = "{ RwgDensityOnRoll(); } // rwg-density-1: RWGDENSITY trigger=roll (diagnostics only)`n    RerollWipeEmitListAudit(bIsReroll); // rwg-rerollwipe-1 review F3: every roll (reroll=0 is the baseline)`n}`n"
-$auditFmt = 'TEXT("REROLLAUDIT: reroll=%d managerEntries=%d entriesNotYieldedByActorIterator=%d actorsIterated=%d"),'
-$auditArgs = '        bIsReroll ? 1 : 0, Mgr->mResourceNodes.Num(), NotIterated, Iterated.Num());'
+$auditCall = "{ RwgDensityOnRoll(); } // rwg-density-1: RWGDENSITY trigger=roll (diagnostics only)`n    RerollWipeEmitListAudit(bIsReroll, AuditNotYieldedBeforeWipe); // rwg-rerollwipe-1 review F3 / re-review A1: every roll; notYieldedNewSinceWipe is the per-roll control`n}`n"
+$auditFmt = 'TEXT("REROLLAUDIT: reroll=%d managerEntries=%d entriesNotYieldedByActorIterator=%d notYieldedBeforeWipe=%d notYieldedNewSinceWipe=%d actorsIterated=%d"),'
+$auditArgs = '        bIsReroll ? 1 : 0, Mgr->mResourceNodes.Num(), NotIterated, NotYieldedBeforeWipe.Num(), NewSinceWipe, Iterated.Num());'
+# re-review A1: the before-wipe snapshot call (R12), ordered before the wipe block and the audit call
+$snapCall = '    RerollWipeCollectNotYielded(AuditNotYieldedBeforeWipe);'
+$auditLoop = 'for (const AFGResourceNode* Ptr : Mgr->mResourceNodes) { if (!Iterated.Contains(Ptr)) { ++NotIterated; if (!NotYieldedBeforeWipe.Contains(Ptr)) { ++NewSinceWipe; } } }'
 # review F1: the WHOLE well-member snap-list drop line, so mutant Q20 moves the identical text after Destroy (order, not presence)
 $wellSnapLine = "    if (AFGResourceNode* AsNode = Cast<AFGResourceNode>(Member)) { if (AFGResourceNodeManager* Mgr = GetNodeManager()) { SnapDropped = Mgr->mResourceNodes.RemoveSingle" + "Swap(AsNode); } }`n"
 
@@ -93,7 +98,7 @@ function Invoke-RerollWipeChecks($T) {
     }
     # R4
     if ((Count $T.wipe $censusFmt) -ne 1 -or (Count $T.wipe $censusArgs) -ne 1) { $f += '(R4) census field list / argument order' }
-    foreach ($tok in @('destroyed=', 'removedFromManager=', 'staleInManagerAfter=', 'representationsRemoved=', 'managerCountBefore=', 'managerCountAfter=', 'invalidSlotsNull=', 'invalidInManagerAtWipe=', 'invalidRemovedFromManager=', 'destroyRefused=', 'repPresentAfterUpdate=', 'managerEntries=', 'entriesNotYieldedByActorIterator=', 'actorsIterated=')) {
+    foreach ($tok in @('destroyed=', 'removedFromManager=', 'staleInManagerAfter=', 'representationsRemoved=', 'managerCountBefore=', 'managerCountAfter=', 'invalidSlotsNull=', 'invalidInManagerAtWipe=', 'invalidRemovedFromManager=', 'destroyRefused=', 'repPresentAfterUpdate=', 'managerEntries=', 'entriesNotYieldedByActorIterator=', 'notYieldedBeforeWipe=', 'notYieldedNewSinceWipe=', 'actorsIterated=')) {
         if ((Count $T.wipe $tok) -ne 1) { $f += "(R4) census token $tok must appear once in the file (no legend echo)" }
     }
     # R5
@@ -107,7 +112,8 @@ function Invoke-RerollWipeChecks($T) {
     if ((Count $T.sub ('RemoveSingle' + 'Swap(')) -ne 1) { $f += '(R7) Subsystem.cpp keeps one RemoveSingleSwap (DeregisterNodeFromManager); the wipe goes through the helper' }
     # R8
     foreach ($d in @('void RerollWipeBegin(struct FNodeShuffleRerollWipeTally& T);', 'void RerollWipeTeardownRegistrations(class AFGResourceNode* Node, struct FNodeShuffleRerollWipeTally& T);',
-        'void RerollWipeNoteInvalidSlot(class AFGResourceNode* Node, struct FNodeShuffleRerollWipeTally& T);', 'void RerollWipeEmitCensus(const struct FNodeShuffleRerollWipeTally& T);', 'void RerollWipeEmitListAudit(bool bIsReroll);')) {
+        'void RerollWipeNoteInvalidSlot(class AFGResourceNode* Node, struct FNodeShuffleRerollWipeTally& T);', 'void RerollWipeEmitCensus(const struct FNodeShuffleRerollWipeTally& T);', 'void RerollWipeCollectNotYielded(TSet<const class AFGResourceNode*>& Out);',
+        'void RerollWipeEmitListAudit(bool bIsReroll, const TSet<const class AFGResourceNode*>& NotYieldedBeforeWipe);')) {
         if ((Count $T.subh $d) -ne 1) { $f += "(R8) header declaration missing: $d" }
     }
     if ((Count $T.sub '#include "NodeShuffleRerollWipe.h"') -ne 1 -or (Count $T.wipeh 'struct FNodeShuffleRerollWipeTally') -ne 1 -or (Count $T.wipe '#include "EngineUtils.h"') -ne 1) { $f += '(R8) include / tally struct / EngineUtils' }
@@ -118,9 +124,19 @@ function Invoke-RerollWipeChecks($T) {
     else {
         $audit = $T.wipe.Substring($ai)
         if (-not (Ordered $audit @('for (TActorIterator<AFGResourceNode> It(World); It; ++It) { Iterated.Add(*It); }',
-            'for (const AFGResourceNode* Ptr : Mgr->mResourceNodes) { if (!Iterated.Contains(Ptr)) { ++NotIterated; } }', $auditFmt, $auditArgs))) { $f += '(R11) audit: iterate, pointer-compare every list entry, exact format/args' }
+            $auditLoop, $auditFmt, $auditArgs))) { $f += '(R11) audit: iterate, pointer-compare every list entry (new-since-wipe excludes the snapshot), exact format/args' }
         if ((Count $audit ('IsVal' + 'id(')) -ne 0 -or (Count $audit ('Ptr' + '->')) -ne 0 -or (Count $audit ('(*' + 'Ptr')) -ne 0 -or (Count $audit ('Ptr' + '.')) -ne 0) { $f += '(R11) audit dereferences a list entry' }
         if ((Count $audit ('AreDiagnostics' + 'Enabled')) -ne 0) { $f += '(R11) audit must be ungated' }
+    }
+    # R12 (re-review A1) the before-wipe snapshot: one call, before the wipe block, before the audit call; same predicate, no dereference, no gate
+    if ((Count $T.sub 'RerollWipeCollectNotYielded(') -ne 1 -or -not (Ordered $T.sub @($snapCall, '        TSet<FGuid> KeptGuids;', 'RerollWipeEmitListAudit(bIsReroll, AuditNotYieldedBeforeWipe);'))) { $f += '(R12) one before-wipe snapshot call, ahead of the wipe block and the audit call' }
+    $coll = Span $T.wipe 'void ANodeShuffleSubsystem::RerollWipeCollectNotYielded(' 'void ANodeShuffleSubsystem::RerollWipeEmitListAudit('
+    if ($coll -eq '') { $f += '(R12) snapshot function span missing (it must sit above the audit)' }
+    else {
+        if (-not (Ordered $coll @('    Out.Reset();', 'for (TActorIterator<AFGResourceNode> It(World); It; ++It) { Iterated.Add(*It); }',
+            'for (const AFGResourceNode* Ptr : Mgr->mResourceNodes) { if (!Iterated.Contains(Ptr)) { Out.Add(Ptr); } }'))) { $f += '(R12) snapshot: reset, iterate, the same pointer-compare predicate' }
+        if ((Count $coll ('IsVal' + 'id(')) -ne 0 -or (Count $coll ('Ptr' + '->')) -ne 0 -or (Count $coll ('(*' + 'Ptr')) -ne 0 -or (Count $coll ('Ptr' + '.')) -ne 0) { $f += '(R12) snapshot dereferences a list entry' }
+        if ((Count $coll ('AreDiagnostics' + 'Enabled')) -ne 0) { $f += '(R12) snapshot must be ungated' }
     }
     # R10 (review F2)
     $inv = Span $T.wipe 'void ANodeShuffleSubsystem::RerollWipeNoteInvalidSlot(' 'void ANodeShuffleSubsystem::RerollWipeEmitCensus('
@@ -149,7 +165,7 @@ function Invoke-RerollWipeChecks($T) {
 
 $base = Invoke-RerollWipeChecks $text
 if ($base.Count -gt 0) { Write-Host 'FAIL (baseline):'; $base | ForEach-Object { Write-Host "  $_" }; exit 1 }
-Write-Host 'PASS baseline: R1-R11 hold'
+Write-Host 'PASS baseline: R1-R12 hold'
 
 $mutants = @(
     @{ Name = 'Q1 teardown call dropped'; Key = 'sub'; Expect = 'R1'; Find = 'RerollWipeTeardownRegistrations(It->Value, WipeTally); if (!It->Value->Destroy())'; Repl = 'if (!It->Value->Destroy())' }
@@ -178,11 +194,17 @@ $mutants = @(
     @{ Name = 'Q25 invalid-slot field dropped from census'; Key = 'wipe'; Expect = 'R4'; Find = ' invalidInManagerAtWipe=%d'; Repl = '' }
     @{ Name = 'Q28 F6 presence measured before UpdateNodeRepresentation'; Key = 'wipe'; Expect = 'R2'; Find = "    Node->UpdateNodeRepresentation();`n"; Repl = ''
        Find2 = "++T.RepPresentAfterUpdate; } }`n"; Repl2 = "++T.RepPresentAfterUpdate; } }`n    Node->UpdateNodeRepresentation();`n" }
-    @{ Name = 'Q29 REROLLAUDIT call dropped'; Key = 'sub'; Expect = 'R11'; Find = '    RerollWipeEmitListAudit(bIsReroll); // rwg'; Repl = '    // audit removed // rwg' }
-    @{ Name = 'Q30 REROLLAUDIT call gated'; Key = 'sub'; Expect = 'R11'; Find = '    RerollWipeEmitListAudit(bIsReroll); // rwg'; Repl = ('    if (FNodeShuffleModule::AreDiagnostics' + 'Enabled()) RerollWipeEmitListAudit(bIsReroll); // rwg') }
-    @{ Name = 'Q31 REROLLAUDIT dereferences an entry'; Key = 'wipe'; Expect = 'R11'; Find = 'if (!Iterated.Contains(Ptr))'; Repl = ('if (!IsVal' + 'id(Ptr) || !Iterated.Contains(Ptr))') }
-    @{ Name = 'Q32 REROLLAUDIT gated in its body'; Key = 'wipe'; Expect = 'R11'; Find = "    UWorld* World = GetWorld();`n"; Repl = ("    UWorld* World = GetWorld();`n    if (!FNodeShuffleModule::AreDiagnostics" + "Enabled()) { return; }`n") }
+    @{ Name = 'Q29 REROLLAUDIT call dropped'; Key = 'sub'; Expect = 'R11'; Find = '    RerollWipeEmitListAudit(bIsReroll, AuditNotYieldedBeforeWipe); // rwg'; Repl = '    // audit removed // rwg' }
+    @{ Name = 'Q30 REROLLAUDIT call gated'; Key = 'sub'; Expect = 'R11'; Find = '    RerollWipeEmitListAudit(bIsReroll, AuditNotYieldedBeforeWipe); // rwg'; Repl = ('    if (FNodeShuffleModule::AreDiagnostics' + 'Enabled()) RerollWipeEmitListAudit(bIsReroll, AuditNotYieldedBeforeWipe); // rwg') }
+    @{ Name = 'Q31 REROLLAUDIT dereferences an entry'; Key = 'wipe'; Expect = 'R11'; Find = "    int32 NotIterated = 0;`n"; Repl = ("    int32 NotIterated = 0;`n    for (const AFGResourceNode* P : Mgr->mResourceNodes) { if (IsVal" + "id(P)) { } }`n") }
+    @{ Name = 'Q32 REROLLAUDIT gated in its body'; Key = 'wipe'; Expect = 'R11'; Find = '    if (!Mgr || !World) { UE_LOG(LogNodeShuffle, Display, TEXT("REROLLAUDIT: reroll=%d noManagerOrWorld=1"), bIsReroll ? 1 : 0); return; }'; Repl = ('    if (!FNodeShuffleModule::AreDiagnostics' + 'Enabled()) { return; }`n    if (!Mgr || !World) { return; }') }
     @{ Name = 'Q33 REROLLAUDIT field renamed'; Key = 'wipe'; Expect = 'R11'; Find = 'entriesNotYieldedByActorIterator=%d'; Repl = 'dead=%d' }
+    @{ Name = 'Q36 (re-review A1) before-wipe snapshot call dropped'; Key = 'sub'; Expect = 'R12'; Find = ($snapCall + "`n"); Repl = '' }
+    @{ Name = 'Q37 (re-review A1) snapshot moved after the wipe'; Key = 'sub'; Expect = 'R12'; Find = ($snapCall + "`n"); Repl = ''
+       Find2 = '        RerollWipeEmitCensus(WipeTally); // rwg-rerollwipe-1: REROLLWIPE, ungated, once per re-roll'; Repl2 = ('        RerollWipeEmitCensus(WipeTally); // rwg-rerollwipe-1: REROLLWIPE, ungated, once per re-roll' + "`n" + $snapCall) }
+    @{ Name = 'Q38 (re-review A1) new-since-wipe ignores the snapshot'; Key = 'wipe'; Expect = 'R11'; Find = 'if (!NotYieldedBeforeWipe.Contains(Ptr)) { ++NewSinceWipe; }'; Repl = '++NewSinceWipe;' }
+    @{ Name = 'Q39 (re-review A1) snapshot dereferences an entry'; Key = 'wipe'; Expect = 'R12'; Find = "    Out.Reset();`n"; Repl = ("    Out.Reset();`n    for (const AFGResourceNode* P : Mgr->mResourceNodes) { if (IsVal" + "id(P)) { } }`n") }
+    @{ Name = 'Q40 (re-review A1) snapshot predicate dropped'; Key = 'wipe'; Expect = 'R12'; Find = 'if (!Iterated.Contains(Ptr)) { Out.Add(Ptr); }'; Repl = 'Out.Add(Ptr);' }
     @{ Name = 'Q17 well-member snap-list drop removed'; Key = 'welld'; Expect = 'R9'; Find = ('SnapDropped = Mgr->mResourceNodes.RemoveSingle' + 'Swap(AsNode);'); Repl = 'SnapDropped = 0;' }
     @{ Name = 'Q18 well-member rep-by-actor drop removed'; Key = 'welld'; Expect = 'R9'; Find = "        RepMgr->RemoveRepresentationOfActor(Member);`n"; Repl = '' }
     @{ Name = 'Q19 well-member rep-by-node drop removed'; Key = 'welld'; Expect = 'R9'; Find = '{ RepMgr->RemoveRepresentation(NodeRep); }'; Repl = '{ }' }

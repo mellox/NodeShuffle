@@ -1970,6 +1970,9 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     // redesign-1: OriginalNodeRecord was already built during the Hide & Replace conversion above
     // (it captures every unoccupied original — vanilla AND modded — before they were detached).
 
+    // rwg-rerollwipe-1 re-review A1: REROLLAUDIT's before-wipe snapshot, same predicate, same synchronous RollLayout call (one streaming state). Every roll; no Rng.
+    TSet<const AFGResourceNode*> AuditNotYieldedBeforeWipe;
+    RerollWipeCollectNotYielded(AuditNotYieldedBeforeWipe);
     // Live spawned actors from a previous layout die with the re-roll — EXCEPT occupied ones, which
     // were carried (pinned) above and MUST survive so the player's miner keeps its node (save-safety).
     if (bIsReroll)
@@ -2067,7 +2070,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     EmitRollCensus(Seed, bIsReroll, PoolSize, TargetActive, VanillaCount, NewLocations.Num(),
                    VanillaResourceCounts);
     if (GetMapMode() == ENodeShuffleMapMode::Rwg) { RwgDensityOnRoll(); } // rwg-density-1: RWGDENSITY trigger=roll (diagnostics only)
-    RerollWipeEmitListAudit(bIsReroll); // rwg-rerollwipe-1 review F3: every roll (reroll=0 is the baseline)
+    RerollWipeEmitListAudit(bIsReroll, AuditNotYieldedBeforeWipe); // rwg-rerollwipe-1 review F3 / re-review A1: every roll; notYieldedNewSinceWipe is the per-roll control
 }
 
 // ns-truth-diagnostics B. ONE line per roll carrying the numbers that two separate log-archaeology

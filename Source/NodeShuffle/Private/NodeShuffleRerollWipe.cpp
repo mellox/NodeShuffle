@@ -111,7 +111,19 @@ void ANodeShuffleSubsystem::RerollWipeEmitCensus(const FNodeShuffleRerollWipeTal
         T.DestroyRefused, T.RepPresentAfterUpdate);
 }
 
-void ANodeShuffleSubsystem::RerollWipeEmitListAudit(bool bIsReroll)
+void ANodeShuffleSubsystem::RerollWipeCollectNotYielded(TSet<const AFGResourceNode*>& Out)
+{
+    // re-review A1: the before-wipe half of REROLLAUDIT. Same predicate (list entry matching no AFGResourceNode the default-flag TActorIterator yields); pointer compares only, no dereference.
+    Out.Reset();
+    AFGResourceNodeManager* Mgr = GetNodeManager();
+    UWorld* World = GetWorld();
+    if (!Mgr || !World) { return; }
+    TSet<const AFGResourceNode*> Iterated;
+    for (TActorIterator<AFGResourceNode> It(World); It; ++It) { Iterated.Add(*It); }
+    for (const AFGResourceNode* Ptr : Mgr->mResourceNodes) { if (!Iterated.Contains(Ptr)) { Out.Add(Ptr); } }
+}
+
+void ANodeShuffleSubsystem::RerollWipeEmitListAudit(bool bIsReroll, const TSet<const AFGResourceNode*>& NotYieldedBeforeWipe)
 {
     // review F3: the WHOLE raw snap list after every teardown this roll ran (node wipe and RollWellRelocation's well despawns). Pointer compares
     // only: counts entries that match no AFGResourceNode the world's TActorIterator yields (default flags); no entry is dereferenced. UNGATED.
@@ -120,8 +132,10 @@ void ANodeShuffleSubsystem::RerollWipeEmitListAudit(bool bIsReroll)
     if (!Mgr || !World) { UE_LOG(LogNodeShuffle, Display, TEXT("REROLLAUDIT: reroll=%d noManagerOrWorld=1"), bIsReroll ? 1 : 0); return; }
     TSet<const AFGResourceNode*> Iterated;
     for (TActorIterator<AFGResourceNode> It(World); It; ++It) { Iterated.Add(*It); }
+    // re-review A1: new-since-wipe excludes entries that already failed the same test earlier in this RollLayout call (GC assumed not to run in between: engine-internal).
     int32 NotIterated = 0;
-    for (const AFGResourceNode* Ptr : Mgr->mResourceNodes) { if (!Iterated.Contains(Ptr)) { ++NotIterated; } }
-    UE_LOG(LogNodeShuffle, Display, TEXT("REROLLAUDIT: reroll=%d managerEntries=%d entriesNotYieldedByActorIterator=%d actorsIterated=%d"),
-        bIsReroll ? 1 : 0, Mgr->mResourceNodes.Num(), NotIterated, Iterated.Num());
+    int32 NewSinceWipe = 0;
+    for (const AFGResourceNode* Ptr : Mgr->mResourceNodes) { if (!Iterated.Contains(Ptr)) { ++NotIterated; if (!NotYieldedBeforeWipe.Contains(Ptr)) { ++NewSinceWipe; } } }
+    UE_LOG(LogNodeShuffle, Display, TEXT("REROLLAUDIT: reroll=%d managerEntries=%d entriesNotYieldedByActorIterator=%d notYieldedBeforeWipe=%d notYieldedNewSinceWipe=%d actorsIterated=%d"),
+        bIsReroll ? 1 : 0, Mgr->mResourceNodes.Num(), NotIterated, NotYieldedBeforeWipe.Num(), NewSinceWipe, Iterated.Num());
 }
