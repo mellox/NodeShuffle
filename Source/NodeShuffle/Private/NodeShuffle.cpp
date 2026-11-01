@@ -584,6 +584,7 @@ void FNodeShuffleModule::StartupModule()
     // deployed DLL indistinguishable from its parked predecessor in a log. Bump the tag in the same
     // action as the build, never after it.
     UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle 1.4.0 LOADED (2026-10-31-rwg-farspawn-1f)====="));
+    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle packet marker (2026-10-31-rwg-rerollwipe-1)=====")); // own line: check_rwgp4 W14 allows one tag in the line above
     FNodeShuffleModule::LogAutoAllowExtractorsState(); // Packet G: log the CVar state once at startup
 
 #if !WITH_EDITOR

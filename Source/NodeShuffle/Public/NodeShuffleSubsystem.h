@@ -1192,6 +1192,11 @@ private:
     int32 RwgProvCandBuiltLayoutNum = -1;                                  // Layout.Num() at the last build
     const TCHAR* RwgProvCandDirtyWhy = nullptr;                            // set by RwgProvCandMarkDirty; cleared by a build
     int32 RwgProvCandBuilds = 0;                                           // session: list builds (PROVSPAWN candidateListBuilds)
+    // rwg-rerollwipe-1 (2026-10-31, NodeShuffleRerollWipe.cpp): the re-roll wipe's registration teardown + REROLLWIPE census (RollLayout call sites only).
+    void RerollWipeBegin(struct FNodeShuffleRerollWipeTally& T);                                        // records the snap-list count before the wipe
+    void RerollWipeTeardownRegistrations(class AFGResourceNode* Node, struct FNodeShuffleRerollWipeTally& T); // snap list, representation, scan; caller Destroys after
+    void RerollWipeNoteInvalidSlot(class AFGResourceNode* Node, struct FNodeShuffleRerollWipeTally& T);  // invalid slot: address recorded, nothing torn down
+    void RerollWipeEmitCensus(const struct FNodeShuffleRerollWipeTally& T);                             // REROLLWIPE, ungated, pointer compares only
     // Coordinator addendum (water diagnostics, measured only, gates nothing): ROLLCENSUS / WELLROLL splits + bounded samples.
     void RwgNoteWaterSample(const NodeShuffleMapMode::FRwgGroundQuery& Q, const FVector& P, bool bVolumeWet, const TCHAR* Caller);
     int32 RwgRcWaterZBelow0 = 0, RwgRcWaterZAtOrAbove0 = 0, RwgRcDealtBelowZ0 = 0; // per roll (GenerateRwgLocations)

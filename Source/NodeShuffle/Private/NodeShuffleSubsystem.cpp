@@ -12,6 +12,7 @@
 #include "NodeShuffleRwgRockCache.h" // rwg-rockcache-1: the shared 8 m rock-owns-node constant
 #include "NodeShuffleRwgDeal.h" // rwg-deal-1: the slot-kind-agnostic RWG card deal
 #include "NodeShuffleRwgSeedGas.h" // rwg-seedgas-1: the RWG modded vanilla-count table
+#include "NodeShuffleRerollWipe.h" // rwg-rerollwipe-1: the re-roll wipe's per-wipe tally (REROLLWIPE census)
 
 #include "EngineUtils.h"
 #include "TimerManager.h"
@@ -1977,9 +1978,11 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
         TSet<FGuid> KeptGuids;
         for (const FNodeShuffleEntry& E : CarriedEntries) { KeptGuids.Add(E.EntryGuid); }
 
+        FNodeShuffleRerollWipeTally WipeTally; // rwg-rerollwipe-1 (NodeShuffleRerollWipe.cpp)
+        RerollWipeBegin(WipeTally);
         for (auto It = SpawnedNodes.CreateIterator(); It; ++It)
         {
-            if (KeptGuids.Contains(It->Key)) { continue; } // keep the occupied node alive
+            if (KeptGuids.Contains(It->Key)) { ++WipeTally.Kept; continue; } // keep the occupied node alive
             // redesign-5: the visual rock is a subobject OF the node now, so destroying the node destroys
             // its rock — no separate rock actor to clean up.
             // coexist-1 INVARIANT: every NodeShuffle self-destroy of a spawned node (this re-roll wipe, and RwgRedealLiveEntry
@@ -1989,11 +1992,15 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
             // coexist-veto-1: unregister AFTER Destroy() — the OnActorDestroyed delegates fire inside
             // Destroy(), so a KBFL destroyed-event listener still sees the node as MANAGED (vetoed)
             // for our own intentional wipe; the FObjectKey stays computable (index/serial unchanged).
-            if (IsValid(It->Value)) { It->Value->Destroy(); }
+            // rwg-rerollwipe-1: BEFORE Destroy, drop the node from the manager's raw Mk1 snap list (a dangling pointer otherwise),
+            // its map/compass representation and its scan reveal -- the teardown RwgRedealLiveEntry and RwgProvisionalDespawn do.
+            if (IsValid(It->Value)) { RerollWipeTeardownRegistrations(It->Value, WipeTally); It->Value->Destroy(); }
+            else { RerollWipeNoteInvalidSlot(It->Value, WipeTally); }
             FNodeShuffleModule::UnregisterManagedNode(It->Value);
             It.RemoveCurrent();
         }
         MeshActorCache.Reset();
+        RerollWipeEmitCensus(WipeTally); // rwg-rerollwipe-1: REROLLWIPE, ungated, once per re-roll
     }
 
     // coexist-1: a fresh roll is a fresh start for the session-only backoff/steady state — new entries
