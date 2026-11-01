@@ -5088,9 +5088,10 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
         // NodeShuffle.InsideGateRefuse=1). Option B (an all-solid reading at a spot not dealt as a cave redeals the entry: ring, then map-wide)
         // is applied on the provisional settle's move path and the provisional spawn path only (NodeShuffleMapModeProvisionalMove.cpp,
         // RwgProvisionalInsideRedeal); bringing it here is its own packet (round-1f review, options table: "Near-player fresh ... own packet").
+        // The provisional settle's respawn branch (a2: xyShift / classDiffers / resourceDiffers / moveNotApplied / gatedRespawn) reaches this same gate and also only measures.
         const bool bGateRefuses = EvaluateInsideShadowGate(Entry.Location, /*Subject=*/nullptr, GateWho,
                                                            /*bAdoptedNotPlaced=*/false,
-                                                           /*bCaveFlagged=*/Entry.bUnderground || Entry.bRwgCave); // RWG P5: an RWG cave floor is a dealt cave cell too (bRwgCave false on vanilla)
+                                                           /*bCaveFlagged=*/RwgInsideCaveExempt(Entry)); // RWG P5: an RWG cave floor is a dealt cave cell too; the same predicate option B tests
         if (bGateRefuses)
         {
             // ns-t54 cold review F11 -- ONE EVALUATION, THEN DROP. NO RETRY.

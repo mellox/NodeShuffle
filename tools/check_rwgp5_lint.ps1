@@ -147,7 +147,7 @@ function Invoke-P5Checks($T) {
     if (-not $T.resettle.Contains('E.bRwgSettledOnTerrain || E.bUnderground || E.bRwgCave) { continue; }')) { $f += '(P9) the resettle pass must skip cave entries' }
     if (-not $T.rock.Contains('E.bRwgRockChecked || E.bUnderground || E.bRwgCave) { continue; }')) { $f += '(P9) the rock pass must skip cave entries' }
     if (-not $T.sea.Contains('if (E.bPinned || E.bUnderground || E.bRwgCave) { ++SkipPinned;')) { $f += '(P9) the sea pass must skip cave entries' }
-    if (-not $T.subsys.Contains('/*bCaveFlagged=*/Entry.bUnderground || Entry.bRwgCave);') -or -not $T.subsys.Contains('Reuse->bRwgCave = false;')) { $f += '(P9) the inside gate must exempt RWG cave entries and the starter re-home must clear bRwgCave' }
+    if (-not $T.subsys.Contains('/*bCaveFlagged=*/RwgInsideCaveExempt(Entry));') -or -not $T.subsysh.Contains('static bool RwgInsideCaveExempt(const FNodeShuffleEntry& E) { return E.bUnderground || E.bRwgCave; }') -or -not $T.subsys.Contains('Reuse->bRwgCave = false;')) { $f += '(P9) the inside gate must exempt RWG cave entries and the starter re-home must clear bRwgCave' }
     if (-not $T.subsys.Contains('Entry.bUnderground || Entry.bRwgCave, &bTrySteep,') -or -not $T.subsys.Contains('bUndergroundEntry = E.bUnderground || E.bRwgCave;')) { $f += '(P9) the overlap nudge and rock dress must treat bRwgCave as cave' }
     # P10
     if ((Count $T.place ('caveSpots=' + '0 ')) -ne 0 -or (Count $T.place 'caveSpots=%d caveDrawsTried=%d caveDealFailed=%d') -ne 1) { $f += '(P10) ROLLCENSUS must print caveSpots as a measured field' }
@@ -199,7 +199,8 @@ $mutants = @(
     @{ Name = 'M10 census grade drops the JSON count'; Key = 'cave';  Expect = 'P3'; Find = 'bRwgCaveUsable = bNumOk && bStandOk'; Repl = 'bRwgCaveUsable = bStandOk' }
     @{ Name = 'M11 cave redeal rolls FRand at share 0'; Key = 'cave'; Expect = 'P13'; Find = '!(Share > 0.0f && Rng.FRand() < Share)'; Repl = '!(Rng.FRand() < Share)' }
     @{ Name = 'M13 census not run at readiness';       Key = 'r1';    Expect = 'P3'; Find = 'RwgEnsureCaveCheck(Q); }'; Repl = '}' }
-    @{ Name = 'M14 inside gate not exempting caves';   Key = 'subsys'; Expect = 'P9'; Find = '/*bCaveFlagged=*/Entry.bUnderground || Entry.bRwgCave);'; Repl = '/*bCaveFlagged=*/Entry.bUnderground);' }
+    @{ Name = 'M14 inside gate not exempting caves';   Key = 'subsys'; Expect = 'P9'; Find = '/*bCaveFlagged=*/RwgInsideCaveExempt(Entry));'; Repl = '/*bCaveFlagged=*/Entry.bUnderground);' } # rwg-farspawn-1f re-review F9: the gate passes the shared helper
+    @{ Name = 'M14b cave helper narrowed';   Key = 'subsysh'; Expect = 'P9'; Find = '{ return E.bUnderground || E.bRwgCave; }'; Repl = '{ return E.bUnderground; }' }
     @{ Name = 'M15 seed count feeds on our spawns';     Key = 'cave';  Expect = 'P3'; Find = 'if (bOurs) { ++ExcludedOurs; continue; }'; Repl = '' }
     @{ Name = 'M12 surface settle census dropped';     Key = 'place'; Expect = 'P10'; Find = 'RwgNoteSettledInsideCave(Q, Entry);'; Repl = '' }
     @{ Name = 'M16 cave redeal keeps the flag at entry'; Key = 'cave'; Expect = 'P15'; Find = "    Entry.bRwgCave = false;`n    if (!RwgEnsureCaveCheck(Q))"; Repl = "    if (!RwgEnsureCaveCheck(Q))" }
