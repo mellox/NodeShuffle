@@ -5088,7 +5088,7 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
         // NodeShuffle.InsideGateRefuse=1). Option B (an all-solid reading at a spot not dealt as a cave redeals the entry: ring, then map-wide)
         // is applied on the provisional settle's move path and the provisional spawn path only (NodeShuffleMapModeProvisionalMove.cpp,
         // RwgProvisionalInsideRedeal); bringing it here is its own packet (round-1f review, options table: "Near-player fresh ... own packet").
-        // The provisional settle's respawn branch (a2: xyShift / classDiffers / resourceDiffers / moveNotApplied / gatedRespawn) reaches this same gate and also only measures.
+        // The provisional settle's respawn branch (a2: every settled MoveCheck other than moved or a completed insideRedeal -- xyShift / classDiffers / resourceDiffers / noActor / moveNotApplied / gatedRespawn, or an insideRedeal RwgRedealLiveEntry refused) calls this function too, so its spawn can reach this same gate, which there also only measures at the default CVar.
         const bool bGateRefuses = EvaluateInsideShadowGate(Entry.Location, /*Subject=*/nullptr, GateWho,
                                                            /*bAdoptedNotPlaced=*/false,
                                                            /*bCaveFlagged=*/RwgInsideCaveExempt(Entry)); // RWG P5: an RWG cave floor is a dealt cave cell too; the same predicate option B tests
@@ -5122,7 +5122,7 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
                 TEXT("the identical point; the overlap spiral retries because it relocates between ")
                 TEXT("attempts, and its nudge counter is left untouched by this branch. This is a DROP, ")
                 TEXT("not a re-deal unless the caller restores the entry (the RWG provisional spawn pass does, then redeals it and prints PROVINSIDE); otherwise the entry does not come back this session, AND NOTHING HERE TOUCHES ")
-                TEXT("THE VANILLA ORIGINAL'S SUPPRESSION -- that node stays hidden, so this resource is ")
+                TEXT("THE VANILLA ORIGINAL'S SUPPRESSION -- that node stays hidden, so an entry that is not restored leaves this resource ")
                 TEXT("absent at BOTH ends for the session. That is the same outcome as the pre-existing ")
                 TEXT("overlap/enclosure give-up and is not new behaviour, but it is the cost of turning ")
                 TEXT("the switch on. Reachable only while ")
