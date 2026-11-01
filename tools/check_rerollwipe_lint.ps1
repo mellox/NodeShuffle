@@ -185,7 +185,7 @@ $mutants = @(
     @{ Name = 'Q3 snap-list removal dropped'; Key = 'wipe'; Expect = 'R2'; Find = 'Removed = Mgr->mResourceNodes.RemoveSingleSwap(Node); '; Repl = 'Removed = 0; ' }
     @{ Name = 'Q4 representation-by-actor removal dropped'; Key = 'wipe'; Expect = 'R2'; Find = 'bByActor = RepMgr->RemoveRepresentationOfActor(Node);'; Repl = 'bByActor = false;' }
     @{ Name = 'Q5 scan reveal removal dropped'; Key = 'wipe'; Expect = 'R2'; Find = "    Node->RemoveResourceNodeScan_Local();`n"; Repl = '' }
-    @{ Name = 'Q6 stale count dereferences'; Key = 'wipe'; Expect = 'R3'; Find = 'if (Mgr->mResourceNodes.Contains(Ptr)) { ++StaleAfter; }'; Repl = ('if (IsVal' + 'id(Ptr) && Mgr->mResourceNodes.Contains(Ptr)) { ++StaleAfter; }') }
+    @{ Name = 'Q6 stale count dereferences (re-review N2: insert-only, every needle intact)'; Key = 'wipe'; Expect = 'R3'; ExpectMsg = 'a recorded address is dereferenced'; Find = "        InvalidStillIn = 0;`n"; Repl = ("        for (AFGResourceNode* P : T.DestroyedPtrs) { if (IsVal" + "id(P)) { ++StaleAfter; } }`n        InvalidStillIn = 0;`n") }
     @{ Name = 'Q7 census field renamed'; Key = 'wipe'; Expect = 'R4'; Find = 'staleInManagerAfter=%d'; Repl = 'stale=%d' }
     @{ Name = 'Q8 census gated'; Key = 'wipe'; Expect = 'R5'; Find = "    // UNGATED: once per re-roll; it is the packet's control line.`n"; Repl = ("    if (FNodeShuffleModule::AreDiagnostics" + "Enabled())`n") }
     @{ Name = 'Q9 marker reverted'; Key = 'nsmod'; Expect = 'R6'; Find = $marker; Repl = ('2026-10-31-rwg-' + 'rerollwipe-0') }
@@ -206,14 +206,14 @@ $mutants = @(
        Find2 = "++T.RepPresentAfterUpdate; } }`n"; Repl2 = "++T.RepPresentAfterUpdate; } }`n    Node->UpdateNodeRepresentation();`n" }
     @{ Name = 'Q29 REROLLAUDIT call dropped'; Key = 'sub'; Expect = 'R11'; Find = '    RerollWipeEmitListAudit(bIsReroll, AuditNotYieldedBeforeWipe); // rwg'; Repl = '    // audit removed // rwg' }
     @{ Name = 'Q30 REROLLAUDIT call gated'; Key = 'sub'; Expect = 'R11'; Find = '    RerollWipeEmitListAudit(bIsReroll, AuditNotYieldedBeforeWipe); // rwg'; Repl = ('    if (FNodeShuffleModule::AreDiagnostics' + 'Enabled()) RerollWipeEmitListAudit(bIsReroll, AuditNotYieldedBeforeWipe); // rwg') }
-    @{ Name = 'Q31 REROLLAUDIT dereferences an entry'; Key = 'wipe'; Expect = 'R11'; Find = "    int32 NotIterated = 0;`n"; Repl = ("    int32 NotIterated = 0;`n    for (const AFGResourceNode* P : Mgr->mResourceNodes) { if (IsVal" + "id(P)) { } }`n") }
+    @{ Name = 'Q31 REROLLAUDIT dereferences an entry (re-review N2: insert-only)'; Key = 'wipe'; Expect = 'R11'; ExpectMsg = 'audit dereferences a list entry'; Find = "    int32 NotIterated = 0;`n"; Repl = ("    int32 NotIterated = 0;`n    for (const AFGResourceNode* P : Mgr->mResourceNodes) { if (IsVal" + "id(P)) { } }`n") }
     @{ Name = 'Q32 REROLLAUDIT gated in its body'; Key = 'wipe'; Expect = 'R11'; Find = '    if (!Mgr || !World) { UE_LOG(LogNodeShuffle, Display, TEXT("REROLLAUDIT: reroll=%d noManagerOrWorld=1"), bIsReroll ? 1 : 0); return; }'; Repl = ('    if (!FNodeShuffleModule::AreDiagnostics' + 'Enabled()) { return; }`n    if (!Mgr || !World) { return; }') }
     @{ Name = 'Q33 REROLLAUDIT field renamed'; Key = 'wipe'; Expect = 'R11'; Find = 'entriesNotYieldedByActorIterator=%d'; Repl = 'dead=%d' }
     @{ Name = 'Q36 (re-review A1) before-wipe snapshot call dropped'; Key = 'sub'; Expect = 'R12'; Find = ($snapCall + "`n"); Repl = '' }
     @{ Name = 'Q37 (re-review A1) snapshot moved after the wipe'; Key = 'sub'; Expect = 'R12'; Find = ($snapCall + "`n"); Repl = ''
        Find2 = '        RerollWipeEmitCensus(WipeTally); // rwg-rerollwipe-1: REROLLWIPE, ungated, once per re-roll'; Repl2 = ('        RerollWipeEmitCensus(WipeTally); // rwg-rerollwipe-1: REROLLWIPE, ungated, once per re-roll' + "`n" + $snapCall) }
     @{ Name = 'Q38 (re-review A1) new-since-wipe ignores the snapshot'; Key = 'wipe'; Expect = 'R11'; Find = 'if (!NotYieldedBeforeWipe.Contains(Ptr)) { ++NewSinceWipe; }'; Repl = '++NewSinceWipe;' }
-    @{ Name = 'Q39 (re-review A1) snapshot dereferences an entry'; Key = 'wipe'; Expect = 'R12'; Find = "    Out.Reset();`n"; Repl = ("    Out.Reset();`n    for (const AFGResourceNode* P : Mgr->mResourceNodes) { if (IsVal" + "id(P)) { } }`n") }
+    @{ Name = 'Q39 (re-review A1) snapshot dereferences an entry'; Key = 'wipe'; Expect = 'R12'; ExpectMsg = 'snapshot dereferences a list entry'; Find = "    Out.Reset();`n"; Repl = ("    Out.Reset();`n    for (const AFGResourceNode* P : Mgr->mResourceNodes) { if (IsVal" + "id(P)) { } }`n") }
     @{ Name = 'Q40 (re-review A1) snapshot predicate dropped'; Key = 'wipe'; Expect = 'R12'; Find = 'if (!Iterated.Contains(Ptr)) { Out.Add(Ptr); }'; Repl = 'Out.Add(Ptr);' }
     @{ Name = 'Q43 (re-review S1) external-destroy snap drop removed'; Key = 'sub'; Expect = 'R13'; Find = ($s1Call + ' // re-review S1'); Repl = '        const int32 DeadSnapDropped = 0; // re-review S1' }
     @{ Name = 'Q44 (re-review S1) snap drop moved after the slot removal'; Key = 'sub'; Expect = 'R13'; Find = ($s1Call + ' // re-review S1: the review-F2 rule on its other side, before the hard ref goes' + "`n"); Repl = ''
@@ -238,7 +238,11 @@ foreach ($m in $mutants) {
         $t2[$m.Key] = $t2[$m.Key].Replace($m.Find2, $m.Repl2)
     }
     $r = Invoke-RerollWipeChecks $t2
-    if (($r | Where-Object { $_.StartsWith("($($m.Expect))") }).Count -gt 0) { Write-Host "RED  (ok) $($m.Name)" }
+    $hits = @($r | Where-Object { $_.StartsWith("($($m.Expect))") })
+    # re-review N2: ExpectMsg = the mutant must go red through THAT sub-check alone (every same-rule failure carries the message)
+    $ok = $hits.Count -gt 0
+    if ($ok -and $m.ContainsKey('ExpectMsg')) { $ok = (@($hits | Where-Object { -not $_.Contains($m.ExpectMsg) })).Count -eq 0 }
+    if ($ok) { Write-Host "RED  (ok) $($m.Name)" }
     else { Write-Host "GREEN (BAD) $($m.Name): expected $($m.Expect), got: $($r -join ' | ')"; $bad++ }
 }
 if ($bad -gt 0) { Write-Host "FAIL: $bad mutant(s) not caught"; exit 1 }
