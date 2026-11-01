@@ -405,9 +405,10 @@ void ANodeShuffleSubsystem::RwgProvisionalEmitCensus()
     // Legend (re-review V-R3, prose only): the settledNoActor and redealNotMoved fields are session counts of two settle outcomes. settledNoActor counts settles
     // where the settle call returned true but no valid actor existed after the respawn. redealNotMoved counts unplaceable-branch
     // settles where the redeal call returned false (the entry did not move), and since rwg-farspawn-1f option B also settle inside redeals that
-    // left the entry within 1 cm of its spot (their PROVSETTLE outcome is insideRedeal); a redeal that returned true also leaves no actor until
-    // the next spawn and is counted in redealtFromProvisional, not here. Both match the PROVSETTLE outcome strings of the same names,
-    // which are a sample; these are the census.
+    // RwgProvisionalInsideRedeal completed but that left the entry within 1 cm (2-D) of its spot (their PROVSETTLE outcome is insideRedeal). On the
+    // unplaceable branch a redeal that returned true also leaves no actor until the next spawn and is counted in redealtFromProvisional, not here; so is
+    // a settle inside redeal that moved the entry more than 1 cm (2-D). settledNoActor and the unplaceable-branch share of redealNotMoved match the
+    // PROVSETTLE outcome strings of the same names, which are a sample; these are the census.
     // rwg-farspawn-1c C1 (prose only): the movedInPlace tail is the session count of settles that kept and moved the same actor; it is a
     // subset of settledFromProvisional (the rest of that count were respawned).
     // rwg-farspawn-1d F1/F2 (prose only): the moveNotApplied, movedEnclosed and movedShadowInside fields are session counts.
