@@ -18,7 +18,7 @@ namespace NodeShuffleRerollIdentity
     {
         bOutByPath = false;
         OutDistCm = -1.0f;
-        if (!A.VanillaNodePath.IsEmpty() && A.VanillaNodePath == B.VanillaNodePath) { bOutByPath = true; OutDistCm = 0.0f; return true; }
+        if (!A.VanillaNodePath.IsEmpty() && A.VanillaNodePath == B.VanillaNodePath) { const FVector PA = OriginalAnchor(A), PB = OriginalAnchor(B); if (!PA.IsNearlyZero() && !PB.IsNearlyZero() && FVector::DistSquared(PA, PB) >= FMath::Square(RadiusCm)) { return false; } bOutByPath = true; OutDistCm = 0.0f; return true; } // one name at two anchored spots is a swapped name, not one original
         if (A.OriginalResourceClassPath.IsEmpty() || A.OriginalResourceClassPath != B.OriginalResourceClassPath) { return false; }
         const FVector AnchorA = OriginalAnchor(A);
         const FVector AnchorB = OriginalAnchor(B);
@@ -70,20 +70,18 @@ namespace NodeShuffleRerollIdentity
         for (int32 c = 0; c < Cand.Num(); ++c) { Parent[c] = c; }
 
         // Path leg: rows sharing a name are one original. Anchor leg: per resource, rows whose anchors sit within the radius.
-        TMap<FString, int32> FirstByPath;
+        TMap<FString, TArray<int32>> ByPath;
         TMap<FString, TArray<int32>> ByResource;
         for (int32 c = 0; c < Cand.Num(); ++c)
         {
             const FNodeShuffleEntry& E = Layout[Cand[c]];
-            if (!E.VanillaNodePath.IsEmpty())
-            {
-                if (const int32* First = FirstByPath.Find(E.VanillaNodePath)) { Unite(Parent, *First, c); }
-                else { FirstByPath.Add(E.VanillaNodePath, c); }
-            }
+            if (!E.VanillaNodePath.IsEmpty()) { ByPath.FindOrAdd(E.VanillaNodePath).Add(c); }
             if (OriginalAnchor(E).IsNearlyZero()) { ++Out.CandidatesWithoutAnchor; }
             else { ByResource.FindOrAdd(E.OriginalResourceClassPath).Add(c); }
         }
         const float RadiusSq = FMath::Square(RadiusCm);
+        // review F2: one name at two anchored spots further apart than the radius is a swapped name (two originals), never united.
+        for (const TPair<FString, TArray<int32>>& KV : ByPath) { const TArray<int32>& Same = KV.Value; for (int32 x = 0; x < Same.Num(); ++x) { const FVector AX = OriginalAnchor(Layout[Cand[Same[x]]]); for (int32 y = x + 1; y < Same.Num(); ++y) { const FVector AY = OriginalAnchor(Layout[Cand[Same[y]]]); if (!AX.IsNearlyZero() && !AY.IsNearlyZero() && FVector::DistSquared(AX, AY) >= RadiusSq) { ++Out.PathPairsApart; continue; } Unite(Parent, Same[x], Same[y]); } } }
         for (const TPair<FString, TArray<int32>>& KV : ByResource)
         {
             const TArray<int32>& Bucket = KV.Value;
@@ -92,7 +90,8 @@ namespace NodeShuffleRerollIdentity
                 const FVector AnchorX = OriginalAnchor(Layout[Cand[Bucket[x]]]);
                 for (int32 y = x + 1; y < Bucket.Num(); ++y)
                 {
-                    if (FVector::DistSquared(AnchorX, OriginalAnchor(Layout[Cand[Bucket[y]]])) < RadiusSq) { Unite(Parent, Bucket[x], Bucket[y]); }
+                    // review F3: two different names that BOTH resolve live are two originals even inside the radius; never united.
+                    const FNodeShuffleEntry& EX = Layout[Cand[Bucket[x]]]; const FNodeShuffleEntry& EY = Layout[Cand[Bucket[y]]]; if (FVector::DistSquared(AnchorX, OriginalAnchor(EY)) >= RadiusSq) { continue; } if (!EX.VanillaNodePath.IsEmpty() && !EY.VanillaNodePath.IsEmpty() && EX.VanillaNodePath != EY.VanillaNodePath && PathResolvesLive(EX.VanillaNodePath) && PathResolvesLive(EY.VanillaNodePath)) { ++Out.AnchorPairsBothLive; continue; } Unite(Parent, Bucket[x], Bucket[y]);
                 }
             }
         }
@@ -115,6 +114,7 @@ namespace NodeShuffleRerollIdentity
             FNodeShuffleEntry& Keeper = Layout[Cand[K]];
             const bool bKeeperCarried = CarriedGuids.Contains(Keeper.EntryGuid);
 
+            const FNodeShuffleEntry KeeperBefore = Keeper; // legs graded on the pre-pass names (a transfer can make an anchor twin path-equal)
             // A keeper whose name is dead takes a member's live name, so one record resolves by path at the next load and the
             // live-scan augments see the original's current name in the dedupe set.
             const bool bKeeperPathLive = !Keeper.VanillaNodePath.IsEmpty() && PathResolvesLive(Keeper.VanillaNodePath);
@@ -141,7 +141,7 @@ namespace NodeShuffleRerollIdentity
                 FNodeShuffleEntry& E = Layout[Cand[m]];
                 bool bByPath = false;
                 float DistCm = -1.0f;
-                SameOriginal(Keeper, E, RadiusCm, bByPath, DistCm); // a member joined through a third row leaves both unset
+                SameOriginal(KeeperBefore, E, RadiusCm, bByPath, DistCm); // a member joined through a third row leaves both unset
                 if (CarriedGuids.Contains(E.EntryGuid))
                 {
                     // Two mined copies of one original both stay under their miners; sharing one name makes the path-keyed
@@ -166,7 +166,7 @@ namespace NodeShuffleRerollIdentity
                 D.DistCm = DistCm;
                 Out.Drops.Add(E.EntryGuid, D);
                 if (!E.VanillaNodePath.IsEmpty()) { Out.DroppedPaths.Add(E.VanillaNodePath); }
-                if (bByPath) { ++Out.PathDrops; } else { ++Out.AnchorDrops; }
+                if (bByPath) { ++Out.PathDrops; } else if (DistCm >= 0.0f) { ++Out.AnchorDrops; } else { ++Out.ThirdRowDrops; }
             }
         }
     }
@@ -185,9 +185,9 @@ namespace NodeShuffleRerollIdentity
             ++Count;
             if (Count <= LineCap)
             {
-                UE_LOG(LogNodeShuffle, Display, TEXT("REROLLPOOL-NORECORD path='%s' res='%s' guid=%s anchor=%s carried=%d"),
+                UE_LOG(LogNodeShuffle, Display, TEXT("REROLLPOOL-NORECORD path='%s' res='%s' guid=%s trueLoc=%s carried=%d pinnedNow=%d"),
                     *E.VanillaNodePath, *ShortName(E.OriginalResourceClassPath), *E.EntryGuid.ToString(),
-                    *OriginalAnchor(E).ToCompactString(), bCarried ? 1 : 0);
+                    *E.OriginalTrueLocation.ToCompactString(), bCarried ? 1 : 0, E.bPinned ? 1 : 0);
             }
         };
         for (const FNodeShuffleEntry& E : Pool) { if (!E.bIsNewNode) { Visit(E, false); } }

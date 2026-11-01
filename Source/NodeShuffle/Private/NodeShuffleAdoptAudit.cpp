@@ -139,11 +139,13 @@ void ANodeShuffleSubsystem::AdoptAuditEmit(int32 AdoptLineAdopted)
         TArray<FString> Classes;
         ByClass.GetKeys(Classes);
         Classes.Sort();
+        AdoptUnboundSpawnClasses.Reset();
         for (const FString& C : Classes)
         {
             const FClassRow& Row = ByClass.FindChecked(C);
             UE_LOG(LogNodeShuffle, Display, TEXT("ADOPTCLASS class=%s entries=%d bound=%d unbound=%d provisional=%d"),
                 *FPackageName::ObjectPathToObjectName(C), Row.Entries, Row.Bound, Row.Entries - Row.Bound, Row.Provisional);
+            if (Row.Entries > 0 && Row.Bound == 0) { AdoptUnboundSpawnClasses.Add(C); }
         }
     }
     RwgProvCandMarkDirty(TEXT("reload")); // rwg-farspawn-1f C3: the provisional candidate list is rebuilt after adopt-on-load

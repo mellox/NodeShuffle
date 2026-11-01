@@ -10,7 +10,8 @@
 //
 // Identity here is: SAME PATH, or SAME ORIGINAL RESOURCE AND BOTH ANCHORS SET AND WITHIN OriginalIdentityRadiusCm. An entry
 // with no anchor (a relocated entry never stamped with OriginalTrueLocation) never matches by distance. All helpers are PURE
-// over the layout arrays except where a caller passes a path resolver; log lines are Display and bounded by the caller's cap.
+// over the layout arrays except DedupeOriginals, which renames VanillaNodePath in Layout and Carried; log lines are Display and
+// bounded by the caller's cap.
 
 #include "CoreMinimal.h"
 #include "NodeShuffleSubsystem.h"
@@ -50,6 +51,9 @@ namespace NodeShuffleRerollIdentity
         int32 PathDrops = 0;            // dropped by the path leg where the keeper is NOT carried (the rerolldup-1 poolPathRepeats class)
         int32 CarriedTwinsUnified = 0;  // carried rows of one original given the keeper's name (both stay under their miners)
         int32 PathTransfers = 0;        // keepers whose dead name was replaced by a member's live name
+        int32 PathPairsApart = 0;       // same name, both anchored, >= radius apart: NOT united (a swapped name)
+        int32 AnchorPairsBothLive = 0;  // anchors within the radius but two different names both resolving live: NOT united
+        int32 ThirdRowDrops = 0;        // joined through a third row: neither leg matches the keeper directly
     };
 
     // Groups Layout rows carrying an original by identity and picks one keeper per group: carried first, then a pinned raw

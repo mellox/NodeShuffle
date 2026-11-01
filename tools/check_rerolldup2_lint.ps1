@@ -31,6 +31,7 @@ $files = [ordered]@{
     dump  = 'NodeShuffle\Private\NodeShuffleLayoutDump.cpp'
     audit = 'NodeShuffle\Private\NodeShuffleAdoptAudit.cpp'
     nsmod = 'NodeShuffle\Private\NodeShuffle.cpp'
+    hdr   = 'NodeShuffle\Public\NodeShuffleSubsystem.h'
 }
 $text = [ordered]@{}
 foreach ($k in $files.Keys) {
@@ -56,7 +57,7 @@ $carryAdd    = '                CarriedEntries.Add(Kept);'
 $fillGuid    = '        RerollCarriedGuids.Add(C.EntryGuid);'
 $snapLoop    = '        for (const FNodeShuffleSuppressedOriginal& R : OriginalNodeRecord) { if (!R.VanillaNodePath.IsEmpty()) { RerollPriorRecordPaths.Add(R.VanillaNodePath); } }'
 $prePass     = "        NodeShuffleRerollIdentity::DedupeOriginals(Layout, CarriedEntries, AdoptMatchRadiusCm,`n            [this](const FString& Path) { return IsValid(FindOriginalBaseByPath(Path)); }, RerollIdentity);"
-$identFmt    = 'TEXT("REROLLPOOL-IDENTITY candidates=%d candidatesWithoutAnchor=%d groups=%d anchorDrops=%d pathDrops=%d carriedTwinsRenamed=%d liveNamesTransferred=%d radiusCm=%.0f"),'
+$identFmt    = 'TEXT("REROLLPOOL-IDENTITY candidates=%d candidatesWithoutAnchor=%d groups=%d anchorDrops=%d pathDrops=%d carriedTwinsUnified=%d pathTransfers=%d radiusCm=%.0f thirdRowDrops=%d pathPairsApart=%d anchorPairsBothLive=%d"),'
 $dupeContinue = "                    Old.bActive ? 1 : 0, Old.bPinned ? 1 : 0, Old.bIsNewNode ? 1 : 0);`n                continue;`n            }"
 $skipPred    = '            if (const NodeShuffleRerollIdentity::FDrop* Drop = RerollIdentity.Drops.Find(Old.EntryGuid))'
 $skipCount   = '                ++RerollIdentityDupesDropped;'
@@ -66,7 +67,19 @@ $carriedFlag = '            const bool bCarriedOld = RerollCarriedGuids.Contains
 $guardedAdd  = '            if (!bCarriedOld) { NewLayout.Add(E); } // rwg-rerolldup-1 I1'
 $anchorRaw   = '        if (!E.bIsNewNode) { return E.Location; } // a raw original still sits where it was captured'
 $anchorZero  = '        return FVector::ZeroVector;              // a relocated entry''s Location is its destination'
-$samePath    = '        if (!A.VanillaNodePath.IsEmpty() && A.VanillaNodePath == B.VanillaNodePath) { bOutByPath = true; OutDistCm = 0.0f; return true; }'
+$samePath    = '        if (!A.VanillaNodePath.IsEmpty() && A.VanillaNodePath == B.VanillaNodePath) { const FVector PA = OriginalAnchor(A), PB = OriginalAnchor(B); if (!PA.IsNearlyZero() && !PB.IsNearlyZero() && FVector::DistSquared(PA, PB) >= FMath::Square(RadiusCm)) { return false; } bOutByPath = true; OutDistCm = 0.0f; return true; }'
+# review F2/F3/F4 (verbatim): the two union guards, the pre-transfer grading copy, the third-row bucket
+$pathApart   = 'if (!AX.IsNearlyZero() && !AY.IsNearlyZero() && FVector::DistSquared(AX, AY) >= RadiusSq) { ++Out.PathPairsApart; continue; } Unite(Parent, Same[x], Same[y]);'
+$bothLive    = 'if (!EX.VanillaNodePath.IsEmpty() && !EY.VanillaNodePath.IsEmpty() && EX.VanillaNodePath != EY.VanillaNodePath && PathResolvesLive(EX.VanillaNodePath) && PathResolvesLive(EY.VanillaNodePath)) { ++Out.AnchorPairsBothLive; continue; } Unite(Parent, Bucket[x], Bucket[y]);'
+$keeperBefore = '            const FNodeShuffleEntry KeeperBefore = Keeper;'
+$gradeBefore = '                SameOriginal(KeeperBefore, E, RadiusCm, bByPath, DistCm);'
+$thirdRow    = '                if (bByPath) { ++Out.PathDrops; } else if (DistCm >= 0.0f) { ++Out.AnchorDrops; } else { ++Out.ThirdRowDrops; }'
+# review F1 (verbatim, reviewer-authored): live carried actors keep their class unless ADOPTCLASS saw the class with no bound actor
+$liveKeptSkip = '            AFGResourceNode* const* LiveC = SpawnedNodes.Find(C.EntryGuid); if (LiveC && IsValid(*LiveC) && !AdoptUnboundSpawnClasses.Contains(ResolveSpawnNodeClassPath(C))) { ++RerollVanillaRestampLiveKept; continue; }'
+$liveKeptFmt = 'TEXT("REPCLASS-VANRESTAMP-LIVEKEPT carriedTotal=%d liveNotInUnboundSet=%d unboundClassesAtAdopt=%d"), CarriedEntries.Num(), RerollVanillaRestampLiveKept, AdoptUnboundSpawnClasses.Num());'
+$adoptSetReset = '        AdoptUnboundSpawnClasses.Reset();'
+$adoptSetAdd = '            if (Row.Entries > 0 && Row.Bound == 0) { AdoptUnboundSpawnClasses.Add(C); }'
+$hdrSet      = 'TSet<FString> AdoptUnboundSpawnClasses;'
 $sameRes     = '        if (A.OriginalResourceClassPath.IsEmpty() || A.OriginalResourceClassPath != B.OriginalResourceClassPath) { return false; }'
 $sameZero    = '        if (AnchorA.IsNearlyZero() || AnchorB.IsNearlyZero()) { return false; } // an unanchored row never matches by distance'
 $sameRadius  = '        if (Dist >= RadiusCm) { return false; }'
@@ -83,9 +96,9 @@ $augDropped  = '        ExistingPaths.Append(RerollIdentity.DroppedPaths);'
 $noRecCall   = '        RerollPathsWithoutPriorRecord = NodeShuffleRerollIdentity::ReportPathsWithoutPriorRecord(NewLayout, CarriedEntries, RerollPriorRecordPaths, 48);'
 $recReset    = '        OriginalNodeRecord.Reset();'
 $poolLine    = 'Re-roll pool (redesign-6)'
-$poolTail    = 'rwg-rerolldup-2: %d rows of an original another row already holds dropped, %d rebuilt paths had no record in the previous roll)"),'
+$poolTail    = 'rwg-rerolldup-2: %d rows dropped as grouped with a keeper (same name within the radius, or same resource + anchors within the radius), %d rebuilt paths had no record in the previous roll)"),'
 $poolArgs    = "            RerollIdentityDupesDropped, RerollPathsWithoutPriorRecord);"
-$noRecFmt    = 'TEXT("REROLLPOOL-NORECORD path=''%s'' res=''%s'' guid=%s anchor=%s carried=%d"),'
+$noRecFmt    = 'TEXT("REROLLPOOL-NORECORD path=''%s'' res=''%s'' guid=%s trueLoc=%s carried=%d pinnedNow=%d"),'
 $noRecPool   = '        for (const FNodeShuffleEntry& E : Pool) { if (!E.bIsNewNode) { Visit(E, false); } }'
 $noRecSeen   = '            if (bSeen || PriorRecordPaths.Contains(E.VanillaNodePath)) { return; }'
 $vanPred1    = '        if (E.AssignedResourceClassPath.IsEmpty() || !NodeShuffleRepClass::IsGenericNodeClassPath(E.AssignedResourceClassPath)) { return false; }'
@@ -97,7 +110,7 @@ $convForm    = '                    else { RwgConvFormKept++; }'
 $convCall    = '                NodeShuffleRerollIdentity::RestampVanillaDealOffForeignClass(E, ResolvedSolidRepresentative, ResolvedLiquidRepresentative, FormLiquid, RerollVanillaRestampConv);'
 $convDone    = '                Converted++;'
 $convEmit    = '        NodeShuffleRerollIdentity::EmitVanillaRestampCensus(TEXT("conversion"), RerollVanillaRestampConv);'
-$carrLoop    = "        for (FNodeShuffleEntry& C : CarriedEntries)`n        {`n            NodeShuffleRerollIdentity::RestampVanillaDealOffForeignClass(C, ResolvedSolidRepresentative, ResolvedLiquidRepresentative, FormLiquid, RerollVanillaRestampCarried);`n        }`n        NodeShuffleRerollIdentity::EmitVanillaRestampCensus(TEXT(""carried""), RerollVanillaRestampCarried);"
+$carrLoop    = "        int32 RerollVanillaRestampLiveKept = 0;`n        for (FNodeShuffleEntry& C : CarriedEntries)`n        {`n" + $liveKeptSkip + " // a live actor of a class this session's adopt bound keeps its class`n            NodeShuffleRerollIdentity::RestampVanillaDealOffForeignClass(C, ResolvedSolidRepresentative, ResolvedLiquidRepresentative, FormLiquid, RerollVanillaRestampCarried);`n        }`n        NodeShuffleRerollIdentity::EmitVanillaRestampCensus(TEXT(""carried""), RerollVanillaRestampCarried);`n        UE_LOG(LogNodeShuffle, Display, " + $liveKeptFmt
 $appendCarry = '    NewLayout.Append(CarriedEntries);'
 $vanFmt      = 'TEXT("REPCLASS-VANRESTAMP role=%s slotClass=%s to=%s restamped=%d"),'
 $vanEndFmt   = 'TEXT("REPCLASS-VANRESTAMP-END role=%s restamped=%d repNotGeneric=%d slotClasses=%d"),'
@@ -139,7 +152,9 @@ function Invoke-RerollDup2Checks($T) {
         if ((Count $c $n) -ne 1) { $f += "(V3) identity module text missing: $($n.Substring(0, [Math]::Min(60, $n.Length)).Trim())" }
     }
     if (-not (Ordered $c @($samePath, $sameRes, $sameZero, $sameRadius))) { $f += '(V3) SameOriginal: path leg, then resource, then both anchors set, then the radius' }
-    if (-not (Ordered $c @($liveKeeper, $liveMember, $carriedKeep, $carriedSame, $dropAdd))) { $f += '(V3) group loop: live-name transfer, carried member renamed and kept, carried-keeper same-path skip, then the drop' }
+    if (-not (Ordered $c @($keeperBefore, $liveKeeper, $liveMember, $gradeBefore, $carriedKeep, $carriedSame, $dropAdd, $thirdRow))) { $f += '(V3) group loop: pre-transfer copy, live-name transfer, legs graded on the copy, carried member renamed and kept, carried-keeper same-path skip, the drop, three drop buckets' }
+    foreach ($n in @($pathApart, $bothLive, $keeperBefore, $gradeBefore, $thirdRow)) { if ((Count $c $n) -ne 1) { $f += "(V3) review guard missing: $($n.Trim().Substring(0, 50))" } }
+    if (-not (Ordered $c @('const float RadiusSq = FMath::Square(RadiusCm);', $pathApart, $bothLive))) { $f += '(V3) union order: radius, same-name pairs (apart guard), same-resource pairs (both-live guard)' }
     if ((Count $h $radiusH) -ne 1 -or (Count $s $radiusS) -ne 1) { $f += '(V3) both identity radius literals must read 300' }
     if ((Count $s ('AdoptMatchRadiusCm,' + "`n            [this]")) -ne 1) { $f += '(V3) the pre-pass must receive the subsystem radius' }
     # V4
@@ -155,12 +170,16 @@ function Invoke-RerollDup2Checks($T) {
     if ((Count $s ('RepClassSpawnPath =' + ' ')) -ne 2) { $f += '(V6) the subsystem keeps exactly two RepClassSpawnPath writes (repclass R8); the vanilla-deal write lives in the module' }
     if ((Count $s $convCall) -ne 1 -or -not (Ordered $s @($convForm, $convCall, $convDone))) { $f += '(V6) the conversion must call the restamp after the form restamp and before Converted++' }
     if ((Count $s $convEmit) -ne 1 -or (Count $s $carrLoop) -ne 1 -or -not (Ordered $s @($convEmit, "    if (bIsReroll)`n    {`n" + $carrLoop, $appendCarry))) { $f += '(V6) conversion census, then every carried entry restamped (re-roll only) before the carried append' }
+    if ((Count $s $liveKeptSkip) -ne 1 -or (Count $s $liveKeptFmt) -ne 1 -or (Count $T.hdr $hdrSet) -ne 1 -or (Count $T.hdr ('UPROPERTY' + '(SaveGame) TSet<FString> AdoptUnboundSpawnClasses')) -ne 0) { $f += '(V6) review F1: live carried actors skip the restamp unless their class is in the session-only unbound set; the set is a plain member, never saved' }
     # V7
     if ((Count $s $censusTail) -ne 1 -or (Count $s $censusArgs2) -ne 1) { $f += '(V7) REROLLPOOL-CARRY must carry the six new fields with their arguments' }
-    foreach ($tok in @('identityDupesDropped=', 'carriedTwinsUnified=', 'pathTransfers=', 'pathsWithoutPriorRecord=', 'vanillaRestampedConversion=', 'vanillaRestampedCarried=')) {
+    foreach ($tok in @('identityDupesDropped=', 'pathsWithoutPriorRecord=', 'vanillaRestampedConversion=', 'vanillaRestampedCarried=', 'thirdRowDrops=', 'pathPairsApart=', 'anchorPairsBothLive=', 'liveNotInUnboundSet=', 'unboundClassesAtAdopt=')) {
         if ((Count $s (' ' + $tok)) -ne 1) { $f += "(V7) census token echoed or missing: $tok" }
     }
-    foreach ($tok in @('REROLLPOOL-IDENTITY ', 'REROLLPOOL-IDENTITYDUPE ', 'REROLLPOOL-NORECORD ', 'REPCLASS-VANRESTAMP ', 'REPCLASS-VANRESTAMP-END ', 'LAYOUTDUMP-IDTWIN ', 'LAYOUTDUMP-IDTWINS ', 'ADOPTCLASS ')) {
+    foreach ($tok in @('carriedTwinsUnified=', 'pathTransfers=')) { # review F6: one counter, one name, printed by both the IDENTITY and the CARRY census
+        if ((Count $s (' ' + $tok)) -ne 2) { $f += "(V7) census token echoed or missing (two print sites): $tok" }
+    }
+    foreach ($tok in @('REROLLPOOL-IDENTITY ', 'REROLLPOOL-IDENTITYDUPE ', 'REROLLPOOL-NORECORD ', 'REPCLASS-VANRESTAMP ', 'REPCLASS-VANRESTAMP-END ', 'REPCLASS-VANRESTAMP-LIVEKEPT ', 'LAYOUTDUMP-IDTWIN ', 'LAYOUTDUMP-IDTWINS ', 'ADOPTCLASS ')) {
         $all = $s + $c + $d + $a
         if ((Count $all ('TEXT("' + $tok)) -ne 1) { $f += "(V7) each new tag is printed from exactly one site: $tok" }
     }
@@ -173,7 +192,8 @@ function Invoke-RerollDup2Checks($T) {
     if ((Count $c $idtFmt) -ne 1 -or (Count $c $idtSame) -ne 1 -or (Count $c $idtAnchor) -ne 1 -or -not (Ordered $c @($idtAnchor, $idtSame, $idtFmt))) { $f += '(V9) IDTWIN: anchors required, same-path pairs excluded, exact format' }
     # V10
     $emit = Span $a 'void ANodeShuffleSubsystem::AdoptAuditEmit(int32 AdoptLineAdopted)' $adoptMark
-    if (-not $emit -or (Count $emit $adoptPred) -ne 1 -or (Count $emit $adoptKey) -ne 1 -or (Count $emit $adoptFmt) -ne 1 -or -not (Ordered $emit @($adoptCensus, $adoptPred, $adoptKey, $adoptFmt))) { $f += '(V10) ADOPTCLASS: active spawn entries, keyed by the resolved spawn class, after ADOPTCENSUS and before the provisional mark' }
+    if (-not $emit -or (Count $emit $adoptPred) -ne 1 -or (Count $emit $adoptKey) -ne 1 -or (Count $emit $adoptFmt) -ne 1 -or -not (Ordered $emit @($adoptCensus, $adoptPred, $adoptKey, $adoptSetReset, $adoptFmt, $adoptSetAdd))) { $f += '(V10) ADOPTCLASS: active spawn entries, keyed by the resolved spawn class, after ADOPTCENSUS and before the provisional mark; the unbound set is reset then filled per class' }
+    if ((Count $emit $adoptSetReset) -ne 1 -or (Count $emit $adoptSetAdd) -ne 1) { $f += '(V10) review F1: the unbound-class set is reset once and filled by the entries>0 and bound==0 test' }
     if ($a.Contains($diagGate)) { $f += '(V10) ADOPTCLASS must be ungated' }
     # V11
     if ((Count $T.nsmod ('    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle packet marker (' + $marker + ')====="));')) -ne 1 -or (Count $T.nsmod $marker) -ne 1) { $f += '(V11) marker missing or not on its own line' }
@@ -209,7 +229,7 @@ $mutants = @(
     @{ Name = 'M20 carried loop dropped'; Key = 'sub'; Expect = 'V6'; Find = $carrLoop; Repl = '        (void)RerollVanillaRestampCarried;' }
     @{ Name = 'M21 conversion restamp before the form restamp'; Key = 'sub'; Expect = 'V6'; Find = ($convCall + "`n"); Repl = ''; Find2 = '                E.RepClassSpawnPath.Reset();'; Repl2 = ("                E.RepClassSpawnPath.Reset();`n" + $convCall) }
     @{ Name = 'M22 write copied into the subsystem'; Key = 'sub'; Expect = 'V6'; Find = $convCall; Repl = ($convCall + "`n                if (E.RepClassSpawnPath.IsEmpty()) { E.RepClassSpawnPath = ResolvedSolidRepresentative; }") }
-    @{ Name = 'M23 census field dropped'; Key = 'sub'; Expect = 'V7'; Find = ' pathTransfers=%d'; Repl = '' }
+    @{ Name = 'M23 census field dropped'; Key = 'sub'; Expect = 'V7'; Find = ' pathsWithoutPriorRecord=%d'; Repl = '' }
     @{ Name = 'M24 identity census gated'; Key = 'sub'; Expect = 'V1'; Find = ("        UE_LOG(LogNodeShuffle, Display,`n            " + $identFmt); Repl = ("        if (FNodeShuffleModule::" + $diagGate + "()) UE_LOG(LogNodeShuffle, Display,`n            " + $identFmt) }
     @{ Name = 'M25 legend echoes a census token'; Key = 'sub'; Expect = 'V7'; Find = '    // The previous roll''s record paths are snapshotted here'; Repl = ('    // identityDupesDropped= counts them; the previous roll''s record paths are snapshotted here') }
     @{ Name = 'M26 purity builder reads the pool again'; Key = 'sub'; Expect = 'V8'; Find = $purCall1; Repl = '    NodeShuffleRwgDeal::BuildPurityDecks(NewLayout, PurityDeckSource, SolidDeck, LiquidDeck, Rng, PurityDecks);' }
@@ -222,6 +242,15 @@ $mutants = @(
     @{ Name = 'M33 ADOPTCLASS keyed on the original class'; Key = 'audit'; Expect = 'V10'; Find = $adoptKey; Repl = '            FClassRow& Row = ByClass.FindOrAdd(E.NodeClassPath);' }
     @{ Name = 'M34 marker reverted'; Key = 'nsmod'; Expect = 'V11'; Find = $marker; Repl = ('2026-11-01-rwg-' + 'rerolldup-1b') }
     @{ Name = 'M35 style debt back (four above)'; Key = 'nsmod'; Expect = 'V11'; Find = 'rwg-thoriumclass-1)====="));' + ' // own line, same reason as the five above'; Repl = 'rwg-thoriumclass-1)====="));' + ' // own line, same reason as the four above' }
+    @{ Name = 'M36 (review F2) path leg ignores the anchors'; Key = 'idc'; Expect = 'V3'; Find = $samePath; Repl = '        if (!A.VanillaNodePath.IsEmpty() && A.VanillaNodePath == B.VanillaNodePath) { bOutByPath = true; OutDistCm = 0.0f; return true; }' }
+    @{ Name = 'M37 (review F2) same-name pairs united at any distance'; Key = 'idc'; Expect = 'V3'; Find = $pathApart; Repl = 'Unite(Parent, Same[x], Same[y]);' }
+    @{ Name = 'M38 (review F3) two live names united'; Key = 'idc'; Expect = 'V3'; Find = $bothLive; Repl = 'Unite(Parent, Bucket[x], Bucket[y]);' }
+    @{ Name = 'M39 (review F4) legs graded after the transfer'; Key = 'idc'; Expect = 'V3'; Find = $gradeBefore; Repl = '                SameOriginal(Keeper, E, RadiusCm, bByPath, DistCm);' }
+    @{ Name = 'M40 (review F4) third-row drops counted as anchor drops'; Key = 'idc'; Expect = 'V3'; Find = $thirdRow; Repl = '                if (bByPath) { ++Out.PathDrops; } else { ++Out.AnchorDrops; }' }
+    @{ Name = 'M41 (review F1) live restorable actor restamped'; Key = 'sub'; Expect = 'V6'; Find = ($liveKeptSkip + " // a live actor of a class this session's adopt bound keeps its class`n"); Repl = '' }
+    @{ Name = 'M42 (review F1) unbound set never filled'; Key = 'audit'; Expect = 'V10'; Find = ($adoptSetAdd + "`n"); Repl = '' }
+    @{ Name = 'M43 (review F1) unbound set never reset'; Key = 'audit'; Expect = 'V10'; Find = ($adoptSetReset + "`n"); Repl = '' }
+    @{ Name = 'M44 (review F1) unbound set saved'; Key = 'hdr'; Expect = 'V6'; Find = ('    ' + $hdrSet); Repl = ('    UPROPERTY' + '(SaveGame) ' + $hdrSet) }
 )
 $bad = 0
 foreach ($m in $mutants) {
