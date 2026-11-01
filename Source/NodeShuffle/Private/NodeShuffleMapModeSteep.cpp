@@ -79,7 +79,7 @@ void ANodeShuffleSubsystem::RwgSteepArmForInside(const FNodeShuffleEntry& Entry)
     // before the map-wide draw, as an occluded settle does (rwg-clifftop-1). No re-probe: the inside gate's reading is the trigger. It arms as a
     // SOLID stop (occluded, rise/run -1), so the RWGSTEEP line reads occludedRing or occludedMapwide with hitMesh naming the inside gate, and the
     // PLACECENSUS / RWGSTEEPSUM occluded counts INCLUDE these runs (PROVCENSUS insideRedealSession / insideRedealRingSession count them apart);
-    // the ring run is charged to RwgPcSteepRingRuns, i.e. against the near-player attempt budget of the pass it runs in.
+    // the ring run is charged to RwgPcSteepRingRuns, which spends a near-player attempt slot only on the settle's move path (it runs inside RwgSpawnPass's attempt loop); the provisional spawn pass runs after that loop and the counter is reset at the end of the same pass, so there it spends only the provisional batch's own time budget.
     bRwgSteepArmed = true;
     bRwgSteepArmInside = true;
     bRwgSteepOccluded = true;
