@@ -652,6 +652,30 @@ void ANodeShuffleSubsystem::PostLoadGame_Implementation(int32 /*saveVersion*/, i
     }
 }
 
+// rwg-rerolldup-1: the hide record for one original, factored out of the Hide & Replace conversion so the carried-entry
+// records RollLayout writes on a re-roll stamp exactly the same fields. E is the layout entry as it stands BEFORE relocation.
+static FNodeShuffleSuppressedOriginal NsMakeSuppressedOriginalRecord(const FNodeShuffleEntry& E)
+{
+    FNodeShuffleSuppressedOriginal Rec;
+    Rec.VanillaNodePath = E.VanillaNodePath;
+    Rec.Location = E.Location;
+    // rehide-1: durable anchor for this record — prefer the entry's own first-hand capture
+    // (TRUE at initial capture and every live-capture augment); fall back to E.Location
+    // (correct at the conversion too, since it runs BEFORE the relocation — see design §2
+    // row 4 — but on a re-roll-rebuilt entry E.OriginalTrueLocation is the carried-forward
+    // real anchor while E.Location is only the previous relocated dest, so the field wins
+    // whenever it's set).
+    Rec.TrueLocation = !E.OriginalTrueLocation.IsNearlyZero() ? E.OriginalTrueLocation : E.Location;
+    Rec.bModdedOrigin = !E.OriginalResourceClassPath.StartsWith(TEXT("/Game/"));
+    Rec.OriginalResourceClassPath = E.OriginalResourceClassPath;
+    // OriginalNodeClassPath arms SuppressOriginalNodes' path-hit identity check (class, resource AND
+    // distance to TrueLocation), so stamp it ONLY when the anchor above is first-hand. A converted
+    // pre-rehide-1 entry has no OriginalTrueLocation and its E.Location is the previous relocated
+    // destination; leaving the class empty keeps the 1.4.0 trust-the-path behaviour for it.
+    if (!E.OriginalTrueLocation.IsNearlyZero()) { Rec.OriginalNodeClassPath = E.NodeClassPath; }
+    return Rec;
+}
+
 void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
 {
     RwgProvCandMarkDirty(bIsReroll ? TEXT("reroll") : TEXT("roll")); // rwg-farspawn-1f C3: the provisional candidate list is rebuilt next pass
@@ -699,6 +723,20 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                 CarriedEntries.Add(Kept);
             }
         }
+    }
+    // rwg-rerolldup-1: a carried entry keeps its slot under the miner, so it must NOT also re-enter the original pool below
+    // (it did: every carried relocated original carries OriginalResourceClassPath, so the rebuild re-dealt it at a fresh spot).
+    // Identity sets for the pool rebuild (I1 by guid, I2 by original path); counts feed the REROLLPOOL-CARRY census.
+    TSet<FGuid> RerollCarriedGuids;
+    TSet<FString> RerollCarriedPaths;
+    TSet<FString> RerollCarriedCompositionPaths; // carried original paths already counted toward the composition (twin dedupe)
+    int32 RerollCarriedWithOriginal = 0, RerollCarriedExtras = 0, RerollExcludedFromPool = 0, RerollPathDupesDropped = 0;
+    int32 RerollCarriedSamePathComposition = 0, RerollPoolPathRepeats = 0;
+    for (const FNodeShuffleEntry& C : CarriedEntries)
+    {
+        RerollCarriedGuids.Add(C.EntryGuid);
+        if (!C.VanillaNodePath.IsEmpty()) { RerollCarriedPaths.Add(C.VanillaNodePath); }
+        if (C.OriginalResourceClassPath.IsEmpty()) { ++RerollCarriedExtras; } else { ++RerollCarriedWithOriginal; }
     }
 
     // Portable-miner occupancy set, used by both the live scan and the reroll
@@ -836,6 +874,29 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                 continue; // no original resource recorded (e.g. a dropped/inactive remnant) — skip
             }
 
+            // rwg-rerolldup-1 I1/I2. A carried entry (by guid) stays out of the pool: below it still counts toward the
+            // ORIGINAL composition (counts, purity multiset, VanillaLocations, latches) but is never added to NewLayout.
+            // Any OTHER entry sharing a carried entry's original path is dropped outright (the carried one counts that
+            // original once); this is the path that removes duplicates an earlier re-roll already wrote into the save.
+            const bool bCarriedOld = RerollCarriedGuids.Contains(Old.EntryGuid);
+            if (!bCarriedOld && !Old.VanillaNodePath.IsEmpty() && RerollCarriedPaths.Contains(Old.VanillaNodePath))
+            {
+                ++RerollPathDupesDropped;
+                UE_LOG(LogNodeShuffle, Display,
+                    TEXT("REROLLPOOL-PATHDUPE dropped path='%s' res='%s' guid=%s active=%d pinned=%d newNode=%d"),
+                    *Old.VanillaNodePath, *Old.OriginalResourceClassPath, *Old.EntryGuid.ToString(),
+                    Old.bActive ? 1 : 0, Old.bPinned ? 1 : 0, Old.bIsNewNode ? 1 : 0);
+                continue;
+            }
+            if (bCarriedOld)
+            {
+                ++RerollExcludedFromPool;
+                // Two carried twins on one original path count that original ONCE toward the composition.
+                bool bPathAlreadyCounted = false;
+                if (!Old.VanillaNodePath.IsEmpty()) { RerollCarriedCompositionPaths.Add(Old.VanillaNodePath, &bPathAlreadyCounted); }
+                if (bPathAlreadyCounted) { ++RerollCarriedSamePathComposition; continue; }
+            }
+
             // Occupancy for pinned originals comes from the LIVE node when streamed in (Base-aware).
             AFGResourceNodeBase* Live = Old.VanillaNodePath.IsEmpty() ? nullptr : FindOriginalBaseByPath(Old.VanillaNodePath);
             AFGResourceNode* LiveNode = Cast<AFGResourceNode>(Live);
@@ -848,8 +909,9 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
             // site post-rehide-1 always stamps OriginalTrueLocation, so only a pre-fix zombie can ever
             // satisfy all three legs at once. Drop it instead of carrying it forward: it would otherwise
             // inflate the pool with an un-healable duplicate of a resource that already lives on
-            // elsewhere in the layout. Never touches a pinned (occupied) entry.
-            if (!Old.bPinned && !IsValid(Live) && !Old.OriginalResourceClassPath.StartsWith(TEXT("/Game/"))
+            // elsewhere in the layout. Never touches a pinned (occupied) entry. rwg-rerolldup-1: nor a carried one -- it is
+            // kept under the player's miner whatever this predicate says, so its original stays in the composition.
+            if (!bCarriedOld && !Old.bPinned && !IsValid(Live) && !Old.OriginalResourceClassPath.StartsWith(TEXT("/Game/"))
                 && Old.OriginalTrueLocation.IsNearlyZero())
             {
                 ZombiesDropped++;
@@ -905,7 +967,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
             {
                 E.OriginalTrueLocation = Live->GetActorLocation();
             }
-            NewLayout.Add(E);
+            if (!bCarriedOld) { NewLayout.Add(E); } // rwg-rerolldup-1 I1: a carried entry never re-enters the pool (it is appended as itself at the end)
 
             VanillaLocations.Add(Old.Location);
             VanillaResourceCounts.FindOrAdd(Old.OriginalResourceClassPath)++;
@@ -935,8 +997,8 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
         // unoccupied originals it re-detaches). Without this, stale records from the prior layout linger.
         OriginalNodeRecord.Reset();
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("Re-roll pool (redesign-6): rebuilt %d original entries from the FULL saved layout (pinned + all relocated), %d resource kinds — no collapse (rehide-1: %d pre-fix un-anchorable zombie(s) dropped)"),
-            VanillaCount, VanillaResourceCounts.Num(), ZombiesDropped);
+            TEXT("Re-roll pool (redesign-6): rebuilt %d original entries from the FULL saved layout (pinned + all relocated), %d resource kinds — no collapse (rehide-1: %d pre-fix un-anchorable zombie(s) dropped; rwg-rerolldup-1: %d of the rebuilt count are carried entries counted toward the composition but kept out of the pool, %d same-path entries dropped)"),
+            VanillaCount, VanillaResourceCounts.Num(), ZombiesDropped, RerollExcludedFromPool - RerollCarriedSamePathComposition, RerollPathDupesDropped);
         if (GetMapMode() == ENodeShuffleMapMode::Rwg)
         {
             UE_LOG(LogNodeShuffle, Display, TEXT("RWGDEAL-REROLL rebuilt=%d slotFormRestoredFromOriginal=%d originalLoadNull=%d"),
@@ -963,8 +1025,17 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
         TSet<FString> ExistingPaths;
         for (const FNodeShuffleEntry& E : NewLayout)
         {
-            if (!E.bIsNewNode && !E.VanillaNodePath.IsEmpty()) { ExistingPaths.Add(E.VanillaNodePath); }
+            if (!E.bIsNewNode && !E.VanillaNodePath.IsEmpty())
+            {
+                bool bRepeat = false;
+                ExistingPaths.Add(E.VanillaNodePath, &bRepeat);
+                if (bRepeat) { ++RerollPoolPathRepeats; } // rwg-rerolldup-1: rebuilt pool entries whose path an earlier pool entry already holds
+            }
         }
+        // rwg-rerolldup-1: the carried originals' paths reached this set only through their (now removed) pool duplicates. Their
+        // hidden originals stay live level actors and the two live-scan augments below dedupe on this set, so it carries them
+        // explicitly (not relying on whether IsEligibleVanillaNode would also reject a hidden original).
+        ExistingPaths.Append(RerollCarriedPaths);
         {
             // Liquid (oil) + gas (e.g. lithium) live scan — these forms join the re-roll pool. Solids are
             // already in the rebuilt pool; this captures liquid/gas the saved layout did not.
@@ -1268,9 +1339,11 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     // is not in the rebuilt pool. Union them all so generation spaces new nodes
     // away from every occupied/kept/original location, not just other new nodes.
     TArray<FVector> AvoidLocations = VanillaLocations;
+    int32 RerollCarriedAvoidAdded = 0; // rwg-rerolldup-1: every carried location is in the avoid set for BOTH GenerateNewLocations calls (RelocAvoid copies this)
     for (const FNodeShuffleEntry& E : CarriedEntries)
     {
         AvoidLocations.Add(E.Location);
+        ++RerollCarriedAvoidAdded;
     }
     for (const FNodeShuffleSuppressedOriginal& Rec : OriginalNodeRecord)
     {
@@ -1289,11 +1362,14 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
 
     TArray<FVector> NewLocations;
     TSet<int32> NewUnderground; // cave-nodes-2: indices of locations that are cave-floor picks
+    // rwg-rerolldup-1 I5: a carried EXTRA (no original resource) already fills one of the configured extra slots, so this roll
+    // deals that many fewer fresh ones. RerollCarriedExtras is 0 on an initial roll (CarriedEntries is empty), so it is unchanged.
+    const int32 RerollNewQuotaEffective = FMath::Max(0, Config.NewNodeCount - RerollCarriedExtras);
     if (!ReadCustomLocationsJson(NewLocations))
     {
         // cave-nodes-4: cave placement is a FIX for the cave-drain regression (the shuffle hid cave
         // originals and could never place anything back inside) — always on, like discovery.
-        GenerateNewLocations(Rng, VanillaLocations, AvoidLocations, FMath::Max(0, Config.NewNodeCount), NewLocations,
+        GenerateNewLocations(Rng, VanillaLocations, AvoidLocations, RerollNewQuotaEffective, NewLocations,
                              &NewUnderground);
         WriteGeneratedLocationsJson(NewLocations);
     }
@@ -1835,23 +1911,8 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
             // Record this unoccupied original for whole-actor hiding (vanilla AND modded).
             if (!E.VanillaNodePath.IsEmpty())
             {
-                FNodeShuffleSuppressedOriginal Rec;
-                Rec.VanillaNodePath = E.VanillaNodePath;
-                Rec.Location = E.Location;
-                // rehide-1: durable anchor for this record — prefer the entry's own first-hand capture
-                // (TRUE at initial capture and every live-capture augment); fall back to E.Location
-                // (correct here too, since we are BEFORE the relocation two lines below — see design §2
-                // row 4 — but on a re-roll-rebuilt entry E.OriginalTrueLocation is the carried-forward
-                // real anchor while E.Location is only the previous relocated dest, so the field wins
-                // whenever it's set).
-                Rec.TrueLocation = !E.OriginalTrueLocation.IsNearlyZero() ? E.OriginalTrueLocation : E.Location;
-                Rec.bModdedOrigin = !E.OriginalResourceClassPath.StartsWith(TEXT("/Game/"));
-                Rec.OriginalResourceClassPath = E.OriginalResourceClassPath;
-                // OriginalNodeClassPath arms SuppressOriginalNodes' path-hit identity check (class, resource AND
-                // distance to TrueLocation), so stamp it ONLY when the anchor above is first-hand. A converted
-                // pre-rehide-1 entry has no OriginalTrueLocation and its E.Location is the previous relocated
-                // destination; leaving the class empty keeps the 1.4.0 trust-the-path behaviour for it.
-                if (!E.OriginalTrueLocation.IsNearlyZero()) { Rec.OriginalNodeClassPath = E.NodeClassPath; }
+                // BEFORE the relocation below: the record reads the entry's pre-move Location (rwg-rerolldup-1 helper).
+                const FNodeShuffleSuppressedOriginal Rec = NsMakeSuppressedOriginalRecord(E);
                 OriginalNodeRecord.Add(Rec);
                 Recorded++;
             }
@@ -1945,6 +2006,32 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                 *FPackageName::ObjectPathToObjectName(Res), PerRes.Key, PerRes.Value);
         }
     }
+    // rwg-rerolldup-1 I3: a carried relocated original's hidden level node was recorded only through its pool duplicate's
+    // conversion just above; with the duplicate gone (I1) it is recorded here, AFTER both OriginalNodeRecord.Reset() sites
+    // (the re-roll rebuild's and the conversion's), with the conversion's own field set. Same skip rule as the conversion's
+    // pinned branch: an original whose live node is occupied right now is never recorded (never hidden). One record per path.
+    int32 RerollHideRecordsForCarried = 0, RerollHideRecordPathDupes = 0, RerollCarriedOrigLiveOccupied = 0;
+    if (bIsReroll)
+    {
+        TSet<FString> CarriedRecordPaths;
+        for (const FNodeShuffleEntry& C : CarriedEntries)
+        {
+            if (C.VanillaNodePath.IsEmpty() || C.OriginalResourceClassPath.IsEmpty()) { continue; }
+            bool bPathRecorded = false;
+            CarriedRecordPaths.Add(C.VanillaNodePath, &bPathRecorded);
+            if (bPathRecorded) { ++RerollHideRecordPathDupes; continue; }
+            AFGResourceNodeBase* LiveOrig = FindOriginalBaseByPath(C.VanillaNodePath);
+            AFGResourceNode* LiveOrigNode = Cast<AFGResourceNode>(LiveOrig);
+            if ((IsValid(LiveOrig) && LiveOrig->IsOccupied()) || (LiveOrigNode && PortableMinerNodes.Contains(LiveOrigNode)))
+            {
+                ++RerollCarriedOrigLiveOccupied;
+                continue;
+            }
+            OriginalNodeRecord.Add(NsMakeSuppressedOriginalRecord(C));
+            ++RerollHideRecordsForCarried;
+        }
+    }
+
     // Remove the now-detached inactive originals from the layout (they are pure hide records now —
     // keeping them as non-new inactive entries would do nothing and confuse the apply loop).
     NewLayout.RemoveAll([](const FNodeShuffleEntry& E){ return !E.bIsNewNode && !E.bPinned; });
@@ -2063,6 +2150,16 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
     RollWellRelocation(Seed, bIsReroll);
     }
 
+    // rwg-rerolldup-1: one ungated census per RE-ROLL (rare: an explicit player action). Every field is a counter of the predicate
+    // named in its comment above; poolAfter is the PoolSize the Rolled layout line prints.
+    if (bIsReroll)
+    {
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("REROLLPOOL-CARRY carried=%d carriedWithOriginal=%d carriedExtras=%d excludedFromPool=%d pathDupesDropped=%d carriedSamePathComposition=%d poolPathRepeats=%d hideRecordsForCarried=%d hideRecordPathDupes=%d carriedOrigLiveOccupied=%d carriedAvoidAdded=%d newQuotaEffective=%d newQuotaConfig=%d poolAfter=%d"),
+            CarriedEntries.Num(), RerollCarriedWithOriginal, RerollCarriedExtras, RerollExcludedFromPool, RerollPathDupesDropped,
+            RerollCarriedSamePathComposition, RerollPoolPathRepeats, RerollHideRecordsForCarried, RerollHideRecordPathDupes,
+            RerollCarriedOrigLiveOccupied, RerollCarriedAvoidAdded, RerollNewQuotaEffective, Config.NewNodeCount, PoolSize);
+    }
     UE_LOG(LogNodeShuffle, Display,
         TEXT("Rolled layout: seed %d, pool %d (vanilla %d, new %d), active %d, pinned %d"),
         Seed, PoolSize, VanillaCount, NewLocations.Num(), ActiveCount, PinnedCount);

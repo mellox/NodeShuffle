@@ -11,6 +11,7 @@
 //   LAYOUTDUMP-O       one per OriginalNodeRecord (the hidden originals);
 //   LAYOUTDUMP-G       one per 1000 m grid cell over the API deal square: land and dealable sample counts and fractions;
 //   LAYOUTDUMP-END     the printed counts beside the BEGIN counts (the control: they must match), latch masks, timings.
+//   LAYOUTDUMP-TWINS   (rwg-rerolldup-1, after CHAT) active entries sharing one VanillaNodePath, then LAYOUTDUMP-TWIN per shared path.
 //
 // NO TRACES. RaycastGroundAt teaches the persistent water grid (see NodeShuffleAuditPlacements.cpp's header), so the grid uses only
 // the height API: the dealable test is RwgDensityLandSample (NodeShuffleMapModeDensity.cpp), the shared helper that runs the
@@ -32,6 +33,7 @@
 #include "Engine/World.h"
 #include "HAL/IConsoleManager.h"
 #include "HAL/PlatformTime.h"
+#include "Misc/PackageName.h"
 #include "Resources/FGResourceNode.h"
 
 namespace
@@ -108,7 +110,7 @@ void ANodeShuffleSubsystem::DumpLayout()
     UE_LOG(LogNodeShuffle, Display, TEXT("LAYOUTDUMP-LEGEND: Purity is the enum integer (0 impure, 1 normal, 2 pure, 3 unset); live means a spawned actor for the entry is valid in this session right now; rayCasted means the entry was settled by a trace at some earlier time."));
     UE_LOG(LogNodeShuffle, Display, TEXT("LAYOUTDUMP-LEGEND: Well lines come from the separate well layout; their position source names which saved location was printed (placed core, dealt destination, RWG claim, vanilla core, or none). Original lines print the record's true location when set, else its recorded location, and the purity of the layout entry sharing its level path or minus one when no entry matches."));
     UE_LOG(LogNodeShuffle, Display, TEXT("LAYOUTDUMP-LEGEND: Grid lines cover the API deal square in 1000 m cells from its minimum corner; edge cells may extend past it. Each cell samples a centred lattice through the height API only: land counts samples passing the RWG reject predicate at the API surface, dealable counts samples passing the dealer's whole land chain (outside, reject predicate, slope). Spacing and the cave quota are not part of dealable."));
-    UE_LOG(LogNodeShuffle, Display, TEXT("LAYOUTDUMP-LEGEND: The end line repeats every count beside what the begin line announced; countsMatch is one only when all of them agree. The dump runs in a single frame; it prints one line per layout entry, well core, original record and grid cell that the begin line announces, plus the begin, legend, end and chat lines."));
+    UE_LOG(LogNodeShuffle, Display, TEXT("LAYOUTDUMP-LEGEND: The end line repeats every count beside what the begin line announced; countsMatch is one only when all of them agree. The dump runs in a single frame; it prints one line per layout entry, well core, original record and grid cell that the begin line announces, plus the begin, legend, end and chat lines. After the chat line it also prints one twin census line, and one twin line per level path that more than one active entry shares; those lines are outside the end line's counts."));
     UE_LOG(LogNodeShuffle, Display, TEXT("LAYOUTDUMP-LEGEND: Grid lines print only when this session's sea, void and killbox checks have all finished; otherwise the grid count is zero. Latch masks add 1 sea usable, 2 void usable, 4 killbox known, 8 sea checked, 16 void checked, 32 killbox checked."));
 
     // ---- entries ----
@@ -207,4 +209,43 @@ void ANodeShuffleSubsystem::DumpLayout()
         DumpId, EntriesPrinted, WellsPrinted, OriginalsPrinted, GridPrinted, SavedSeed);
     const bool bPosted = FNodeShuffleModule::PostChatNotice(GetWorld(), Body, TEXT("LAYOUTDUMP"));
     UE_LOG(LogNodeShuffle, Display, TEXT("LAYOUTDUMP-CHAT: dumpId=%d posted=%d"), DumpId, bPosted ? 1 : 0);
+
+    // rwg-rerolldup-1: TWINS -- active layout entries that share one original level path (VanillaNodePath). Measures, from the
+    // saved layout alone, whether one original is carried by more than one active entry. Printed AFTER the END/CHAT pair so the
+    // BEGIN..END block the offline parsers read is unchanged. One census line, then one line per shared path (no per-entry path).
+    TMap<FString, TArray<int32>> ActiveByPath;
+    int32 ActiveWithPath = 0;
+    for (int32 I = 0; I < Layout.Num(); ++I)
+    {
+        const FNodeShuffleEntry& E = Layout[I];
+        if (!E.bActive || E.VanillaNodePath.IsEmpty()) { continue; }
+        ActiveByPath.FindOrAdd(E.VanillaNodePath).Add(I);
+        ++ActiveWithPath;
+    }
+    TArray<FString> SharedPaths;
+    int32 EntriesOnShared = 0, PinnedOnShared = 0;
+    for (const TPair<FString, TArray<int32>>& KV : ActiveByPath)
+    {
+        if (KV.Value.Num() < 2) { continue; }
+        SharedPaths.Add(KV.Key);
+        EntriesOnShared += KV.Value.Num();
+        for (const int32 I : KV.Value) { if (Layout[I].bPinned) { ++PinnedOnShared; } }
+    }
+    SharedPaths.Sort();
+    UE_LOG(LogNodeShuffle, Display, TEXT("LAYOUTDUMP-TWINS dumpId=%d pathsOnMultipleActiveEntries=%d entriesOnSharedPaths=%d pinnedOnSharedPaths=%d activeWithPath=%d"),
+        DumpId, SharedPaths.Num(), EntriesOnShared, PinnedOnShared, ActiveWithPath);
+    for (const FString& P : SharedPaths)
+    {
+        const TArray<int32>& Idx = ActiveByPath.FindChecked(P);
+        int32 Pinned = 0;
+        FString Guids;
+        for (const int32 I : Idx)
+        {
+            if (Layout[I].bPinned) { ++Pinned; }
+            if (!Guids.IsEmpty()) { Guids += TEXT(","); }
+            Guids += Layout[I].EntryGuid.ToString();
+        }
+        UE_LOG(LogNodeShuffle, Display, TEXT("LAYOUTDUMP-TWIN dumpId=%d path=%s entries=%d pinned=%d guids=%s"),
+            DumpId, *FPackageName::ObjectPathToObjectName(P), Idx.Num(), Pinned, *Guids);
+    }
 }
