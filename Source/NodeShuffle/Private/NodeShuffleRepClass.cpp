@@ -5,6 +5,7 @@
 #include "AssetRegistry/IAssetRegistry.h"
 #include "UObject/TopLevelAssetPath.h"
 #include "Resources/FGResourceNodeBase.h"
+#include "Resources/FGResourceNode.h" // rwg-thoriumclass-1: IsSpawnableNodeClass tests the AFGResourceNode subclass
 #include "Resources/FGResourceDescriptor.h"
 #include "HAL/PlatformTime.h"
 
@@ -52,6 +53,21 @@ namespace NodeShuffleRepClass
     const TCHAR* RepClassRankName(int32 Rank)
     {
         return Rank == 2 ? TEXT("own-mount") : (Rank == 1 ? TEXT("non-generic") : TEXT("generic"));
+    }
+
+    // rwg-thoriumclass-1: the same three tests the deal-kind table, the Phase-2 RWG stamp and the conversion restamp applied
+    // in-line before this packet (rwg-deal-1 F1), in that order, named so a REPCLASS line can print which one failed.
+    const TCHAR* UnspawnableNodeClassReason(const UClass* NodeClass)
+    {
+        if (!NodeClass) { return TEXT("NotResident"); }
+        if (!NodeClass->IsChildOf(AFGResourceNode::StaticClass())) { return TEXT("NotNodeSubclass"); }
+        if (NodeClass->HasAnyClassFlags(CLASS_Abstract)) { return TEXT("Abstract"); }
+        return nullptr;
+    }
+
+    bool IsSpawnableNodeClass(const UClass* NodeClass)
+    {
+        return UnspawnableNodeClassReason(NodeClass) == nullptr;
     }
 
     void QueryDerivedNodeClasses(FRegistryQuery& Out)

@@ -26,9 +26,10 @@ namespace NodeShuffleRwgDeal
     {
         uint8 Form = 1;          // EResourceForm numeric value of the card (FormSolid when unknown)
         bool bGeneric = false;   // NodeShuffleRepClass::IsGenericNodeClassPath(kind)
-        bool bOwnClass = false;  // latched/registry class is rank-2 own-mount for this kind
+        bool bSpawnClass = false; // rwg-thoriumclass-1: the roll chose a spawnable class for this kind (RollLayout's SpawnClassForResource:
+                                  // the class its originals used when spawnable, else the registry's own-mount class); was the rank-2 own-mount test
         bool bLook = false;      // ResourceHasAuthoredLook(kind)
-        bool Dealable() const { return bGeneric || bOwnClass || bLook; }
+        bool Dealable() const { return bGeneric || bSpawnClass || bLook; }
     };
 
     // rwg-purity-1: per-class purity sources. Built once per roll by BuildPurityDecks (all RNG use happens there, in

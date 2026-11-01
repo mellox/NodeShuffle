@@ -31,6 +31,16 @@ namespace NodeShuffleRepClass
         TSet<FString> Seen;          // every distinct class observed for this resource this roll
         bool bReplacedFirstSeen = false;
         bool bFromRegistry = false;
+        // rwg-thoriumclass-1 (2026-11-01): the class this resource's captured ORIGINALS used (the live latch as it stood before
+        // the registry step, and only when that latch was observed on an original; empty otherwise), whether it passes
+        // IsSpawnableNodeClass, the registry candidate (whether or not it was applied), and whether the CHOSEN class passes
+        // IsSpawnableNodeClass -- the one flag the three consumer sites (deal-kind table, Phase-2 RWG stamp, conversion
+        // restamp) read through RollLayout's SpawnClassForResource.
+        FString OriginalsClass;
+        FString OriginalsReason;          // originalsSpawnable | originalsAbsent | originalsNotResident | originalsNotNodeSubclass | originalsAbstract
+        bool bOriginalsSpawnable = false;
+        FString RegistryClass;
+        bool bChosenSpawnable = false;
     };
 
     struct FRegistryQuery
@@ -61,6 +71,12 @@ namespace NodeShuffleRepClass
     // CDO resource (dress sites only choose native vs captured look). Used at the three dress sites.
     bool IsOwnNodeClassForResource(const UClass* NodeClass, const FString& ClassPath, const FString& ResourcePath);
     const TCHAR* RepClassRankName(int32 Rank);
+
+    // rwg-thoriumclass-1 (2026-11-01): the test every spawn consumer applies to a candidate class. Returns nullptr when the
+    // AFGResourceNode placement pipeline can spawn it (resident, a non-abstract AFGResourceNode subclass), else the name of the
+    // FIRST failing predicate: "NotResident", "NotNodeSubclass", "Abstract". Never loads; a null class reads as NotResident.
+    const TCHAR* UnspawnableNodeClassReason(const UClass* NodeClass);
+    bool IsSpawnableNodeClass(const UClass* NodeClass);
 
     // One GetDerivedClassNames({/Script/FactoryGame.FGResourceNode}) call. Never loads anything.
     void QueryDerivedNodeClasses(FRegistryQuery& Out);
