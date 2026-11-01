@@ -81,8 +81,10 @@ $liveKeptFmt = 'TEXT("REPCLASS-VANRESTAMP-LIVEKEPT carriedTotal=%d liveNotInUnbo
 $preAdoptSkip = '            if (!bAdoptedRestoredNodes) { ++RerollVanillaRestampPreAdoptKept; continue; }'
 $adoptSetReset = '        AdoptUnboundSpawnClasses.Reset();'
 # round 2 R2-1: restorability judged on pinned, settled rows only
-$adoptPinned = '            if (E.bPinned && !E.bRwgProvisional) { ++Row.PinnedSettled;'
-$adoptSetAdd = '            if (Row.PinnedSettled > 0 && Row.PinnedSettledBound == 0) { AdoptUnboundSpawnClasses.Add(C); }'
+$adoptPinned = '            if (E.bPinned && !E.bRwgProvisional) { ++Row.PinnedSettled; if (IsValid(SpawnedNodes.FindRef(E.EntryGuid))) { ++Row.PinnedSettledBound; } }'
+$adoptBound  = '            if (IsValid(SpawnedNodes.FindRef(E.EntryGuid))) { ++Row.Bound; }'
+# round 3 R3-1: the strict intersection -- pinned settled rows exist AND no row of the class at all is bound
+$adoptSetAdd = '            if (Row.PinnedSettled > 0 && Row.Bound == 0) { AdoptUnboundSpawnClasses.Add(C); }'
 $hdrSet      = 'TSet<FString> AdoptUnboundSpawnClasses;'
 # round 2 R2-5: the path leg's fill and loop header are pinned, not only the guard inside the loop
 $pathFill    = '            if (!E.VanillaNodePath.IsEmpty()) { ByPath.FindOrAdd(E.VanillaNodePath).Add(c); }'
@@ -103,7 +105,7 @@ $augDropped  = '        ExistingPaths.Append(RerollIdentity.DroppedPaths);'
 $noRecCall   = '        RerollPathsWithoutPriorRecord = NodeShuffleRerollIdentity::ReportPathsWithoutPriorRecord(NewLayout, CarriedEntries, RerollPriorRecordPaths, 48);'
 $recReset    = '        OriginalNodeRecord.Reset();'
 $poolLine    = 'Re-roll pool (redesign-6)'
-$poolTail    = 'rwg-rerolldup-2: %d rows dropped as grouped with a keeper (REROLLPOOL-IDENTITY splits them: pathDrops, anchorDrops, thirdRowDrops), %d rebuilt paths had no record in the previous roll)"),'
+$poolTail    = 'rwg-rerolldup-2: %d rows dropped as grouped with a keeper (REROLLPOOL-IDENTITY grades the pre-pass drops by leg: pathDrops, anchorDrops, thirdRowDrops; an earlier skip can take a listed row), %d rebuilt paths had no record in the previous roll)"),'
 $poolArgs    = "            RerollIdentityDupesDropped, RerollPathsWithoutPriorRecord);"
 $noRecFmt    = 'TEXT("REROLLPOOL-NORECORD path=''%s'' res=''%s'' guid=%s trueLoc=%s carried=%d pinnedNow=%d"),'
 $noRecPool   = '        for (const FNodeShuffleEntry& E : Pool) { if (!E.bIsNewNode) { Visit(E, false); } }'
@@ -199,8 +201,8 @@ function Invoke-RerollDup2Checks($T) {
     if ((Count $c $idtFmt) -ne 1 -or (Count $c $idtSame) -ne 1 -or (Count $c $idtAnchor) -ne 1 -or -not (Ordered $c @($idtAnchor, $idtSame, $idtFmt))) { $f += '(V9) IDTWIN: anchors required, same-path pairs excluded, exact format' }
     # V10
     $emit = Span $a 'void ANodeShuffleSubsystem::AdoptAuditEmit(int32 AdoptLineAdopted)' $adoptMark
-    if (-not $emit -or (Count $emit $adoptPred) -ne 1 -or (Count $emit $adoptKey) -ne 1 -or (Count $emit $adoptFmt) -ne 1 -or -not (Ordered $emit @($adoptCensus, $adoptPred, $adoptKey, $adoptPinned, $adoptSetReset, $adoptFmt, $adoptSetAdd))) { $f += '(V10) ADOPTCLASS: active spawn entries, keyed by the resolved spawn class, pinned-settled counted per row, after ADOPTCENSUS and before the provisional mark; the unbound set is reset then filled per class' }
-    if ((Count $emit $adoptSetReset) -ne 1 -or (Count $emit $adoptSetAdd) -ne 1 -or (Count $emit $adoptPinned) -ne 1) { $f += '(V10) review F1/R2-1: the unbound-class set is reset once and filled only where pinned settled rows exist and none is bound' }
+    if (-not $emit -or (Count $emit $adoptPred) -ne 1 -or (Count $emit $adoptKey) -ne 1 -or (Count $emit $adoptFmt) -ne 1 -or -not (Ordered $emit @($adoptCensus, $adoptPred, $adoptKey, $adoptBound, $adoptPinned, $adoptSetReset, $adoptFmt, $adoptSetAdd))) { $f += '(V10) ADOPTCLASS: active spawn entries, keyed by the resolved spawn class, bound and pinned-settled counted per row, after ADOPTCENSUS and before the provisional mark; the unbound set is reset then filled per class' }
+    if ((Count $emit $adoptSetReset) -ne 1 -or (Count $emit $adoptSetAdd) -ne 1 -or (Count $emit $adoptPinned) -ne 1 -or (Count $emit $adoptBound) -ne 1) { $f += '(V10) review F1/R2-1/R3-1: the unbound-class set is reset once and filled only where pinned settled rows exist and no row of the class is bound' }
     foreach ($tok in @('pinnedSettled=', 'pinnedSettledBound=', 'ADOPTCLASS class=')) { if ((Count $a (' ' + $tok)) -ne 1 -and (Count $a ('"' + $tok)) -ne 1) { $f += "(V10) ADOPTCLASS token echoed or missing: $tok" } }
     if ($a.Contains($diagGate)) { $f += '(V10) ADOPTCLASS must be ungated' }
     # V11
@@ -257,6 +259,8 @@ $mutants = @(
     @{ Name = 'M40 (review F4) third-row drops counted as anchor drops'; Key = 'idc'; Expect = 'V3'; Find = $thirdRow; Repl = '                if (bByPath) { ++Out.PathDrops; } else { ++Out.AnchorDrops; }' }
     @{ Name = 'M41 (review F1) live restorable actor restamped'; Key = 'sub'; Expect = 'V6'; Find = ($liveKeptSkip + " // a live actor whose class is not in the set keeps its class`n"); Repl = '' }
     @{ Name = 'M45 (r2 R2-1) set judged on all entries'; Key = 'audit'; Expect = 'V10'; Find = $adoptSetAdd; Repl = '            if (Row.Entries > 0 && Row.Bound == 0) { AdoptUnboundSpawnClasses.Add(C); }' }
+    @{ Name = 'M49 (r3 R3-1) set ignores unpinned bound rows'; Key = 'audit'; Expect = 'V10'; Find = $adoptSetAdd; Repl = '            if (Row.PinnedSettled > 0 && Row.PinnedSettledBound == 0) { AdoptUnboundSpawnClasses.Add(C); }' }
+    @{ Name = 'M50 (r3 R3-3) bound never counted'; Key = 'audit'; Expect = 'V10'; Find = ($adoptBound + "`n"); Repl = '' }
     @{ Name = 'M46 (r2 R2-2) carried restamp before adopt'; Key = 'sub'; Expect = 'V6'; Find = ($preAdoptSkip + " // adopt-on-load has not run: SpawnedNodes holds no restored actor yet`n"); Repl = '' }
     @{ Name = 'M47 (r2 R2-5) same-name loop retargeted at ByResource'; Key = 'idc'; Expect = 'V3'; Find = $pathLoop; Repl = '        for (const TPair<FString, TArray<int32>>& KV : ByResource) { const TArray<int32>& Same = KV.Value;' }
     @{ Name = 'M48 (r2 R2-5) UPROPERTY on the line above the set'; Key = 'hdr'; Expect = 'V6'; Find = ("binds/destroys nothing`n    TSet<FString> AdoptUnboundSpawnClasses;"); Repl = ("binds/destroys nothing`n    UPROPERTY" + "(SaveGame)`n    TSet<FString> AdoptUnboundSpawnClasses;") }

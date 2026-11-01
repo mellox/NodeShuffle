@@ -1184,7 +1184,7 @@ private:
     // rwg-farspawn-1f C1 (NodeShuffleAdoptAudit.cpp): adopt-on-load accounting of the veto pre-registered restored nodes (ADOPTMISS / ADOPTCENSUS).
     void AdoptAuditNotePreRegistered(class AFGResourceNode* Node, const FGuid& EntryGuid); // beside each PreRegistered++ (PreRegisterRestoredNodesForVeto)
     void AdoptAuditEmit(int32 AdoptLineAdopted);                           // end of AdoptRestoredSpawnedNodes; diagnostic only, binds/destroys nothing
-    TSet<FString> AdoptUnboundSpawnClasses; // rwg-rerolldup-2 F1/r2: ADOPTCLASS classes with pinned settled rows and none of them bound after this session's adopt; session-only, not saved
+    TSet<FString> AdoptUnboundSpawnClasses; // rwg-rerolldup-2 F1/r3: ADOPTCLASS classes with pinned settled rows and no bound row at all after this session's adopt; session-only, not saved
     TMap<TWeakObjectPtr<AFGResourceNode>, FGuid> AdoptPreRegistered;       // session: pre-registered node -> the entry its pre-registration matched
     // rwg-farspawn-1f C2: kept-and-moved settles measured enclosed or all-solid take the despawn + respawn branch instead.
     int32 RwgProvSessGatedRespawn = 0;                                     // session: moves the enclosure reading refused (PROVCENSUS gatedRespawn)

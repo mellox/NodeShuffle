@@ -1037,7 +1037,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
         // unoccupied originals it re-detaches). Without this, stale records from the prior layout linger.
         OriginalNodeRecord.Reset();
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("Re-roll pool (redesign-6): rebuilt %d original entries from the FULL saved layout (pinned + all relocated), %d resource kinds — no collapse (rehide-1: %d pre-fix un-anchorable zombie(s) dropped; rwg-rerolldup-1: %d of the rebuilt count are carried entries counted toward the composition but kept out of the pool, %d same-path entries dropped; rwg-rerolldup-2: %d rows dropped as grouped with a keeper (REROLLPOOL-IDENTITY splits them: pathDrops, anchorDrops, thirdRowDrops), %d rebuilt paths had no record in the previous roll)"),
+            TEXT("Re-roll pool (redesign-6): rebuilt %d original entries from the FULL saved layout (pinned + all relocated), %d resource kinds — no collapse (rehide-1: %d pre-fix un-anchorable zombie(s) dropped; rwg-rerolldup-1: %d of the rebuilt count are carried entries counted toward the composition but kept out of the pool, %d same-path entries dropped; rwg-rerolldup-2: %d rows dropped as grouped with a keeper (REROLLPOOL-IDENTITY grades the pre-pass drops by leg: pathDrops, anchorDrops, thirdRowDrops; an earlier skip can take a listed row), %d rebuilt paths had no record in the previous roll)"),
             VanillaCount, VanillaResourceCounts.Num(), ZombiesDropped, RerollExcludedFromPool - RerollCarriedSamePathComposition, RerollPathDupesDropped,
             RerollIdentityDupesDropped, RerollPathsWithoutPriorRecord);
         if (GetMapMode() == ENodeShuffleMapMode::Rwg)

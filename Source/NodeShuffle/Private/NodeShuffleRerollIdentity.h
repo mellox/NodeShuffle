@@ -71,10 +71,10 @@ namespace NodeShuffleRerollIdentity
         const TSet<FString>& PriorRecordPaths, int32 LineCap);
 
     // A VANILLA resource dealt onto a slot whose spawn class is not a base-game class spawns the vanilla representative of its
-    // form instead. Measured on one class only: our lead_C-class actors (iron/coal/SAM dealt on bamrenew lead slots) never came
-    // back with the save (0 adopted at load; 92 of the 166 load-time respawns in the log were lead_C), so a pinned one sat under
-    // its miner with no node every session; the rule reaches every non-base-game slot class (Res_*2_C included), and ADOPTCLASS
-    // measures per class which ones the save restores. Writes E.RepClassSpawnPath only, and only when the representative itself
+    // form instead. Measured on one class in one log (build3, 2026-11-01): all 41 modded-class spawns between that load and its
+    // first re-roll were lead_C (iron/coal/SAM dealt on bamrenew lead slots), none Res_*, so those entries had no restored actor at
+    // adopt; whether any lead_C actor is ever restored was not measured (ADOPTCLASS bound= reports it per class). The rule reaches
+    // every non-base-game slot class (Res_*2_C included). Writes E.RepClassSpawnPath only, and only when the representative itself
     // is a base-game class.
     struct FVanillaRestamp
     {
