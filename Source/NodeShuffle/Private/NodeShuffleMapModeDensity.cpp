@@ -247,7 +247,7 @@ void ANodeShuffleSubsystem::LogHereDensity(const FVector& P, float HereRadiusCm)
         }
     }
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("HERE-DENSITY: within %.0f m: active=%d live=%d deferred=%d stuck=%d noFailedAttempt=%d; within %.0f m: active=%d live=%d deferred=%d stuck=%d noFailedAttempt=%d (deferred counts unspawned active entries with at least one failed spawn attempt since they were last live or last moved in XY, stuck ones included; stuck needs %d such passes; noFailedAttempt is the rest of the unspawned active entries; a provisional node, placed far from every player and not yet fitted to the ground, is not counted as live and falls in deferred or noFailedAttempt by the same test)"),
+        TEXT("HERE-DENSITY: within %.0f m: active=%d live=%d deferred=%d stuck=%d noFailedAttempt=%d; within %.0f m: active=%d live=%d deferred=%d stuck=%d noFailedAttempt=%d (deferred counts unspawned active entries with at least one failed spawn attempt since they were last live or last moved in XY, stuck ones included; stuck needs %d such passes; noFailedAttempt is the rest of the unspawned active entries; a provisional node, placed but not yet fitted to the ground, is not counted as live and falls in deferred or noFailedAttempt by the same test)"),
         Radii[0] / 100.f, A[0], L[0], D[0], St[0], A[0] - L[0] - D[0], Radii[1] / 100.f, A[1], L[1], D[1], St[1], A[1] - L[1] - D[1], RwgStuckMinFailedAttempts);
     // HERE-LAND (cold review F1): the deal's land predicate measured at the player's own position -- a 100 m lattice inside the 1000 m attempt
     // radius, plus the RwgRejectV3 bits at the pawn's feet. Pure reads of the predicate; user-invoked only (NodeShuffle.Here on RWG).

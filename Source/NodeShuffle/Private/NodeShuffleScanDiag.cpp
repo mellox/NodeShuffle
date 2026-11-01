@@ -46,6 +46,8 @@ namespace
 void ANodeShuffleSubsystem::InstallScanDiagHooks()
 {
     // Never deleted: GLog keeps the pointer until process exit (a static instance could be destroyed while GLog still holds it).
+    // TODO(2026-10-31, rwg-farspawn-1f, release item R1): this GLog output device is installed for EVERY user, ungated, and never removed;
+    // diagnostics-gate it or remove it before release (1d review R1).
     if (GLog) { GLog->AddOutputDevice(new FNodeShuffleCompassWarnCounter()); }
     SUBSCRIBE_UOBJECT_METHOD(AFGResourceScanner, GetClosetClusters,
         [](auto& Scope, AFGResourceScanner* Self, TArray<FNodeClusterData>& Closest)

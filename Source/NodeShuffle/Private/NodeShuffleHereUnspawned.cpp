@@ -13,7 +13,8 @@
 //   nearest-well bearing expression (pawn yaw and the world delta, both measured), not a compass word. With no such entry within 3000 m
 //   the line says so and prints the map-wide count, the excluded count and the nearest non-excluded one's distance (nan when there is none).
 // HERE-UNSPAWNED-BANDS legend: the same population counted by 2-D distance band; each band includes its lower bound and excludes its
-//   upper one; the six band counts sum to unspawnedActiveMapWide.
+//   upper one; the six band counts sum to unspawnedActiveMapWide. provisionalUnfittedMapWide (rwg-farspawn-1e F6) counts the active new
+//   entries map-wide that HAVE a valid actor still flagged provisional (placed, not yet fitted to the ground); they are not in the bands.
 #include "NodeShuffleSubsystem.h"
 #include "NodeShuffleMapMode.h"
 #include "NodeShuffle.h"
@@ -40,6 +41,7 @@ void ANodeShuffleSubsystem::LogHereUnspawned(const FVector& P, const APawn* Pawn
     const double EdgeCm[NumEdges] = { 25000.0, 50000.0, 75000.0, 100000.0, RadiusCm }; // band upper bounds; past the last one = beyond3000m
     int32 Band[NumEdges + 1] = {};
     int32 MapWide = 0;
+    int32 ProvUnfitted = 0; // rwg-farspawn-1e F6: provisional actors not yet fitted to the ground (counted apart, not unspawned)
     int32 Excluded = 0, ExcludedSettled = 0;
     const FNodeShuffleEntry* Nearest = nullptr;
     double NearestD2 = TNumericLimits<double>::Max();
@@ -47,7 +49,7 @@ void ANodeShuffleSubsystem::LogHereUnspawned(const FVector& P, const APawn* Pawn
     {
         if (!E.bIsNewNode || !E.bActive) { continue; }
         AFGResourceNode* const* Live = SpawnedNodes.Find(E.EntryGuid);
-        if (Live && IsValid(*Live)) { continue; }
+        if (Live && IsValid(*Live)) { if (E.bRwgProvisional) { ++ProvUnfitted; } continue; }
         ++MapWide;
         const double D2 = FVector::DistSquared2D(E.Location, P);
         int32 B = 0;
@@ -77,6 +79,6 @@ void ANodeShuffleSubsystem::LogHereUnspawned(const FVector& P, const APawn* Pawn
     }
     // TODO(2026-10-28, rwg-trace-diag-2): diagnostic build only -- gate or remove before release.
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("HERE-UNSPAWNED-BANDS: band0to250m=%d band250to500m=%d band500to750m=%d band750to1000m=%d band1000to3000m=%d beyond3000m=%d unspawnedActiveMapWide=%d"),
-        Band[0], Band[1], Band[2], Band[3], Band[4], Band[5], MapWide);
+        TEXT("HERE-UNSPAWNED-BANDS: band0to250m=%d band250to500m=%d band500to750m=%d band750to1000m=%d band1000to3000m=%d beyond3000m=%d unspawnedActiveMapWide=%d provisionalUnfittedMapWide=%d"),
+        Band[0], Band[1], Band[2], Band[3], Band[4], Band[5], MapWide, ProvUnfitted);
 }
