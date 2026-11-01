@@ -47,8 +47,8 @@ function Span([string]$t, [string]$a, [string]$b) {
     return $t.Substring($i, $j - $i)
 }
 
-$censusFmt = 'TEXT("REROLLWIPE: destroyed=%d removedFromManager=%d staleInManagerAfter=%d representationsRemoved=%d managerCountBefore=%d managerCountAfter=%d kept=%d repByActor=%d repByNode=%d invalidSlots=%d invalidSlotsStillInManager=%d noManager=%d noRepManager=%d invalidSlotsNull=%d invalidInManagerAtWipe=%d invalidRemovedFromManager=%d destroyRefused=%d")'
-$censusArgs = "        T.Destroyed, T.RemovedFromManager, StaleAfter, T.RepAny, T.ManagerCountBefore, ManagerCountAfter, T.Kept,`n        T.RepByActor, T.RepByNode, T.InvalidSlots, InvalidStillIn, T.NoManager, T.NoRepManager, T.InvalidSlotsNull, T.InvalidInManagerAtWipe, T.InvalidRemovedFromManager,`n        T.DestroyRefused);"
+$censusFmt = 'TEXT("REROLLWIPE: destroyed=%d removedFromManager=%d staleInManagerAfter=%d representationsRemoved=%d managerCountBefore=%d managerCountAfter=%d kept=%d repByActor=%d repByNode=%d invalidSlots=%d invalidSlotsStillInManager=%d noManager=%d noRepManager=%d invalidSlotsNull=%d invalidInManagerAtWipe=%d invalidRemovedFromManager=%d destroyRefused=%d repPresentAfterUpdate=%d")'
+$censusArgs = "        T.Destroyed, T.RemovedFromManager, StaleAfter, T.RepAny, T.ManagerCountBefore, ManagerCountAfter, T.Kept,`n        T.RepByActor, T.RepByNode, T.InvalidSlots, InvalidStillIn, T.NoManager, T.NoRepManager, T.InvalidSlotsNull, T.InvalidInManagerAtWipe, T.InvalidRemovedFromManager,`n        T.DestroyRefused, T.RepPresentAfterUpdate);"
 $teardownLine = '            if (IsValid(It->Value)) { RerollWipeTeardownRegistrations(It->Value, WipeTally); if (!It->Value->Destroy()) { ++WipeTally.DestroyRefused; } }'
 $staleLoop = "        StaleAfter = 0;`n        for (AFGResourceNode* Ptr : T.DestroyedPtrs) { if (Mgr->mResourceNodes.Contains(Ptr)) { ++StaleAfter; } }"
 $invalidLoop = "        InvalidStillIn = 0;`n        for (AFGResourceNode* Ptr : T.InvalidPtrs) { if (Mgr->mResourceNodes.Contains(Ptr)) { ++InvalidStillIn; } }"
@@ -74,7 +74,8 @@ function Invoke-RerollWipeChecks($T) {
     else {
         if (-not (Ordered $helper @('T.DestroyedPtrs.Add(Node);', 'Removed = Mgr->mResourceNodes.RemoveSingleSwap(Node); T.RemovedFromManager += Removed;',
             'bByActor = RepMgr->RemoveRepresentationOfActor(Node);', 'RepMgr->FindResourceNodeRepresentation(Node)', 'RepMgr->RemoveRepresentation(NodeRep); bByNode = true;',
-            '    Node->RemoveResourceNodeScan_Local();', '    Node->UpdateNodeRepresentation();'))) { $f += '(R2) helper order: snap list, rep by actor, rep by node, scan, UpdateNodeRepresentation' }
+            '    Node->RemoveResourceNodeScan_Local();', '    Node->UpdateNodeRepresentation();',
+            'if (RepMgr2->FindResourceNodeRepresentation(Node)) { ++T.RepPresentAfterUpdate; }'))) { $f += '(R2) helper order: snap list, rep by actor, rep by node, scan, UpdateNodeRepresentation, then the review-F6 presence measurement' }
         if ((Count $helper ('->Dest' + 'roy();')) -ne 0 -or (Count $helper 'SpawnedNodes') -ne 0) { $f += '(R2) the helper must not Destroy or write SpawnedNodes' }
     }
     # R3
@@ -87,7 +88,7 @@ function Invoke-RerollWipeChecks($T) {
     }
     # R4
     if ((Count $T.wipe $censusFmt) -ne 1 -or (Count $T.wipe $censusArgs) -ne 1) { $f += '(R4) census field list / argument order' }
-    foreach ($tok in @('destroyed=', 'removedFromManager=', 'staleInManagerAfter=', 'representationsRemoved=', 'managerCountBefore=', 'managerCountAfter=', 'invalidSlotsNull=', 'invalidInManagerAtWipe=', 'invalidRemovedFromManager=', 'destroyRefused=')) {
+    foreach ($tok in @('destroyed=', 'removedFromManager=', 'staleInManagerAfter=', 'representationsRemoved=', 'managerCountBefore=', 'managerCountAfter=', 'invalidSlotsNull=', 'invalidInManagerAtWipe=', 'invalidRemovedFromManager=', 'destroyRefused=', 'repPresentAfterUpdate=')) {
         if ((Count $T.wipe $tok) -ne 1) { $f += "(R4) census token $tok must appear once in the file (no legend echo)" }
     }
     # R5
@@ -157,6 +158,8 @@ $mutants = @(
        Find2 = ("Swap(Node);`n    }`n}"); Repl2 = ("Swap(Node);`n        if (Mgr->mResourceNodes.Contains(Node)) { ++T.InvalidInManagerAtWipe; }`n    }`n}") }
     @{ Name = 'Q24 invalid slot dereferenced'; Key = 'wipe'; Expect = 'R10'; Find = 'if (!Node) { ++T.InvalidSlotsNull; return; }'; Repl = ('if (!Node) { ++T.InvalidSlotsNull; return; } if (!IsVal' + 'id(Node)) { }') }
     @{ Name = 'Q25 invalid-slot field dropped from census'; Key = 'wipe'; Expect = 'R4'; Find = ' invalidInManagerAtWipe=%d'; Repl = '' }
+    @{ Name = 'Q28 F6 presence measured before UpdateNodeRepresentation'; Key = 'wipe'; Expect = 'R2'; Find = "    Node->UpdateNodeRepresentation();`n"; Repl = ''
+       Find2 = "++T.RepPresentAfterUpdate; } }`n"; Repl2 = "++T.RepPresentAfterUpdate; } }`n    Node->UpdateNodeRepresentation();`n" }
     @{ Name = 'Q17 well-member snap-list drop removed'; Key = 'welld'; Expect = 'R9'; Find = ('SnapDropped = Mgr->mResourceNodes.RemoveSingle' + 'Swap(AsNode);'); Repl = 'SnapDropped = 0;' }
     @{ Name = 'Q18 well-member rep-by-actor drop removed'; Key = 'welld'; Expect = 'R9'; Find = "        RepMgr->RemoveRepresentationOfActor(Member);`n"; Repl = '' }
     @{ Name = 'Q19 well-member rep-by-node drop removed'; Key = 'welld'; Expect = 'R9'; Find = '{ RepMgr->RemoveRepresentation(NodeRep); }'; Repl = '{ }' }
