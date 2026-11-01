@@ -443,6 +443,10 @@ $mutants = @(
     @{ Name = 'X132 1f OPTION B remainingCandidates ignores inside redeals'; Key = 'prov'; Expect = 'F10'; Find = 'Cands.Num() - Spawned - Refused - InsideRedealt,'; Repl = 'Cands.Num() - Spawned - Refused,' }
     @{ Name = 'X133 1f OPTION B revealLostOnRedeal dropped'; Key = 'move'; Expect = 'F30'; Find = ' revealLostOnRedeal=%d'; Repl = '' }
     @{ Name = 'X134 1f OPTION B arm left set after the redeal'; Key = 'move'; Expect = 'F30'; Find = "    bRwgSteepArmed = false; // a refused redeal"; Repl = "    // a refused redeal" }
+    @{ Name = 'X135 review F6 pin mark dropped'; Key = 'prov'; Expect = 'F31'; Find = 'RwgProvCandMarkDirty(TEXT("pin")); // rwg-farspawn-1f C3'; Repl = '// pin' }
+    @{ Name = 'X136 review F6 reload mark dropped'; Key = 'adopt'; Expect = 'F31'; Find = 'RwgProvCandMarkDirty(TEXT("reload"));'; Repl = '' }
+    @{ Name = 'X137 review F6 branch (b) mark dropped'; Key = 'prov'; Expect = 'F31'; Find = 'RwgProvCandMarkDirty(TEXT("redeal")); // rwg-farspawn-1f C3: this entry loses'; Repl = '// this entry loses' }
+    @{ Name = 'X138 review F6 Rock.cpp mark dropped'; Key = 'rock'; Expect = 'F31'; Find = 'RwgProvCandMarkDirty(TEXT("redeal")); // rwg-farspawn-1f C3: this live entry'; Repl = '// this live entry' }
     @{ Name = 'X139 1f OPTION B fresh-path TODO dropped'; Key = 'sub'; Expect = 'F30'; Find = '// TODO(2026-10-31, rwg-farspawn-1f OPTION B): this near-player FRESH path still only MEASURES'; Repl = '// this near-player path still only MEASURES' }
     @{ Name = 'X121 1e F9 within line dropped'; Key = 'prov'; Expect = 'F31'; Find = 'TEXT("PROVSPAWN: withinRadius entry=%s res=%s at=%s pass=%d"),'; Repl = 'TEXT("PROVSPAWN: withinRadius"),' }
 )
