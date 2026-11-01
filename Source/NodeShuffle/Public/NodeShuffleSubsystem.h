@@ -1188,7 +1188,7 @@ private:
     // the gate does not exempt as a cave redeals it (300 m ring first, then map-wide) on the settle's move path and the provisional spawn path.
     // The near-player fresh path (EnsureNewNodeSpawned) still only measures (its own packet).
     static bool RwgInsideCaveExempt(const FNodeShuffleEntry& E) { return E.bUnderground || E.bRwgCave; } // the inside gate's bCaveFlagged argument (its refusal exemption)
-    bool RwgProvisionalInsideRedeal(FNodeShuffleEntry& E, const TCHAR* Path, const FVector& From, int32 LocalRevealsBefore, int32 ServerRevealsBefore); // false = RwgRedealLiveEntry refused (pinned/occupied), nothing changed
+    bool RwgProvisionalInsideRedeal(FNodeShuffleEntry& E, const TCHAR* Path, const FVector From, int32 LocalRevealsBefore, int32 ServerRevealsBefore); // From by VALUE: the settle passes E.Location, which the redeal rewrites; false = RwgRedealLiveEntry refused (pinned/occupied), nothing changed
     void RwgSteepArmForInside(const FNodeShuffleEntry& E);                 // NodeShuffleMapModeSteep.cpp: arms the ring for the redeal that immediately follows
     int32 RwgProvSessInsideRedeal = 0, RwgProvSessInsideRedealRing = 0;    // session (PROVCENSUS insideRedealSession / insideRedealRingSession)
     // rwg-farspawn-1f C3 (NodeShuffleMapModeProvisionalScan.cpp): the per-session provisional candidate list, rebuilt on a layout change or every 12 passes.

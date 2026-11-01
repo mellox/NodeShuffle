@@ -146,7 +146,7 @@ const TCHAR* ANodeShuffleSubsystem::RwgProvisionalMoveInPlace(FNodeShuffleEntry&
     return nullptr; // kept and moved
 }
 
-bool ANodeShuffleSubsystem::RwgProvisionalInsideRedeal(FNodeShuffleEntry& E, const TCHAR* Path, const FVector& From, int32 LocalRevealsBefore, int32 ServerRevealsBefore)
+bool ANodeShuffleSubsystem::RwgProvisionalInsideRedeal(FNodeShuffleEntry& E, const TCHAR* Path, const FVector From, int32 LocalRevealsBefore, int32 ServerRevealsBefore)
 {
     // rwg-farspawn-1f OPTION B (2026-10-31, user decision; round-1f review options table). The ONE redeal both callers use: the settle's move
     // path (Path settleMove: RwgProvisionalMoveInPlace returned insideRedeal) and the provisional spawn path (Path provisionalSpawn: the inside
