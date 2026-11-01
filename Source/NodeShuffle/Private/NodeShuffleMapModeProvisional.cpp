@@ -373,7 +373,8 @@ void ANodeShuffleSubsystem::RwgProvisionalSpawnPass(const TArray<FVector>& Pawns
         for (const FNodeShuffleEntry& E : Layout) { if (E.bRwgProvisional && IsValid(SpawnedNodes.FindRef(E.EntryGuid))) { ++Total; } }
         // remainingCandidates (fix F10): entries that passed every skip and the sea check this pass, minus this pass's spawned, refused and
         // (rwg-farspawn-1f OPTION B) inside-redealt ones; it does NOT include seaPending entries. insideRedealThisPass counts this pass's
-        // spawns whose inside gate read all-solid at a spot not dealt as a cave, which were torn down and redealt instead of kept. rwg-farspawn-1e (prose only): it includes the within-radius candidates (fresh
+        // spawn attempts whose inside gate read all-solid at a spot not dealt as a cave and whose entry was then redealt (an actor, when one was
+        // spawned, torn down) instead of kept. rwg-farspawn-1e (prose only): it includes the within-radius candidates (fresh
         // attempts this pass that left no actor), whose count is withinRadiusCandidates; withinRadiusProvisioned counts those given a node
         // this pass; wetSpotSkipped counts entries skipped because they are water-locked and still at their lock spot; withinUndergroundSkipped
         // counts within-radius underground entries left to the fresh path. budgetHit names what ended the batch: time (the time budget),
