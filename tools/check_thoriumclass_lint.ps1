@@ -161,7 +161,7 @@ function Invoke-ThoriumClassChecks($T) {
     $f += Check-Log $T 'T5' 'sub' 'REPCLASS-REGISTRY res=' 'REPCLASS-REGISTRY res=%s derived=%d mountFiltered=%d loaded=%d failed=%d rejected=%d cap=%d matched=%s applied=%d ms=%.1f' `
         @('*FPackageName::ObjectPathToObjectName(Res)', 'RegQuery.Derived', 'RegMatch.MountFiltered', 'RegMatch.Loaded', 'RegMatch.Failed', 'RegMatch.Rejected', 'NodeShuffleRepClass::RegistryLoadCap', 'RegMatch.Matched.IsEmpty() ? TEXT("none") : *FPackageName::ObjectPathToObjectName(RegMatch.Matched)', 'bRegApplied ? 1 : 0', 'RegMatch.Ms') 1
     $f += Check-Log $T 'T5' 'sub' 'REPCLASS-CONVERT ' 'REPCLASS-CONVERT converted=%d spawnClassAvailable=%d restamped=%d alreadySpawnClass=%d kept=%d' @('Converted', 'ConvSpawnClassAvailable', 'ConvRestamped', 'ConvAlreadySpawnClass', 'ConvKept') 1
-    $f += Check-Log $T 'T5' 'diag' 'REPCLASS-CLEARANCE ' $clearFmt @('*FPackageName::ObjectPathToObjectName(ResourcePath)', 'Role', '*FPackageName::ObjectPathToObjectName(ClassPath)', 'Cls ? 1 : 0', 'Cdo ? 1 : 0', 'ClearN', '*Clear', '*BoxExtent', '*BoxProfile', 'BoxCollision', 'ScsPrims', '*FString::Join(ScsParts, TEXT(";"))') 1
+    $f += Check-Log $T 'T5' 'diag' 'REPCLASS-CLEARANCE ' $clearFmt @('*FPackageName::ObjectPathToObjectName(ResourcePath)', 'RoleName', '*FPackageName::ObjectPathToObjectName(ClassPath)', 'Cls ? 1 : 0', 'Cdo ? 1 : 0', 'ClearN', '*Clear', '*BoxExtent', '*BoxProfile', 'BoxCollision', 'ScsPrims', '*FString::Join(ScsParts, TEXT(";"))') 1
     $f += Check-Log $T 'T5' 'diag' 'REPCLASS-STALE ' $staleFmt @('Stale', 'StalePinned', 'Spawned', 'Modded', 'Unresolved', '*FString::Join(Parts, TEXT(";"))') 1
     $f += Check-Log $T 'T5' 'dealc' 'RWGDEAL-RES ' 'RWGDEAL-RES res=%s cards=%d dealt=%d dealable=%d spawnClass=%d look=%d' @('*FPackageName::ObjectPathToObjectName(Res)', 'C.Key', 'C.Value', 'K.Dealable() ? 1 : 0', 'K.bSpawnClass ? 1 : 0', 'K.bLook ? 1 : 0') 1
     # T6
@@ -174,7 +174,7 @@ function Invoke-ThoriumClassChecks($T) {
         if ((Count $clearBody 'Cdo->mClearanceData') -ne 2 -or (Count $clearBody 'Cdo->mBoxComponent.Get()') -ne 1 -or (Count $clearBody $boxExtentFn) -ne 0) { $f += '(T6) the clearance line reads mClearanceData (count + loop) and the native box component, and never calls the FactoryGame-exported box-extent accessor' }
         if ((Count $clearBody 'GetAllNodes()') -ne 1 -or (Count $clearBody 'Cast<UPrimitiveComponent>(N->ComponentTemplate.Get())') -ne 1) { $f += '(T6) the clearance line walks the Blueprint SCS primitive templates' }
     }
-    if ((Count $h 'void EmitRepClassClearanceLine(const FString& ResourcePath, const TCHAR* Role, const FString& ClassPath) const;') -ne 1) { $f += '(T6) EmitRepClassClearanceLine must be declared const (friend-grant reads only)' }
+    if ((Count $h 'void EmitRepClassClearanceLine(const FString& ResourcePath, const TCHAR* RoleName, const FString& ClassPath) const;') -ne 1) { $f += '(T6) EmitRepClassClearanceLine must be declared const (friend-grant reads only)' }
     # T7
     $staleBody = Span $d 'void ANodeShuffleSubsystem::EmitRepClassStaleCensusOnce()' 'TEXT("REPCLASS-STALE '
     if ($staleBody -eq '') { $f += '(T7) EmitRepClassStaleCensusOnce body not found' }

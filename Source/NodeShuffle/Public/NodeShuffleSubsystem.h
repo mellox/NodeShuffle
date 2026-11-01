@@ -1476,7 +1476,7 @@ private:
     // the class CDO's clearance boxes, its native box component and its Blueprint-added primitive templates. It reads the
     // private AFGResourceNodeBase::mClearanceData through the Config/AccessTransformers.ini friend grant, so it is a member.
     // Defined in NodeShuffleRepClassDiag.cpp. Reports what it measured; asserts no cause.
-    void EmitRepClassClearanceLine(const FString& ResourcePath, const TCHAR* Role, const FString& ClassPath) const;
+    void EmitRepClassClearanceLine(const FString& ResourcePath, const TCHAR* RoleName, const FString& ClassPath) const;
     // rwg-thoriumclass-1: REPCLASS-STALE -- once per load (latched on a non-empty Layout), counts the active spawned entries
     // whose stamped spawn class differs from the class the rule would now choose. COUNT ONLY: no entry is restamped; the
     // saved classes change only when a re-roll recomputes them. Called from PostLoadGame_Implementation. Defined in

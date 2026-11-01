@@ -45,7 +45,7 @@ static FString NsRepClassBox(const FBox& B)
     return NsRepClassVec(B.Min) + TEXT("..") + NsRepClassVec(B.Max);
 }
 
-void ANodeShuffleSubsystem::EmitRepClassClearanceLine(const FString& ResourcePath, const TCHAR* Role, const FString& ClassPath) const
+void ANodeShuffleSubsystem::EmitRepClassClearanceLine(const FString& ResourcePath, const TCHAR* RoleName, const FString& ClassPath) const
 {
     const UClass* Cls = FindObject<UClass>(nullptr, *ClassPath);
     const AFGResourceNodeBase* Cdo = (Cls && Cls->IsChildOf(AFGResourceNodeBase::StaticClass()))
@@ -94,7 +94,7 @@ void ANodeShuffleSubsystem::EmitRepClassClearanceLine(const FString& ResourcePat
 
     UE_LOG(LogNodeShuffle, Display,
         TEXT("REPCLASS-CLEARANCE res=%s role=%s class=%s resident=%d nodeBase=%d clearN=%d clear=%s boxExtent=%s boxProfile=%s boxCollision=%d scsPrims=%d scs=[%s]"),
-        *FPackageName::ObjectPathToObjectName(ResourcePath), Role, *FPackageName::ObjectPathToObjectName(ClassPath),
+        *FPackageName::ObjectPathToObjectName(ResourcePath), RoleName, *FPackageName::ObjectPathToObjectName(ClassPath),
         Cls ? 1 : 0, Cdo ? 1 : 0, ClearN, *Clear, *BoxExtent, *BoxProfile, BoxCollision, ScsPrims, *FString::Join(ScsParts, TEXT(";")));
 }
 
