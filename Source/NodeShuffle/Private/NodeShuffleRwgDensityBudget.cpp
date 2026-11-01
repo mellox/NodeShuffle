@@ -65,7 +65,7 @@ void FNodeShuffleRwgDensityState::BeginCall(int32 Count)
     ++Calls;
     bOpen = false;
     CallCount = Count;
-    CallAccepted = CallRejCellFull = CallDraws = CallFallbackCellsOpened = CallCapDeficit = 0;
+    CallAccepted = CallRejCellFull = CallDraws = CallFallbackCellsOpened = CallRoomOverCount = CallSpotsLeftAtOpen = 0;
     const int32 Cells = N * N;
     TArray<int32> Fill;
     Fill.SetNumZeroed(Cells);
@@ -76,39 +76,22 @@ void FNodeShuffleRwgDensityState::BeginCall(int32 Count)
     if (!bEnabled || Cells == 0) { return; }
     // This call's target is everything that will stand in the cells after it: the spots it deals plus what is already there.
     NodeShuffleRwgDensityBudget::Apportion(Count + FillSum, LandFrac, Budget);
-    int32 CapSum = 0;
+    // Cap is a CEILING ON THE ROLL-CUMULATIVE Accepted[I] -- the count Admit and CellsAtCap compare against: the cell's accepted
+    // count at this call's start plus its room (budget - fill, never below 0) plus the per-land-cell slack.
+    int32 RoomSum = 0;
     for (int32 I = 0; I < Cells; ++I)
     {
         CallBudgetSum += Budget[I];
-        Cap[I] = FMath::Max(0, Budget[I] - Fill[I]);
-        CapSum += Cap[I];
+        const int32 Room = FMath::Max(0, Budget[I] - Fill[I]) + (LandFrac[I] > 0.0 ? NodeShuffleRwgDensityBudget::RoomSlackPerLandCell : 0);
+        Cap[I] = Accepted[I] + Room;
+        RoomSum += Room;
     }
-    // Cells whose fill already exceeds their budget leave a deficit: re-apportion it over land cells that still have room
-    // (by land weight), so the call can still deal Count spots. With no cell left with room, over every land cell.
-    const int32 Deficit = Count - CapSum;
-    if (Deficit > 0)
-    {
-        TArray<double> Weights;
-        Weights.SetNumZeroed(Cells);
-        bool bAny = false;
-        for (int32 I = 0; I < Cells; ++I) { if (Cap[I] > 0 && LandFrac[I] > 0.0) { Weights[I] = LandFrac[I]; bAny = true; } }
-        if (!bAny) { for (int32 I = 0; I < Cells; ++I) { if (LandFrac[I] > 0.0) { Weights[I] = LandFrac[I]; bAny = true; } } }
-        if (bAny)
-        {
-            TArray<int32> Add;
-            NodeShuffleRwgDensityBudget::Apportion(Deficit, Weights, Add);
-            for (int32 I = 0; I < Cells; ++I) { Cap[I] += Add[I]; }
-            CapSum += Deficit;
-            CallCapDeficit = Deficit;
-            CapDeficitSpread += Deficit;
-        }
-        else
-        {
-            bOpen = true; // no land sample passed anywhere: nothing to cap against; this call draws uniform (counted as a fallback call)
-            ++FallbackCalls;
-        }
-    }
-    CallCapSum = CapSum;
+    // Apportion is exact, so Sum(budget - fill) == Count and RoomSum >= Count whenever a lattice sample passed; RoomSum - Count is
+    // the fill standing over budget (dropped by the clamp) plus the slack. RoomSum == 0 only when no sample passed anywhere.
+    CallRoomOverCount = RoomSum - Count;
+    RoomOverCountSum += CallRoomOverCount;
+    if (RoomSum == 0) { bOpen = true; ++FallbackCalls; CallSpotsLeftAtOpen = Count; } // nothing to cap against: this call draws uniform (counted as a fallback call)
+    CallCapSum = RoomSum;
 }
 
 bool FNodeShuffleRwgDensityState::Admit(const FVector& C)
@@ -137,6 +120,7 @@ void FNodeShuffleRwgDensityState::MaybeOpen(int32 AttemptsLeft, int32 SpotsLeft)
     const int32 AtCap = CellsAtCap();
     FallbackCellsOpened += AtCap;
     CallFallbackCellsOpened = AtCap;
+    CallSpotsLeftAtOpen = SpotsLeft;
 }
 
 int32 FNodeShuffleRwgDensityState::CellsAtCap() const
@@ -159,8 +143,8 @@ void FNodeShuffleRwgDensityState::EndCall(int32 Drawn, int32 Outside, int32 Wate
     // One line per GenerateRwgLocations call (the extras deal, then the relocation deal). Its draws and rejectedCellFull close this
     // call's ROLLCENSUS sum: drawn = dealt + rejectedOutside + rejectedWater + rejectedVoid + rejectedKillbox + rejectedSlope + rejectedSpacing + rejectedCellFull.
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("ROLLDENSITY-CALL call=%d budgetEnabled=%d requested=%d fillBefore=%d budgetSum=%d capSum=%d capDeficitSpread=%d accepted=%d rejectedCellFull=%d draws=%d capsLiftedThisCall=%d fallbackCellsOpened=%d"),
-        Calls, bEnabled ? 1 : 0, CallCount, CallFill, CallBudgetSum, CallCapSum, CallCapDeficit, CallAccepted, CallRejCellFull, CallDraws, bOpen ? 1 : 0, CallFallbackCellsOpened);
+        TEXT("ROLLDENSITY-CALL call=%d budgetEnabled=%d requested=%d fillBefore=%d budgetSum=%d capSum=%d roomOverCount=%d accepted=%d rejectedCellFull=%d draws=%d capsLiftedThisCall=%d fallbackCellsOpened=%d spotsLeftAtOpen=%d"),
+        Calls, bEnabled ? 1 : 0, CallCount, CallFill, CallBudgetSum, CallCapSum, CallRoomOverCount, CallAccepted, CallRejCellFull, CallDraws, bOpen ? 1 : 0, CallFallbackCellsOpened, CallSpotsLeftAtOpen);
 }
 
 void ANodeShuffleSubsystem::RwgDensityBudgetBegin(bool bToggleOn, const TArray<FVector>& Prefill)
@@ -182,10 +166,11 @@ void ANodeShuffleSubsystem::RwgDensityBudgetBegin(bool bToggleOn, const TArray<F
         if (I >= 0) { ++S.Prefill[I]; } else { ++S.PrefillOutsideGrid; }
     }
     if (!S.bEnabled) { return; }
+    RwgBuildWaterVolumeCache(); // the deal rebuilds it at its own start (NodeShuffleMapModePlace.cpp); the lattice samples the same volumes
     // The land lattice: the dealer's own land chain at fixed sub-centres of every cell (no FRandomStream draw, no physics trace).
     // RwgRejectV3's graders latch on their first call of a session; the masks before/after say whether this sampling was that call.
     S.bGradesDone = bRwgSeaCheckDone && bRwgVoidCheckDone && bRwgKillboxDone;
-    S.LatchMaskBefore = (bRwgSeaUsable ? 1 : 0) | (bRwgVoidUsable ? 2 : 0) | (bRwgKillboxKnown ? 4 : 0);
+    S.LatchMaskBefore = (bRwgSeaUsable ? 1 : 0) | (bRwgVoidUsable ? 2 : 0) | (bRwgKillboxKnown ? 4 : 0) | (bRwgSeaCheckDone ? 8 : 0) | (bRwgVoidCheckDone ? 16 : 0) | (bRwgKillboxDone ? 32 : 0);
     const double T0 = FPlatformTime::Seconds();
     constexpr int32 Sub = NodeShuffleRwgDensityBudget::LandSamplesPerCellSide;
     for (int32 I = 0; I < S.N * S.N; ++I)
@@ -207,7 +192,7 @@ void ANodeShuffleSubsystem::RwgDensityBudgetBegin(bool bToggleOn, const TArray<F
         if (Passed > 0) { ++S.LandCells; }
     }
     S.LandSampleMs = (FPlatformTime::Seconds() - T0) * 1000.0;
-    S.LatchMaskAfter = (bRwgSeaUsable ? 1 : 0) | (bRwgVoidUsable ? 2 : 0) | (bRwgKillboxKnown ? 4 : 0);
+    S.LatchMaskAfter = (bRwgSeaUsable ? 1 : 0) | (bRwgVoidUsable ? 2 : 0) | (bRwgKillboxKnown ? 4 : 0) | (bRwgSeaCheckDone ? 8 : 0) | (bRwgVoidCheckDone ? 16 : 0) | (bRwgKillboxDone ? 32 : 0);
 }
 
 void ANodeShuffleSubsystem::RwgDensityBudgetEnd()
@@ -225,11 +210,11 @@ void ANodeShuffleSubsystem::RwgDensityBudgetEnd()
     const int32 Printed = FMath::Min(Printable, NodeShuffleRwgDensityBudget::CellLinesMax);
     // 32 fields, 32 arguments (hand-counted). Every value is a count or a predicate measured in this roll.
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("ROLLDENSITY: budgetEnabled=%d apiUsable=%d calls=%d cellsPerSide=%d cells=%d cellCm=%.0f landCells=%d landSamplesPerCell=%d landSamplesPassed=%d landSamples=%d landSampleMs=%.0f gradesDone=%d latchMaskBefore=%d latchMaskAfter=%d pinnedPrefilled=%d prefillOutsideGrid=%d budgetSum=%d capDeficitSpread=%d accepted=%d rejectedCellFull=%d rejectedWater=%d rejectedVoid=%d rejectedKillbox=%d rejectedOutside=%d rejectedSlope=%d rejectedSpacing=%d draws=%d fallbackCalls=%d fallbackCellsOpened=%d cellsAtCap=%d cellLinesPrinted=%d cellLinesOmitted=%d"),
+        TEXT("ROLLDENSITY: budgetEnabled=%d apiUsable=%d calls=%d cellsPerSide=%d cells=%d cellCm=%.0f landCells=%d landSamplesPerCell=%d landSamplesPassed=%d landSamples=%d landSampleMs=%.0f gradesDone=%d latchMaskBefore=%d latchMaskAfter=%d pinnedPrefilled=%d prefillOutsideGrid=%d budgetSum=%d roomOverCount=%d accepted=%d rejectedCellFull=%d rejectedWater=%d rejectedVoid=%d rejectedKillbox=%d rejectedOutside=%d rejectedSlope=%d rejectedSpacing=%d draws=%d fallbackCalls=%d fallbackCellsOpened=%d cellsAtCap=%d cellLinesPrinted=%d cellLinesOmitted=%d"),
         S.bEnabled ? 1 : 0, S.bApiUsable ? 1 : 0, S.Calls, S.N, Cells, S.CellCm, S.LandCells, NodeShuffleRwgDensityBudget::LandSamplesPerCellSide * NodeShuffleRwgDensityBudget::LandSamplesPerCellSide, S.LandSamplesPassed, S.LandSamplesTotal, S.LandSampleMs,
-        S.bGradesDone ? 1 : 0, S.LatchMaskBefore, S.LatchMaskAfter, PrefillSum, S.PrefillOutsideGrid, BudgetSum, S.CapDeficitSpread, S.AcceptedTotal, S.RejCellFull, S.RejWater, S.RejVoid, S.RejKillbox, S.RejOutside, S.RejSlope, S.RejSpacing,
+        S.bGradesDone ? 1 : 0, S.LatchMaskBefore, S.LatchMaskAfter, PrefillSum, S.PrefillOutsideGrid, BudgetSum, S.RoomOverCountSum, S.AcceptedTotal, S.RejCellFull, S.RejWater, S.RejVoid, S.RejKillbox, S.RejOutside, S.RejSlope, S.RejSpacing,
         S.Draws, S.FallbackCalls, S.FallbackCellsOpened, S.CellsAtCap(), Printed, Printable - Printed);
-    UE_LOG(LogNodeShuffle, Display, TEXT("ROLLDENSITY-LEGEND: Cells are 1000 m squares anchored at the world origin; a cell index is the floor of the coordinate in centimetres divided by the cell size. A cell's budget is its land share of the last call's target, land being the lattice samples per cell that pass the dealer's land chain. The pinned count is the carried and pinned entries already standing in the cell at the roll. A draw counted as cell full passed the land chain and met a cell whose accepted count had reached its cap. The fallback lifts every cap for the rest of a call once the draws left fall to the reserve per spot still needed; the opened count is the land cells at their cap at that moment. Cell lines print at Display with diagnostic logging on, else at Verbose."));
+    UE_LOG(LogNodeShuffle, Display, TEXT("ROLLDENSITY-LEGEND: Cells are squares of the printed cell size (1000 m unless the world is wider than 256 km), anchored at the world origin; a cell index is the floor of the coordinate in centimetres divided by the cell size. A cell's budget is its land share of the last call's target, land being the lattice samples per cell that pass the dealer's land chain. The pinned count is the carried and pinned entries already standing in the cell at the roll. A cell's cap is the most accepted spots it may hold by the end of a call: its accepted count when the call began plus its room, the room being its budget less what already stands in it, never below zero, plus a slack on every land cell. The call line's cap sum is the room summed over cells and its room over count is that sum less the spots the call requested. A draw counted as cell full passed the land chain and met a cell whose accepted count had reached its cap. The fallback lifts every cap for the rest of a call once the draws left fall to the reserve per spot still needed; the opened count is the land cells at their cap at that moment and the spots left are the spots the call still needed then. The latch masks add 1, 2 and 4 for the sea, void and killbox terms usable and 8, 16 and 32 for each grader having run. Cell lines print at Display with diagnostic logging on, else at Verbose.")));
     const bool bDiag = FNodeShuffleModule::AreDiagnosticsEnabled();
     int32 Lines = 0;
     for (int32 I = 0; I < Cells && Lines < NodeShuffleRwgDensityBudget::CellLinesMax; ++I)

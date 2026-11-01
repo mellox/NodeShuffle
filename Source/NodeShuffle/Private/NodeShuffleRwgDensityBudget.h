@@ -11,8 +11,8 @@
 //     (RwgDensityLandSample: Outside -> RwgRejectV3 -> RwgApiSlopeTooSteep, the same functions -- never a physics trace, so the
 //     roll stays independent of what is streamed around the player) and pre-fills each cell with the carried + pinned entries.
 //   - Each GenerateRwgLocations call apportions ITS target (this call's count plus everything already in the cells) over the
-//     cells by land fraction (largest remainder, ties to the lower index), caps a cell at budget minus fill, and re-apportions
-//     the deficit (cells whose fill already exceeds their budget) over cells that still have room. A land draw whose cell is
+//     cells by land fraction (largest remainder, ties to the lower index), caps a cell at budget minus fill, and lets each cell hold its
+//     accepted count plus that room plus RoomSlackPerLandCell; a share no draw can reach is left to the FALLBACK below. A land draw whose cell is
 //     at its cap is counted rejectedCellFull and redrawn; nothing here consumes the roll's FRandomStream, so a seed's draw
 //     SEQUENCE is unchanged and only which draws are kept differs (a given seed gives a different layout than the pre-packet
 //     build; the OFF toggle restores the pre-packet layout for the same seed).
@@ -32,7 +32,8 @@ namespace NodeShuffleRwgDensityBudget
     constexpr double CellSizeCm = 100000.0;          // 1 km cells, anchored at the world origin: cell index = floor(cm / 100000), the density_cells.py convention
     constexpr int32 LandSamplesPerCellSide = 4;      // 4 x 4 lattice per cell = 16 samples; 900 cells -> 14,400 samples. TODO(2026-11-01 rwg-density-1 budget): roll-time cost predicted ~0.8 s from RWGDENSITY's measured 57 us/sample; read landSampleMs on the first re-roll and drop to 3 if above 1500 ms
     constexpr int32 MaxCellsPerSide = 256;           // bound on the grid; a world wider than 256 km gets coarser cells (CellCm grows), printed as cellCm
-    constexpr int32 FallbackReserveDrawsPerSpot = 20; // caps lift when the draws left in a call <= this * spots still needed (today's uniform deal needs ~14 draws per accept)
+    constexpr int32 FallbackReserveDrawsPerSpot = 20; // caps lift when the draws left in a call <= this * spots still needed (today's uniform deal needs ~14 draws per accept) TODO(2026-11-01 rwg-density-1 review F3): unmeasured; re-read capsLiftedThisCall / spotsLeftAtOpen on the first re-roll
+    constexpr int32 RoomSlackPerLandCell = 1;        // TODO(2026-11-01 rwg-density-1 review F3): model-only value (cold-review sim: call-2 draws 18-35k at 0, 10-15k at 1); re-read ROLLDENSITY-CALL draws on the first re-roll
     constexpr int32 CellLinesMax = 120;              // ROLLDENSITY-CELL lines per roll, in index order; the rest are counted in cellLinesOmitted
 
     // Largest-remainder apportionment of Target over Weights, ties to the lower index. Sum(Out) == Target when the weights sum
@@ -50,23 +51,23 @@ struct FNodeShuffleRwgDensityState
     TArray<int32> Prefill;      // per cell: carried + pinned entries at Begin
     TArray<int32> Accepted;     // per cell: spots accepted by every call of this roll
     TArray<int32> Budget;       // per cell: the last call's apportionment of (count + fill)
-    TArray<int32> Cap;          // per cell: the last call's cap on Accepted (budget - fill, plus its deficit share)
+    TArray<int32> Cap;          // per cell: the last call's ceiling on the roll-cumulative Accepted (accepted at call start + max(0, budget - fill) + slack)
     bool bOpen = false;         // caps lifted for the rest of the current call (fallback)
     // Roll totals (across calls).
     int32 Calls = 0, Draws = 0, AcceptedTotal = 0, RejCellFull = 0, RejWater = 0, RejVoid = 0, RejKillbox = 0, RejOutside = 0, RejSlope = 0, RejSpacing = 0;
-    int32 FallbackCalls = 0, FallbackCellsOpened = 0, CapDeficitSpread = 0, PrefillOutsideGrid = 0;
+    int32 FallbackCalls = 0, FallbackCellsOpened = 0, RoomOverCountSum = 0, PrefillOutsideGrid = 0;
     // Begin's land sampling.
     int32 LandCells = 0, LandSamplesPassed = 0, LandSamplesTotal = 0, LatchMaskBefore = 0, LatchMaskAfter = 0;
     bool bGradesDone = false;
     double LandSampleMs = 0.0;
     // Per-call (reset by BeginCall).
-    int32 CallCount = 0, CallFill = 0, CallBudgetSum = 0, CallCapSum = 0, CallCapDeficit = 0, CallAccepted = 0, CallRejCellFull = 0, CallDraws = 0, CallFallbackCellsOpened = 0;
+    int32 CallCount = 0, CallFill = 0, CallBudgetSum = 0, CallCapSum = 0, CallRoomOverCount = 0, CallAccepted = 0, CallRejCellFull = 0, CallDraws = 0, CallFallbackCellsOpened = 0, CallSpotsLeftAtOpen = 0;
 
     void Init(int32 InN, double InCellCm);
     int32 CellOf(double X, double Y) const;  // -1 = off the grid
     int32 CellX(int32 Index) const { return Index % N - N / 2; } // origin-anchored index, as density_cells.py prints it
     int32 CellY(int32 Index) const { return Index / N - N / 2; }
-    void BeginCall(int32 Count);             // apportion this call's target, set the caps, clear bOpen
+    void BeginCall(int32 Count);             // apportion this call's target, set the caps (ceilings on the cumulative Accepted), clear bOpen
     bool Admit(const FVector& C);            // false = the cell's accepted count has reached its cap (counted); always true when !bEnabled or bOpen
     void Accept(const FVector& C);
     void MaybeOpen(int32 AttemptsLeft, int32 SpotsLeft); // the fallback test, once per draw

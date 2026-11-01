@@ -3,13 +3,14 @@
 # per-1-km-cell land-share caps on the RWG deal (NodeShuffleRwgDensityBudget.h/.cpp, the hooks in GenerateRwgLocations, the Begin/End
 # window in RollLayout, the config toggle, the marker). LOADS: the two budget files, NodeShuffleMapModePlace.cpp, NodeShuffleSubsystem.cpp,
 # NodeShuffleSubsystem.h, NodeShuffleConfig.h, NodeShuffleConfig.cpp, NodeShuffle.cpp, NodeShuffleLateNodes.cpp.
-#   B1  Formats: ROLLDENSITY (32 fields), ROLLDENSITY-CALL (12), ROLLDENSITY-CELL (7) once each; field count == conversion count; every
+#   B1  Formats: ROLLDENSITY (32 fields), ROLLDENSITY-CALL (13), ROLLDENSITY-CELL (7) once each; field count == conversion count; every
 #       name= is followed by a conversion; the brief's required fields present; the LEGEND line carries no field=value token.
 #   B2  Begin/End window in RollLayout: one Begin behind an Rwg test fed by Config.RwgDensityBudget; the pre-fill is every carried entry's
 #       location plus every bPinned NewLayout entry; one End behind an Rwg test, ordered before EmitRollCensus (the density trigger and the
 #       wipe audit keep their pinned places after it); the late-node file never calls Begin.
 #   B3  Land fraction and caps: one RwgDensityLandSample call site in the budget file, on the lattice; LandFrac = passed / (Sub * Sub); the
-#       apportionment weights ARE LandFrac; fill = prefill + accepted; cap = max(0, budget - fill); the deficit re-apportion exists.
+#       apportionment weights ARE LandFrac; fill = prefill + accepted; room = max(0, budget - fill) + slack; cap = accepted + room (a ceiling
+#       on the roll-cumulative accepted count, review F1); the no-land call opens its caps.
 #   B4  Dealer hooks, in order: BeginCall after the water cache, MaybeOpen directly after ++Drawn, Admit directly after the pinned land-test
 #       line and before the spacing block, a rejected draw `continue`s (redraw) and releases a cave pick, Accept directly after
 #       OutLocations.Add(C), EndCall before the deal-bounds comment; the loop head is unchanged.
@@ -89,9 +90,9 @@ $latticeX    = '                const double X = (Cx + (Sx + 0.5) / Sub) * CellC
 $landFracSet = '        S.LandFrac[I] = static_cast<double>(Passed) / (Sub * Sub);'
 $apportion   = '    NodeShuffleRwgDensityBudget::Apportion(Count + FillSum, LandFrac, Budget);'
 $fillLine    = '    for (int32 I = 0; I < Cells; ++I) { Fill[I] = Prefill[I] + Accepted[I]; FillSum += Fill[I]; }'
-$capLine     = '        Cap[I] = FMath::Max(0, Budget[I] - Fill[I]);'
-$deficitLine = '    const int32 Deficit = Count - CapSum;'
-$deficitApp  = '            NodeShuffleRwgDensityBudget::Apportion(Deficit, Weights, Add);'
+$capLine     = '        Cap[I] = Accepted[I] + Room;'
+$roomLine    = '        const int32 Room = FMath::Max(0, Budget[I] - Fill[I]) + (LandFrac[I] > 0.0 ? NodeShuffleRwgDensityBudget::RoomSlackPerLandCell : 0);'
+$noLandOpen  = '    if (RoomSum == 0) { bOpen = true; ++FallbackCalls;'
 $reserveTest = '    if (AttemptsLeft > SpotsLeft * NodeShuffleRwgDensityBudget::FallbackReserveDrawsPerSpot) { return; }'
 $openSet     = '    bOpen = true;' + "`n" + '    ++FallbackCalls;' + "`n" + '    const int32 AtCap = CellsAtCap();'
 $admitBypass = '    if (!bEnabled || bOpen) { return true; }'
@@ -126,7 +127,7 @@ function Invoke-DensityBudgetChecks($T) {
     $call = FormatOf $T.bud 'ROLLDENSITY-CALL '
     $cell = FormatOf $T.bud 'ROLLDENSITY-CELL '
     $f += FieldCheck $roll 32 $requiredRoll 'B1'
-    $f += FieldCheck $call 12 @('call', 'requested', 'accepted', 'rejectedCellFull', 'draws') 'B1'
+    $f += FieldCheck $call 13 @('call', 'requested', 'accepted', 'rejectedCellFull', 'draws', 'spotsLeftAtOpen') 'B1'
     $f += FieldCheck $cell 7 $requiredCell 'B1'
     if ((Count $T.bud 'TEXT("ROLLDENSITY: ') -ne 1 -or (Count $T.bud 'TEXT("ROLLDENSITY-CALL ') -ne 1 -or (Count $T.bud 'TEXT("ROLLDENSITY-CELL ') -ne 1 -or (Count $T.bud ('TEXT("' + $legendHead)) -ne 1) { $f += '(B1) each ROLLDENSITY head once' }
     $legend = FormatOf $T.bud $legendHead
@@ -138,7 +139,7 @@ function Invoke-DensityBudgetChecks($T) {
     if ((Count $T.late 'RwgDensityBudgetBegin(') -ne 0 -or (Count $T.late 'RwgDensityState') -ne 0) { $f += '(B2) the late-node deal must not open the window' }
     # B3
     if ((Count $T.bud 'RwgDensityLandSample(') -ne 1 -or (Count $T.bud $sampleCall) -ne 1 -or (Count $T.bud $latticeX) -ne 1 -or (Count $T.bud $landFracSet) -ne 1) { $f += '(B3) one lattice land-sample call site writing LandFrac = passed / samples' }
-    if ((Count $T.bud $apportion) -ne 1 -or (Count $T.bud $fillLine) -ne 1 -or (Count $T.bud $capLine) -ne 1 -or (Count $T.bud $deficitLine) -ne 1 -or (Count $T.bud $deficitApp) -ne 1) { $f += '(B3) apportion over LandFrac, fill = prefill + accepted, cap = max(0, budget - fill), deficit re-apportioned' }
+    if ((Count $T.bud $apportion) -ne 1 -or (Count $T.bud $fillLine) -ne 1 -or (Count $T.bud $capLine) -ne 1 -or (Count $T.bud $roomLine) -ne 1 -or (Count $T.bud $noLandOpen) -ne 1) { $f += '(B3) apportion over LandFrac, fill = prefill + accepted, room = max(0, budget - fill) + slack, cap = accepted + room, no-land call opens' }
     # B4
     if ((Count $T.place $waterCache) -ne 1 -or (Count $T.place $beginCall) -ne 1 -or (Count $T.place $beginCall2) -ne 1 -or -not (Ordered $T.place @($waterCache, $beginCall, $beginCall2, $loopHead))) { $f += '(B4) BeginCall after the water cache and before the loop' }
     if ((Count $T.place $drawnLine) -ne 1) { $f += '(B4) MaybeOpen directly after ++Drawn' }
@@ -152,7 +153,7 @@ function Invoke-DensityBudgetChecks($T) {
     }
     # B6
     if ((Count $T.bud $reserveTest) -ne 1 -or (Count $T.bud $openSet) -ne 1 -or (Count $T.bud $admitBypass) -ne 1 -or (Count $T.bud $admitFull) -ne 1) { $f += '(B6) fallback reserve test, open set, Admit bypass and full test' }
-    if ((Count $T.budh 'constexpr double CellSizeCm = 100000.0;') -ne 1 -or (Count $T.budh 'constexpr int32 LandSamplesPerCellSide = 4;') -ne 1 -or (Count $T.budh 'constexpr int32 FallbackReserveDrawsPerSpot = 20;') -ne 1 -or (Count $T.budh 'constexpr int32 CellLinesMax = 120;') -ne 1) { $f += '(B6) constants pinned by value' }
+    if ((Count $T.budh 'constexpr double CellSizeCm = 100000.0;') -ne 1 -or (Count $T.budh 'constexpr int32 LandSamplesPerCellSide = 4;') -ne 1 -or (Count $T.budh 'constexpr int32 FallbackReserveDrawsPerSpot = 20;') -ne 1 -or (Count $T.budh 'constexpr int32 CellLinesMax = 120;') -ne 1 -or (Count $T.budh 'constexpr int32 RoomSlackPerLandCell = 1;') -ne 1) { $f += '(B6) constants pinned by value' }
     # B7
     if ((Count $T.bud $floorLine) -ne 1 -or (Count $T.bud $sortPred) -ne 1 -or (Count $T.bud $slackLine) -ne 1) { $f += '(B7) Apportion: floors, descending remainders with ties to the lower index, slack to the heaviest' }
     # B8
@@ -179,8 +180,8 @@ $mutants = @(
     @{ Name = 'Y7 landFrac ignored (uniform weights)'; Key = 'bud'; Expect = 'B3'; Find = $apportion; Repl = '    NodeShuffleRwgDensityBudget::Apportion(Count + FillSum, Ones, Budget);' }
     @{ Name = 'Y8 landFrac hard-coded to full land'; Key = 'bud'; Expect = 'B3'; Find = $landFracSet; Repl = '        S.LandFrac[I] = 1.0;' }
     @{ Name = 'Y9 fill ignores earlier accepted spots'; Key = 'bud'; Expect = 'B3'; Find = $fillLine; Repl = '    for (int32 I = 0; I < Cells; ++I) { Fill[I] = Prefill[I]; FillSum += Fill[I]; }' }
-    @{ Name = 'Y10 cap ignores the fill'; Key = 'bud'; Expect = 'B3'; Find = $capLine; Repl = '        Cap[I] = Budget[I];' }
-    @{ Name = 'Y11 deficit never re-apportioned'; Key = 'bud'; Expect = 'B3'; Find = ($deficitApp + "`n"); Repl = "            Add.SetNumZeroed(Cells);`n" }
+    @{ Name = 'Y10 room ignores the fill'; Key = 'bud'; Expect = 'B3'; Find = $roomLine; Repl = '        const int32 Room = Budget[I];' }
+    @{ Name = 'Y11 cap compares cumulative accepted with per-call room (review F1)'; Key = 'bud'; Expect = 'B3'; Find = $capLine; Repl = '        Cap[I] = Room;' }
     @{ Name = 'Y12 cell-full reject never redraws'; Key = 'place'; Expect = 'B4'; Find = $admitLine; Repl = '        if (Density && !Density->Admit(C)) { if (bCavePick) { bSlotIsCave = false; } }' }
     @{ Name = 'Y13 cave pick not released on cell-full'; Key = 'place'; Expect = 'B4'; Find = $admitLine; Repl = '        if (Density && !Density->Admit(C)) { continue; }' }
     @{ Name = 'Y14 Admit moved after the spacing test'; Key = 'place'; Expect = 'B4'; Find = $admitLine; Repl = ''; Find2 = $acceptLine; Repl2 = ($admitLine + "`n" + $acceptLine) }
@@ -197,11 +198,12 @@ $mutants = @(
     @{ Name = 'Y25 mirror default OFF'; Key = 'cfgh'; Expect = 'B8'; Find = $cfghLine; Repl = '    bool RwgDensityBudget{false};' }
     @{ Name = 'Y26 panel default OFF'; Key = 'cfg'; Expect = 'B8'; Find = $cfgLine; Repl = '    AddBool(TEXT("RwgDensityBudget"), false,' }
     @{ Name = 'Y27 marker reverted'; Key = 'nsmod'; Expect = 'B9'; Find = $markerTag; Repl = ('2026-11-01-rwg-' + 'density-0)') }
-    @{ Name = 'Y28 marker tag leaks into a legend'; Key = 'bud'; Expect = 'B9'; Find = 'Cells are 1000 m squares anchored at the world origin;'; Repl = ('Cells (' + $markerTag + ' are 1000 m squares anchored at the world origin;') }
+    @{ Name = 'Y28 marker tag leaks into a legend'; Key = 'bud'; Expect = 'B9'; Find = 'Cells are squares of the printed cell size'; Repl = ('Cells (' + $markerTag + ' are squares of the printed cell size') }
     @{ Name = 'Y29 state never dropped at End'; Key = 'bud'; Expect = 'B10'; Find = $resetLine; Repl = '    // state kept' }
     @{ Name = 'Y30 census field dropped'; Key = 'bud'; Expect = 'B1'; Find = ' rejectedCellFull=%d rejectedWater=%d'; Repl = ' rejectedWater=%d' }
     @{ Name = 'Y31 legend echoes a field token'; Key = 'bud'; Expect = 'B1'; Find = 'A draw counted as cell full passed the land chain'; Repl = ('A draw counted as rejectedCellFull' + '=1 passed the land chain') }
     @{ Name = 'Y32 cell line loses its budget field'; Key = 'bud'; Expect = 'B1'; Find = 'landFrac=%.3f budget=%d pinned=%d'; Repl = 'landFrac=%.3f pinned=%d' }
+    @{ Name = 'Y33 slack zeroed'; Key = 'budh'; Expect = 'B6'; Find = 'constexpr int32 RoomSlackPerLandCell = 1;'; Repl = 'constexpr int32 RoomSlackPerLandCell = 0;' }
 )
 $bad = 0
 foreach ($m in $mutants) {
