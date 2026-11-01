@@ -2,7 +2,8 @@
 // Brief: _team/test-logs/2026-10-31-nodeshuffle-reroll-wipe-brief.md (review F1 of rwg-farspawn-1).
 // THE DEFECT. RollLayout's re-roll wipe (NodeShuffleSubsystem.cpp, `if (bIsReroll)`) called Destroy() on every non-kept spawned node
 // without dropping it from AFGResourceNodeManager::mResourceNodes, a RAW TArray<AFGResourceNode*> (no UPROPERTY, so GC never nulls
-// it) that the Miner Mk1 hologram's GetClosestNode walks, and without removing its map/compass representation or scan reveal.
+// it), the list the Miner Mk1 hologram's snap needs a node in (redesign-11 measured: registering into it enabled Mk1 snap; the read
+// itself is closed source), and without removing its map/compass representation or scan reveal.
 // THE MECHANISM. FGResourceNodeManager.h exposes NO removal API for that list (no Remove/Unregister member), and our own
 // DeregisterNodeFromManager returns early for OUR nodes (NodeShuffleIsOurNode). The only removal open to us is the friend-granted
 // raw edit `mResourceNodes.RemoveSingleSwap(Node)` (Config/AccessTransformers.ini), the same call RwgRedealLiveEntry

@@ -69,7 +69,7 @@ bool ANodeShuffleSubsystem::RwgRedealLiveEntry(FNodeShuffleEntry& E, const TCHAR
         {
             // RWG P2d review MF1: the manager's Mk1 snap list holds a RAW pointer to every node we spawn (RegisterNodeWithManager) and
             // DeregisterNodeFromManager refuses our own nodes, so drop it here, with the scan reveal and the map/compass representation,
-            // BEFORE Destroy -- the same registrations DestroyWellMemberIfUnused drops for a well member.
+            // BEFORE Destroy -- DestroyWellMemberIfUnused drops the same set for a well member (rwg-rerollwipe-1 review F1: explicitly, since DeregisterNodeFromManager refuses our nodes).
             if (AFGResourceNodeManager* Mgr = GetNodeManager()) { Mgr->mResourceNodes.RemoveSingleSwap(Node); }
             if (AFGActorRepresentationManager* RepMgr = AFGActorRepresentationManager::Get(GetWorld()))
             {
