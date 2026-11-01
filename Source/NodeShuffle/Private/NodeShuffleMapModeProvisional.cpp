@@ -349,6 +349,7 @@ void ANodeShuffleSubsystem::RwgProvisionalSpawnPass(const TArray<FVector>& Pawns
         // (building the candidate list when this pass built it, then testing it); candidates counts the entries on the per-session list
         // after this pass dropped the set-aside ones (it includes sea-pending, wet-spot, already-fitted and within-radius entries);
         // candidateListBuild names what made this pass build the list, or none; candidateListBuilds counts the builds this session.
+        // rwg-farspawn-1f C3 (prose only): seaPending, rayCastedNoActor, seaDealFailed, wetSpotSkipped and withinUndergroundSkipped count only the entries tested this pass (the per-session list plus this pass's fresh attempts that left no actor), so an entry that lost its actor since the last build is not counted until the next build (at most 12 passes).
         // seaPending (re-review R7): entries (far, or within after a fresh attempt that left no actor) held back for the sea/void pass -- those it has not checked yet, PLUS the entries whose
         // sea re-deal found no spot (RwgSeaDealFailed), which the sea pass skips for the rest of the session, so the sea pass never clears them from this count
         // this session; seaDealFailed prints that subset.
