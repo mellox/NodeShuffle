@@ -2,7 +2,7 @@
 # raw Mk1 snap list (mResourceNodes), its representation and its scan reveal BEFORE Destroy, and prints one ungated REROLLWIPE census
 # whose stale count is a pointer compare. Brief: _team/test-logs/2026-10-31-nodeshuffle-reroll-wipe-brief.md.
 # LOADS and PINS: NodeShuffleSubsystem.cpp (the wipe call sites), NodeShuffleRerollWipe.cpp/.h (helper + census), NodeShuffleSubsystem.h
-# (declarations), NodeShuffle.cpp (marker).
+# (declarations), NodeShuffle.cpp (marker), NodeShuffleWellDespawn.cpp (review F1: the well-member teardown).
 #   R1 wipe order: Begin -> iterate -> [IsValid: teardown helper, then Destroy] -> Unregister -> RemoveCurrent -> MeshActorCache.Reset -> census
 #   R2 helper order: snap-list RemoveSingleSwap (return summed), representation by actor, by node, scan reveal, UpdateNodeRepresentation;
 #      no Destroy and no SpawnedNodes write inside the helper
@@ -12,6 +12,8 @@
 #   R6 marker rwg-rerollwipe-1 once on its own line in NodeShuffle.cpp, farspawn-1f LOADED line still once; no marker in the new files
 #   R7 new .cpp under 500 lines; RemoveSingleSwap stays a single (DeregisterNodeFromManager) site in Subsystem.cpp
 #   R8 header declarations + the include
+#   R9 (review F1) DestroyWellMemberIfUnused: after DeregisterNodeFromManager (which refuses OUR nodes), an explicit snap-list RemoveSingleSwap
+#      and representation removal (by actor, by node), all BEFORE Destroy; the WELLDESPAWN-SNAP line is diagnostics-gated; the three includes
 # Mutants run in-file. Exit 0 = all hold; 1 = at least one does not; 2 = a pinned FILE is missing.
 
 $ErrorActionPreference = 'Stop'
@@ -23,6 +25,7 @@ $files = [ordered]@{
     wipe  = 'NodeShuffle\Private\NodeShuffleRerollWipe.cpp'
     wipeh = 'NodeShuffle\Private\NodeShuffleRerollWipe.h'
     nsmod = 'NodeShuffle\Private\NodeShuffle.cpp'
+    welld = 'NodeShuffle\Private\NodeShuffleWellDespawn.cpp'
 }
 $text = [ordered]@{}
 foreach ($k in $files.Keys) {
@@ -49,6 +52,8 @@ $teardownLine = '            if (IsValid(It->Value)) { RerollWipeTeardownRegistr
 $staleLoop = "        StaleAfter = 0;`n        for (AFGResourceNode* Ptr : T.DestroyedPtrs) { if (Mgr->mResourceNodes.Contains(Ptr)) { ++StaleAfter; } }"
 $invalidLoop = "        InvalidStillIn = 0;`n        for (AFGResourceNode* Ptr : T.InvalidPtrs) { if (Mgr->mResourceNodes.Contains(Ptr)) { ++InvalidStillIn; } }"
 $marker = '2026-10-31-rwg-' + 'rerollwipe-1'
+# review F1: the WHOLE well-member snap-list drop line, so mutant Q20 moves the identical text after Destroy (order, not presence)
+$wellSnapLine = "    if (AFGResourceNode* AsNode = Cast<AFGResourceNode>(Member)) { if (AFGResourceNodeManager* Mgr = GetNodeManager()) { SnapDropped = Mgr->mResourceNodes.RemoveSingle" + "Swap(AsNode); } }`n"
 
 function Invoke-RerollWipeChecks($T) {
     $f = @()
@@ -99,12 +104,25 @@ function Invoke-RerollWipeChecks($T) {
         if ((Count $T.subh $d) -ne 1) { $f += "(R8) header declaration missing: $d" }
     }
     if ((Count $T.sub '#include "NodeShuffleRerollWipe.h"') -ne 1 -or (Count $T.wipeh 'struct FNodeShuffleRerollWipeTally') -ne 1) { $f += '(R8) include / tally struct' }
+    # R9 (review F1)
+    $well = Span $T.welld 'bool ANodeShuffleSubsystem::DestroyWellMemberIfUnused(' 'bool ANodeShuffleSubsystem::DespawnWellGroup('
+    if ($well -eq '') { $f += '(R9) DestroyWellMemberIfUnused span missing' }
+    else {
+        if ((Count $well 'DeregisterNodeFromManager(Member);') -ne 1 -or (Count $well ('Member->Dest' + 'roy();')) -ne 1) { $f += '(R9) one Deregister and one Destroy in the well-member teardown' }
+        if (-not (Ordered $well @('DeregisterNodeFromManager(Member);', ('SnapDropped = Mgr->mResourceNodes.RemoveSingle' + 'Swap(AsNode);'),
+            'RepMgr->RemoveRepresentationOfActor(Member);', 'RepMgr->FindResourceNodeRepresentation(Member)) { RepMgr->RemoveRepresentation(NodeRep); }',
+            ('Member->Dest' + 'roy();')))) { $f += '(R9) well-member order: Deregister, snap-list drop, rep by actor, rep by node, then Destroy' }
+        if ((Count $well ('if (FNodeShuffleModule::AreDiagnostics' + 'Enabled()) { UE_LOG(LogNodeShuffle, Display, TEXT("WELLDESPAWN-SNAP %s: snapListRemovedAfterDeregister %d"), *Member->GetName(), SnapDropped); }')) -ne 1) { $f += '(R9) WELLDESPAWN-SNAP line, diagnostics-gated, arity 2' }
+    }
+    foreach ($inc in @('#include "Resources/FGResourceNodeManager.h"', '#include "FGActorRepresentationManager.h"', '#include "Representation/FGResourceNodeRepresentation.h"')) {
+        if ((Count $T.welld $inc) -ne 1) { $f += "(R9) WellDespawn include missing: $inc" }
+    }
     return $f
 }
 
 $base = Invoke-RerollWipeChecks $text
 if ($base.Count -gt 0) { Write-Host 'FAIL (baseline):'; $base | ForEach-Object { Write-Host "  $_" }; exit 1 }
-Write-Host 'PASS baseline: R1-R8 hold'
+Write-Host 'PASS baseline: R1-R9 hold'
 
 $mutants = @(
     @{ Name = 'Q1 teardown call dropped'; Key = 'sub'; Expect = 'R1'; Find = 'RerollWipeTeardownRegistrations(It->Value, WipeTally); It->Value->Destroy();'; Repl = 'It->Value->Destroy();' }
@@ -122,12 +140,23 @@ $mutants = @(
     @{ Name = 'Q13 stale count derived by formula'; Key = 'wipe'; Expect = 'R3'; Find = "        StaleAfter = 0;`n"; Repl = ("        StaleAfter = " + "T.Destroyed - T.RemovedFromManager; StaleAfter = 0;`n") }
     @{ Name = 'Q14 removal inlined at the wipe (third copy in Subsystem.cpp)'; Key = 'sub'; Expect = 'R7'; Find = "        MeshActorCache.Reset();`n        RerollWipeEmitCensus"; Repl = ("        if (AFGResourceNodeManager* M = GetNodeManager()) { M->mResourceNodes.RemoveSingle" + "Swap(nullptr); }`n        MeshActorCache.Reset();`n        RerollWipeEmitCensus") }
     @{ Name = 'Q15 legend echoes a census token'; Key = 'wipe'; Expect = 'R4'; Find = '    // UNGATED: once per re-roll'; Repl = '    // staleInManagerAfter= counts survivors. UNGATED: once per re-roll' }
+    @{ Name = 'Q17 well-member snap-list drop removed'; Key = 'welld'; Expect = 'R9'; Find = ('SnapDropped = Mgr->mResourceNodes.RemoveSingle' + 'Swap(AsNode);'); Repl = 'SnapDropped = 0;' }
+    @{ Name = 'Q18 well-member rep-by-actor drop removed'; Key = 'welld'; Expect = 'R9'; Find = "        RepMgr->RemoveRepresentationOfActor(Member);`n"; Repl = '' }
+    @{ Name = 'Q19 well-member rep-by-node drop removed'; Key = 'welld'; Expect = 'R9'; Find = '{ RepMgr->RemoveRepresentation(NodeRep); }'; Repl = '{ }' }
+    @{ Name = 'Q20 well-member snap-list drop moved after Destroy'; Key = 'welld'; Expect = 'R9'; Find = $wellSnapLine; Repl = ''
+       Find2 = ("    Member->Dest" + "roy();`n"); Repl2 = ("    Member->Dest" + "roy();`n" + $wellSnapLine) }
+    @{ Name = 'Q21 WELLDESPAWN-SNAP ungated'; Key = 'welld'; Expect = 'R9'; Find = ('    if (FNodeShuffleModule::AreDiagnostics' + 'Enabled()) { UE_LOG(LogNodeShuffle, Display, TEXT("WELLDESPAWN-SNAP'); Repl = '    { UE_LOG(LogNodeShuffle, Display, TEXT("WELLDESPAWN-SNAP' }
+    @{ Name = 'Q22 WellDespawn manager include dropped'; Key = 'welld'; Expect = 'R9'; Find = '#include "Resources/FGResourceNodeManager.h"'; Repl = '' }
 )
 $bad = 0
 foreach ($m in $mutants) {
     $t2 = [ordered]@{}; foreach ($k in $text.Keys) { $t2[$k] = $text[$k] }
     if ((Count $t2[$m.Key] $m.Find) -ne 1) { Write-Host "MUTANT-SETUP FAIL $($m.Name): find text not unique in $($m.Key)"; $bad++; continue }
     $t2[$m.Key] = $t2[$m.Key].Replace($m.Find, $m.Repl)
+    if ($m.ContainsKey('Find2')) {
+        if ((Count $t2[$m.Key] $m.Find2) -ne 1) { Write-Host "MUTANT-SETUP FAIL $($m.Name): find2 text not unique in $($m.Key)"; $bad++; continue }
+        $t2[$m.Key] = $t2[$m.Key].Replace($m.Find2, $m.Repl2)
+    }
     $r = Invoke-RerollWipeChecks $t2
     if (($r | Where-Object { $_.StartsWith("($($m.Expect))") }).Count -gt 0) { Write-Host "RED  (ok) $($m.Name)" }
     else { Write-Host "GREEN (BAD) $($m.Name): expected $($m.Expect), got: $($r -join ' | ')"; $bad++ }

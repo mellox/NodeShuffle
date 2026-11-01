@@ -51,6 +51,9 @@
 #include "NodeShuffleWellRetype.h"   // WellShort
 #include "NodeShuffleWellRelocate.h" // IsFiniteVector + WellAdoptMatchRadiusCm
 #include "Resources/FGResourceNode.h"
+#include "Resources/FGResourceNodeManager.h"              // rwg-rerollwipe-1 review F1: mResourceNodes (friend-granted raw edit)
+#include "FGActorRepresentationManager.h"                 // rwg-rerollwipe-1 review F1: representation removal
+#include "Representation/FGResourceNodeRepresentation.h" // rwg-rerollwipe-1 review F1: FindResourceNodeRepresentation result type
 
 // ------------------------------------------------------------------------------------------------
 // DESPAWN  (ns-review-h3 H1, BLOCKING) -- the counterpart the packet was missing entirely
@@ -111,6 +114,16 @@ bool ANodeShuffleSubsystem::DestroyWellMemberIfUnused(AFGResourceNodeBase* Membe
     // object is still addressable.
     FNodeShuffleModule::UnregisterManagedNode(Member);
     DeregisterNodeFromManager(Member);
+    // rwg-rerollwipe-1 review F1: DeregisterNodeFromManager refuses OUR nodes (NodeShuffleIsOurNode) and a dressed well member carries the
+    // identity component, so drop the raw Mk1 snap-list pointer and the representation here (a no-op where Deregister already acted).
+    int32 SnapDropped = 0;
+    if (AFGResourceNode* AsNode = Cast<AFGResourceNode>(Member)) { if (AFGResourceNodeManager* Mgr = GetNodeManager()) { SnapDropped = Mgr->mResourceNodes.RemoveSingleSwap(AsNode); } }
+    if (AFGActorRepresentationManager* RepMgr = AFGActorRepresentationManager::Get(GetWorld()))
+    {
+        RepMgr->RemoveRepresentationOfActor(Member);
+        if (UFGResourceNodeRepresentation* NodeRep = RepMgr->FindResourceNodeRepresentation(Member)) { RepMgr->RemoveRepresentation(NodeRep); }
+    }
+    if (FNodeShuffleModule::AreDiagnosticsEnabled()) { UE_LOG(LogNodeShuffle, Display, TEXT("WELLDESPAWN-SNAP %s: snapListRemovedAfterDeregister %d"), *Member->GetName(), SnapDropped); }
     Member->RemoveResourceNodeScan_Local();
     Member->UpdateNodeRepresentation();
 
