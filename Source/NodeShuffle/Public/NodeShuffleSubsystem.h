@@ -1454,6 +1454,15 @@ private:
     bool ResourceHasAuthoredLook(UClass* ResourceClass);
     void HideNativeNodeMesh(class AFGResourceNode* Node, class UStaticMeshComponent* ExcludeRock);
     bool bAdoptedRestoredNodes = false;
+    // rwg-pinnedspawn-1 I3 (2026-11-01): once per load (latched only once the Layout is non-empty), every
+    // pinned entry that the spawn path's overlap or inside gate deactivated is re-activated and re-armed;
+    // one PINNEDHEAL census line per load. Defined in NodeShufflePinnedHeal.cpp, called from ApplyLayout
+    // right after the one-time adopt-on-load.
+    bool bPinnedHealDone = false;
+    void HealDeactivatedPinnedEntriesOnce();
+    // rwg-pinnedspawn-1 I1: pinned entries whose building overlap the occupancy gate ignored, so the
+    // OVERLAPGATE-PINNED line prints once per entry per session.
+    TSet<FGuid> PinnedBuildingSkipLogged;
     // redesign-3 BUG C: originals already deregistered from the scanner this session (path set, so we
     // call RemoveResourceNodeScan_Local/UpdateNodeRepresentation once per original, not every pass) + a
     // running count for the log evidence (redesign-2's calls were silent).
@@ -1560,6 +1569,10 @@ private:
     // knowledge-2 item 3: extractors already truth-dumped this session (diag-gated once-per-extractor
     // ground-truth line: bound object validity, resolved resource, node-at-location match).
     TSet<TWeakObjectPtr<const AActor>> ExtractorsDumped;
+    // rwg-pinnedspawn-1 I4: the EXTRACTOR-RELINK census prints only when its tuple changes (it runs every
+    // pass); the key of the last printed tuple, and the extractors already named by EXTRACTOR-NONODE.
+    FString RelinkCensusLastKey;
+    TSet<TWeakObjectPtr<const AActor>> ExtractorsNoNodeLogged;
     // knowledge-1 item 1: on authority, once per load after the layout is applied, register the
     // DISTINCT modded resources the shuffle actively manages with the game's scanner-unlock list
     // (AFGUnlockSubsystem::UnlockScannableResource — SaveGame + Replicated, so it persists). This is

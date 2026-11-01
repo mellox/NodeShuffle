@@ -2591,6 +2591,9 @@ void ANodeShuffleSubsystem::ApplyLayout()
         AdoptRestoredSpawnedNodes();
         bAdoptedRestoredNodes = true;
     }
+    // rwg-pinnedspawn-1 I3: once per load, after adoption and before both spawn paths (the loop below and
+    // RwgSpawnPass), re-arm every pinned entry a spawn-path gate deactivated. NodeShufflePinnedHeal.cpp.
+    HealDeactivatedPinnedEntriesOnce();
 
     // redesign-1: pair each original node to its own AFGNodeMeshActor so SuppressOriginalNodes can
     // hide the paired mesh actor when an unoccupied original streams in. Rebuilt each pass.
@@ -4986,6 +4989,15 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
         constexpr float OverlapRejectRadius = 800.0f; // 8 m: a node footprint
         const float RejSq = FMath::Square(OverlapRejectRadius);
 
+        // rwg-pinnedspawn-1 I2: what the most recent refusing call hit (written only on a refusal), read
+        // after the primary-spot call for the OVERLAPGATE line. I1: building hits ignored for a pinned entry.
+        const TCHAR* GateHitKind = TEXT("none");
+        FString GateHitClass = TEXT("-");
+        FString GateHitPath = TEXT("-");
+        int32 PinnedBuildingHitsIgnored = 0;
+        FString PinnedFirstBuildingClass = TEXT("-");
+        FString PinnedFirstBuildingPath = TEXT("-");
+
         auto OverlapsAt = [&](const FVector& At) -> bool
         {
             // ns-t35-gatereach: this lambda IS the node path's occupancy gate, so counting here counts
@@ -5009,6 +5021,9 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
                 if (FVector::DistSquared(Other->GetActorLocation(), At) < RejSq)
                 {
                     ++NodeGateCallOccupiedRejected; // ns-t35-gatereach (resource-node half)
+                    GateHitKind = TEXT("resourceNode"); // rwg-pinnedspawn-1 I2
+                    GateHitClass = Other->GetClass()->GetName();
+                    GateHitPath = Other->GetPathName();
                     return true;
                 }
             }
@@ -5032,7 +5047,25 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
                         AActor* HitActor = H.GetActor();
                         if (HitActor && HitActor->IsA<AFGBuildable>() && !HitActor->IsA<AFGBuildableFoundation>())
                         {
+                            // rwg-pinnedspawn-1 I1: a PINNED entry never refuses on a building -- the pin means a
+                            // player's miner stands on this spot by definition, and before this exemption that miner
+                            // refused its own node until the 8-strike give-up deactivated the entry. The hit is
+                            // counted and the first one remembered for the OVERLAPGATE-PINNED line; the scan goes on.
+                            // Non-pinned entries take the unchanged refusal below.
+                            if (Entry.bPinned)
+                            {
+                                if (PinnedBuildingHitsIgnored == 0)
+                                {
+                                    PinnedFirstBuildingClass = HitActor->GetClass()->GetName();
+                                    PinnedFirstBuildingPath = HitActor->GetPathName();
+                                }
+                                ++PinnedBuildingHitsIgnored;
+                                continue;
+                            }
                             ++NodeGateCallOccupiedRejected; // ns-t35-gatereach (buildable half)
+                            GateHitKind = TEXT("buildable"); // rwg-pinnedspawn-1 I2
+                            GateHitClass = HitActor->GetClass()->GetName();
+                            GateHitPath = HitActor->GetPathName();
                             return true; // a machine/wall/belt — reject (foundations & ramps are allowed)
                         }
                     }
@@ -5078,6 +5111,20 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
         const bool bSpotOccupied = OverlapsAt(Entry.Location);
         if (bSpotOccupied) { ++NodeGatePrimaryOccupiedRejected; }
         else { ++NodeGatePrimaryEnclosedReached; }
+        // rwg-pinnedspawn-1 I2: the primary spot's hit, copied before any spiral probe overwrites it.
+        const FString PrimaryHitKind = bSpotOccupied ? FString(GateHitKind) : FString(TEXT("none"));
+        const FString PrimaryHitClass = bSpotOccupied ? GateHitClass : FString(TEXT("-"));
+        const FString PrimaryHitPath = bSpotOccupied ? GateHitPath : FString(TEXT("-"));
+        // rwg-pinnedspawn-1 I1: once per pinned entry per session, the building overlap the gate ignored at
+        // its primary spot (the exemption's positive evidence: normally the player's own miner).
+        if (Entry.bPinned && PinnedBuildingHitsIgnored > 0 && !PinnedBuildingSkipLogged.Contains(Entry.EntryGuid))
+        {
+            PinnedBuildingSkipLogged.Add(Entry.EntryGuid);
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("OVERLAPGATE-PINNED entry=%s res=%s at=%s buildingOverlapHitsIgnored=%d firstBuildingClass=%s firstBuildingPath=%s occupiedAfterExemption=%d"),
+                *Entry.EntryGuid.ToString(), *ResourceClass->GetName(), *Entry.Location.ToCompactString(),
+                PinnedBuildingHitsIgnored, *PinnedFirstBuildingClass, *PinnedFirstBuildingPath, bSpotOccupied ? 1 : 0);
+        }
         const bool bSpotEnclosed = !bSpotOccupied && IsEnclosed(Entry.Location);
         if (bSpotEnclosed) { ++NodeGatePrimaryEnclosedRejected; }
         if (bSpotOccupied || bSpotEnclosed)
@@ -5091,6 +5138,7 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
             // Try one nudge per visit: an expanding golden-angle spiral, re-grounded
             // and water-checked, accepting the first free LAND spot. Persist it.
             constexpr float GoldenAngleRad = 2.39996323f;
+            const FVector RefusedAt = Entry.Location; // rwg-pinnedspawn-1 I2: the refused spot, before a nudge moves it
             bool bRelocated = false;
             for (int32 i = 1; i <= LandRelocationTries && !bRelocated; i++)
             {
@@ -5118,9 +5166,24 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
                         *ResourceClass->GetName(), *TryLoc.ToCompactString());
                 }
             }
+            // rwg-pinnedspawn-1 I2: one Display line per visit on which the primary spot was refused, naming the
+            // actor the occupancy test hit there (overlapKind none = the enclosure test refused it). strike is
+            // the entry's nudge counter after this visit; it advances only when the spiral found no spot.
+            // Bound: at most MaxOverlapNudges unrelocated lines per entry, plus one per relocation that a spawn follows.
+            auto LogGateRefusal = [&]()
+            {
+                UE_LOG(LogNodeShuffle, Display,
+                    TEXT("OVERLAPGATE refused entry=%s res=%s at=%s pinned=%d occupied=%d enclosed=%d overlapKind=%s overlapClass=%s overlapPath=%s relocated=%d strike=%d/%d"),
+                    *Entry.EntryGuid.ToString(), *ResourceClass->GetName(), *RefusedAt.ToCompactString(),
+                    Entry.bPinned ? 1 : 0, bSpotOccupied ? 1 : 0, bSpotEnclosed ? 1 : 0,
+                    *PrimaryHitKind, *PrimaryHitClass, *PrimaryHitPath,
+                    bRelocated ? 1 : 0, static_cast<int32>(Entry.OverlapNudges), static_cast<int32>(MaxOverlapNudges));
+            };
+            if (bRelocated) { LogGateRefusal(); }
             if (!bRelocated)
             {
                 Entry.OverlapNudges++;
+                LogGateRefusal(); // rwg-pinnedspawn-1 I2: after the strike, before any give-up
                 if (Entry.OverlapNudges >= MaxOverlapNudges)
                 {
                     // Give up cleanly: resolve the entry so it never re-attempts or
@@ -8403,10 +8466,18 @@ void ANodeShuffleSubsystem::ReassociateOrphanedExtractors()
         }
     }
 
+    // rwg-pinnedspawn-1 I4: the EXTRACTOR-RELINK census, a partition of this pass's extractors by the branch
+    // below that handled them: linked (no binding, a spawned node within ExtractorSnapDistance, binding present
+    // after SetResourceNode), linkNoEffect (same, binding still absent after the call), noNodeUnderExtractor
+    // (no binding and no SpawnedNodes actor within ExtractorSnapDistance -- vanilla nodes are not searched),
+    // alreadyLinked (a binding object is present, valid or not). Printed only when the tuple changes.
+    int32 RelinkExtractors = 0, RelinkLinked = 0, RelinkLinkNoEffect = 0, RelinkNoNode = 0, RelinkAlreadyLinked = 0;
+    constexpr int32 RelinkNoNodeLinesMax = 40; // EXTRACTOR-NONODE lines per session; the census carries the full count
     for (TActorIterator<AFGBuildableResourceExtractorBase> It(GetWorld()); It; ++It)
     {
         AFGBuildableResourceExtractorBase* Extractor = *It;
         const FVector Loc = Extractor->GetActorLocation();
+        ++RelinkExtractors;
 
         // The live spawned node AT this extractor's location (the reassociation proximity rule).
         // Resolved lazily — healthy bound extractors never pay the SpawnedNodes scan.
@@ -8473,6 +8544,7 @@ void ANodeShuffleSubsystem::ReassociateOrphanedExtractors()
 
         if (BoundObj != nullptr)
         {
+            ++RelinkAlreadyLinked; // rwg-pinnedspawn-1 I4
             // knowledge-1 item 2b + knowledge-2 widening: heal via the construct path's setter
             // (SetResourceNode — binds AND claims, re-running the OnExtractableResourceSet
             // derivation). Critical without a rebuild: SF+ removed vanilla miners from the build
@@ -8507,6 +8579,36 @@ void ANodeShuffleSubsystem::ReassociateOrphanedExtractors()
             // SetExtractableResource bound the interface but skipped the node-claim half.
             Extractor->SetResourceNode(Orphan);
             UE_LOG(LogNodeShuffle, Verbose, TEXT("Re-associated extractor %s with new node"), *Extractor->GetName());
+            // rwg-pinnedspawn-1 I4: read the binding back after the setter; one Display line per link event.
+            const bool bBoundAfter = Extractor->GetExtractableResource().GetObject() == Orphan;
+            if (bBoundAfter) { ++RelinkLinked; } else { ++RelinkLinkNoEffect; }
+            UE_LOG(LogNodeShuffle, Display, TEXT("EXTRACTOR-RELINK-LINK extractor=%s node=%s at=%s nodeDistM=%.1f boundAfter=%d"),
+                *Extractor->GetName(), *Orphan->GetName(), *Loc.ToCompactString(),
+                FVector::Dist(Orphan->GetActorLocation(), Loc) / 100.0f, bBoundAfter ? 1 : 0);
+        }
+        else
+        {
+            // rwg-pinnedspawn-1 I4: no binding and no spawned node within ExtractorSnapDistance. Named once per
+            // extractor per session (capped), so a miner standing without a node is visible in the log.
+            ++RelinkNoNode;
+            if (ExtractorsNoNodeLogged.Num() < RelinkNoNodeLinesMax && !ExtractorsNoNodeLogged.Contains(Extractor))
+            {
+                ExtractorsNoNodeLogged.Add(Extractor);
+                UE_LOG(LogNodeShuffle, Display, TEXT("EXTRACTOR-NONODE extractor=%s class=%s at=%s spawnedNodes=%d snapRadiusM=%.0f"),
+                    *Extractor->GetName(), *Extractor->GetClass()->GetName(), *Loc.ToCompactString(),
+                    SpawnedNodes.Num(), ExtractorSnapDistance / 100.0f);
+            }
+        }
+    }
+    {
+        // rwg-pinnedspawn-1 I4: the census, change-driven (this function runs every pass).
+        const FString RelinkKey = FString::Printf(TEXT("%d|%d|%d|%d|%d"),
+            RelinkLinked, RelinkNoNode, RelinkAlreadyLinked, RelinkLinkNoEffect, RelinkExtractors);
+        if (RelinkKey != RelinkCensusLastKey)
+        {
+            RelinkCensusLastKey = RelinkKey;
+            UE_LOG(LogNodeShuffle, Display, TEXT("EXTRACTOR-RELINK linked=%d noNodeUnderExtractor=%d alreadyLinked=%d linkNoEffect=%d extractors=%d spawnedNodes=%d"),
+                RelinkLinked, RelinkNoNode, RelinkAlreadyLinked, RelinkLinkNoEffect, RelinkExtractors, SpawnedNodes.Num());
         }
     }
 
