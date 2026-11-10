@@ -40,7 +40,7 @@ foreach ($k in @('W', 'T')) {
     if ([string]::IsNullOrWhiteSpace($raw)) { Write-Host "UHTGUARD LOAD FAIL empty $($paths[$k])"; exit 2 }
     $text[$k] = Strip $raw
 }
-foreach ($p in @($GoodDll, $BadDll, (Join-Path $Repo 'Source'))) {
+foreach ($p in @($GoodDll, $BadDll)) {
     if (-not (Test-Path -LiteralPath $p)) { Write-Host "UHTGUARD LOAD FAIL missing $p"; exit 2 }
 }
 
@@ -55,6 +55,11 @@ Set-Content -LiteralPath (Join-Path $tmp 'one.log')  -Value @('x', $ph1, 'y')
 $zeroSrc = Join-Path $tmp 'zeroSrc\NodeShuffle\Public'
 New-Item -ItemType Directory -Force $zeroSrc | Out-Null
 Set-Content -LiteralPath (Join-Path $zeroSrc 'X.h') -Value @('UCLASS()', ('class NODESHUFFLE' + '_API AX : public AActor'), '{', ('    GENERATED_' + 'BODY()'), '};')
+# Fixed synthetic tree matching the parks' source (2 UFUNCTIONs), so a legitimate new
+# UFUNCTION in the live Source cannot turn this lint red; live Source is the wrapper's job.
+$fixSrc = Join-Path $tmp 'fixSrc\NodeShuffle\Public'
+New-Item -ItemType Directory -Force $fixSrc | Out-Null
+Set-Content -LiteralPath (Join-Path $fixSrc 'NodeShuffleSubsystem.h') -Value @('UCLASS()', ('class NODESHUFFLE' + '_API ANodeShuffleSubsystem : public AModSubsystem'), '{', ('    GENERATED_' + 'BODY()'), 'public:', ('    UFUNC' + 'TION() FString McpDescribe() const;'), ('    UFUNC' + 'TION() FString McpSnapshot(const FString& ArgsJson);'), '};')
 $behaviourCache = @{}
 $runN = 0
 function Run-Script([string]$body, [string[]]$argv) {
@@ -62,7 +67,7 @@ function Run-Script([string]$body, [string[]]$argv) {
     $f = Join-Path $tmp ("run{0}.ps1" -f $script:runN)
     [System.IO.File]::WriteAllText($f, $body)
     $global:LASTEXITCODE = $null
-    $out = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $f @argv 2>&1 | ForEach-Object { "$_" })
+    $out = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $f @argv | ForEach-Object { "$_" })
     return @{ Code = $LASTEXITCODE; Out = $out }
 }
 function Behaviour-W([string]$W) {
@@ -80,7 +85,7 @@ function Behaviour-T([string]$T) {
     $key = 'T' + $T.GetHashCode() + $T.Length
     if ($behaviourCache.ContainsKey($key)) { return $behaviourCache[$key] }
     $r = New-Object System.Collections.Generic.List[string]
-    $src = Join-Path $Repo 'Source'
+    $src = Join-Path $tmp 'fixSrc'
     $g = Run-Script $T @('-Dll', $GoodDll, '-SourceRoot', $src)
     if ($g.Code -ne 0) { $r.Add("(P5) good park DLL exited '$($g.Code)', expected 0") }
     $b = Run-Script $T @('-Dll', $BadDll, '-SourceRoot', $src)
