@@ -13,7 +13,7 @@
 #   C3 CONSOLE COMPLETENESS: every NodeShuffle.* console command and console variable registered in Source/ has exactly one manifest row,
 #      no phantom rows, and every registration declaration resolved to a literal name
 #   C4 MARKERS: every NodeShuffle.cpp "packet marker (" line and the LOADED tag appear in NodeShuffleBuildMarkers.h, same order, and this
-#      packet's marker is the newest
+#      packet's marker is the newest; McpDescribe's buildMarker reads the header's newest entry, never a date literal
 # Every forbidden needle is BUILT BY CONCATENATION so this file cannot satisfy or trip its own checks. Mutants run in-file.
 # Exit 0 = all hold; 1 = a rule or mutant fails; 2 = a pinned FILE is missing.
 
@@ -73,6 +73,7 @@ $capLoop      = 'if (Utf8Bytes(Out) <= MaxOutputBytes) ' + '{ break; }'
 $capDesc      = 'return Utf8Bytes(Out) <= MaxOutputBytes ' + '? Out : ErrorJson('
 $utf8Pin      = 'const FTCHARToUTF8 Utf8(*Text, ' + 'Text.Len());'
 $logVerbose   = 'UE_LOG(LogNodeShuffle, ' + 'Verbose, '
+$newestExpr   = 'PacketMarkers[' + 'NodeShuffleBuildMarkers::PacketMarkerCount - 1]'
 $forbidden = @(
     ('Load' + 'Object'), ('Load' + 'Class'), ('Static' + 'Load'), ('Try' + 'Load'), ('Load' + 'Synchronous'), ('Load' + 'Package'),
     ('Line' + 'Trace'), ('Sweep' + 'Single'), ('Sweep' + 'Multi'), ('Overlap' + 'Multi'), ('Overlap' + 'Any'), ('Spawn' + 'Actor'),
@@ -181,6 +182,7 @@ function Invoke-McpChecks($Txt, $Cod) {
     if (-not $loaded.Success -or -not $hdrLoaded.Success -or $loaded.Groups[1].Value -ne $hdrLoaded.Groups[1].Value) { $f += '(C4) LOADED tag differs between NodeShuffle.cpp and the markers header' }
     $own = '2026-11-09-' + 'mcp-contract-1'
     if ($hdrTags.Count -eq 0 -or $hdrTags[-1] -ne $own -or (Count $nsm $own) -ne 1) { $f += '(C4) this packet marker must be the newest, once, on its own line' }
+    if ((Count $Txt[$pin.desc] $newestExpr) -ne 1 -or [regex]::IsMatch($Txt[$pin.desc], 'TEXT\("20\d\d-\d\d-\d\d-')) { $f += '(C4) buildMarker must come from the markers header (newest entry), never a literal in Describe' }
     return ,$f
 }
 
@@ -223,6 +225,7 @@ $mutants = @(
     @{ Name = 'N30 LOADED tag bumped in the cpp only'; Key = $NS; Expect = 'C4'; Find = 'LOADED (2026-10-31-rwg-farspawn-1f)'; Repl = 'LOADED (2026-10-31-rwg-farspawn-1g)' }
     @{ Name = 'N31 header order swapped'; Key = $MK; Expect = 'C4'; Find = "        TEXT(""2026-11-01-rwg-logflood-1""),`n        TEXT(""2026-11-01-rwg-rerolldup-1""),"; Repl = "        TEXT(""2026-11-01-rwg-rerolldup-1""),`n        TEXT(""2026-11-01-rwg-logflood-1""),"}
     @{ Name = 'N32 marker in an unanchored shape'; Key = $NS; Expect = 'C4'; Find = '    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle packet marker (2026-11-01-rwg-density-1)====="));'; Repl = '    UE_LOG(LogNodeShuffle, Log, TEXT("===== NodeShuffle packet marker (2026-11-01-rwg-density-1)====="));' }
+    @{ Name = 'N34 buildMarker hard-coded in Describe'; Key = $D; Expect = 'C4'; Find = ('NodeShuffleBuildMarkers::' + $newestExpr); Repl = ('TEXT("' + '2026-11-09-' + 'mcp-contract-1' + '")') }
     @{ Name = 'N33 the uplugin gains an MCP plugin dependency'; Key = '..\NodeShuffle.uplugin'; Expect = 'M2'; Find = '"Plugins": ['; Repl = ('"Plugins": [ { "Name": "' + $mcpModName + '" },') }
 )
 $bad = 0
