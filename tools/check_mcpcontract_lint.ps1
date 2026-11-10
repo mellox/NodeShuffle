@@ -144,6 +144,9 @@ $gridSites = [ordered]@{
     'NodeShuffle.Here' = @('NodeShuffle\Private\NodeShuffleSubsystem.cpp', 'void ANodeShuffleSubsystem::LogHereCensus() const')
     'NodeShuffle.PointAtHere' = @('NodeShuffle\Private\NodeShufflePointAtHere.cpp', '')
     'NodeShuffle.WellProbe' = @('NodeShuffle\Private\NodeShuffleWellMemberProbe.cpp', '')
+    # mcp-regrade-1: ProbeNearestNode is graded read on the audit's finding that it never traces the ground; a ground trace added
+    # to its file without grid suppression must turn it write / touchesSave true like its three siblings.
+    'NodeShuffle.ProbeNearestNode' = @('NodeShuffle\Private\NodeShuffleNodeProbe.cpp', '')
 }
 $groundCall = 'RaycastGround' + 'At('
 $gridSuppress = 'bWaterGridLearning' + 'Suppressed'
@@ -495,6 +498,7 @@ $mutants = @(
     @{ Name = 'E4 ProbeNearestNode effect drifts from its golden read'; Key = $D; Expect = 'E'; Find = '{ TEXT("NodeShuffle.ProbeNearestNode"), TEXT("read"), false,'; Repl = '{ TEXT("NodeShuffle.ProbeNearestNode"), TEXT("write"), false,' }
     @{ Name = 'E5 a console note cites the const-signature phrase again'; Key = $D; Expect = 'E'; Find = 'Logs a census of every loaded resource well.'; Repl = ('Logs a census of every loaded resource well (' + $constPhrase + ').') }
     @{ Name = 'E6 a config note cites the phrase in upper case'; Key = $D; Expect = 'E'; Find = 'Read only by RollLayout (the new-location quota).'; Repl = ('Read only by RollLayout (the new-location quota; ' + $constPhrase.ToUpper() + ').') }
+    @{ Name = 'E7 ProbeNearestNode gains a ground trace (grid learning) while graded read'; Key = 'NodeShuffle\Private\NodeShuffleNodeProbe.cpp'; Expect = 'R'; Find = 'RunTotallyInsideProbe(W, E.Location, Subject, Inside);'; Repl = ('FVector GL; FRotator GR; bool bWet = false; ' + $groundCall + 'E.Location, E.Location.Z, nullptr, nullptr, GL, GR, bWet); RunTotallyInsideProbe(W, E.Location, Subject, Inside);') }
     @{ Name = 'X13 AuditPlacements back to save-safe (water-grid loader)'; Key = $D; Expect = 'R'; Find = '{ TEXT("NodeShuffle.AuditPlacements"), TEXT("write"), true, TEXT("structural"),'; Repl = '{ TEXT("NodeShuffle.AuditPlacements"), TEXT("write"), false, TEXT("none"),' }
     @{ Name = 'X14 WhereCaveNodes back to save-safe (cave-store loader)'; Key = $D; Expect = 'R'; Find = '{ TEXT("NodeShuffle.WhereCaveNodes"), TEXT("write"), true, TEXT("structural"),'; Repl = '{ TEXT("NodeShuffle.WhereCaveNodes"), TEXT("write"), false, TEXT("none"),' }
     @{ Name = 'LR20 reader loads a class';Key = $LRC; Expect = 'M3'; Find = 'const bool bCaptured = L.RollSeq > 0;'; Repl = ('const bool bCaptured = L.RollSeq > 0; ' + 'Load' + 'Class<UObject>(nullptr, TEXT("x"));') }
