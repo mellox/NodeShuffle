@@ -857,6 +857,14 @@ class NODESHUFFLE_API ANodeShuffleSubsystem : public AModSubsystem, public IFGSa
 public:
     ANodeShuffleSubsystem();
 
+    // mcp-contract-1 (2026-11-09): the MCP <-> mod contract v1 (_team/mcp-mod-contract-v1.md). Plain reflected functions found BY
+    // NAME; nothing registers, links or depends on the MCP mod, so without it they are dead code. Bodies: NodeShuffleMcpDescribe.cpp
+    // and NodeShuffleMcpSnapshot.cpp. McpSnapshot is non-const only because the contract fixes its signature: its body forwards
+    // *this as a const reference to FNodeShuffleMcpReader, so the compiler refuses any member write (check_mcpcontract_lint.ps1).
+    UFUNCTION() FString McpDescribe() const;
+    UFUNCTION() FString McpSnapshot(const FString& ArgsJson);
+    friend struct FNodeShuffleMcpReader;
+
     // IFGSaveInterface
     virtual bool ShouldSave_Implementation() const override { return true; }
     virtual bool NeedTransform_Implementation() override { return false; }
