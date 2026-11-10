@@ -20,8 +20,8 @@ namespace
 {
     constexpr double NsMcpDefaultRadiusM = 300.0;
     constexpr double NsMcpMaxRadiusM = 2000.0;
-    constexpr int32 NsMcpDefaultLimit = 40;
-    constexpr int32 NsMcpMaxLimit = 80;
+    constexpr int32 NsMcpDefaultCount = 40;
+    constexpr int32 NsMcpMaxCount = 80;
     constexpr int32 NsMcpTopResources = 40;
 
     const TCHAR* NsMcpMapModeName(ENodeShuffleMapMode Mode)
@@ -46,17 +46,6 @@ namespace
         if (V->Type != EJson::Number) { Err = FString::Printf(TEXT("argument %s must be a number"), Name); return false; }
         Out = V->AsNumber();
         if (!FMath::IsFinite(Out)) { Err = FString::Printf(TEXT("argument %s must be finite"), Name); return false; }
-        return true;
-    }
-
-    bool NsMcpArgBool(const TSharedPtr<FJsonObject>& Args, const TCHAR* Name, bool& bPresent, bool& Out, FString& Err)
-    {
-        TSharedPtr<FJsonValue> V;
-        if (Args.IsValid()) { V = Args->TryGetField(Name); }
-        bPresent = V.IsValid() && V->Type != EJson::Null;
-        if (!bPresent) { return true; }
-        if (V->Type != EJson::Boolean) { Err = FString::Printf(TEXT("argument %s must be true or false"), Name); return false; }
-        Out = V->AsBool();
         return true;
     }
 
@@ -89,9 +78,11 @@ int32 FNodeShuffleMcpReader::Utf8Bytes(const FString& Text)
     return Utf8.Length();
 }
 
-FString FNodeShuffleMcpReader::ErrorJson(const FString& Message)
+FString FNodeShuffleMcpReader::ErrorJson(const TCHAR* Kind, const FString& Message)
 {
     const TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
+    AddEnvelope(Root);
+    Root->SetStringField(TEXT("errorKind"), Kind);
     Root->SetStringField(TEXT("error"), Message);
     return Serialize(Root);
 }
@@ -109,35 +100,43 @@ FString FNodeShuffleMcpReader::ShortObjectName(const FString& Path)
 FString FNodeShuffleMcpReader::Help()
 {
     const TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
+    AddEnvelope(Root);
     Root->SetStringField(TEXT("section"), TEXT("help"));
     const TSharedRef<FJsonObject> Sections = MakeShared<FJsonObject>();
-    Sections->SetStringField(TEXT("help"), TEXT("this object; also returned for a missing or unknown section"));
+    Sections->SetStringField(TEXT("help"), TEXT("this object; also returned when no section is given. An unknown section or argument name is a bad-args error."));
     Sections->SetStringField(TEXT("near"),
-        TEXT("layout entries within radiusM of a point, nearest first. Point: xCm + yCm (numbers), or usePlayer true (first player pawn). ")
-        TEXT("Optional: radiusM (default 300, cap 2000), resource (case-insensitive substring of the assigned or original resource short name), ")
-        TEXT("limit (default 40, cap 80). Distance is horizontal (XY). Top-level: ready, section, pointSource, xCm, yCm, radiusM, radiusCapped, ")
-        TEXT("resourceFilter, limit, distanceMode, layoutEntries, inRadius, returned, truncated, cappedBy, entries. Entry: guid, assignedResource, ")
-        TEXT("originalResource, nodeClass, xCm, yCm, zCm, distM, active, pinned, rayCasted, isNewNode, underground, rwgCave, live, liveClass, originalObject."));
+        TEXT("layout entries within radiusM of a point, nearest first. Point: xCm + yCm (numbers), or else player (whole number from 0, default 0: ")
+        TEXT("the index among player controllers that hold a valid pawn). Optional: radiusM (default 300, cap 2000), resource (at most 64 characters, ")
+        TEXT("case-insensitive substring of the assigned or original resource short name), count (default 40, cap 80), offset (default 0). ")
+        TEXT("Distance is horizontal (XY). Top-level: contract, mod, buildMarker, ready, section, pointSource, xCm, yCm, radiusM, radiusCapped, ")
+        TEXT("resourceFilter, count, countCapped, offset, distanceMode, layoutEntries, inRadius, returned, truncated (rows dropped by the 64 KB cap), ")
+        TEXT("hasMore, cappedBy, rows. Row: guid, assignedResource, originalResource, nodeClass, xCm, yCm, zCm, distM, active, pinned, rayCasted, ")
+        TEXT("isNewNode, underground, rwgCave, spawnedActor, spawnedClass, originalObject. spawnedActor: a valid actor is held in SpawnedNodes ")
+        TEXT("for this entry's guid (new-location entries only; an original kept in place, isNewNode false, is never held there)."));
     Sections->SetStringField(TEXT("summary"),
-        TEXT("totals counted now from members (no replay of any roll). Top-level: ready, section, mapMode, layoutGenerated, seed (only when ")
-        TEXT("layoutGenerated), layoutVersion, currentLayoutVersion, rwgLayoutVersion, layout{...}, spawnedNodes{...}, hideRecords{...}, wells{...}, ")
-        TEXT("session{...}, saved{...}, activeByResource[{resource, active}] (top 40), resourceKindsActive, resourcesTruncated."));
+        TEXT("totals counted now from members (no replay of any roll). Top-level: contract, mod, buildMarker, ready, section, mapMode, layoutGenerated, ")
+        TEXT("seed (only when layoutGenerated), layoutVersion, currentLayoutVersion, rwgLayoutVersion, layout{...}, spawnedNodes{...}, hideRecords{...}, ")
+        TEXT("wells{...}, session{...}, saved{...}, activeByResource[{resource, active}] (top 40), resourceKindsActive, resourcesTruncated."));
     Root->SetObjectField(TEXT("sections"), Sections);
-    Root->SetStringField(TEXT("notReady"), TEXT("near and summary return ready false with the failing predicate while there is no world, on the class default object, or while the layout array is empty"));
+    Root->SetStringField(TEXT("errors"), TEXT("every failure is an object with errorKind (bad-args, no-world, no-player, not-ready, too-large) and error; not-ready and no-world also carry ready false, reason and layoutGenerated"));
     return Serialize(Root);
 }
 
 bool FNodeShuffleMcpReader::NotReady(const ANodeShuffleSubsystem& Sub, FString& OutJson, FString& OutBranch)
 {
     const TCHAR* Reason = nullptr;
-    if (Sub.IsTemplate()) { Reason = TEXT("IsTemplate() is true: this is the class default object"); }
-    else if (Sub.GetWorld() == nullptr) { Reason = TEXT("GetWorld() returned null"); }
+    const TCHAR* Kind = TEXT("not-ready");
+    if (Sub.IsTemplate()) { Reason = TEXT("IsTemplate() is true: this is the class default object"); Kind = TEXT("no-world"); }
+    else if (Sub.GetWorld() == nullptr) { Reason = TEXT("GetWorld() returned null"); Kind = TEXT("no-world"); }
     else if (Sub.Layout.Num() == 0) { Reason = TEXT("Layout.Num() is 0"); }
     if (!Reason) { return false; }
     const TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
+    AddEnvelope(Root);
     Root->SetBoolField(TEXT("ready"), false);
     Root->SetStringField(TEXT("reason"), Reason);
     Root->SetBoolField(TEXT("layoutGenerated"), Sub.bLayoutGenerated);
+    Root->SetStringField(TEXT("errorKind"), Kind);
+    Root->SetStringField(TEXT("error"), Reason);
     OutJson = Serialize(Root);
     OutBranch = FString::Printf(TEXT("%s notready: %s"), *OutBranch, Reason);
     return true;
@@ -145,6 +144,7 @@ bool FNodeShuffleMcpReader::NotReady(const ANodeShuffleSubsystem& Sub, FString& 
 
 FString FNodeShuffleMcpReader::Snapshot(const ANodeShuffleSubsystem& Sub, const FString& ArgsJson, FString& OutBranch)
 {
+    if (ArgsJson.Len() > 8192) { OutBranch = TEXT("error: ArgsJson over 8192 chars"); return ErrorJson(TEXT("bad-args"), TEXT("ArgsJson must be at most 8192 characters")); }
     TSharedPtr<FJsonObject> Args;
     const FString Trimmed = ArgsJson.TrimStartAndEnd();
     if (!Trimmed.IsEmpty())
@@ -153,57 +153,70 @@ FString FNodeShuffleMcpReader::Snapshot(const ANodeShuffleSubsystem& Sub, const 
         if (!FJsonSerializer::Deserialize(Reader, Args) || !Args.IsValid())
         {
             OutBranch = TEXT("error: ArgsJson did not parse as a JSON object");
-            return ErrorJson(TEXT("ArgsJson must be a JSON object, e.g. {\"section\":\"summary\"}"));
+            return ErrorJson(TEXT("bad-args"), TEXT("ArgsJson must be a JSON object, e.g. {\"section\":\"summary\"}"));
         }
     }
+    static const TCHAR* const NsMcpKnownArgs[] = { TEXT("section"), TEXT("xCm"), TEXT("yCm"), TEXT("player"), TEXT("radiusM"), TEXT("resource"), TEXT("count"), TEXT("offset") };
+    if (Args.IsValid()) { for (const TPair<FString, TSharedPtr<FJsonValue>>& KV : Args->Values) { bool bKnown = false;
+      for (const TCHAR* K : NsMcpKnownArgs) { if (KV.Key.Equals(K, ESearchCase::IgnoreCase)) { bKnown = true; break; } }
+      if (!bKnown) { OutBranch = TEXT("error: unknown argument"); return ErrorJson(TEXT("bad-args"), FString::Printf(TEXT("unknown argument '%s'; known: section, xCm, yCm, player, radiusM, resource, count, offset"), *KV.Key.Left(40))); } } }
     FString Section;
     bool bHasSection = false;
     FString Err;
-    if (!NsMcpArgString(Args, TEXT("section"), bHasSection, Section, Err)) { OutBranch = TEXT("error: section type"); return ErrorJson(Err); }
+    if (!NsMcpArgString(Args, TEXT("section"), bHasSection, Section, Err)) { OutBranch = TEXT("error: section type"); return ErrorJson(TEXT("bad-args"), Err); }
     if (Section.Equals(TEXT("near"), ESearchCase::IgnoreCase)) { OutBranch = TEXT("near"); return Near(Sub, Args, OutBranch); }
     if (Section.Equals(TEXT("summary"), ESearchCase::IgnoreCase)) { OutBranch = TEXT("summary"); return Summary(Sub, OutBranch); }
-    if (!bHasSection) { OutBranch = TEXT("help: no section given"); }
-    else if (Section.Equals(TEXT("help"), ESearchCase::IgnoreCase)) { OutBranch = TEXT("help: requested"); }
-    else { OutBranch = FString::Printf(TEXT("help: section '%s' is not near, summary or help"), *Section.Left(40)); }
-    return Help();
+    if (!bHasSection) { OutBranch = TEXT("help: no section given"); return Help(); }
+    if (Section.Equals(TEXT("help"), ESearchCase::IgnoreCase)) { OutBranch = TEXT("help: requested"); return Help(); }
+    OutBranch = TEXT("error: unknown section");
+    return ErrorJson(TEXT("bad-args"), FString::Printf(TEXT("section '%s' is not help, near or summary"), *Section.Left(40)));
 }
 
 FString FNodeShuffleMcpReader::Near(const ANodeShuffleSubsystem& Sub, const TSharedPtr<FJsonObject>& Args, FString& OutBranch)
 {
     FString Err;
-    bool bHasX = false, bHasY = false, bHasPlayer = false, bHasRadius = false, bHasResource = false, bHasLimit = false;
-    double XCm = 0.0, YCm = 0.0, RadiusM = NsMcpDefaultRadiusM, LimitD = NsMcpDefaultLimit;
-    bool bUsePlayer = false;
+    bool bHasX = false, bHasY = false, bHasPlayer = false, bHasRadius = false, bHasResource = false, bHasCount = false, bHasOffset = false;
+    double XCm = 0.0, YCm = 0.0, PlayerD = 0.0, RadiusM = NsMcpDefaultRadiusM, CountD = NsMcpDefaultCount, OffsetD = 0.0;
     FString Resource;
     if (!NsMcpArgNumber(Args, TEXT("xCm"), bHasX, XCm, Err) || !NsMcpArgNumber(Args, TEXT("yCm"), bHasY, YCm, Err)
-        || !NsMcpArgBool(Args, TEXT("usePlayer"), bHasPlayer, bUsePlayer, Err) || !NsMcpArgNumber(Args, TEXT("radiusM"), bHasRadius, RadiusM, Err)
-        || !NsMcpArgString(Args, TEXT("resource"), bHasResource, Resource, Err) || !NsMcpArgNumber(Args, TEXT("limit"), bHasLimit, LimitD, Err))
+        || !NsMcpArgNumber(Args, TEXT("player"), bHasPlayer, PlayerD, Err) || !NsMcpArgNumber(Args, TEXT("radiusM"), bHasRadius, RadiusM, Err)
+        || !NsMcpArgString(Args, TEXT("resource"), bHasResource, Resource, Err) || !NsMcpArgNumber(Args, TEXT("count"), bHasCount, CountD, Err)
+        || !NsMcpArgNumber(Args, TEXT("offset"), bHasOffset, OffsetD, Err))
     {
         OutBranch += TEXT(" error: argument type");
-        return ErrorJson(Err);
+        return ErrorJson(TEXT("bad-args"), Err);
     }
-    if (bUsePlayer && (bHasX || bHasY)) { OutBranch += TEXT(" error: both point forms"); return ErrorJson(TEXT("give either xCm and yCm, or usePlayer true, not both")); }
-    if (!bUsePlayer && !(bHasX && bHasY)) { OutBranch += TEXT(" error: no point"); return ErrorJson(TEXT("section near needs a point: xCm and yCm, or usePlayer true")); }
-    if (!(RadiusM > 0.0)) { OutBranch += TEXT(" error: radius"); return ErrorJson(TEXT("radiusM must be greater than 0")); }
-    if (LimitD < 1.0 || LimitD != FMath::FloorToDouble(LimitD)) { OutBranch += TEXT(" error: limit"); return ErrorJson(TEXT("limit must be a whole number of at least 1")); }
+    if (Resource.Len() > 64) { OutBranch += TEXT(" error: resource length"); return ErrorJson(TEXT("bad-args"), TEXT("resource must be at most 64 characters")); }
+    if (bHasPlayer && (bHasX || bHasY)) { OutBranch += TEXT(" error: both point forms"); return ErrorJson(TEXT("bad-args"), TEXT("give either xCm and yCm, or player, not both")); }
+    if (bHasX != bHasY) { OutBranch += TEXT(" error: half a point"); return ErrorJson(TEXT("bad-args"), TEXT("xCm and yCm must be given together")); }
+    if (!(RadiusM > 0.0)) { OutBranch += TEXT(" error: radius"); return ErrorJson(TEXT("bad-args"), TEXT("radiusM must be greater than 0")); }
+    if (CountD < 1.0 || CountD != FMath::FloorToDouble(CountD)) { OutBranch += TEXT(" error: count"); return ErrorJson(TEXT("bad-args"), TEXT("count must be a whole number of at least 1")); }
+    if (OffsetD < 0.0 || OffsetD != FMath::FloorToDouble(OffsetD) || OffsetD > 1.0e9) { OutBranch += TEXT(" error: offset"); return ErrorJson(TEXT("bad-args"), TEXT("offset must be a whole number from 0 to 1e9")); }
+    if (PlayerD < 0.0 || PlayerD != FMath::FloorToDouble(PlayerD) || PlayerD > 1.0e6) { OutBranch += TEXT(" error: player"); return ErrorJson(TEXT("bad-args"), TEXT("player must be a whole number from 0 to 1e6")); }
     const bool bRadiusCapped = RadiusM > NsMcpMaxRadiusM;
     RadiusM = FMath::Min(RadiusM, NsMcpMaxRadiusM);
-    const int32 Limit = static_cast<int32>(FMath::Min(LimitD, static_cast<double>(NsMcpMaxLimit)));
+    const bool bCountCapped = CountD > NsMcpMaxCount;
+    const int32 Count = static_cast<int32>(FMath::Min(CountD, static_cast<double>(NsMcpMaxCount)));
+    const int32 Offset = static_cast<int32>(OffsetD);
+    const int32 PlayerIndex = static_cast<int32>(PlayerD);
 
     FString NotReadyJson;
     if (NotReady(Sub, NotReadyJson, OutBranch)) { return NotReadyJson; }
 
     const TCHAR* PointSource = TEXT("xy");
-    if (bUsePlayer)
+    if (!bHasX)
     {
         const APawn* FoundPawn = nullptr;
+        int32 Seen = 0;
         for (FConstPlayerControllerIterator It = Sub.GetWorld()->GetPlayerControllerIterator(); It; ++It)
         {
             const APlayerController* Pc = It->Get();
             const APawn* Pawn = Pc ? Pc->GetPawn() : nullptr;
-            if (IsValid(Pawn)) { FoundPawn = Pawn; break; }
+            if (!IsValid(Pawn)) { continue; }
+            if (Seen == PlayerIndex) { FoundPawn = Pawn; break; }
+            ++Seen;
         }
-        if (!FoundPawn) { OutBranch += TEXT(" error: no player pawn"); return ErrorJson(TEXT("usePlayer: no player controller with a valid pawn was found")); }
+        if (!FoundPawn) { OutBranch += TEXT(" error: no player pawn"); return ErrorJson(TEXT("no-player"), FString::Printf(TEXT("player %d: only %d player controller(s) hold a valid pawn"), PlayerIndex, Seen)); }
         const FVector P = FoundPawn->GetActorLocation();
         XCm = P.X;
         YCm = P.Y;
@@ -228,8 +241,9 @@ FString FNodeShuffleMcpReader::Near(const ANodeShuffleSubsystem& Sub, const TSha
     Hits.Sort([](const TPair<double, int32>& A, const TPair<double, int32>& B) { return A.Key < B.Key; });
 
     TArray<TSharedPtr<FJsonValue>> Entries;
-    const int32 Wanted = FMath::Min(Limit, Hits.Num());
-    for (int32 H = 0; H < Wanted; ++H)
+    const int32 Start = FMath::Min(Offset, Hits.Num());
+    const int32 Wanted = FMath::Min(Count, Hits.Num() - Start);
+    for (int32 H = Start; H < Start + Wanted; ++H)
     {
         const FNodeShuffleEntry& E = Sub.Layout[Hits[H].Value];
         AFGResourceNode* const* Slot = Sub.SpawnedNodes.Find(E.EntryGuid);
@@ -249,18 +263,19 @@ FString FNodeShuffleMcpReader::Near(const ANodeShuffleSubsystem& Sub, const TSha
         O->SetBoolField(TEXT("isNewNode"), E.bIsNewNode);
         O->SetBoolField(TEXT("underground"), E.bUnderground);
         O->SetBoolField(TEXT("rwgCave"), E.bRwgCave);
-        O->SetBoolField(TEXT("live"), LiveNode != nullptr);
-        O->SetStringField(TEXT("liveClass"), LiveNode ? LiveNode->GetClass()->GetName() : FString());
+        O->SetBoolField(TEXT("spawnedActor"), LiveNode != nullptr);
+        O->SetStringField(TEXT("spawnedClass"), LiveNode ? LiveNode->GetClass()->GetName() : FString());
         O->SetStringField(TEXT("originalObject"), ShortObjectName(E.VanillaNodePath));
         Entries.Add(MakeShared<FJsonValueObject>(O));
     }
 
-    // 64 KB cap: serialize, measure, drop tail entries until it fits.
+    // 64 KB cap: serialize, measure; when over, shrink the kept rows in proportion to the overshoot (always by at least one) and retry.
     int32 Keep = Entries.Num();
     FString Out;
     for (;;)
     {
         const TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
+        AddEnvelope(Root);
         Root->SetBoolField(TEXT("ready"), true);
         Root->SetStringField(TEXT("section"), TEXT("near"));
         Root->SetStringField(TEXT("pointSource"), PointSource);
@@ -269,20 +284,24 @@ FString FNodeShuffleMcpReader::Near(const ANodeShuffleSubsystem& Sub, const TSha
         Root->SetNumberField(TEXT("radiusM"), RadiusM);
         Root->SetBoolField(TEXT("radiusCapped"), bRadiusCapped);
         Root->SetStringField(TEXT("resourceFilter"), Resource);
-        Root->SetNumberField(TEXT("limit"), Limit);
+        Root->SetNumberField(TEXT("count"), Count);
+        Root->SetBoolField(TEXT("countCapped"), bCountCapped);
         Root->SetStringField(TEXT("distanceMode"), TEXT("xy"));
         Root->SetNumberField(TEXT("layoutEntries"), Sub.Layout.Num());
         Root->SetNumberField(TEXT("inRadius"), Hits.Num());
+        Root->SetNumberField(TEXT("offset"), Start);
         Root->SetNumberField(TEXT("returned"), Keep);
-        Root->SetBoolField(TEXT("truncated"), Keep < Hits.Num());
-        Root->SetStringField(TEXT("cappedBy"), Keep < Entries.Num() ? TEXT("bytes") : (Entries.Num() < Hits.Num() ? TEXT("limit") : TEXT("none")));
-        Root->SetArrayField(TEXT("entries"), TArray<TSharedPtr<FJsonValue>>(Entries.GetData(), Keep));
+        Root->SetBoolField(TEXT("hasMore"), Start + Keep < Hits.Num());
+        Root->SetBoolField(TEXT("truncated"), Keep < Wanted); // rows dropped by the byte cap
+        Root->SetStringField(TEXT("cappedBy"), Keep < Wanted ? TEXT("bytes") : (Start + Wanted < Hits.Num() ? TEXT("count") : TEXT("none")));
+        Root->SetArrayField(TEXT("rows"), TArray<TSharedPtr<FJsonValue>>(Entries.GetData(), Keep));
         Out = Serialize(Root);
-        if (Utf8Bytes(Out) <= MaxOutputBytes) { break; }
-        if (Keep == 0) { OutBranch += TEXT(" error: over cap with no entries"); return ErrorJson(TEXT("near: output exceeds the 64 KB cap even with no entries")); }
-        --Keep;
+        const int32 Bytes = Utf8Bytes(Out);
+        if (Bytes <= MaxOutputBytes) { break; }
+        if (Keep == 0) { OutBranch += TEXT(" error: over cap with no rows"); return ErrorJson(TEXT("too-large"), TEXT("near: output exceeds the 64 KB cap even with no rows")); }
+        Keep = FMath::Min(Keep - 1, static_cast<int32>(static_cast<int64>(Keep) * MaxOutputBytes / Bytes));
     }
-    OutBranch += FString::Printf(TEXT(" point %s inRadius %d returned %d"), PointSource, Hits.Num(), Keep);
+    OutBranch += FString::Printf(TEXT(" point %s inRadius %d offset %d returned %d"), PointSource, Hits.Num(), Start, Keep);
     return Out;
 }
 
@@ -323,6 +342,7 @@ FString FNodeShuffleMcpReader::Summary(const ANodeShuffleSubsystem& Sub, FString
     for (;;)
     {
         const TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
+        AddEnvelope(Root);
         Root->SetBoolField(TEXT("ready"), true);
         Root->SetStringField(TEXT("section"), TEXT("summary"));
         Root->SetStringField(TEXT("mapMode"), NsMcpMapModeName(Sub.MapMode)); // raw member; GetMapMode() would latch it
@@ -340,7 +360,7 @@ FString FNodeShuffleMcpReader::Summary(const ANodeShuffleSubsystem& Sub, FString
         L->SetNumberField(TEXT("rayCasted"), RayCasted);
         L->SetNumberField(TEXT("underground"), Underground);
         L->SetNumberField(TEXT("rwgCave"), RwgCave);
-        L->SetNumberField(TEXT("withLiveActor"), LiveEntries);
+        L->SetNumberField(TEXT("withSpawnedActor"), LiveEntries);
         Root->SetObjectField(TEXT("layout"), L);
 
         const TSharedRef<FJsonObject> S = MakeShared<FJsonObject>();
@@ -392,9 +412,10 @@ FString FNodeShuffleMcpReader::Summary(const ANodeShuffleSubsystem& Sub, FString
         Root->SetNumberField(TEXT("resourceKindsActive"), Ranked.Num());
         Root->SetBoolField(TEXT("resourcesTruncated"), Keep < Ranked.Num());
         Out = Serialize(Root);
-        if (Utf8Bytes(Out) <= MaxOutputBytes) { break; }
-        if (Keep == 0) { OutBranch += TEXT(" error: over cap"); return ErrorJson(TEXT("summary: output exceeds the 64 KB cap")); }
-        --Keep;
+        const int32 Bytes = Utf8Bytes(Out);
+        if (Bytes <= MaxOutputBytes) { break; }
+        if (Keep == 0) { OutBranch += TEXT(" error: over cap"); return ErrorJson(TEXT("too-large"), TEXT("summary: output exceeds the 64 KB cap")); }
+        Keep = FMath::Min(Keep - 1, static_cast<int32>(static_cast<int64>(Keep) * MaxOutputBytes / Bytes));
     }
     OutBranch += FString::Printf(TEXT(" entries %d active %d resources %d"), Sub.Layout.Num(), Active, Keep);
     return Out;

@@ -12,6 +12,10 @@
 #   C2 the re-roll trigger RerollNow carries touchesSave true
 #   C3 CONSOLE COMPLETENESS: every NodeShuffle.* console command and console variable registered in Source/ has exactly one manifest row,
 #      no phantom rows, and every registration declaration resolved to a literal name
+#   R  REVIEW ROUND 1 + CONTRACT REVISION 2 (P1..P8 of _team/test-logs/2026-11-09-nodeshuffle-mcp-contract-review.md): row shape with
+#      saveEffect; GOLDEN (touchesSave, saveEffect) per key and command; touchesSave false <=> saveEffect none; every ErrorJson call
+#      carries a known errorKind; NotReady carries errorKind; no pointee calls beyond the allowed reads; water-grid symmetry for commands
+#      whose handler traces the ground without suppressing grid learning; the envelope on Describe/Help/NotReady/ErrorJson
 #   C4 MARKERS: every NodeShuffle.cpp "packet marker (" line and the LOADED tag appear in NodeShuffleBuildMarkers.h, same order, and this
 #      packet's marker is the newest; McpDescribe's buildMarker reads the header's newest entry, never a date literal
 # Every forbidden needle is BUILT BY CONCATENATION so this file cannot satisfy or trip its own checks. Mutants run in-file.
@@ -69,7 +73,8 @@ $sigSnapshot  = 'UFUNCTION() FString ' + 'McpSnapshot(const FString& ArgsJson);'
 $friendDecl   = 'friend struct ' + 'FNodeShuffleMcpReader;'
 $trampoline   = 'FNodeShuffleMcpReader::Snapshot(' + 'static_cast<const ANodeShuffleSubsystem&>(*this), ArgsJson, Branch);'
 $capDecl      = 'static constexpr int32 MaxOutputBytes = ' + '64 * 1024;'
-$capLoop      = 'if (Utf8Bytes(Out) <= MaxOutputBytes) ' + '{ break; }'
+$capLoop      = 'if (Bytes <= MaxOutputBytes) ' + '{ break; }'
+$capShrink    = 'Keep = FMath::Min(Keep - 1, ' + 'static_cast<int32>(static_cast<int64>(Keep) * MaxOutputBytes / Bytes));'
 $capDesc      = 'return Utf8Bytes(Out) <= MaxOutputBytes ' + '? Out : ErrorJson('
 $utf8Pin      = 'const FTCHARToUTF8 Utf8(*Text, ' + 'Text.Len());'
 $logVerbose   = 'UE_LOG(LogNodeShuffle, ' + 'Verbose, '
@@ -78,8 +83,41 @@ $forbidden = @(
     ('Load' + 'Object'), ('Load' + 'Class'), ('Static' + 'Load'), ('Try' + 'Load'), ('Load' + 'Synchronous'), ('Load' + 'Package'),
     ('Line' + 'Trace'), ('Sweep' + 'Single'), ('Sweep' + 'Multi'), ('Overlap' + 'Multi'), ('Overlap' + 'Any'), ('Spawn' + 'Actor'),
     ('const' + '_cast'), ('mut' + 'able'), ('GetMap' + 'Mode('), ('GetActive' + 'Config('), ('Save' + 'Config'), ('Mark' + 'Dirty'),
-    ('Flush' + 'PendingSaves'), ('ClearReroll' + 'NowFlag'), ('this' + '->'), ('Get' + 'MutableDefault')
+    ('Flush' + 'PendingSaves'), ('ClearReroll' + 'NowFlag'), ('this' + '->'), ('Get' + 'MutableDefault'), ('Destroy' + 'Actor')
 )
+$pointeeRx = @(
+    ('Sub\s*\.\s*GetWorld\(\)\s*->(?!\s*GetPlayerController' + 'Iterator\()'),
+    ('\(\s*\*\s*Slot\s*\)\s*' + '->'),
+    ('\bLiveNode\s*->(?!\s*GetClass\(\)' + ')'),
+    ('\bFoundPawn\s*->(?!\s*GetActorLocation\(\)' + ')')
+)
+$errKinds = 'bad-args|no-world|no-player|not-ready|unsupported|too-large'
+# GOLDEN (touchesSave/saveEffect) from the review's R2.1 table. Any difference in the manifest is RED.
+$golden = @{
+    'Enabled' = 'true/structural'; 'RerollNow' = 'true/structural'; 'ActivePercent' = 'true/structural'; 'MinNodesPerResource' = 'true/structural'
+    'MinNodesPerModdedResource' = 'true/structural'; 'RandomizePurity' = 'true/structural'; 'IncludeModdedNodes' = 'true/structural'
+    'SpawnRadiusMeters' = 'true/structural'; 'UnlockModdedKnowledge' = 'true/structural'; 'ProtectOtherModsNodes' = 'true/structural'
+    'ProtectedForeignResources' = 'true/structural'; 'SeedOverride' = 'false/none'; 'NewNodeCount' = 'false/none'; 'EnableStarterNodes' = 'false/none'
+    'StarterNodeRadiusMeters' = 'false/none'; 'RwgDensityBudget' = 'false/none'; 'ModdedVanillaCountsOnRwg' = 'false/none'
+    'ModdedVanillaCountRows' = 'false/none'; 'EnableDiagnostics' = 'false/none'
+    'NodeShuffle.SeedHere' = 'true/structural'; 'NodeShuffle.Here' = 'true/structural'; 'NodeShuffle.PointAtHere' = 'true/structural'
+    'NodeShuffle.WellProbe' = 'true/structural'; 'NodeShuffle.AuditPlacements' = 'false/none'; 'NodeShuffle.DumpLayout' = 'false/none'
+    'NodeShuffle.ProbeNearestNode' = 'false/none'; 'NodeShuffle.NearestCave' = 'false/none'; 'NodeShuffle.DumpExtractors' = 'false/none'
+    'NodeShuffle.DumpWells' = 'false/none'; 'NodeShuffle.WhereCaveNodes' = 'false/none'
+}
+# P7: commands whose handler traces the ground. Here's handler is the LogHereCensus body inside the subsystem file.
+$gridSites = [ordered]@{
+    'NodeShuffle.Here' = @('NodeShuffle\Private\NodeShuffleSubsystem.cpp', 'void ANodeShuffleSubsystem::LogHereCensus() const')
+    'NodeShuffle.PointAtHere' = @('NodeShuffle\Private\NodeShufflePointAtHere.cpp', '')
+    'NodeShuffle.WellProbe' = @('NodeShuffle\Private\NodeShuffleWellMemberProbe.cpp', '')
+}
+$groundCall = 'RaycastGround' + 'At('
+$gridSuppress = 'bWaterGridLearning' + 'Suppressed'
+function FnBody([string]$t, [string]$head) {
+    $i = $t.IndexOf($head); if ($i -lt 0) { return '' }
+    $j = $t.IndexOf("`n}`n", $i); if ($j -lt 0) { return '' }
+    return $t.Substring($i, $j - $i)
+}
 $writeRx = @(
     '\bSub\s*\.\s*\w+(?:\s*(?:\.|->)\s*\w+)*\s*(?:\[[^\]]*\])?\s*(?:=(?!=)|\+=|-=|\*=|/=|\|=|&=|\+\+|--)',
     '(?:\+\+|--)\s*Sub\s*\.',
@@ -123,9 +161,41 @@ function Invoke-McpChecks($Txt, $Cod) {
     if (-not (Ordered $Cod[$pin.desc] @('FString ANodeShuffleSubsystem::McpDescribe() const', 'FNodeShuffleMcpReader::Describe();', $logVerbose))) { $f += '(M4) the describe log line must sit in McpDescribe' }
     # ---- M5
     if ((Count $Txt[$pin.com] $capDecl) -ne 1) { $f += '(M5) the 64 KB cap constant is missing or changed' }
-    if ((Count $snapC $capLoop) -ne 2 -or (Count $snapC '--Keep;') -ne 2) { $f += '(M5) near and summary must each re-serialize and drop the tail until under the cap' }
+    if ((Count $snapC $capLoop) -ne 2 -or (Count $snapC $capShrink) -ne 2) { $f += '(M5) near and summary must each re-serialize and drop the tail until under the cap' }
     if ((Count $Txt[$pin.snap] $utf8Pin) -ne 1) { $f += '(M5) the cap must be measured in UTF-8 bytes' }
     if ((Count $Txt[$pin.desc] $capDesc) -ne 1) { $f += '(M5) the manifest must be checked against the cap' }
+    # ---- R (review round 1 + Revision 2)
+    foreach ($k in @($pin.desc, $pin.snap)) { foreach ($rx in $pointeeRx) { if ([regex]::IsMatch($Cod[$k], $rx)) { $f += "(R) pointee call in $k : $([regex]::Match($Cod[$k], $rx).Value)" } } }
+    $d = $Txt[$pin.desc]
+    $loose = ([regex]::Matches($d, '\{ TEXT\("([\w.]+)"\), TEXT\("[\w-]+"\), (?:true|false),')).Count
+    $strict = @([regex]::Matches($d, '\{ TEXT\("([\w.]+)"\), TEXT\("(tick|roll|world-load|inert|never|read|write)"\), (true|false), TEXT\("(none|gameplay|structural)"\),'))
+    if ($strict.Count -ne $loose) { $f += "(R) row shape: $loose rows, $($strict.Count) carry a valid saveEffect" }
+    $seen = @{}
+    foreach ($m in $strict) {
+        $name = $m.Groups[1].Value; $grade = $m.Groups[3].Value + '/' + $m.Groups[4].Value; $seen[$name] = 1
+        if (($m.Groups[3].Value -eq 'false') -ne ($m.Groups[4].Value -eq 'none')) { $f += "(R) $name : touchesSave false must pair with saveEffect none and only with it" }
+        if (-not $golden.ContainsKey($name)) { $f += "(R) $name has no golden grade in this lint" } elseif ($golden[$name] -ne $grade) { $f += "(R) $name graded $grade, golden $($golden[$name])" }
+    }
+    foreach ($g in $golden.Keys) { if (-not $seen.ContainsKey($g)) { $f += "(R) golden row $g missing from the manifest" } }
+    foreach ($k in @($pin.desc, $pin.snap)) {
+        $calls = ([regex]::Matches($Cod[$k], '(?<!::)\bErrorJson\(')).Count
+        $good = ([regex]::Matches($Txt[$k], '(?<!::)\bErrorJson\(TEXT\("(?:' + $errKinds + ')"\),')).Count
+        if ($calls -ne $good) { $f += "(R) $k : $calls ErrorJson calls, $good with a known errorKind" }
+    }
+    if ((FnBody $Txt[$pin.snap] 'bool FNodeShuffleMcpReader::NotReady(').IndexOf('TEXT("errorKind")') -lt 0) { $f += '(R) NotReady must carry errorKind' }
+    foreach ($pair in @(@($pin.desc, 'FString FNodeShuffleMcpReader::Describe()'), @($pin.snap, 'FString FNodeShuffleMcpReader::Help()'),
+                        @($pin.snap, 'bool FNodeShuffleMcpReader::NotReady('), @($pin.snap, 'FString FNodeShuffleMcpReader::ErrorJson('))) {
+        if ((FnBody $Cod[$pair[0]] $pair[1]).IndexOf('AddEnvelope(Root);') -lt 0) { $f += "(R) envelope missing in $($pair[1])" }
+    }
+    foreach ($cmd in $gridSites.Keys) {
+        $file = $gridSites[$cmd][0]; $head = $gridSites[$cmd][1]
+        if (-not $Txt.Contains($file)) { $f += "(R) water-grid site file missing: $file"; continue }
+        $body = if ($head -eq '') { $Cod[$file] } else { FnBody $Cod[$file] $head }
+        if ($body -eq '') { $f += "(R) water-grid site body not found for $cmd"; continue }
+        if ($body.Contains($groundCall) -and -not $body.Contains($gridSuppress)) {
+            if ((Count $d ('{ TEXT("' + $cmd + '"), TEXT("write"), true,')) -ne 1) { $f += "(R) $cmd traces the ground (water grid) and must be write / touchesSave true" }
+        }
+    }
     # ---- C1
     $reg = @()
     foreach ($k in $Txt.Keys) {
@@ -188,7 +258,7 @@ function Invoke-McpChecks($Txt, $Cod) {
 
 $base = Invoke-McpChecks $text $code
 if ($base.Count -gt 0) { $base | ForEach-Object { Write-Host "FAIL$_" }; Write-Host "MCPCONTRACT lint: FAIL -- baseline $($base.Count) problem(s)"; exit 1 }
-Write-Host "BASELINE GREEN: M1..M5, C1..C4 hold across $($text.Count) loaded files"
+Write-Host "BASELINE GREEN: M1..M5, R, C1..C4 hold across $($text.Count) loaded files"
 
 $H = $pin.hdr; $D = $pin.desc; $S = $pin.snap; $CMN = $pin.com; $MK = $pin.mark; $NS = $pin.nsmod; $CF = $pin.cfg; $SG = $pin.sg
 $BC = 'NodeShuffle\NodeShuffle.Build.cs'; $WD = 'NodeShuffle\Private\NodeShuffleWellDump.cpp'
@@ -211,7 +281,7 @@ $mutants = @(
     @{ Name = 'N16 snapshot log raised to Display'; Key = $S; Expect = 'M4'; Find = $logVerbose; Repl = 'UE_LOG(LogNodeShuffle, Display, ' }
     @{ Name = 'N17 a second log line in near'; Key = $S; Expect = 'M4'; Find = 'const double RadiusCm = RadiusM * 100.0;'; Repl = ('const double RadiusCm = RadiusM * 100.0; ' + $logVerbose + 'TEXT("x"));') }
     @{ Name = 'N18 cap raised tenfold'; Key = $CMN; Expect = 'M5'; Find = $capDecl; Repl = 'static constexpr int32 MaxOutputBytes = 640 * 1024;' }
-    @{ Name = 'N19 near stops re-serializing under the cap'; Key = $S; Expect = 'M5'; Find = ($capLoop + "`n        if (Keep == 0) { OutBranch += TEXT("" error: over cap with no entries"")"); Repl = ('break;' + "`n        if (Keep == 0) { OutBranch += TEXT("" error: over cap with no entries"")") }
+    @{ Name = 'N19 near stops re-serializing under the cap'; Key = $S; Expect = 'M5'; Find = ($capLoop + "`n        if (Keep == 0) { OutBranch += TEXT("" error: over cap with no rows"")"); Repl = ('break;' + "`n        if (Keep == 0) { OutBranch += TEXT("" error: over cap with no rows"")") }
     @{ Name = 'N20 config key dropped from the manifest'; Key = $D; Expect = 'C1'; Find = '{ TEXT("EnableDiagnostics"), TEXT("tick"), false,'; Repl = '{ TEXT("EnableDiagnosticz"), TEXT("tick"), false,' }
     @{ Name = 'N21 new config key registered'; Key = $CF; Expect = 'C1'; Find = '    AddBool(TEXT("EnableDiagnostics"), false,'; Repl = ("    AddBool(TEXT(""NewKeyX""), false, TEXT(""x""), TEXT(""x""));`n" + '    AddBool(TEXT("EnableDiagnostics"), false,') }
     @{ Name = 'N22 new root array registered through a constant'; Key = $SG; Expect = 'C1'; Find = 'Root->SectionProperties.Add(RowsKey, Rows);'; Repl = 'Root->SectionProperties.Add(RowsKey, Rows); Root->SectionProperties.Add(ExtraKey, Rows);' }
@@ -226,6 +296,18 @@ $mutants = @(
     @{ Name = 'N31 header order swapped'; Key = $MK; Expect = 'C4'; Find = "        TEXT(""2026-11-01-rwg-logflood-1""),`n        TEXT(""2026-11-01-rwg-rerolldup-1""),"; Repl = "        TEXT(""2026-11-01-rwg-rerolldup-1""),`n        TEXT(""2026-11-01-rwg-logflood-1""),"}
     @{ Name = 'N32 marker in an unanchored shape'; Key = $NS; Expect = 'C4'; Find = '    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle packet marker (2026-11-01-rwg-density-1)====="));'; Repl = '    UE_LOG(LogNodeShuffle, Log, TEXT("===== NodeShuffle packet marker (2026-11-01-rwg-density-1)====="));' }
     @{ Name = 'N34 buildMarker hard-coded in Describe'; Key = $D; Expect = 'C4'; Find = ('NodeShuffleBuildMarkers::' + $newestExpr); Repl = ('TEXT("' + '2026-11-09-' + 'mcp-contract-1' + '")') }
+    @{ Name = 'X1 ActivePercent graded save-safe'; Key = $D; Expect = 'R'; Find = '{ TEXT("ActivePercent"), TEXT("roll"), true, TEXT("structural"),'; Repl = '{ TEXT("ActivePercent"), TEXT("roll"), false, TEXT("none"),' }
+    @{ Name = 'X3 pointee write through a SpawnedNodes slot'; Key = $S; Expect = 'R'; Find = 'if (Slot && IsValid(*Slot)) { ++LiveEntries; }'; Repl = ('if (Slot && IsValid(*Slot)) { ++LiveEntries; (*Slot)' + '->SetActorHiddenInGame(true); }') }
+    @{ Name = 'X4 SeedHere graded read / save-safe'; Key = $D; Expect = 'R'; Find = '{ TEXT("NodeShuffle.SeedHere"), TEXT("write"), true, TEXT("structural"),'; Repl = '{ TEXT("NodeShuffle.SeedHere"), TEXT("read"), false, TEXT("none"),' }
+    @{ Name = 'X5 world pointee destroys an actor'; Key = $S; Expect = 'M3'; Find = 'int32 ModdedOrigin = 0;'; Repl = ('int32 ModdedOrigin = 0; Sub.GetWorld()->' + 'Destroy' + 'Actor(nullptr);') }
+    @{ Name = 'X6 Here back to save-safe'; Key = $D; Expect = 'R'; Find = '{ TEXT("NodeShuffle.Here"), TEXT("write"), true, TEXT("structural"),'; Repl = '{ TEXT("NodeShuffle.Here"), TEXT("write"), false, TEXT("none"),' }
+    @{ Name = 'X7 errorKind dropped from NotReady'; Key = $S; Expect = 'R'; Find = '    Root->SetStringField(TEXT("errorKind"), Kind);
+    Root->SetStringField(TEXT("error"), Reason);'; Repl = '    Root->SetStringField(TEXT("error"), Reason);' }
+    @{ Name = 'X8 unknown errorKind'; Key = $S; Expect = 'R'; Find = 'return ErrorJson(TEXT("bad-args"), TEXT("radiusM must be greater than 0"));'; Repl = 'return ErrorJson(TEXT("oops"), TEXT("radiusM must be greater than 0"));' }
+    @{ Name = 'X9 RerollNow graded gameplay'; Key = $D; Expect = 'R'; Find = '{ TEXT("RerollNow"), TEXT("tick"), true, TEXT("structural"),'; Repl = '{ TEXT("RerollNow"), TEXT("tick"), true, TEXT("gameplay"),' }
+    @{ Name = 'X10 envelope dropped from ErrorJson'; Key = $S; Expect = 'R'; Find = "    AddEnvelope(Root);`n    Root->SetStringField(TEXT(""errorKind""), Kind);`n    Root->SetStringField(TEXT(""error""), Message);"; Repl = "    Root->SetStringField(TEXT(""errorKind""), Kind);`n    Root->SetStringField(TEXT(""error""), Message);" }
+    @{ Name = 'X11 PointAtHere back to read (water-grid symmetry)'; Key = $D; Expect = 'R'; Find = '{ TEXT("NodeShuffle.PointAtHere"), TEXT("write"), true,'; Repl = '{ TEXT("NodeShuffle.PointAtHere"), TEXT("read"), true,' }
+    @{ Name = 'X12 pawn pointee call beyond its location'; Key = $S; Expect = 'R'; Find = 'const FVector P = FoundPawn->GetActorLocation();'; Repl = ('const FVector P = FoundPawn->GetActorLocation(); FoundPawn' + '->GetName();') }
     @{ Name = 'N33 the uplugin gains an MCP plugin dependency'; Key = '..\NodeShuffle.uplugin'; Expect = 'M2'; Find = '"Plugins": ['; Repl = ('"Plugins": [ { "Name": "' + $mcpModName + '" },') }
 )
 $bad = 0
@@ -242,5 +324,5 @@ foreach ($m in $mutants) {
     else { Write-Host "GREEN (BAD) $($m.Name): expected $($m.Expect), got: $($r -join ' | ')"; $bad++ }
 }
 if ($bad -gt 0) { Write-Host "FAIL: $bad mutant(s) not caught"; exit 1 }
-Write-Host "PASS: MCPCONTRACT lint -- M1..M5, C1..C4 hold across $($text.Count) loaded files; mutants caught $($mutants.Count)/$($mutants.Count)."
+Write-Host "PASS: MCPCONTRACT lint -- M1..M5, R, C1..C4 hold across $($text.Count) loaded files; mutants caught $($mutants.Count)/$($mutants.Count)."
 exit 0

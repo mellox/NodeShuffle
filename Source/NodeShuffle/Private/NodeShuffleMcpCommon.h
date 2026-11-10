@@ -23,7 +23,9 @@ struct FNodeShuffleMcpReader
     // Shared helpers (NodeShuffleMcpSnapshot.cpp).
     static FString Serialize(const TSharedRef<FJsonObject>& Root);
     static int32 Utf8Bytes(const FString& Text);
-    static FString ErrorJson(const FString& Message);
+    static FString ErrorJson(const TCHAR* Kind, const FString& Message);
+    // R2.7 envelope: contract, mod, buildMarker -- first on every returned object (defined in NodeShuffleMcpDescribe.cpp).
+    static void AddEnvelope(const TSharedRef<FJsonObject>& Root);
     static FString ShortObjectName(const FString& Path);
 
 private:
