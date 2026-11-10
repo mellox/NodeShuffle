@@ -118,6 +118,16 @@ FString FNodeShuffleMcpReader::Help()
         TEXT("totals counted now from members (no replay of any roll). Top-level: contract, mod, buildMarker, ready, section, mapMode, layoutGenerated, ")
         TEXT("seed (only when layoutGenerated), layoutVersion, currentLayoutVersion, rwgLayoutVersion, layout{...}, spawnedNodes{...}, hideRecords{...}, ")
         TEXT("wells{...}, session{...}, saved{...}, activeByResource[{resource, active}] (top 40), resourceKindsActive, resourcesTruncated."));
+    Sections->SetStringField(TEXT("lastRoll"),
+        TEXT("censuses the roll code copied as it printed them, during the latest entry into the roll routine in THIS session; never saved, so ")
+        TEXT("it is filled only in a session where a roll or re-roll ran (a session in which the roll routine never ran reads empty). Never not-ready. ")
+        TEXT("Top-level: contract, mod, buildMarker, section, captured (rollSeq above 0), rollSeq (entries into the roll routine this session, ")
+        TEXT("including one that aborted), note (only while rollSeq is 0), seed and isReroll (only when captured: the arguments of that entry), ")
+        TEXT("rollDensity{...}. Each family object carries captured (its copy ran, right after its census log statement, during entry ")
+        TEXT("rollSeq); a family not printed in that roll reads captured false and carries no other field. rollDensity: the ROLLDENSITY ")
+        TEXT("line's fields (printed on Random World Generator maps only), without cellsAtCap; flags as booleans; cellCm and landSampleMs ")
+        TEXT("rounded to whole numbers and left out when not finite, counted in nonFiniteOmitted. Not served: REROLLPOOL-CARRY, PURITYCENSUS, ")
+        TEXT("RWGDEAL-RES and MODQUOTA-CFG."));
     Root->SetObjectField(TEXT("sections"), Sections);
     Root->SetStringField(TEXT("errors"), TEXT("every failure is an object with errorKind (bad-args, no-world, no-player, not-ready, too-large) and error; not-ready and no-world also carry ready false, reason and layoutGenerated"));
     return Serialize(Root);
@@ -167,10 +177,11 @@ FString FNodeShuffleMcpReader::Snapshot(const ANodeShuffleSubsystem& Sub, const 
     if (!NsMcpArgString(Args, TEXT("section"), bHasSection, Section, Err)) { OutBranch = TEXT("error: section type"); return ErrorJson(TEXT("bad-args"), Err); }
     if (Section.Equals(TEXT("near"), ESearchCase::IgnoreCase)) { OutBranch = TEXT("near"); return Near(Sub, Args, OutBranch); }
     if (Section.Equals(TEXT("summary"), ESearchCase::IgnoreCase)) { OutBranch = TEXT("summary"); return Summary(Sub, OutBranch); }
+    if (Section.Equals(TEXT("lastRoll"), ESearchCase::IgnoreCase)) { OutBranch = TEXT("lastRoll"); return LastRoll(Sub, OutBranch); } // mcp-lastroll-1
     if (!bHasSection) { OutBranch = TEXT("help: no section given"); return Help(); }
     if (Section.Equals(TEXT("help"), ESearchCase::IgnoreCase)) { OutBranch = TEXT("help: requested"); return Help(); }
     OutBranch = TEXT("error: unknown section");
-    return ErrorJson(TEXT("bad-args"), FString::Printf(TEXT("section '%s' is not help, near or summary"), *Section.Left(40)));
+    return ErrorJson(TEXT("bad-args"), FString::Printf(TEXT("section '%s' is not help, near, summary or lastRoll"), *Section.Left(40)));
 }
 
 FString FNodeShuffleMcpReader::Near(const ANodeShuffleSubsystem& Sub, const TSharedPtr<FJsonObject>& Args, FString& OutBranch)

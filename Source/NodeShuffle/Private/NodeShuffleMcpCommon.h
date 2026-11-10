@@ -33,4 +33,6 @@ private:
     static FString Near(const ANodeShuffleSubsystem& Sub, const TSharedPtr<FJsonObject>& Args, FString& OutBranch);
     static FString Summary(const ANodeShuffleSubsystem& Sub, FString& OutBranch);
     static bool NotReady(const ANodeShuffleSubsystem& Sub, FString& OutJson, FString& OutBranch);
+    // NodeShuffleMcpLastRoll.cpp (mcp-lastroll-1) -- section lastRoll: the censuses copied at their print sites in this session's latest roll.
+    static FString LastRoll(const ANodeShuffleSubsystem& Sub, FString& OutBranch);
 };

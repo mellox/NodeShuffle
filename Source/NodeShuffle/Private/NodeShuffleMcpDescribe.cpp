@@ -121,7 +121,7 @@ FString FNodeShuffleMcpReader::Describe()
 
     {
         const TSharedRef<FJsonObject> Args = MakeShared<FJsonObject>();
-        Args->SetStringField(TEXT("section"), TEXT("help | near | summary (missing returns help; unknown is a bad-args error)"));
+        Args->SetStringField(TEXT("section"), TEXT("help | near | summary | lastRoll (missing returns help; unknown is a bad-args error; lastRoll is filled only in a session where a roll or re-roll ran)"));
         Args->SetStringField(TEXT("xCm"), TEXT("number, near: world X in cm (with yCm); when absent, player selects the point"));
         Args->SetStringField(TEXT("yCm"), TEXT("number, near: world Y in cm (with xCm)"));
         Args->SetStringField(TEXT("player"), TEXT("whole number from 0, near: index among player controllers holding a valid pawn, default 0; not with xCm/yCm"));

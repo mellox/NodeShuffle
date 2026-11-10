@@ -20,6 +20,13 @@
 #      packet's marker is the newest; McpDescribe's buildMarker reads the header's newest entry, never a date literal
 #   F  CONTRACT REVISION 4 (R4.4, finite numbers only): near skips a Layout entry with a non-finite location component inside its Layout
 #      loop before the distance math, emits the skip count, help names it; a non-finite pawn location is refused as no-player
+#   L  LASTROLL (2026-11-10, packet mcp-lastroll-1; handoff _team/test-logs/2026-11-10-nodeshuffle-mcp-lastroll-handoff.md): the member is
+#      plain (no property macro, not mutable, no reflected struct); MCP files never write it or bind it non-const; roll code only STORES
+#      into it (no read beyond the sequence copy); the one reset is RollLayout's first statement and precedes every store; each family's
+#      stores sit in the census's own function between its UE_LOG and the next anchor; NAME CHAIN: every name= token of the census line
+#      maps reader field -> struct member -> store -> the very argument the line prints (declared omissions/derivations only); the
+#      lastRoll section is dispatched and named in help, the manifest's snapshotArgs and the unknown-section error text.
+#      One family is held today: ROLLDENSITY.
 # Every forbidden needle is BUILT BY CONCATENATION so this file cannot satisfy or trip its own checks. Mutants run in-file.
 # Exit 0 = all hold; 1 = a rule or mutant fails; 2 = a pinned FILE is missing.
 
@@ -35,6 +42,10 @@ $pin = [ordered]@{
     nsmod = 'NodeShuffle\Private\NodeShuffle.cpp'
     cfg   = 'NodeShuffle\Private\NodeShuffleConfig.cpp'
     sg    = 'NodeShuffle\Private\NodeShuffleRwgSeedGas.cpp'
+    lr    = 'NodeShuffle\Private\NodeShuffleMcpLastRoll.cpp'
+    lrh   = 'NodeShuffle\Public\NodeShuffleLastRoll.h'
+    sub   = 'NodeShuffle\Private\NodeShuffleSubsystem.cpp'
+    dens  = 'NodeShuffle\Private\NodeShuffleRwgDensityBudget.cpp'
 }
 function Read-Norm([string]$p) { return ((Get-Content -Raw -Encoding utf8 -Path $p) -replace "`r`n", "`n") }
 foreach ($k in $pin.Keys) { if (-not (Test-Path (Join-Path $src $pin[$k]))) { Write-Host "FAIL(load): pinned file '$($pin[$k])' does not exist"; exit 2 } }
@@ -130,6 +141,70 @@ function FnBody([string]$t, [string]$head) {
     $j = $t.IndexOf("`n}`n", $i); if ($j -lt 0) { return '' }
     return $t.Substring($i, $j - $i)
 }
+# L: lastRoll (mcp-lastroll-1). Reflection/mutable needles concatenated.
+$lrMember    = "`n    FNodeShuffleLastRoll " + 'LastRoll;' + "`n"
+$lrReflRx    = '\b(?:' + 'UPROP' + 'ERTY|' + 'USTR' + 'UCT|' + 'GENERATED' + '_BODY|' + 'UCL' + 'ASS)\b'
+$lrMutRx     = '\b' + 'mut' + 'able\b'
+$lrBegin     = 'LastRoll.' + 'BeginRoll(Seed, bIsReroll);'
+$lrRollSig   = 'void ANodeShuffleSubsystem::' + 'RollLayout(int32 Seed, bool bIsReroll)'
+$lrDensSig   = 'void ANodeShuffleSubsystem::' + 'RwgDensityBudgetEnd()'
+$lrDensFmt   = 'TEXT("ROLL' + 'DENSITY: '
+$lrDensNext  = 'UE_LOG(LogNodeShuffle, Display, TEXT("ROLLDENSITY-' + 'LEGEND: '
+$lrStoreRx   = '\bLastRoll\.(Density)\.(\w+) = ([^;]+);' # REROLLPOOL-CARRY is not held (rerolldup U6 adjacency; see the handoff)
+$lrSeqStore  = '.CapturedInSeq = LastRoll.' + 'RollSeq;'
+$lrEndCallRx = '(?<!void )(?<!::)\bRwgDensityBudgetEnd\(\);'
+$lrMcpWriteRx = @('\bLastRoll\s*(?:\.\s*\w+\s*)+(?:=(?!=)|\+=|-=|\*=|/=|\+\+|--)', '\b[LDC]\s*\.\s*\w+(?:\s*\.\s*\w+)*\s*(?:=(?!=)|\+=|-=|\*=|/=|\+\+|--)',
+    '(?:\+\+|--)\s*[LDC]\s*\.', '(?<!const )\bFNodeShuffleLastRoll(?:Density)?\s*[&*]', ('\b' + 'Begin' + 'Roll\s*\('))
+$lrSq = 'NodeShuffleRwgDensityBudget::LandSamplesPerCellSide * NodeShuffleRwgDensityBudget::LandSamplesPerCellSide'
+$lrDensDerived = @{ 'landSamplesPerCell' = @($lrSq, ('TEXT("landSamplesPerCell"), ' + $lrSq)); 'cellLinesOmitted' = @('Printable - Printed', 'TEXT("cellLinesOmitted"), D.CellLinesPrintable - D.CellLinesPrinted') }
+function LrBlock([string]$t, [string]$head) { # anonymous-namespace helper: from its head to its four-space closing brace
+    $i = $t.IndexOf($head); if ($i -lt 0) { return '' }
+    $j = $t.IndexOf("`n    }`n", $i); if ($j -lt 0) { return '' }
+    return $t.Substring($i, $j - $i)
+}
+function LrCensus([string]$t, [string]$fmtHead) { # @(name= tokens, printed arguments) of the UE_LOG whose format starts with fmtHead
+    $m = [regex]::Match($t, [regex]::Escape($fmtHead) + '([^"]*)"\),\s*([\s\S]*?)\);')
+    if (-not $m.Success) { return $null }
+    $names = @([regex]::Matches($m.Groups[1].Value, '(\w+)=%') | ForEach-Object { $_.Groups[1].Value })
+    $argv = @($m.Groups[2].Value -split ',' | ForEach-Object { (($_ -replace '\s+', ' ').Trim()) -replace ' \? 1 : 0$', '' })
+    return ,@($names, $argv)
+}
+function LrStores([string]$body, [string]$fam, [ref]$errs) {
+    $map = @{}
+    foreach ($m in [regex]::Matches($body, $lrStoreRx)) {
+        if ($m.Groups[1].Value -ne $fam) { continue }
+        $mem = $m.Groups[2].Value
+        if ($map.ContainsKey($mem)) { $errs.Value += "(L) $fam.$mem is stored twice" }
+        $map[$mem] = ($m.Groups[3].Value -replace '\s+', ' ').Trim()
+    }
+    return $map
+}
+function LrChain([string]$fam, $census, [string]$reader, [string]$var, [hashtable]$stores, [string[]]$omitted, [hashtable]$derived) {
+    $f = @()
+    if ($null -eq $census) { return ,@("(L) $fam : census line not found") }
+    if ($reader -eq '') { return ,@("(L) $fam : reader helper not found") }
+    $names = $census[0]; $argv = $census[1]
+    if ($names.Count -eq 0 -or $names.Count -ne $argv.Count) { return ,@("(L) $fam : $($names.Count) name= tokens but $($argv.Count) printed arguments") }
+    $rmap = @{}
+    foreach ($m in [regex]::Matches($reader, 'TEXT\("(\w+)"\), ' + $var + '\.(\w+)\b(?!\s*-)')) { $rmap[$m.Groups[1].Value] = $m.Groups[2].Value }
+    $rnames = @([regex]::Matches($reader, 'TEXT\("(\w+)"\)') | ForEach-Object { $_.Groups[1].Value })
+    for ($i = 0; $i -lt $names.Count; $i++) {
+        $n = $names[$i]; $a = $argv[$i]
+        if ($omitted -contains $n) { if ($rnames -contains $n) { $f += "(L) $fam : $n is declared not captured but the reader serves it" }; continue }
+        if ($derived.ContainsKey($n)) {
+            if ($a -ne $derived[$n][0]) { $f += "(L) $fam : $n prints '$a', the reader's derivation assumes '$($derived[$n][0])'" }
+            if ($reader.IndexOf($derived[$n][1]) -lt 0) { $f += "(L) $fam : the reader's derivation of $n changed" }
+            continue
+        }
+        if (-not $rmap.ContainsKey($n)) { $f += "(L) $fam : the reader does not serve $n from a member"; continue }
+        $mem = $rmap[$n]
+        if (-not $stores.ContainsKey($mem)) { $f += "(L) $fam : member $mem (served as $n) has no store"; continue }
+        if ($stores[$mem] -ne $a) { $f += "(L) $fam : $n prints '$a' but $mem stores '$($stores[$mem])'" }
+    }
+    foreach ($rn in $rnames) { if ($names -notcontains $rn -and @('captured', 'nonFiniteOmitted') -notcontains $rn) { $f += "(L) $fam : the reader serves $rn, which the census line does not print" } }
+    foreach ($mem in $stores.Keys) { if ($mem -ne 'CapturedInSeq' -and -not [regex]::IsMatch($reader, '\b' + $var + '\.' + $mem + '\b')) { $f += "(L) $fam : member $mem is stored but never served" } }
+    return ,$f
+}
 $writeRx = @(
     '\bSub\s*\.\s*\w+(?:\s*(?:\.|->)\s*\w+)*\s*(?:\[[^\]]*\])?\s*(?:=(?!=)|\+=|-=|\*=|/=|\|=|&=|\+\+|--)',
     '(?:\+\+|--)\s*Sub\s*\.',
@@ -150,7 +225,7 @@ function Invoke-McpChecks($Txt, $Cod) {
     # ---- M2
     foreach ($k in $Txt.Keys) { if ($Txt[$k].IndexOf($mcpModName, [StringComparison]::OrdinalIgnoreCase) -ge 0) { $f += "(M2) $k names the MCP mod" } }
     # ---- M3
-    foreach ($k in @($pin.desc, $pin.snap, $pin.com)) {
+    foreach ($k in @($pin.desc, $pin.snap, $pin.com, $pin.lr)) {
         $c = $Cod[$k]
         foreach ($n in $forbidden) { if ((Count $c $n) -ne 0) { $f += "(M3) forbidden call or keyword in $k : $n" } }
         foreach ($rx in $writeRx) { if ([regex]::IsMatch($c, $rx)) { $f += "(M3) write through Sub. in $k : $([regex]::Match($c, $rx).Value)" } }
@@ -169,6 +244,7 @@ function Invoke-McpChecks($Txt, $Cod) {
         if ((Count $c $logVerbose) -ne 1) { $f += "(M4) the UE_LOG in $k must be Verbose on LogNodeShuffle" }
     }
     if ((Count $Cod[$pin.com] 'UE_LOG(') -ne 0) { $f += '(M4) no UE_LOG in the common header' }
+    if ((Count $Cod[$pin.lr] 'UE_LOG(') -ne 0) { $f += '(M4) no UE_LOG in the lastRoll reader (McpSnapshot logs its branch)' }
     if (-not (Ordered $snapC @('FString ANodeShuffleSubsystem::McpSnapshot(', $trampoline, $logVerbose, 'return Out;'))) { $f += '(M4) the snapshot log line must follow the reader call inside McpSnapshot' }
     if (-not (Ordered $Cod[$pin.desc] @('FString ANodeShuffleSubsystem::McpDescribe() const', 'FNodeShuffleMcpReader::Describe();', $logVerbose))) { $f += '(M4) the describe log line must sit in McpDescribe' }
     # ---- M5
@@ -177,7 +253,7 @@ function Invoke-McpChecks($Txt, $Cod) {
     if ((Count $Txt[$pin.snap] $utf8Pin) -ne 1) { $f += '(M5) the cap must be measured in UTF-8 bytes' }
     if ((Count $Txt[$pin.desc] $capDesc) -ne 1) { $f += '(M5) the manifest must be checked against the cap' }
     # ---- R (review round 1 + Revision 2)
-    foreach ($k in @($pin.desc, $pin.snap)) { foreach ($rx in $pointeeRx) { if ([regex]::IsMatch($Cod[$k], $rx)) { $f += "(R) pointee call in $k : $([regex]::Match($Cod[$k], $rx).Value)" } } }
+    foreach ($k in @($pin.desc, $pin.snap, $pin.lr)) { foreach ($rx in $pointeeRx) { if ([regex]::IsMatch($Cod[$k], $rx)) { $f += "(R) pointee call in $k : $([regex]::Match($Cod[$k], $rx).Value)" } } }
     $d = $Txt[$pin.desc]
     $loose = ([regex]::Matches($d, '\{ TEXT\("([\w.]+)"\), TEXT\("[\w-]+"\), (?:true|false),')).Count
     $strict = @([regex]::Matches($d, '\{ TEXT\("([\w.]+)"\), TEXT\("(tick|roll|world-load|inert|never|read|write)"\), (true|false), TEXT\("(none|gameplay|structural)"\),'))
@@ -189,8 +265,8 @@ function Invoke-McpChecks($Txt, $Cod) {
         if (-not $golden.ContainsKey($name)) { $f += "(R) $name has no golden grade in this lint" } elseif ($golden[$name] -ne $grade) { $f += "(R) $name graded $grade, golden $($golden[$name])" }
     }
     foreach ($g in $golden.Keys) { if (-not $seen.ContainsKey($g)) { $f += "(R) golden row $g missing from the manifest" } }
-    foreach ($k in @($pin.desc, $pin.snap)) {
-        $calls = ([regex]::Matches($Cod[$k], '(?<!::)\bErrorJson\(')).Count
+    foreach ($k in @($pin.desc, $pin.snap, $pin.lr)) {
+        $calls =([regex]::Matches($Cod[$k], '(?<!::)\bErrorJson\(')).Count
         $good = ([regex]::Matches($Txt[$k], '(?<!::)\bErrorJson\(TEXT\("(?:' + $errKinds + ')"\),')).Count
         if ($calls -ne $good) { $f += "(R) $k : $calls ErrorJson calls, $good with a known errorKind" }
     }
@@ -262,7 +338,7 @@ function Invoke-McpChecks($Txt, $Cod) {
     $hdrLoaded = [regex]::Match($mh, 'LoadedLineTag = TEXT\("([\w-]+)"\)')
     if (($lineTags -join '|') -ne ($hdrTags -join '|')) { $f += "(C4) markers header does not list NodeShuffle.cpp's packet markers in order (cpp: $($lineTags -join ','); header: $($hdrTags -join ','))" }
     if (-not $loaded.Success -or -not $hdrLoaded.Success -or $loaded.Groups[1].Value -ne $hdrLoaded.Groups[1].Value) { $f += '(C4) LOADED tag differs between NodeShuffle.cpp and the markers header' }
-    $own = '2026-11-09-' + 'mcp-contract-1'
+    $own = '2026-11-10-' + 'mcp-lastroll-1'
     if ($hdrTags.Count -eq 0 -or $hdrTags[-1] -ne $own -or (Count $nsm $own) -ne 1) { $f += '(C4) this packet marker must be the newest, once, on its own line' }
     if ((Count $Txt[$pin.desc] $newestExpr) -ne 1 -or [regex]::IsMatch($Txt[$pin.desc], 'TEXT\("20\d\d-\d\d-\d\d-')) { $f += '(C4) buildMarker must come from the markers header (newest entry), never a literal in Describe' }
     # ---- F (contract R4.4: finite numbers only)
@@ -272,14 +348,51 @@ function Invoke-McpChecks($Txt, $Cod) {
     if ((Count $Txt[$pin.snap] $finEmit) -ne 1 -or (Count $nearT $finEmit) -ne 1) { $f += '(F) near must emit the non-finite skip count' }
     if ((Count (FnBody $Txt[$pin.snap] 'FString FNodeShuffleMcpReader::Help()') $finHelp) -ne 1) { $f += '(F) help must name the non-finite skip count' }
     if ((Count $nearC $finPawn) -ne 1 -or -not (Ordered $nearC @('FoundPawn->GetActorLocation();', $finPawn, $finPawnRetC, 'XCm = P.X;'))) { $f += '(F) near must refuse a pawn location with a non-finite X or Y before using it as the point' }
+    # ---- L (mcp-lastroll-1)
+    if ((Count $h $lrMember) -ne 1) { $f += '(L) the subsystem must hold exactly one plain member line: FNodeShuffleLastRoll LastRoll;' }
+    if ([regex]::IsMatch($Cod[$pin.hdr], $lrReflRx + '[^;{}]*FNodeShuffleLastRoll\s+LastRoll\b') -or [regex]::IsMatch($Cod[$pin.hdr], $lrMutRx + '\s+FNodeShuffleLastRoll\b')) { $f += '(L) the LastRoll member must carry no property macro and must not be mutable' }
+    if ([regex]::IsMatch($Cod[$pin.lrh], $lrReflRx) -or [regex]::IsMatch($Cod[$pin.lrh], $lrMutRx)) { $f += '(L) NodeShuffleLastRoll.h must stay plain C++: no reflection macro, no mutable' }
+    if (-not (Ordered $h @('#include "NodeShuffleLastRoll.h"', '#include "NodeShuffleSubsystem.generated.h"'))) { $f += '(L) the subsystem header must include NodeShuffleLastRoll.h before its generated header' }
+    $mcpKeys = @($pin.desc, $pin.snap, $pin.com, $pin.lr)
+    foreach ($k in $mcpKeys) { foreach ($rx in $lrMcpWriteRx) { if ([regex]::IsMatch($Cod[$k], $rx)) { $f += "(L) MCP file $k writes LastRoll or binds it non-const: $([regex]::Match($Cod[$k], $rx).Value)" } } }
+    $stores = 0; $refs = 0; $begins = 0; $endCalls = 0; $dAll = 0
+    foreach ($k in $Cod.Keys) {
+        if ($mcpKeys -contains $k -or $k -eq $pin.lrh) { continue }
+        $c = $Cod[$k]
+        $sm = @([regex]::Matches($c, $lrStoreRx))
+        $stores += $sm.Count; $dAll += @($sm | Where-Object { $_.Groups[1].Value -eq 'Density' }).Count
+        $refs += ([regex]::Matches($c, '\bLastRoll\s*\.')).Count; $begins += (Count $c $lrBegin); $endCalls += ([regex]::Matches($c, $lrEndCallRx)).Count
+    }
+    if ($begins -ne 1) { $f += "(L) exactly one LastRoll reset expected in roll code, found $begins" }
+    if ($refs -ne $stores + 2) { $f += "(L) roll code may only store into LastRoll: $refs references, $stores stores (2 others allowed: the reset and the sequence copy)" }
+    $rollT = FnBody $Txt[$pin.sub] $lrRollSig
+    if (-not $rollT.StartsWith($lrRollSig + "`n{`n    " + $lrBegin)) { $f += '(L) the LastRoll reset must be the first statement of RollLayout' }
+    if ($endCalls -ne 1 -or ([regex]::Matches((FnBody $Cod[$pin.sub] $lrRollSig), $lrEndCallRx)).Count -ne 1) { $f += '(L) RwgDensityBudgetEnd must be called exactly once, from RollLayout (so after the reset)' }
+    $errs = @()
+    $densT = FnBody $Txt[$pin.dens] $lrDensSig
+    $ci = $densT.IndexOf($lrDensFmt); $ni = $densT.IndexOf($lrDensNext)
+    $dIn = @([regex]::Matches($densT, $lrStoreRx) | Where-Object { $_.Groups[1].Value -eq 'Density' })
+    if ($ci -lt 0 -or $ni -lt 0 -or $dIn.Count -eq 0 -or $dIn.Count -ne $dAll -or @($dIn | Where-Object { $_.Index -lt $ci -or $_.Index -gt $ni }).Count -gt 0) { $f += "(L) every Density store must sit in RwgDensityBudgetEnd between the ROLLDENSITY line and its legend line ($($dIn.Count) there, $dAll in all)" }
+    if ((Count $densT ('LastRoll.Density' + $lrSeqStore)) -ne 1) { $f += '(L) the Density stores must record the roll sequence once' }
+    $dMap = LrStores $densT 'Density' ([ref]$errs)
+    $f += $errs
+    if ($dMap['CellLinesPrintable'] -ne 'Printable') { $f += '(L) CellLinesPrintable must copy the Printable local (the cellLinesOmitted derivation reads it)' }
+    $lrT = $Txt[$pin.lr]
+    $f += LrChain 'ROLLDENSITY' (LrCensus $densT $lrDensFmt) (LrBlock $lrT 'void NsMcpDensityFields(') 'D' $dMap @('cellsAtCap') $lrDensDerived
+    if ((FnBody $Cod[$pin.lr] 'FString FNodeShuffleMcpReader::LastRoll(').IndexOf('AddEnvelope(Root);') -lt 0) { $f += '(L) envelope missing in LastRoll' }
+    if ((Count $Txt[$pin.snap] 'if (Section.Equals(TEXT("lastRoll"), ESearchCase::IgnoreCase)) { OutBranch = TEXT("lastRoll"); return LastRoll(Sub, OutBranch); }') -ne 1) { $f += '(L) the lastRoll section must be dispatched' }
+    if ((Count (FnBody $Txt[$pin.snap] 'FString FNodeShuffleMcpReader::Help()') 'Sections->SetStringField(TEXT("lastRoll"),') -ne 1) { $f += '(L) help must describe the lastRoll section' }
+    if ((Count $Txt[$pin.desc] 'TEXT("help | near | summary | lastRoll (') -ne 1) { $f += "(L) the manifest's snapshotArgs must list lastRoll" }
+    if ((Count $Txt[$pin.snap] 'is not help, near, summary or lastRoll') -ne 1) { $f += '(L) the unknown-section error must list lastRoll' }
     return ,$f
 }
 
 $base = Invoke-McpChecks $text $code
 if ($base.Count -gt 0) { $base | ForEach-Object { Write-Host "FAIL$_" }; Write-Host "MCPCONTRACT lint: FAIL -- baseline $($base.Count) problem(s)"; exit 1 }
-Write-Host "BASELINE GREEN: M1..M5, R, C1..C4, F hold across $($text.Count) loaded files"
+Write-Host "BASELINE GREEN: M1..M5, R, C1..C4, F, L hold across $($text.Count) loaded files"
 
 $H = $pin.hdr; $D = $pin.desc; $S = $pin.snap; $CMN = $pin.com; $MK = $pin.mark; $NS = $pin.nsmod; $CF = $pin.cfg; $SG = $pin.sg
+$LRC = $pin.lr; $LRH = $pin.lrh; $SU = $pin.sub; $DN = $pin.dens
 $BC = 'NodeShuffle\NodeShuffle.Build.cs'; $WD = 'NodeShuffle\Private\NodeShuffleWellDump.cpp'
 $mutants = @(
     @{ Name = 'N1 McpDescribe loses const'; Key = $H; Expect = 'M1'; Find = $sigDescribe; Repl = 'UFUNCTION() FString McpDescribe();' }
@@ -314,7 +427,7 @@ $mutants = @(
     @{ Name = 'N30 LOADED tag bumped in the cpp only'; Key = $NS; Expect = 'C4'; Find = 'LOADED (2026-10-31-rwg-farspawn-1f)'; Repl = 'LOADED (2026-10-31-rwg-farspawn-1g)' }
     @{ Name = 'N31 header order swapped'; Key = $MK; Expect = 'C4'; Find = "        TEXT(""2026-11-01-rwg-logflood-1""),`n        TEXT(""2026-11-01-rwg-rerolldup-1""),"; Repl = "        TEXT(""2026-11-01-rwg-rerolldup-1""),`n        TEXT(""2026-11-01-rwg-logflood-1""),"}
     @{ Name = 'N32 marker in an unanchored shape'; Key = $NS; Expect = 'C4'; Find = '    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle packet marker (2026-11-01-rwg-density-1)====="));'; Repl = '    UE_LOG(LogNodeShuffle, Log, TEXT("===== NodeShuffle packet marker (2026-11-01-rwg-density-1)====="));' }
-    @{ Name = 'N34 buildMarker hard-coded in Describe'; Key = $D; Expect = 'C4'; Find = ('NodeShuffleBuildMarkers::' + $newestExpr); Repl = ('TEXT("' + '2026-11-09-' + 'mcp-contract-1' + '")') }
+    @{ Name = 'N34 buildMarker hard-coded in Describe'; Key = $D; Expect = 'C4'; Find = ('NodeShuffleBuildMarkers::' + $newestExpr); Repl = ('TEXT("' + '2026-11-10-' + 'mcp-lastroll-1' + '")') }
     @{ Name = 'X1 ActivePercent graded save-safe'; Key = $D; Expect = 'R'; Find = '{ TEXT("ActivePercent"), TEXT("roll"), true, TEXT("structural"),'; Repl = '{ TEXT("ActivePercent"), TEXT("roll"), false, TEXT("none"),' }
     @{ Name = 'X3 pointee write through a SpawnedNodes slot'; Key = $S; Expect = 'R'; Find = 'if (Slot && IsValid(*Slot)) { ++LiveEntries; }'; Repl = ('if (Slot && IsValid(*Slot)) { ++LiveEntries; (*Slot)' + '->SetActorHiddenInGame(true); }') }
     @{ Name = 'X4 SeedHere graded read / save-safe'; Key = $D; Expect = 'R'; Find = '{ TEXT("NodeShuffle.SeedHere"), TEXT("write"), true, TEXT("structural"),'; Repl = '{ TEXT("NodeShuffle.SeedHere"), TEXT("read"), false, TEXT("none"),' }
@@ -333,6 +446,26 @@ $mutants = @(
     @{ Name = 'F4 help loses the nonFiniteSkipped clause'; Key = $S; Expect = 'F'; Find = $finHelp; Repl = 'returned (' }
     @{ Name = 'F5 pawn-location finite guard disabled'; Key = $S; Expect = 'F'; Find = $finPawn; Repl = 'if (false)' }
     @{ Name = 'F6 pawn guard body gutted'; Key = $S; Expect = 'F'; Find = $finPawnRet; Repl = '}' }
+    @{ Name = 'LR1 a density store deleted'; Key = $DN; Expect = 'L'; Find = 'LastRoll.Density.Accepted = S.AcceptedTotal; '; Repl = '' }
+    @{ Name = 'LR2 a density store copies the wrong argument'; Key = $DN; Expect = 'L'; Find = 'LastRoll.Density.RejectedWater = S.RejWater;'; Repl = 'LastRoll.Density.RejectedWater = S.RejVoid;' }
+    @{ Name = 'LR3 reset moved after a store'; Key = $SU; Expect = 'L'; Find = ('    ' + $lrBegin + ' // mcp-lastroll-1'); Repl = '    // mcp-lastroll-1'; Find2 = 'RwgDensityBudgetEnd(); }'; Repl2 = ('RwgDensityBudgetEnd(); ' + $lrBegin + ' }') }
+    @{ Name = 'LR4 member made mutable'; Key = $H; Expect = 'L'; Find = $lrMember; Repl = ("`n    " + 'mut' + 'able FNodeShuffleLastRoll LastRoll;' + "`n") }
+    @{ Name = 'LR5 member gains a property macro'; Key = $H; Expect = 'L'; Find = $lrMember; Repl = ("`n    " + 'UPROP' + 'ERTY() FNodeShuffleLastRoll LastRoll;' + "`n") }
+    @{ Name = 'LR6 reader writes the member'; Key = $LRC; Expect = 'L'; Find = 'const bool bCaptured = L.RollSeq > 0;'; Repl = 'const bool bCaptured = L.RollSeq > 0; Sub.LastRoll.RollSeq = 0;' }
+    @{ Name = 'LR7 reader binds the member non-const'; Key = $LRC; Expect = 'L'; Find = 'const FNodeShuffleLastRoll& L = Sub.LastRoll;'; Repl = 'FNodeShuffleLastRoll& L = Sub.LastRoll;' }
+    @{ Name = 'LR8 struct becomes reflected'; Key = $LRH; Expect = 'L'; Find = "struct FNodeShuffleLastRoll`n{"; Repl = ('USTR' + 'UCT()' + "`nstruct FNodeShuffleLastRoll`n{") }
+    @{ Name = 'LR9 roll code reads the member'; Key = $SU; Expect = 'L'; Find = '    RwgProvCandMarkDirty(bIsReroll'; Repl = "    if (LastRoll.RollSeq > 5) { return; }`n    RwgProvCandMarkDirty(bIsReroll" }
+    @{ Name = 'LR10 density store after the legend line'; Key = $DN; Expect = 'L'; Find = '    RwgDensityState.Reset(); // the late-node deal'; Repl = "    LastRoll.Density.Draws = S.Draws;`n    RwgDensityState.Reset(); // the late-node deal" }
+    @{ Name = 'LR18 density store in another function'; Key = $SU; Expect = 'L'; Find = 'RwgDensityBudgetEnd(); }'; Repl = 'RwgDensityBudgetEnd(); LastRoll.Density.Calls = 0; }' }
+    @{ Name = 'LR11 reader field renamed'; Key = $LRC; Expect = 'L'; Find = 'TEXT("draws"), D.Draws'; Repl = 'TEXT("drawCount"), D.Draws' }
+    @{ Name = 'LR12 reader serves the uncopied cellsAtCap'; Key = $LRC; Expect = 'L'; Find = 'O->SetNumberField(TEXT("draws"), D.Draws);'; Repl = 'O->SetNumberField(TEXT("draws"), D.Draws); O->SetNumberField(TEXT("cellsAtCap"), D.Draws);' }
+    @{ Name = 'LR13 reader logs'; Key = $LRC; Expect = 'M4'; Find = 'const FNodeShuffleLastRoll& L = Sub.LastRoll;'; Repl = ('const FNodeShuffleLastRoll& L = Sub.LastRoll; ' + $logVerbose + 'TEXT("x"));') }
+    @{ Name = 'LR14 help loses lastRoll'; Key = $S; Expect = 'L'; Find = 'Sections->SetStringField(TEXT("lastRoll"),'; Repl = 'Sections->SetStringField(TEXT("lastRollX"),' }
+    @{ Name = 'LR15 manifest loses lastRoll'; Key = $D; Expect = 'L'; Find = 'help | near | summary | lastRoll ('; Repl = 'help | near | summary (' }
+    @{ Name = 'LR16 error text loses lastRoll'; Key = $S; Expect = 'L'; Find = 'is not help, near, summary or lastRoll'; Repl = 'is not help, near or summary' }
+    @{ Name = 'LR17 dispatch dropped'; Key = $S; Expect = 'L'; Find = 'return LastRoll(Sub, OutBranch); }'; Repl = 'return Help(); }' }
+    @{ Name = 'LR19 density sequence copy dropped'; Key = $DN; Expect = 'L'; Find = ('LastRoll.Density' + $lrSeqStore); Repl = '' }
+    @{ Name = 'LR20 reader loads a class'; Key = $LRC; Expect = 'M3'; Find = 'const bool bCaptured = L.RollSeq > 0;'; Repl = ('const bool bCaptured = L.RollSeq > 0; ' + 'Load' + 'Class<UObject>(nullptr, TEXT("x"));') }
 )
 $bad = 0
 foreach ($m in $mutants) {
@@ -341,6 +474,10 @@ foreach ($m in $mutants) {
     $t2 = [ordered]@{}; foreach ($k in $text.Keys) { $t2[$k] = $text[$k] }
     $c2 = [ordered]@{}; foreach ($k in $code.Keys) { $c2[$k] = $code[$k] }
     $t2[$m.Key] = $t2[$m.Key].Replace($m.Find, $m.Repl)
+    if ($m.ContainsKey('Find2')) { # optional second edit in the same file (a MOVE = delete here + insert there)
+        if ((Count $t2[$m.Key] $m.Find2) -ne 1) { Write-Host "MUTANT-SETUP FAIL $($m.Name): second find text not unique"; $bad++; continue }
+        $t2[$m.Key] = $t2[$m.Key].Replace($m.Find2, $m.Repl2)
+    }
     $c2[$m.Key] = Code-Only $t2[$m.Key]
     $r = Invoke-McpChecks $t2 $c2
     $hits = @($r | Where-Object { $_.StartsWith("($($m.Expect))") })
@@ -348,5 +485,5 @@ foreach ($m in $mutants) {
     else { Write-Host "GREEN (BAD) $($m.Name): expected $($m.Expect), got: $($r -join ' | ')"; $bad++ }
 }
 if ($bad -gt 0) { Write-Host "FAIL: $bad mutant(s) not caught"; exit 1 }
-Write-Host "PASS: MCPCONTRACT lint -- M1..M5, R, C1..C4, F hold across $($text.Count) loaded files; mutants caught $($mutants.Count)/$($mutants.Count)."
+Write-Host "PASS: MCPCONTRACT lint -- M1..M5, R, C1..C4, F, L hold across $($text.Count) loaded files; mutants caught $($mutants.Count)/$($mutants.Count)."
 exit 0
