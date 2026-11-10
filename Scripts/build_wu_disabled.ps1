@@ -44,7 +44,11 @@ param(
     [string]$LockFile = "C:\Claude\Projects\_team\BUILD-LOCK.txt",
     [string]$AlpakitLog = (Join-Path $env:TEMP ('alpakit_' + $ModName + '.log')),
     [string]$DeployedDir = ("C:\Program Files (x86)\Steam\steamapps\common\Satisfactory\FactoryGame\Mods\" + $ModName + "\Binaries\Win64"),
-    [string]$EvidenceSelfTest = ""
+    [string]$EvidenceSelfTest = "",
+    # Opt-in (2026-11-10): leave WeaponUpgrades.uplugin in place -- no rename, nothing to restore.
+    # Every build now runs the header tool; with WeaponUpgrades set aside that run regenerates the
+    # shared FactoryGame headers without its access grants. Default (absent) = set aside as before.
+    [switch]$KeepWeaponUpgrades
 )
 $ErrorActionPreference = "Stop"
 $wrapperStart = Get-Date
@@ -119,6 +123,11 @@ if ((Test-Path $strandedWu) -and -not (Test-Path $WuUplugin)) {
     Rename-Item $strandedWu (Split-Path $WuUplugin -Leaf)
     Write-Host "SELF-HEAL: restored stranded WeaponUpgrades.uplugin from a killed prior build"
 }
+# Both files present: the self-heal above does not fire and neither file is touched here.
+$wuBoth = (Test-Path -LiteralPath $WuUplugin) -and (Test-Path -LiteralPath $strandedWu)
+if ($wuBoth) {
+    Write-Host ("NSBUILD WU-BOTH upluginPresent=True disabledPresent=True keepWeaponUpgrades={0} -- self-heal did not fire; neither file touched here" -f [bool]$KeepWeaponUpgrades)
+}
 
 # LEVER: mtime-only touch of every reflected repo header.
 $gbMacro = 'GENERATED_' + 'BODY'
@@ -133,7 +142,9 @@ foreach ($h in $touchSet) { [System.IO.File]::SetLastWriteTime($h.FullName, $tou
 Write-Host ("NSBUILD UHT-TOUCH headers={0} setTo={1} names={2}" -f $touchSet.Count, $touchTime.ToString('s'), (($touchSet | ForEach-Object { $_.Name }) -join ','))
 
 try {
-    if (Test-Path $WuUplugin) {
+    if ($KeepWeaponUpgrades) {
+        Write-Host ("NSBUILD WU-KEEP WeaponUpgrades left in place (-KeepWeaponUpgrades); upluginPresentBeforeChild={0} path={1}" -f (Test-Path -LiteralPath $WuUplugin), $WuUplugin)
+    } elseif (Test-Path $WuUplugin) {
         Rename-Item $WuUplugin "WeaponUpgrades.uplugin.disabled_for_build"
         $renamed = $true
         Write-Host "WeaponUpgrades.uplugin disabled for this build"

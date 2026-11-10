@@ -16,6 +16,7 @@
 #   P7 the WeaponUpgrades restore stays in finally; the disable stays inside try.
 #   P8 the thunk-gate call is preceded by a reset of the global exit code; null is a failure.
 #   P9 gate failures map to 21/22/23 and print the defective-deploy line.
+#   P10 -KeepWeaponUpgrades: default path renames (P7 restores); switch path renames nothing.
 # Text pins read files with full-line '#' comments and block comments removed. Every
 # searched-for token is built by CONCATENATION so this file cannot satisfy its own pins.
 # Mutants run in-file against the loaded text; each must turn its named pin red.
@@ -191,6 +192,21 @@ function Invoke-Checks([string]$W, [string]$T) {
     if (-not ($finBody.Contains('if ($ren' + 'amed) {') -and $finBody.Contains('Rename-Item $disabled "WeaponUpgrades' + '.uplugin"'))) { $r.Add('(P7) WeaponUpgrades restore is not in finally') }
     $iDis = Idx $W ('Rename-Item $WuUplugin "WeaponUpgrades.uplugin.disabled' + '_for_build"')
     if (-not ($iDis -gt $iTry -and $iDis -lt $iChild)) { $r.Add('(P7) the disable must be inside try, before the child call') }
+    # P10 -KeepWeaponUpgrades: default path renames (and P7 restores); switch path renames nothing;
+    # no rename of the plugin anywhere before the refusal.
+    $renameWu = 'Rename-Item $Wu' + 'Uplugin'
+    if ((Cnt $W ('[switch]$Keep' + 'WeaponUpgrades')) -ne 1) { $r.Add('(P10) -KeepWeaponUpgrades switch param missing') }
+    $mKeep = [regex]::Match($W, '(?s)if \(\$Keep' + 'WeaponUpgrades\) \{(.*?)\} elseif \(Test-Path \$WuUplugin\) \{\s*\n\s*' + [regex]::Escape($renameWu) + ' "')
+    if (-not $mKeep.Success) { $r.Add('(P10) the default rename must sit in the elseif-Test-Path branch directly after the keep branch') }
+    elseif ($mKeep.Groups[1].Value.Contains('Rename-' + 'Item')) { $r.Add('(P10) the keep branch must not rename anything') }
+    elseif (-not ($mKeep.Index -gt $iTry -and $mKeep.Index -lt $iChild)) { $r.Add('(P10) the keep/default branch must sit inside try before the child call') }
+    if ((Cnt $W $renameWu) -ne 1) { $r.Add("(P10) expected exactly one rename of the plugin, found $(Cnt $W $renameWu)") }
+    $both = 'Write-Host ("NSBUILD WU-' + 'BOTH '
+    $iBoth = Idx $W $both
+    $iHealEnd = Idx $W ('Rename-Item $stranded' + 'Wu')
+    if ((Cnt $W $both) -ne 1 -or $iBoth -lt $iHealEnd -or ($iTouch -ge 0 -and $iBoth -gt $iTouch)) { $r.Add('(P10) the both-files-present line must print once, after the self-heal and before the touch') }
+    $iFirstRen = Idx $W $renameWu
+    if ($iRefIf -ge 0 -and $iFirstRen -ge 0 -and $iFirstRen -lt $iRefIf) { $r.Add('(P1) a plugin rename precedes the refusal') }
     return $r
 }
 
@@ -199,7 +215,7 @@ try {
     $base = @(Invoke-Checks $text.W $text.T)
     if ($base.Count -gt 0) { foreach ($x in $base) { Write-Host "UHTGUARD BASELINE FAIL $x" }; $exitCode = 1 }
     else {
-        Write-Host 'UHTGUARD BASELINE GREEN: P1..P9 hold'
+        Write-Host 'UHTGUARD BASELINE GREEN: P1..P10 hold'
         $mutants = @(
             @{ N = 'W1 refusal no longer exits'; K = 'W'; E = 'P1'; F = ('$gameProcs.Count, $LockFile)' + "`n    exit 4"); R = '$gameProcs.Count, $LockFile)' }
             @{ N = 'W2 a touch before the refusal'; K = 'W'; E = 'P1'; F = '$lockPresent = Test-Path -LiteralPath $LockFile'; R = ("[System.IO.File]::SetLast" + "WriteTime('x', (Get-Date))`n" + '$lockPresent = Test-Path -LiteralPath $LockFile') }
@@ -219,6 +235,11 @@ try {
             @{ N = 'W15 catch path sets thunkOk'; K = 'W'; E = 'P9'; F = 'catch { Write-Host "NSBUILD GATE-B FAIL could not run: $($_.Exception.Message)" }'; R = 'catch { $thunkOk = $true }' }
             @{ N = 'W16 wrong-tree refusal no longer exits'; K = 'W'; E = 'P1'; F = ('$repoRoot, $canonicalRoot); exit 2' + '6 }'); R = '$repoRoot, $canonicalRoot) }' }
             @{ N = 'W17 WU heal moved back before the refusal'; K = 'W'; E = 'P1'; F = '$lockPresent = Test-Path -LiteralPath $LockFile'; R = ('if ($false) { Rename-Item $stranded' + "Wu 'x' }`n" + '$lockPresent = Test-Path -LiteralPath $LockFile') }
+            @{ N = 'K1 keep branch renames the plugin'; K = 'W'; E = 'P10'; F = '$KeepWeaponUpgrades) {'; R = ('$KeepWeaponUpgrades) {' + "`n        Rename-" + "Item `$disabled 'x'") }
+            @{ N = 'K2 default path never renames'; K = 'W'; E = 'P10'; F = '} elseif (Test-Path $WuUplugin) {'; R = '} elseif ($false) {' }
+            @{ N = 'K3 plugin rename before the refusal'; K = 'W'; E = 'P1'; F = '$lockPresent = Test-Path -LiteralPath $LockFile'; R = ('Rename-Item $Wu' + "Uplugin 'x'`n" + '$lockPresent = Test-Path -LiteralPath $LockFile') }
+            @{ N = 'K4 switch param removed'; K = 'W'; E = 'P10'; F = ('[switch]$Keep' + 'WeaponUpgrades'); R = '[string]$KeepX = ""' }
+            @{ N = 'K5 both-present line dropped'; K = 'W'; E = 'P10'; F = ('    Write-Host ("NSBUILD WU-' + 'BOTH '); R = '    Write-Host ("NSBUILD WU-X ' }
             @{ N = 'T1 derive from generated cpp'; K = 'T'; E = 'P5'; F = "-Filter '*.h' | Where-Object { `$_.Extension -eq '.h' }"; R = ("-Filter ('*.gen' + '.cpp')") }
             @{ N = 'T2 zero-expected main module passes'; K = 'T'; E = 'P5'; F = '            $fails.Add("NSTHUNK FAIL main module'; R = '            Out-Line ("NSTHUNK FAIL main module' }
             @{ N = 'T3 needle not class-qualified'; K = 'T'; E = 'P5'; F = "'ec' + `$fn + '@' + `$cls + '@@'"; R = "'ec' + `$fn + '@'" }
@@ -238,7 +259,7 @@ try {
             else { Write-Host "UHTGUARD GREEN (BAD) $($m.N): expected $($m.E), got: $($res -join ' | ')"; $bad++ }
         }
         if ($bad -gt 0) { Write-Host "UHTGUARD FAIL: $bad of $($mutants.Count) mutant(s) not caught"; $exitCode = 1 }
-        else { Write-Host "UHTGUARD PASS: P1..P9 hold; mutants caught $($mutants.Count)/$($mutants.Count)." }
+        else { Write-Host "UHTGUARD PASS: P1..P10 hold; mutants caught $($mutants.Count)/$($mutants.Count)." }
     }
 }
 finally {
