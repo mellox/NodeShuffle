@@ -7,6 +7,7 @@
 #include "NodeShuffle.h" // ns-h1b-notice: FNodeShufflePendingEntry, held by value in a member below
 #include "NodeShuffleMapMode.h" // RWG P1: ENodeShuffleMapMode, held by value in a member below
 #include "UObject/ObjectKey.h"  // RWG P4: FObjectKey, RwgClaimedOriginals
+#include "NodeShuffleLastRoll.h" // mcp-lastroll-1: FNodeShuffleLastRoll, held by value in a member below (plain C++, not reflected)
 struct FNodeShuffleRwgDensityState; // rwg-density-1 (2026-11-01, budget): NodeShuffleRwgDensityBudget.h, held by TSharedPtr below
 class AFGWaterVolume; // RWG P2b: RwgWaterVolumes cache (weak pointers only)
 #include "NodeShuffleSubsystem.generated.h"
@@ -1263,6 +1264,11 @@ private:
     void RwgDensityBudgetBegin(bool bToggleOn, const TArray<FVector>& Prefill); // samples the land lattice, pre-fills the cells with carried + pinned entries
     void RwgDensityBudgetEnd();                                                 // ROLLDENSITY census + ROLLDENSITY-CELL lines, then drops the state
     void RwgDensityOnRoll();                                        // RWGDENSITY trigger=roll + clears the stuck tracker (new layout guids)
+
+    // mcp-lastroll-1 (2026-11-10): roll censuses kept as data for McpSnapshot section lastRoll (NodeShuffleLastRoll.h). A plain member
+    // with no property macro: never saved, replicated or reflected. Written only by RollLayout (BeginRoll, its first statement) and
+    // RwgDensityBudgetEnd (ROLLDENSITY copies); read only by FNodeShuffleMcpReader through a const reference.
+    FNodeShuffleLastRoll LastRoll;
     void RwgEmitDensityCensus(const TCHAR* Trigger);                // RWGDENSITY: 10 x 10 grid of active entries / land samples
     bool RwgDensityLandSample(const NodeShuffleMapMode::FRwgGroundQuery& Q, double X, double Y); // the deal's land test (Outside, v3, slope)
     void RwgDensityPassHook(const TArray<FVector>& Pawns, float AttemptRadiusCm); // load-trigger RWGDENSITY + RWGSTUCK every 12th pass
