@@ -139,6 +139,11 @@ $effectGolden = @{
     'NodeShuffle.PointAtHere' = 'write'; 'NodeShuffle.DumpWells' = 'read'; 'NodeShuffle.WellProbe' = 'write'; 'NodeShuffle.WhereCaveNodes' = 'write'
 }
 $constPhrase = 'const ' + 'handler'
+# E (cold review regrade-1): every golden READ row is pinned at its SOURCE too -- each file its handler reaches in this module.
+$readSites = @{ 'NodeShuffle.DumpWells' = @('NodeShuffle\Private\NodeShuffleWellDump.cpp', 'NodeShuffle\Private\NodeShuffleWellCensus.cpp') }
+$readExtra = @(('ANodeShuffle' + 'Subsystem'), ('Raycast' + 'GroundAt('), ('Ensure' + 'CaveStoreLoaded'), ('Ensure' + 'WaterGridLoaded'),
+    ('IsKnown' + 'WaterCell'), ('Set' + 'Timer'), ('SaveString' + 'ToFile'), ('FFile' + 'Helper'), ('Register' + 'ManagedNode'),
+    ('Reset' + 'ManagedNodes'), ('PostChat' + 'Notice'))
 # P7: commands whose handler traces the ground. Here's handler is the LogHereCensus body inside the subsystem file.
 $gridSites = [ordered]@{
     'NodeShuffle.Here' = @('NodeShuffle\Private\NodeShuffleSubsystem.cpp', 'void ANodeShuffleSubsystem::LogHereCensus() const')
@@ -287,6 +292,14 @@ function Invoke-McpChecks($Txt, $Cod) {
         elseif ($effectGolden[$n] -ne $m.Groups[2].Value) { $f += "(E) $n effect $($m.Groups[2].Value), golden $($effectGolden[$n])" }
     }
     foreach ($g in $effectGolden.Keys) { if (-not $eSeen.ContainsKey($g)) { $f += "(E) golden effect row $g missing from the manifest" } }
+    foreach ($rn in $readSites.Keys) {
+        if ($effectGolden[$rn] -ne 'read') { $f += "(E) $rn has a read-site pin but is not golden read"; continue }
+        foreach ($rf in $readSites[$rn]) {
+            if (-not $Cod.Contains($rf)) { $f += "(E) read-site file $rf is not loaded"; continue }
+            foreach ($n in ($forbidden + $readExtra)) { if ((Count $Cod[$rf] $n) -ne 0) { $f += "(E) read row $rn reaches '$n' in $rf" } }
+        }
+    }
+    foreach ($g in $effectGolden.Keys) { if ($effectGolden[$g] -eq 'read' -and -not $readSites.ContainsKey($g)) { $f += "(E) golden read row $g has no source pin" } }
     foreach ($tbl in @('GNsMcpConfigKeys', 'GNsMcpConsole')) {
         $blk = [regex]::Match($d, $tbl + '\[\] = \{([\s\S]*?)\n    \};')
         if (-not $blk.Success) { $f += "(E) manifest table $tbl not found" }
@@ -499,6 +512,8 @@ $mutants = @(
     @{ Name = 'E5 a console note cites the const-signature phrase again'; Key = $D; Expect = 'E'; Find = 'Logs a census of every loaded resource well.'; Repl = ('Logs a census of every loaded resource well (' + $constPhrase + ').') }
     @{ Name = 'E6 a config note cites the phrase in upper case'; Key = $D; Expect = 'E'; Find = 'Read only by RollLayout (the new-location quota).'; Repl = ('Read only by RollLayout (the new-location quota; ' + $constPhrase.ToUpper() + ').') }
     @{ Name = 'E7 ProbeNearestNode gains a ground trace (grid learning) while touchesSave false'; Key = 'NodeShuffle\Private\NodeShuffleNodeProbe.cpp'; Expect = 'R'; Find = 'RunTotallyInsideProbe(W, E.Location, Subject, Inside);'; Repl = ('FVector GL; FRotator GR; bool bWet = false; ' + $groundCall + 'E.Location, E.Location.Z, nullptr, nullptr, GL, GR, bWet); RunTotallyInsideProbe(W, E.Location, Subject, Inside);') }
+    @{ Name = 'E8 DumpWells census reaches the subsystem'; Key = 'NodeShuffle\Private\NodeShuffleWellCensus.cpp'; Expect = 'E'; Find = 'Out.IteratorCores = Cores.Num();'; Repl = ('Out.IteratorCores = Cores.Num(); for (TActorIterator<' + 'ANodeShuffle' + 'Subsystem> SIt(World); SIt; ++SIt) { SIt->' + 'GetMap' + 'Mode(); }') }
+    @{ Name = 'E9 DumpWells handler traces'; Key = 'NodeShuffle\Private\NodeShuffleWellDump.cpp'; Expect = 'E'; Find = 'CollectWellCensus(World, C);'; Repl = ('CollectWellCensus(World, C); FHitResult H; World->' + 'Line' + 'TraceSingleByChannel(H, FVector::ZeroVector, FVector::UpVector, ECC_WorldStatic);') }
     @{ Name = 'X13 AuditPlacements back to save-safe (water-grid loader)'; Key = $D; Expect = 'R'; Find = '{ TEXT("NodeShuffle.AuditPlacements"), TEXT("write"), true, TEXT("structural"),'; Repl = '{ TEXT("NodeShuffle.AuditPlacements"), TEXT("write"), false, TEXT("none"),' }
     @{ Name = 'X14 WhereCaveNodes back to save-safe (cave-store loader)'; Key = $D; Expect = 'R'; Find = '{ TEXT("NodeShuffle.WhereCaveNodes"), TEXT("write"), true, TEXT("structural"),'; Repl = '{ TEXT("NodeShuffle.WhereCaveNodes"), TEXT("write"), false, TEXT("none"),' }
     @{ Name = 'LR20 reader loads a class';Key = $LRC; Expect = 'M3'; Find = 'const bool bCaptured = L.RollSeq > 0;'; Repl = ('const bool bCaptured = L.RollSeq > 0; ' + 'Load' + 'Class<UObject>(nullptr, TEXT("x"));') }
@@ -520,6 +535,16 @@ foreach ($m in $mutants) {
     if ($hits.Count -gt 0) { Write-Host "RED  (ok) $($m.Name)" }
     else { Write-Host "GREEN (BAD) $($m.Name): expected $($m.Expect), got: $($r -join ' | ')"; $bad++ }
 }
+# E10 (SELF-AUTHORED, coder, after the regrade-1 cold review; not reviewer text): a golden read row with no $readSites entry must
+# go red. The mutation is to THIS lint's own table (no source edit can reach it), so it runs outside the source-mutant loop: drop the
+# DumpWells read-site pin, run the checks on the unmutated tree, require an (E) hit, then restore the pin.
+$lintMutants = 1
+$savedSites = $readSites[[string]('NodeShuffle.' + 'DumpWells')]
+$readSites.Remove('NodeShuffle.' + 'DumpWells')
+$r = Invoke-McpChecks $text $code
+$readSites['NodeShuffle.' + 'DumpWells'] = $savedSites
+if (@($r | Where-Object { $_.StartsWith('(E)') -and $_.Contains('has no source pin') }).Count -gt 0) { Write-Host 'RED  (ok) E10 golden read row loses its source pin (self-authored, lint-table mutant)' }
+else { Write-Host "GREEN (BAD) E10 golden read row loses its source pin: got: $($r -join ' | ')"; $bad++ }
 if ($bad -gt 0) { Write-Host "FAIL: $bad mutant(s) not caught"; exit 1 }
-Write-Host "PASS: MCPCONTRACT lint -- M1..M5, R, E, C1..C4, F, L hold across $($text.Count) loaded files; mutants caught $($mutants.Count)/$($mutants.Count)."
+Write-Host "PASS: MCPCONTRACT lint -- M1..M5, R, E, C1..C4, F, L hold across $($text.Count) loaded files; mutants caught $($mutants.Count + $lintMutants)/$($mutants.Count + $lintMutants)."
 exit 0
