@@ -205,6 +205,9 @@ function Invoke-Checks([string]$W, [string]$T) {
     $iBoth = Idx $W $both
     $iHealEnd = Idx $W ('Rename-Item $stranded' + 'Wu')
     if ((Cnt $W $both) -ne 1 -or $iBoth -lt $iHealEnd -or ($iTouch -ge 0 -and $iBoth -gt $iTouch)) { $r.Add('(P10) the both-files-present line must print once, after the self-heal and before the touch') }
+    $ref27 = 'if (-not $Keep' + 'WeaponUpgrades) { Write-Host "NSBUILD REFUSE wuBoth=True'
+    $i27 = Idx $W $ref27
+    if ((Cnt $W $ref27) -ne 1 -or $i27 -lt $iBoth -or ($iTouch -ge 0 -and $i27 -gt $iTouch) -or -not [regex]::IsMatch($W.Substring([Math]::Max(0, $i27)), '^[^\n]*; exit 2' + '7 \}')) { $r.Add('(P10) the both-files-present refusal (exit 27, switch off) must precede the header touch') }
     $iFirstRen = Idx $W $renameWu
     if ($iRefIf -ge 0 -and $iFirstRen -ge 0 -and $iFirstRen -lt $iRefIf) { $r.Add('(P1) a plugin rename precedes the refusal') }
     return $r
@@ -235,11 +238,12 @@ try {
             @{ N = 'W15 catch path sets thunkOk'; K = 'W'; E = 'P9'; F = 'catch { Write-Host "NSBUILD GATE-B FAIL could not run: $($_.Exception.Message)" }'; R = 'catch { $thunkOk = $true }' }
             @{ N = 'W16 wrong-tree refusal no longer exits'; K = 'W'; E = 'P1'; F = ('$repoRoot, $canonicalRoot); exit 2' + '6 }'); R = '$repoRoot, $canonicalRoot) }' }
             @{ N = 'W17 WU heal moved back before the refusal'; K = 'W'; E = 'P1'; F = '$lockPresent = Test-Path -LiteralPath $LockFile'; R = ('if ($false) { Rename-Item $stranded' + "Wu 'x' }`n" + '$lockPresent = Test-Path -LiteralPath $LockFile') }
-            @{ N = 'K1 keep branch renames the plugin'; K = 'W'; E = 'P10'; F = '$KeepWeaponUpgrades) {'; R = ('$KeepWeaponUpgrades) {' + "`n        Rename-" + "Item `$disabled 'x'") }
+            @{ N = 'K1 keep branch renames the plugin'; K = 'W'; E = 'P10'; F = 'if ($KeepWeaponUpgrades) {'; R = ('if ($KeepWeaponUpgrades) {' +"`n        Rename-" + "Item `$disabled 'x'") }
             @{ N = 'K2 default path never renames'; K = 'W'; E = 'P10'; F = '} elseif (Test-Path $WuUplugin) {'; R = '} elseif ($false) {' }
             @{ N = 'K3 plugin rename before the refusal'; K = 'W'; E = 'P1'; F = '$lockPresent = Test-Path -LiteralPath $LockFile'; R = ('Rename-Item $Wu' + "Uplugin 'x'`n" + '$lockPresent = Test-Path -LiteralPath $LockFile') }
             @{ N = 'K4 switch param removed'; K = 'W'; E = 'P10'; F = ('[switch]$Keep' + 'WeaponUpgrades'); R = '[string]$KeepX = ""' }
             @{ N = 'K5 both-present line dropped'; K = 'W'; E = 'P10'; F = ('    Write-Host ("NSBUILD WU-' + 'BOTH '); R = '    Write-Host ("NSBUILD WU-X ' }
+            @{ N = 'K6 both-present refusal removed'; K = 'W'; E = 'P10'; F = ('no build started"; exit 2' + '7 }'); R = 'no build started" }' }
             @{ N = 'T1 derive from generated cpp'; K = 'T'; E = 'P5'; F = "-Filter '*.h' | Where-Object { `$_.Extension -eq '.h' }"; R = ("-Filter ('*.gen' + '.cpp')") }
             @{ N = 'T2 zero-expected main module passes'; K = 'T'; E = 'P5'; F = '            $fails.Add("NSTHUNK FAIL main module'; R = '            Out-Line ("NSTHUNK FAIL main module' }
             @{ N = 'T3 needle not class-qualified'; K = 'T'; E = 'P5'; F = "'ec' + `$fn + '@' + `$cls + '@@'"; R = "'ec' + `$fn + '@'" }

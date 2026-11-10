@@ -25,13 +25,15 @@
 # A failing gate does not restore anything; it exits with its own code (table below) and
 # says the deployed DLL must be treated as defective.
 #
-# EXIT CODES. Own: 4 refused (lock present or game running, nothing touched); 20 the child
+# EXIT CODES. Own: 4 refused (lock present or game running; no header or WeaponUpgrades file touched -- a dead-PID lock may already have been deleted by the self-heal); 20 the child
 # returned no exit code; 21 header-tool evidence gate failed; 22 reflection-thunk gate failed;
 # 23 both gates failed; 25 the lever found no header to touch. Any other value is passed
 # through from build_mod.ps1. MEASURED 2026-11-10: build_mod runs with ErrorActionPreference=Stop,
 # so every 'Write-Error ...; exit N' there exits 1; reachable child codes are 1 (build failed, sync
 # failed, game/lock/named UBT process), 4 (UBT running as dotnet.exe only), 16, 17.
 # 26 refused: the repo root is not C:\Claude\Projects\<ModName>, the only tree build_mod.ps1 syncs.
+# 27 refused: WeaponUpgrades.uplugin and its .disabled_for_build both exist and -KeepWeaponUpgrades
+#    is absent (the set-aside rename would fail); no header touched, no build started.
 #
 # Test seams: -LockFile is used ONLY for this wrapper's own self-heal and refusal; it is never
 # passed to build_mod.ps1, which always uses the real lock. -EvidenceSelfTest <log> runs only
@@ -127,6 +129,7 @@ if ((Test-Path $strandedWu) -and -not (Test-Path $WuUplugin)) {
 $wuBoth = (Test-Path -LiteralPath $WuUplugin) -and (Test-Path -LiteralPath $strandedWu)
 if ($wuBoth) {
     Write-Host ("NSBUILD WU-BOTH upluginPresent=True disabledPresent=True keepWeaponUpgrades={0} -- self-heal did not fire; neither file touched here" -f [bool]$KeepWeaponUpgrades)
+    if (-not $KeepWeaponUpgrades) { Write-Host "NSBUILD REFUSE wuBoth=True keepWeaponUpgrades=False -- the set-aside rename target already exists; no header touched, no build started"; exit 27 }
 }
 
 # LEVER: mtime-only touch of every reflected repo header.
