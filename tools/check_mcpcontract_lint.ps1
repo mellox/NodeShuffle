@@ -18,6 +18,8 @@
 #      whose handler traces the ground without suppressing grid learning; the envelope on Describe/Help/NotReady/ErrorJson
 #   C4 MARKERS: every NodeShuffle.cpp "packet marker (" line and the LOADED tag appear in NodeShuffleBuildMarkers.h, same order, and this
 #      packet's marker is the newest; McpDescribe's buildMarker reads the header's newest entry, never a date literal
+#   F  CONTRACT REVISION 4 (R4.4, finite numbers only): near skips a Layout entry with a non-finite location component inside its Layout
+#      loop before the distance math, emits the skip count, help names it; a non-finite pawn location is refused as no-player
 # Every forbidden needle is BUILT BY CONCATENATION so this file cannot satisfy or trip its own checks. Mutants run in-file.
 # Exit 0 = all hold; 1 = a rule or mutant fails; 2 = a pinned FILE is missing.
 
@@ -91,6 +93,14 @@ $pointeeRx = @(
     ('\bLiveNode\s*->(?!\s*GetClass\(\)' + ')'),
     ('\bFoundPawn\s*->(?!\s*GetActorLocation\(\)' + ')')
 )
+# F: finite-number guards in near (contract Revision 4, R4.4).
+$nearHead = 'FString FNodeShuffleMcpReader::' + 'Near('
+$finLoop  = 'for (int32 I = 0; I < Sub.Layout.' + 'Num(); ++I)'
+$finGuard = 'if (!FMath::IsFinite(E.' + 'Location.X) || !FMath::IsFinite(E.Location.Y) || !FMath::IsFinite(E.Location.Z)) { ++NonFiniteSkipped; continue; }'
+$finDx    = 'const double Dx = E.' + 'Location.X - XCm;'
+$finEmit  = 'Root->SetNumberField(TEXT("nonFinite' + 'Skipped"), NonFiniteSkipped);'
+$finHelp  = 'nonFinite' + 'Skipped ('
+$finPawn  = 'if (!FMath::IsFinite(P.' + 'X) || !FMath::IsFinite(P.Y))'
 $errKinds = 'bad-args|no-world|no-player|not-ready|unsupported|too-large'
 # GOLDEN (touchesSave/saveEffect) from the review's R2.1 table. Any difference in the manifest is RED.
 $golden = @{
@@ -253,12 +263,19 @@ function Invoke-McpChecks($Txt, $Cod) {
     $own = '2026-11-09-' + 'mcp-contract-1'
     if ($hdrTags.Count -eq 0 -or $hdrTags[-1] -ne $own -or (Count $nsm $own) -ne 1) { $f += '(C4) this packet marker must be the newest, once, on its own line' }
     if ((Count $Txt[$pin.desc] $newestExpr) -ne 1 -or [regex]::IsMatch($Txt[$pin.desc], 'TEXT\("20\d\d-\d\d-\d\d-')) { $f += '(C4) buildMarker must come from the markers header (newest entry), never a literal in Describe' }
+    # ---- F (contract R4.4: finite numbers only)
+    $nearC = FnBody $Cod[$pin.snap] $nearHead
+    if ((Count $snapC $finGuard) -ne 1 -or -not (Ordered $nearC @($finLoop, $finGuard, $finDx))) { $f += '(F) near must skip a Layout entry with a non-finite location component inside its Layout loop, before the distance math' }
+    $nearT = FnBody $Txt[$pin.snap] $nearHead
+    if ((Count $Txt[$pin.snap] $finEmit) -ne 1 -or (Count $nearT $finEmit) -ne 1) { $f += '(F) near must emit the non-finite skip count' }
+    if ((Count (FnBody $Txt[$pin.snap] 'FString FNodeShuffleMcpReader::Help()') $finHelp) -ne 1) { $f += '(F) help must name the non-finite skip count' }
+    if ((Count $nearC $finPawn) -ne 1 -or -not (Ordered $nearC @('FoundPawn->GetActorLocation();', $finPawn, 'XCm = P.X;'))) { $f += '(F) near must refuse a pawn location with a non-finite X or Y before using it as the point' }
     return ,$f
 }
 
 $base = Invoke-McpChecks $text $code
 if ($base.Count -gt 0) { $base | ForEach-Object { Write-Host "FAIL$_" }; Write-Host "MCPCONTRACT lint: FAIL -- baseline $($base.Count) problem(s)"; exit 1 }
-Write-Host "BASELINE GREEN: M1..M5, R, C1..C4 hold across $($text.Count) loaded files"
+Write-Host "BASELINE GREEN: M1..M5, R, C1..C4, F hold across $($text.Count) loaded files"
 
 $H = $pin.hdr; $D = $pin.desc; $S = $pin.snap; $CMN = $pin.com; $MK = $pin.mark; $NS = $pin.nsmod; $CF = $pin.cfg; $SG = $pin.sg
 $BC = 'NodeShuffle\NodeShuffle.Build.cs'; $WD = 'NodeShuffle\Private\NodeShuffleWellDump.cpp'
@@ -301,14 +318,18 @@ $mutants = @(
     @{ Name = 'X4 SeedHere graded read / save-safe'; Key = $D; Expect = 'R'; Find = '{ TEXT("NodeShuffle.SeedHere"), TEXT("write"), true, TEXT("structural"),'; Repl = '{ TEXT("NodeShuffle.SeedHere"), TEXT("read"), false, TEXT("none"),' }
     @{ Name = 'X5 world pointee destroys an actor'; Key = $S; Expect = 'M3'; Find = 'int32 ModdedOrigin = 0;'; Repl = ('int32 ModdedOrigin = 0; Sub.GetWorld()->' + 'Destroy' + 'Actor(nullptr);') }
     @{ Name = 'X6 Here back to save-safe'; Key = $D; Expect = 'R'; Find = '{ TEXT("NodeShuffle.Here"), TEXT("write"), true, TEXT("structural"),'; Repl = '{ TEXT("NodeShuffle.Here"), TEXT("write"), false, TEXT("none"),' }
-    @{ Name = 'X7 errorKind dropped from NotReady'; Key = $S; Expect = 'R'; Find = '    Root->SetStringField(TEXT("errorKind"), Kind);
-    Root->SetStringField(TEXT("error"), Reason);'; Repl = '    Root->SetStringField(TEXT("error"), Reason);' }
+    @{ Name = 'X7 errorKind dropped from NotReady'; Key = $S; Expect = 'R'; Find = "    Root->SetStringField(TEXT(""errorKind""), Kind);`n    Root->SetStringField(TEXT(""error""), Reason);"; Repl = '    Root->SetStringField(TEXT("error"), Reason);' }
     @{ Name = 'X8 unknown errorKind'; Key = $S; Expect = 'R'; Find = 'return ErrorJson(TEXT("bad-args"), TEXT("radiusM must be greater than 0"));'; Repl = 'return ErrorJson(TEXT("oops"), TEXT("radiusM must be greater than 0"));' }
     @{ Name = 'X9 RerollNow graded gameplay'; Key = $D; Expect = 'R'; Find = '{ TEXT("RerollNow"), TEXT("tick"), true, TEXT("structural"),'; Repl = '{ TEXT("RerollNow"), TEXT("tick"), true, TEXT("gameplay"),' }
     @{ Name = 'X10 envelope dropped from ErrorJson'; Key = $S; Expect = 'R'; Find = "    AddEnvelope(Root);`n    Root->SetStringField(TEXT(""errorKind""), Kind);`n    Root->SetStringField(TEXT(""error""), Message);"; Repl = "    Root->SetStringField(TEXT(""errorKind""), Kind);`n    Root->SetStringField(TEXT(""error""), Message);" }
     @{ Name = 'X11 PointAtHere back to read (water-grid symmetry)'; Key = $D; Expect = 'R'; Find = '{ TEXT("NodeShuffle.PointAtHere"), TEXT("write"), true,'; Repl = '{ TEXT("NodeShuffle.PointAtHere"), TEXT("read"), true,' }
     @{ Name = 'X12 pawn pointee call beyond its location'; Key = $S; Expect = 'R'; Find = 'const FVector P = FoundPawn->GetActorLocation();'; Repl = ('const FVector P = FoundPawn->GetActorLocation(); FoundPawn' + '->GetName();') }
     @{ Name = 'N33 the uplugin gains an MCP plugin dependency'; Key = '..\NodeShuffle.uplugin'; Expect = 'M2'; Find = '"Plugins": ['; Repl = ('"Plugins": [ { "Name": "' + $mcpModName + '" },') }
+    @{ Name = 'F1 near drops the finite guard'; Key = $S; Expect = 'F'; Find = $finGuard; Repl = '' }
+    @{ Name = 'F2 finite guard moved after the distance math'; Key = $S; Expect = 'F'; Find = ($finGuard + "`n        " + $finDx); Repl = ($finDx + "`n        " + $finGuard) }
+    @{ Name = 'F3 nonFiniteSkipped not emitted'; Key = $S; Expect = 'F'; Find = $finEmit; Repl = '' }
+    @{ Name = 'F4 help loses the nonFiniteSkipped clause'; Key = $S; Expect = 'F'; Find = $finHelp; Repl = 'returned (' }
+    @{ Name = 'F5 pawn-location finite guard disabled'; Key = $S; Expect = 'F'; Find = $finPawn; Repl = 'if (false)' }
 )
 $bad = 0
 foreach ($m in $mutants) {
@@ -324,5 +345,5 @@ foreach ($m in $mutants) {
     else { Write-Host "GREEN (BAD) $($m.Name): expected $($m.Expect), got: $($r -join ' | ')"; $bad++ }
 }
 if ($bad -gt 0) { Write-Host "FAIL: $bad mutant(s) not caught"; exit 1 }
-Write-Host "PASS: MCPCONTRACT lint -- M1..M5, R, C1..C4 hold across $($text.Count) loaded files; mutants caught $($mutants.Count)/$($mutants.Count)."
+Write-Host "PASS: MCPCONTRACT lint -- M1..M5, R, C1..C4, F hold across $($text.Count) loaded files; mutants caught $($mutants.Count)/$($mutants.Count)."
 exit 0

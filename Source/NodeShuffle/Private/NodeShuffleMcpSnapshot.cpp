@@ -109,7 +109,8 @@ FString FNodeShuffleMcpReader::Help()
         TEXT("the index among player controllers that hold a valid pawn). Optional: radiusM (default 300, cap 2000), resource (at most 64 characters, ")
         TEXT("case-insensitive substring of the assigned or original resource short name), count (default 40, cap 80), offset (default 0). ")
         TEXT("Distance is horizontal (XY). Top-level: contract, mod, buildMarker, ready, section, pointSource, xCm, yCm, radiusM, radiusCapped, ")
-        TEXT("resourceFilter, count, countCapped, offset, distanceMode, layoutEntries, inRadius, returned, truncated (rows dropped by the 64 KB cap), ")
+        TEXT("resourceFilter, count, countCapped, offset, distanceMode, layoutEntries, inRadius, nonFiniteSkipped (layout entries left out of near ")
+        TEXT("because a location component was not a finite number), returned, truncated (rows dropped by the 64 KB cap), ")
         TEXT("hasMore, cappedBy, rows. Row: guid, assignedResource, originalResource, nodeClass, xCm, yCm, zCm, distM, active, pinned, rayCasted, ")
         TEXT("isNewNode, underground, rwgCave, spawnedActor, spawnedClass, originalObject. spawnedActor: a valid actor is held in SpawnedNodes ")
         TEXT("for this entry's guid (new-location entries only; an original kept in place, isNewNode false, is never held there)."));
@@ -218,6 +219,7 @@ FString FNodeShuffleMcpReader::Near(const ANodeShuffleSubsystem& Sub, const TSha
         }
         if (!FoundPawn) { OutBranch += TEXT(" error: no player pawn"); return ErrorJson(TEXT("no-player"), FString::Printf(TEXT("player %d: only %d player controller(s) hold a valid pawn"), PlayerIndex, Seen)); }
         const FVector P = FoundPawn->GetActorLocation();
+        if (!FMath::IsFinite(P.X) || !FMath::IsFinite(P.Y)) { OutBranch += TEXT(" error: pawn location not finite"); return ErrorJson(TEXT("no-player"), FString::Printf(TEXT("player %d: the pawn location has a non-finite X or Y component"), PlayerIndex)); }
         XCm = P.X;
         YCm = P.Y;
         PointSource = TEXT("player");
@@ -226,9 +228,11 @@ FString FNodeShuffleMcpReader::Near(const ANodeShuffleSubsystem& Sub, const TSha
     const double RadiusCm = RadiusM * 100.0;
     const double RadiusSq = RadiusCm * RadiusCm;
     TArray<TPair<double, int32>> Hits; // (horizontal distance squared cm, Layout index)
+    int32 NonFiniteSkipped = 0; // contract R4.4: replies carry finite numbers only
     for (int32 I = 0; I < Sub.Layout.Num(); ++I)
     {
         const FNodeShuffleEntry& E = Sub.Layout[I];
+        if (!FMath::IsFinite(E.Location.X) || !FMath::IsFinite(E.Location.Y) || !FMath::IsFinite(E.Location.Z)) { ++NonFiniteSkipped; continue; }
         const double Dx = E.Location.X - XCm;
         const double Dy = E.Location.Y - YCm;
         const double D2 = Dx * Dx + Dy * Dy;
@@ -289,6 +293,7 @@ FString FNodeShuffleMcpReader::Near(const ANodeShuffleSubsystem& Sub, const TSha
         Root->SetStringField(TEXT("distanceMode"), TEXT("xy"));
         Root->SetNumberField(TEXT("layoutEntries"), Sub.Layout.Num());
         Root->SetNumberField(TEXT("inRadius"), Hits.Num());
+        Root->SetNumberField(TEXT("nonFiniteSkipped"), NonFiniteSkipped);
         Root->SetNumberField(TEXT("offset"), Start);
         Root->SetNumberField(TEXT("returned"), Keep);
         Root->SetBoolField(TEXT("hasMore"), Start + Keep < Hits.Num());
@@ -301,7 +306,7 @@ FString FNodeShuffleMcpReader::Near(const ANodeShuffleSubsystem& Sub, const TSha
         if (Keep == 0) { OutBranch += TEXT(" error: over cap with no rows"); return ErrorJson(TEXT("too-large"), TEXT("near: output exceeds the 64 KB cap even with no rows")); }
         Keep = FMath::Min(Keep - 1, static_cast<int32>(static_cast<int64>(Keep) * MaxOutputBytes / Bytes));
     }
-    OutBranch += FString::Printf(TEXT(" point %s inRadius %d offset %d returned %d"), PointSource, Hits.Num(), Start, Keep);
+    OutBranch += FString::Printf(TEXT(" point %s inRadius %d nonFiniteSkipped %d offset %d returned %d"), PointSource, Hits.Num(), NonFiniteSkipped, Start, Keep);
     return Out;
 }
 
