@@ -135,7 +135,7 @@ $golden = @{
 # E (mcp-regrade-1): GOLDEN effect per console command, from the audit in the regrade handoff. read = the tool may run it on a real save.
 $effectGolden = @{
     'NodeShuffle.Here' = 'write'; 'NodeShuffle.NearestCave' = 'write'; 'NodeShuffle.SeedHere' = 'write'; 'NodeShuffle.AuditPlacements' = 'write'
-    'NodeShuffle.DumpExtractors' = 'write'; 'NodeShuffle.DumpLayout' = 'write'; 'NodeShuffle.ProbeNearestNode' = 'read'
+    'NodeShuffle.DumpExtractors' = 'write'; 'NodeShuffle.DumpLayout' = 'write'; 'NodeShuffle.ProbeNearestNode' = 'write'
     'NodeShuffle.PointAtHere' = 'write'; 'NodeShuffle.DumpWells' = 'read'; 'NodeShuffle.WellProbe' = 'write'; 'NodeShuffle.WhereCaveNodes' = 'write'
 }
 $constPhrase = 'const ' + 'handler'
@@ -144,8 +144,8 @@ $gridSites = [ordered]@{
     'NodeShuffle.Here' = @('NodeShuffle\Private\NodeShuffleSubsystem.cpp', 'void ANodeShuffleSubsystem::LogHereCensus() const')
     'NodeShuffle.PointAtHere' = @('NodeShuffle\Private\NodeShufflePointAtHere.cpp', '')
     'NodeShuffle.WellProbe' = @('NodeShuffle\Private\NodeShuffleWellMemberProbe.cpp', '')
-    # mcp-regrade-1: ProbeNearestNode is graded read on the audit's finding that it never traces the ground; a ground trace added
-    # to its file without grid suppression must turn it write / touchesSave true like its three siblings.
+    # mcp-regrade-1 (coordinator overrule): ProbeNearestNode stays write (engine-side query effects unmeasured; rule E pins it, mutant E4);
+    # a ground trace added to its file without grid suppression must also turn it touchesSave true like its three siblings.
     'NodeShuffle.ProbeNearestNode' = @('NodeShuffle\Private\NodeShuffleNodeProbe.cpp', '')
 }
 $groundCall = 'RaycastGround' + 'At('
@@ -495,10 +495,10 @@ $mutants = @(
     @{ Name = 'E1 WhereCaveNodes back to read (lazy cave-store load)'; Key = $D; Expect = 'E'; Find = '{ TEXT("NodeShuffle.WhereCaveNodes"), TEXT("write"), true,'; Repl = '{ TEXT("NodeShuffle.WhereCaveNodes"), TEXT("read"), true,' }
     @{ Name = 'E2 NearestCave back to read (map-mode latch)'; Key = $D; Expect = 'E'; Find = '{ TEXT("NodeShuffle.NearestCave"), TEXT("write"), false,'; Repl = '{ TEXT("NodeShuffle.NearestCave"), TEXT("read"), false,' }
     @{ Name = 'E3 DumpExtractors back to read (object loads)'; Key = $D; Expect = 'E'; Find = '{ TEXT("NodeShuffle.DumpExtractors"), TEXT("write"), false,'; Repl = '{ TEXT("NodeShuffle.DumpExtractors"), TEXT("read"), false,' }
-    @{ Name = 'E4 ProbeNearestNode effect drifts from its golden read'; Key = $D; Expect = 'E'; Find = '{ TEXT("NodeShuffle.ProbeNearestNode"), TEXT("read"), false,'; Repl = '{ TEXT("NodeShuffle.ProbeNearestNode"), TEXT("write"), false,' }
+    @{ Name = 'E4 ProbeNearestNode loosened to read (unmeasured engine queries)'; Key = $D; Expect = 'E'; Find = '{ TEXT("NodeShuffle.ProbeNearestNode"), TEXT("write"), false,'; Repl = '{ TEXT("NodeShuffle.ProbeNearestNode"), TEXT("read"), false,' }
     @{ Name = 'E5 a console note cites the const-signature phrase again'; Key = $D; Expect = 'E'; Find = 'Logs a census of every loaded resource well.'; Repl = ('Logs a census of every loaded resource well (' + $constPhrase + ').') }
     @{ Name = 'E6 a config note cites the phrase in upper case'; Key = $D; Expect = 'E'; Find = 'Read only by RollLayout (the new-location quota).'; Repl = ('Read only by RollLayout (the new-location quota; ' + $constPhrase.ToUpper() + ').') }
-    @{ Name = 'E7 ProbeNearestNode gains a ground trace (grid learning) while graded read'; Key = 'NodeShuffle\Private\NodeShuffleNodeProbe.cpp'; Expect = 'R'; Find = 'RunTotallyInsideProbe(W, E.Location, Subject, Inside);'; Repl = ('FVector GL; FRotator GR; bool bWet = false; ' + $groundCall + 'E.Location, E.Location.Z, nullptr, nullptr, GL, GR, bWet); RunTotallyInsideProbe(W, E.Location, Subject, Inside);') }
+    @{ Name = 'E7 ProbeNearestNode gains a ground trace (grid learning) while touchesSave false'; Key = 'NodeShuffle\Private\NodeShuffleNodeProbe.cpp'; Expect = 'R'; Find = 'RunTotallyInsideProbe(W, E.Location, Subject, Inside);'; Repl = ('FVector GL; FRotator GR; bool bWet = false; ' + $groundCall + 'E.Location, E.Location.Z, nullptr, nullptr, GL, GR, bWet); RunTotallyInsideProbe(W, E.Location, Subject, Inside);') }
     @{ Name = 'X13 AuditPlacements back to save-safe (water-grid loader)'; Key = $D; Expect = 'R'; Find = '{ TEXT("NodeShuffle.AuditPlacements"), TEXT("write"), true, TEXT("structural"),'; Repl = '{ TEXT("NodeShuffle.AuditPlacements"), TEXT("write"), false, TEXT("none"),' }
     @{ Name = 'X14 WhereCaveNodes back to save-safe (cave-store loader)'; Key = $D; Expect = 'R'; Find = '{ TEXT("NodeShuffle.WhereCaveNodes"), TEXT("write"), true, TEXT("structural"),'; Repl = '{ TEXT("NodeShuffle.WhereCaveNodes"), TEXT("write"), false, TEXT("none"),' }
     @{ Name = 'LR20 reader loads a class';Key = $LRC; Expect = 'M3'; Find = 'const bool bCaptured = L.RollSeq > 0;'; Repl = ('const bool bCaptured = L.RollSeq > 0; ' + 'Load' + 'Class<UObject>(nullptr, TEXT("x"));') }
