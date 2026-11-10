@@ -57,8 +57,7 @@ if (-not (Test-Path -LiteralPath $SourceRoot -PathType Container)) {
         $skipped = 0
         foreach ($f in $headers) {
             $t = [System.IO.File]::ReadAllText($f.FullName) -replace "`r`n", "`n"
-            $t = [regex]::Replace($t, '/\*.*?\*/', ' ', 'Singleline')
-            $t = [regex]::Replace($t, '//[^\n]*', '')
+            $t = [regex]::Replace($t, '"(?:\\.|[^"\\\n])*"|//[^\n]*|/\*.*?\*/', { param($x) if ($x.Value[0] -eq '"') { '""' } else { ' ' } }, 'Singleline')
             foreach ($m in [regex]::Matches($t, '(?m)^[ \t]*' + [regex]::Escape($macro))) {
                 $i = $m.Index + $m.Length; $depth = 1
                 while ($i -lt $t.Length -and $depth -gt 0) {
@@ -73,9 +72,8 @@ if (-not (Test-Path -LiteralPath $SourceRoot -PathType Container)) {
                 if ($p -lt 0) { $fails.Add("NSTHUNK FAIL derive: no declaration after a UFUNCTION in $($f.Name)"); continue }
                 $id = [regex]::Match($rest.Substring(0, $p), '([A-Za-z_][A-Za-z0-9_]*)\s*$')
                 if (-not $id.Success) { $fails.Add("NSTHUNK FAIL derive: no function name after a UFUNCTION in $($f.Name)"); continue }
-                $decls = [regex]::Matches($t.Substring(0, $m.Index), '(?m)^[ \t]*(?:class|struct)[ \t]+(' + $api + '[ \t]+)?([A-Za-z_][A-Za-z0-9_]*)[^;\n]*$')
-                if ($decls.Count -eq 0) { $fails.Add("NSTHUNK FAIL derive: no owning class for $($id.Groups[1].Value) in $($f.Name)"); continue }
-                $owner = $decls[$decls.Count - 1]
+                $owner = $null; foreach ($d in [regex]::Matches($t, '(?m)^[ \t]*(?:class|struct)[ \t]+(' + $api + '[ \t]+)?([A-Za-z_][A-Za-z0-9_]*)[^;{]*\{')) { if ($d.Index -ge $m.Index) { break }; $j = $d.Index + $d.Length; $dd = 1; while ($j -lt $t.Length -and $dd -gt 0) { if ($t[$j] -eq '{') { $dd++ } elseif ($t[$j] -eq '}') { $dd-- }; $j++ }; if ($j -gt $m.Index) { $owner = $d } }
+                if (-not $owner) { $fails.Add("NSTHUNK FAIL derive: no enclosing class for $($id.Groups[1].Value) in $($f.Name)"); continue }
                 $qual = $owner.Groups[2].Value + '::' + $id.Groups[1].Value
                 if ($owner.Groups[1].Success) { $list.Add($qual) } else { $notProvable.Add("$mod $qual") }
             }
@@ -86,7 +84,7 @@ if (-not (Test-Path -LiteralPath $SourceRoot -PathType Container)) {
     if (-not $expected.ContainsKey($MainModule)) { $fails.Add("NSTHUNK FAIL derive: main module folder '$MainModule' not found under $SourceRoot") }
 }
 foreach ($u in $notProvable) {
-    Out-Line "NSTHUNK NOT-PROVABLE $u -- declared on a class without the module export macro; this probe cannot see its thunk (not checked, not passed)"
+    Out-Line "NSTHUNK NOT-PROVABLE $u -- the owner resolved for this UFUNCTION has no module export macro on its declaration line; not checked, not passed"
 }
 Out-Line 'NSTHUNK SCOPE only UFUNCTIONs on classes declared with the module export macro are visible to this probe; non-exported classes are outside what it can see'
 
@@ -159,6 +157,6 @@ foreach ($mod in @($expected.Keys | Sort-Object)) {
     $totalExpected += $list.Count; $totalFound += $found
     Out-Line ("NSTHUNK MODULE {0} expected={1} found={2}" -f $mod, $list.Count, $found)
 }
-Out-Line ("NSTHUNK SUMMARY expected={0} found={1} failures={2}" -f $totalExpected, $totalFound, $fails.Count)
+Out-Line ("NSTHUNK SUMMARY expected={0} found={1} notProvable={2} failures={3}" -f $totalExpected, $totalFound, $notProvable.Count, $fails.Count)
 foreach ($x in $fails) { Out-Line $x }
 if ($fails.Count -eq 0) { exit 0 } else { exit 1 }

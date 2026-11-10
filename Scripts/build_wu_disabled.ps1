@@ -12,7 +12,7 @@
 # module only when a reflected header is newer than the module's UHT Timestamp (or that file
 # is missing), every build of a target re-stamps every module, and the robocopy sync inside
 # build_mod.ps1 preserves repo mtimes. So, BEFORE the child build:
-#   - refuse (exit 4, touching nothing) if the build lock exists or the game is running;
+#   - refuse (exit 4, no header or WeaponUpgrades file touched) if the build lock exists or the game is running;
 #   - set LastWriteTime = now on every repo Source\ header containing the GENERATED_BODY
 #     macro (mtime only; content and git status unchanged), so the synced copies are newer
 #     than any stamp. The stamp delete was NOT chosen: it would happen before the sync and
@@ -28,8 +28,10 @@
 # EXIT CODES. Own: 4 refused (lock present or game running, nothing touched); 20 the child
 # returned no exit code; 21 header-tool evidence gate failed; 22 reflection-thunk gate failed;
 # 23 both gates failed; 25 the lever found no header to touch. Any other value is passed
-# through from build_mod.ps1 (1 build failed, 2 game running, 3 sync, 4 lock/UBT busy,
-# 16 AT pre gate refused, 17 deployed but AT post gate failed). Gates run only after child 0.
+# through from build_mod.ps1. MEASURED 2026-11-10: build_mod runs with ErrorActionPreference=Stop,
+# so every 'Write-Error ...; exit N' there exits 1; reachable child codes are 1 (build failed, sync
+# failed, game/lock/named UBT process), 4 (UBT running as dotnet.exe only), 16, 17.
+# 26 refused: the repo root is not C:\Claude\Projects\<ModName>, the only tree build_mod.ps1 syncs.
 #
 # Test seams: -LockFile is used ONLY for this wrapper's own self-heal and refusal; it is never
 # passed to build_mod.ps1, which always uses the real lock. -EvidenceSelfTest <log> runs only
@@ -41,7 +43,7 @@ param(
     [string]$WuUplugin = "C:\Claude\Projects\SatisfactoryModLoader\Mods\WeaponUpgrades\WeaponUpgrades.uplugin",
     [string]$LockFile = "C:\Claude\Projects\_team\BUILD-LOCK.txt",
     [string]$AlpakitLog = (Join-Path $env:TEMP ('alpakit_' + $ModName + '.log')),
-    [string]$DeployedDir = "C:\Program Files (x86)\Steam\steamapps\common\Satisfactory\FactoryGame\Mods\NodeShuffle\Binaries\Win64",
+    [string]$DeployedDir = ("C:\Program Files (x86)\Steam\steamapps\common\Satisfactory\FactoryGame\Mods\" + $ModName + "\Binaries\Win64"),
     [string]$EvidenceSelfTest = ""
 )
 $ErrorActionPreference = "Stop"
@@ -49,6 +51,8 @@ $wrapperStart = Get-Date
 $exit = 1
 $renamed = $false
 $repoRoot = Split-Path -Parent $PSScriptRoot
+$canonicalRoot = Join-Path 'C:\Claude\Projects' $ModName
+if ($repoRoot.TrimEnd('\') -ne $canonicalRoot -and -not $EvidenceSelfTest) { Write-Host ("NSBUILD REFUSE repoRoot={0} syncRoot={1} -- build_mod.ps1 syncs only syncRoot; nothing touched, no build started" -f $repoRoot, $canonicalRoot); exit 26 }
 $UhtTarget = 'FactoryGame' + 'Steam'
 
 # Header-tool evidence: both phrases must START a line (optional leading whitespace or one
@@ -83,14 +87,9 @@ if ($EvidenceSelfTest) {
 }
 
 # Self-heal (retro-approved 2026-08-11, ledger x3): a KILLED build (tool timeout, TaskStop) never
-# runs the finally below, stranding two things a FAILED build cannot strand. Heal both at START:
-# 1. A leftover .disabled_for_build from a killed prior run (WeaponUpgrades stays disabled for every
-#    later session until someone notices -- happened twice in one hour on 2026-08-10).
-$strandedWu = "$WuUplugin.disabled_for_build"
-if ((Test-Path $strandedWu) -and -not (Test-Path $WuUplugin)) {
-    Rename-Item $strandedWu (Split-Path $WuUplugin -Leaf)
-    Write-Host "SELF-HEAL: restored stranded WeaponUpgrades.uplugin from a killed prior build"
-}
+# runs the finally below, stranding two things a FAILED build cannot strand. Heal both before building:
+# 1. A leftover .disabled_for_build from a killed prior run: healed AFTER the refusal below, so a
+#    live build that set WeaponUpgrades aside is never undone by a refused run (review F1).
 # 2. A build lock whose owner PID is provably dead (never steal a live one -- the cross-session
 #    serialization contract in _team/BUILD-COORDINATION.md depends on it).
 if (Test-Path $LockFile) {
@@ -111,6 +110,14 @@ $gameProcs = @(Get-Process -Name 'FactoryGameSteam-Win64-Shipping' -ErrorAction 
 if ($lockPresent -or $gameProcs.Count -gt 0) {
     Write-Host ("NSBUILD REFUSE lockFilePresent={0} gameProcessCount={1} lockPath={2} -- no header touched, no build started" -f $lockPresent, $gameProcs.Count, $LockFile)
     exit 4
+}
+# Self-heal 1 (moved here by review F1): a leftover .disabled_for_build from a killed prior run
+# (WeaponUpgrades stays disabled for every later session until someone notices -- happened twice
+# in one hour on 2026-08-10).
+$strandedWu = "$WuUplugin.disabled_for_build"
+if ((Test-Path $strandedWu) -and -not (Test-Path $WuUplugin)) {
+    Rename-Item $strandedWu (Split-Path $WuUplugin -Leaf)
+    Write-Host "SELF-HEAL: restored stranded WeaponUpgrades.uplugin from a killed prior build"
 }
 
 # LEVER: mtime-only touch of every reflected repo header.
@@ -174,6 +181,7 @@ if ($exit -eq 0) {
     # Gate b: reflection thunks derived from the source headers, in the deployed DLL.
     try {
         $thunkScript = Join-Path $repoRoot 'tools\check_reflection_thunks.ps1'
+        $dllTime = (Get-Item -LiteralPath $mainDll).LastWriteTime; Write-Host ("NSBUILD GATE-B dllMtime={0} dllMtimeAfterStart={1}" -f $dllTime.ToString('s'), ($dllTime -ge $wrapperStart))
         $global:LASTEXITCODE = $null
         $thunkOut = @(& $thunkScript -Dll $mainDll -SourceRoot (Join-Path $repoRoot 'Source') -MainModule $ModName -ModuleDll ($ModName + 'VetoKBFL=' + $vetoDll))
         $thunkExit = $LASTEXITCODE
@@ -187,10 +195,12 @@ if ($exit -eq 0) {
     elseif (-not $evidenceOk) { $exit = 21 }
     elseif (-not $thunkOk) { $exit = 22 }
     if ($exit -ne 0) {
-        Write-Host ("NSBUILD DEFECTIVE-DEPLOY exit {0}: the build reported success and ALREADY DEPLOYED {1}, but a post-build reflection gate failed. Treat the DEPLOYED DLL as defective and restore the last reviewed park before anyone launches the game. This wrapper restores nothing." -f $exit, $mainDll)
+        Write-Host ("NSBUILD DEFECTIVE-DEPLOY exit {0}: build_mod exited 0 (it deploys on success) and a post-build reflection gate failed or could not run; the DLL at {1} is UNVERIFIED -- restore the last reviewed park before anyone launches the game. This wrapper restores nothing." -f $exit, $mainDll)
     } else {
         Write-Host "NSBUILD GATES PASS header-tool evidence and reflection thunks"
     }
+} elseif ($exit -eq 17) {
+    Write-Host ("NSBUILD GATES not run: child exit {0}. Exit 17 means build_mod DEPLOYED the DLL with reflection unchecked -- restore the last reviewed park." -f $exit)
 } else {
     Write-Host "NSBUILD GATES not run: child exit $exit (post-build gates run only after child exit 0)"
 }

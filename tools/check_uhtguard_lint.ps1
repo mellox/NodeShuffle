@@ -93,6 +93,7 @@ function Behaviour-T([string]$T) {
     if ($b.Code -ne 1 -or $miss -ne 2) { $r.Add("(P5) defective park DLL exited '$($b.Code)' with $miss MISSING lines, expected 1 and 2") }
     $z = Run-Script $T @('-Dll', $GoodDll, '-SourceRoot', (Join-Path $tmp 'zeroSrc'))
     if ($z.Code -ne 1) { $r.Add("(P5) zero-expected main module exited '$($z.Code)', expected 1") }
+    $n = Run-Script $T @('-Dll', $GoodDll, '-SourceRoot', $src, '-Dumpbin', (Join-Path $tmp 'no-dumpbin.exe')); if ($n.Code -ne 1) { $r.Add("(P5) missing dumpbin exited '$($n.Code)', expected 1") }
     $behaviourCache[$key] = $r; return $r
 }
 
@@ -119,7 +120,12 @@ function Invoke-Checks([string]$W, [string]$T) {
         if (-not ([regex]::IsMatch($blk, '(?m)^\s*exit 4\s*$'))) { $r.Add('(P1) refusal block does not exit 4') }
         if (-not ($iLockTest -lt $iRefIf -and $iGameTest -lt $iRefIf)) { $r.Add('(P1) lock/game measurement must precede the refusal if') }
         if ($iTouch -ge 0 -and $iTouch -lt $iRefIf) { $r.Add('(P1) a header touch precedes the refusal') }
+        $iWuHeal = Idx $W ('Rename-Item $stranded' + 'Wu')
+        if ($iWuHeal -lt 0 -or $iWuHeal -lt $iRefIf) { $r.Add('(P1) the WeaponUpgrades un-strand heal must follow the refusal') }
     }
+    $rootIf = 'if ($repoRoot.TrimEnd(' + "'\') -ne `$canonicalRoot"
+    $iRoot = Idx $W $rootIf
+    if ((Cnt $W ("`$canonicalRoot = Join-Path 'C:\Claude\Projects' " + '$ModName')) -ne 1 -or $iRoot -lt 0 -or -not [regex]::IsMatch($W.Substring([Math]::Max(0, $iRoot)), '^[^\n]*exit 2' + '6 \}') -or ($iTouch -ge 0 -and $iRoot -gt $iTouch)) { $r.Add('(P1) wrong-tree refusal (repo root vs sync root, exit 26) must precede the touch') }
     # P2
     if ((Cnt $W $touch) -ne 1) { $r.Add("(P2) expected exactly one header touch, found $(Cnt $W $touch)") }
     elseif (-not ($iTouch -lt $iTry -and $iTry -lt $iChild -and $iChild -lt $iFin)) { $r.Add('(P2) order must be touch < try < child call < finally') }
@@ -175,6 +181,7 @@ function Invoke-Checks([string]$W, [string]$T) {
             if (-not ($gate.Contains('$thunkExit = $LASTEXIT' + 'CODE') -and $gate.Contains('if ($null -eq $thunk' + 'Exit -or'))) { $r.Add('(P8) a null thunk-gate exit must be a failure') }
         }
         # P9
+        if ((Cnt $W ('$thunkOk = $' + 'true')) -ne 1) { $r.Add('(P9) thunkOk may be set true only on the PASS branch') }
         foreach ($n in @(('$exit = 2' + '3 }'), ('$exit = 2' + '1 }'), ('$exit = 2' + '2 }'), ('NSBUILD DEFECTIVE' + '-DEPLOY'))) {
             if ((Cnt $gate $n) -ne 1) { $r.Add("(P9) gate section missing: $n") }
         }
@@ -209,6 +216,9 @@ try {
             @{ N = 'W12 restore removed from finally'; K = 'W'; E = 'P7'; F = 'Rename-Item $disabled "WeaponUpgrades.uplugin"'; R = '' }
             @{ N = 'W13 exit-code reset before thunk gate removed'; K = 'W'; E = 'P8'; F = ('$global:LASTEXITCODE = $null' + "`n        `$thunkOut"); R = '$thunkOut' }
             @{ N = 'W14 thunk failure maps to success'; K = 'W'; E = 'P9'; F = '$exit = 22'; R = '$exit = 0' }
+            @{ N = 'W15 catch path sets thunkOk'; K = 'W'; E = 'P9'; F = 'catch { Write-Host "NSBUILD GATE-B FAIL could not run: $($_.Exception.Message)" }'; R = 'catch { $thunkOk = $true }' }
+            @{ N = 'W16 wrong-tree refusal no longer exits'; K = 'W'; E = 'P1'; F = ('$repoRoot, $canonicalRoot); exit 2' + '6 }'); R = '$repoRoot, $canonicalRoot) }' }
+            @{ N = 'W17 WU heal moved back before the refusal'; K = 'W'; E = 'P1'; F = '$lockPresent = Test-Path -LiteralPath $LockFile'; R = ('if ($false) { Rename-Item $stranded' + "Wu 'x' }`n" + '$lockPresent = Test-Path -LiteralPath $LockFile') }
             @{ N = 'T1 derive from generated cpp'; K = 'T'; E = 'P5'; F = "-Filter '*.h' | Where-Object { `$_.Extension -eq '.h' }"; R = ("-Filter ('*.gen' + '.cpp')") }
             @{ N = 'T2 zero-expected main module passes'; K = 'T'; E = 'P5'; F = '            $fails.Add("NSTHUNK FAIL main module'; R = '            Out-Line ("NSTHUNK FAIL main module' }
             @{ N = 'T3 needle not class-qualified'; K = 'T'; E = 'P5'; F = "'ec' + `$fn + '@' + `$cls + '@@'"; R = "'ec' + `$fn + '@'" }
