@@ -61,29 +61,33 @@ namespace
 
     // effect: read = the handler only reads and logs. Handlers that change any member state (session latches, a time-sliced job, a
     // persisted store) are graded write even when the change is diagnostic.
+    // mcp-regrade-1 (2026-11-10; audit in _team/test-logs/2026-11-10-nodeshuffle-mcp-regrade-handoff.md): every grade below was traced
+    // from the handler down to its leaf calls. A const method signature is not evidence: this class has mutable members that const
+    // functions write (map-mode latch, lazy store loaders, probe counters). Grades hold on every map mode (worst case), and a command that
+    // can cause a write to a cross-save store file that later rolls or deals read is touchesSave true / structural (review F1 rule).
     const FNsMcpConsoleRow GNsMcpConsole[] = {
         { TEXT("NodeShuffle.Here"), TEXT("write"), true, TEXT("structural"),
           TEXT("Logs a census within 300 m of the player. Its ground trace at the player's position records one cell in the persistent cross-save water grid (a file outside the save that later rolls and redeals read). On RWG it reads RwgRejectV3, whose session latches it may grade.") },
-        { TEXT("NodeShuffle.NearestCave"), TEXT("read"), false, TEXT("none"),
-          TEXT("Logs the nearest RWG cave mouth and nearest cave entry (const handler). One line off RWG.") },
+        { TEXT("NodeShuffle.NearestCave"), TEXT("write"), false, TEXT("none"),
+          TEXT("Logs the nearest RWG cave mouth and nearest dealt cave entry; on RWG it reads the per-world cave file carved-caves-<seed>.json under Saved/PWMaps. One line off RWG. Graded write on every map: its first call is GetMapMode, which stores the map mode and map package name in the subsystem when they are not yet latched (BeginPlay latches them only with authority). No trace and no file write.") },
         { TEXT("NodeShuffle.SeedHere"), TEXT("write"), true, TEXT("structural"),
           TEXT("Traces up from the player and adds a cell to the cave store (CaveFloors). That store is written to a file outside the save, and later deals can draw from it.") },
-        { TEXT("NodeShuffle.AuditPlacements"), TEXT("write"), false, TEXT("none"),
-          TEXT("Starts a time-sliced audit job across ticks (member state) that runs traces over every layout entry and logs counts.") },
-        { TEXT("NodeShuffle.DumpExtractors"), TEXT("read"), false, TEXT("none"),
-          TEXT("Logs extractor classes and node groups. Loads asset-registry-named classes (LoadObject).") },
+        { TEXT("NodeShuffle.AuditPlacements"), TEXT("write"), true, TEXT("structural"),
+          TEXT("Starts a time-sliced audit job across ticks (member state) that traces at every layout entry and logs counts. Its ground traces record no water-grid sample (grid learning is suppressed while a slice runs), but its known-water lookup loads the water grid when it is not yet loaded. On a vanilla map that load merges the embedded baked grid and marks the grid dirty when the merge added cells; the next save or EndPlay then writes Configs/NodeShuffle_WaterGrid.json, a file outside the save that later rolls and redeals read. Other maps write no file.") },
+        { TEXT("NodeShuffle.DumpExtractors"), TEXT("write"), false, TEXT("none"),
+          TEXT("Logs extractor classes, node groups and the extractor by node-group match matrix. Graded write on every map: it calls LoadObject for the SF+ allow-list asset and for asset-registry-named extractor classes that are not yet in memory, which adds those objects to memory; what such a load runs was not measured. It does not use the NodeShuffle subsystem, traces nothing and writes no file.") },
         { TEXT("NodeShuffle.DumpLayout"), TEXT("write"), false, TEXT("none"),
-          TEXT("RWG only. Logs every entry and a 1000 m grid in one frame (hitches) and posts one chat line. Samples the grid only after RwgRejectV3's sea, void and killbox checks have latched; no traces; writes no layout field.") },
-        { TEXT("NodeShuffle.ProbeNearestNode"), TEXT("write"), false, TEXT("none"),
-          TEXT("Logs gate readings at the nearest shuffled node's centre. Handler is non-const; not traced to a member write, so graded write.") },
+          TEXT("RWG only. Off RWG it prints one line after GetMapMode, which stores the map mode in the subsystem when it is not yet latched. On RWG it logs every entry and a 1000 m grid in one frame (hitches), increments a per-process dump id, may build the water-volume cache, samples the grid through RwgRejectV3 only after its sea, void and killbox checks have latched, and broadcasts one chat line; whether chat is kept in the save was not measured. Writes no layout field and no store file.") },
+        { TEXT("NodeShuffle.ProbeNearestNode"), TEXT("read"), false, TEXT("none"),
+          TEXT("Logs enclosure-gate and containment readings at the nearest shuffled node's recorded centre. Graded read on every map: the handler and every function it calls write only locals and out-parameters (no subsystem member, store, latch or file). It runs line traces, sweeps and overlaps, assumed not to change world state.") },
         { TEXT("NodeShuffle.PointAtHere"), TEXT("write"), true, TEXT("structural"),
           TEXT("Traces from the camera and logs enclosure and slope readings at the hit. Its ground trace records one cell in the persistent cross-save water grid (a file outside the save that later rolls and redeals read).") },
         { TEXT("NodeShuffle.DumpWells"), TEXT("read"), false, TEXT("none"),
-          TEXT("Logs a census of every loaded resource well.") },
+          TEXT("Logs a census of every loaded resource well. Graded read on every map: the handler never looks up the NodeShuffle subsystem; it iterates fracking cores, satellites and resource nodes and writes only its own locals. The game accessors it calls (satellite list, core, purity, state, extractor) are assumed to be reads.") },
         { TEXT("NodeShuffle.WellProbe"), TEXT("write"), true, TEXT("structural"),
           TEXT("Logs gate readings for each member of the nearest relocated well group. Each member's ground trace records a cell in the persistent cross-save water grid (a file outside the save that later rolls and redeals read).") },
-        { TEXT("NodeShuffle.WhereCaveNodes"), TEXT("read"), false, TEXT("none"),
-          TEXT("Logs every cave-flagged layout entry (const handler).") },
+        { TEXT("NodeShuffle.WhereCaveNodes"), TEXT("write"), true, TEXT("structural"),
+          TEXT("Logs every cave-flagged layout entry. Each row's cave-store lookup loads the cave store when it is not yet loaded. On a vanilla map that load reads Configs/NodeShuffle_CaveFloors.json, merges the embedded baked atlas and marks the store dirty when the merge added cells; the next save or EndPlay then writes that file, which is outside the save and which later deals read. On other maps the load sets the store's loaded flag and prints one CAVESTORE line, and no file is written. It may also store the map mode when not yet latched.") },
     };
 
     // Registered console VARIABLES (not commands). The manifest marks them read-only for the MCP.

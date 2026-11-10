@@ -27,6 +27,10 @@
 #      maps reader field -> struct member -> store -> the very argument the line prints (declared omissions/derivations only); the
 #      lastRoll section is dispatched and named in help, the manifest's snapshotArgs and the unknown-section error text.
 #      One family is held today: ROLLDENSITY.
+#   E  EFFECT REGRADE (2026-11-10, packet mcp-regrade-1; handoff _team/test-logs/2026-11-10-nodeshuffle-mcp-regrade-handoff.md): GOLDEN
+#      effect (read/write) per console command, so a command the audit traced to a member write, a lazy store load or an object load
+#      cannot drift back to read (the MCP's console_run runs read rows on the user's real save); and neither manifest table's notes may
+#      cite the const-signature phrase (needle concatenated) as grading evidence.
 # Every forbidden needle is BUILT BY CONCATENATION so this file cannot satisfy or trip its own checks. Mutants run in-file.
 # Exit 0 = all hold; 1 = a rule or mutant fails; 2 = a pinned FILE is missing.
 
@@ -124,10 +128,17 @@ $golden = @{
     'StarterNodeRadiusMeters' = 'false/none'; 'RwgDensityBudget' = 'false/none'; 'ModdedVanillaCountsOnRwg' = 'false/none'
     'ModdedVanillaCountRows' = 'false/none'; 'EnableDiagnostics' = 'false/none'
     'NodeShuffle.SeedHere' = 'true/structural'; 'NodeShuffle.Here' = 'true/structural'; 'NodeShuffle.PointAtHere' = 'true/structural'
-    'NodeShuffle.WellProbe' = 'true/structural'; 'NodeShuffle.AuditPlacements' = 'false/none'; 'NodeShuffle.DumpLayout' = 'false/none'
+    'NodeShuffle.WellProbe' = 'true/structural'; 'NodeShuffle.AuditPlacements' = 'true/structural'; 'NodeShuffle.DumpLayout' = 'false/none'
     'NodeShuffle.ProbeNearestNode' = 'false/none'; 'NodeShuffle.NearestCave' = 'false/none'; 'NodeShuffle.DumpExtractors' = 'false/none'
-    'NodeShuffle.DumpWells' = 'false/none'; 'NodeShuffle.WhereCaveNodes' = 'false/none'
+    'NodeShuffle.DumpWells' = 'false/none'; 'NodeShuffle.WhereCaveNodes' = 'true/structural'
 }
+# E (mcp-regrade-1): GOLDEN effect per console command, from the audit in the regrade handoff. read = the tool may run it on a real save.
+$effectGolden = @{
+    'NodeShuffle.Here' = 'write'; 'NodeShuffle.NearestCave' = 'write'; 'NodeShuffle.SeedHere' = 'write'; 'NodeShuffle.AuditPlacements' = 'write'
+    'NodeShuffle.DumpExtractors' = 'write'; 'NodeShuffle.DumpLayout' = 'write'; 'NodeShuffle.ProbeNearestNode' = 'read'
+    'NodeShuffle.PointAtHere' = 'write'; 'NodeShuffle.DumpWells' = 'read'; 'NodeShuffle.WellProbe' = 'write'; 'NodeShuffle.WhereCaveNodes' = 'write'
+}
+$constPhrase = 'const ' + 'handler'
 # P7: commands whose handler traces the ground. Here's handler is the LogHereCensus body inside the subsystem file.
 $gridSites = [ordered]@{
     'NodeShuffle.Here' = @('NodeShuffle\Private\NodeShuffleSubsystem.cpp', 'void ANodeShuffleSubsystem::LogHereCensus() const')
@@ -265,6 +276,19 @@ function Invoke-McpChecks($Txt, $Cod) {
         if (-not $golden.ContainsKey($name)) { $f += "(R) $name has no golden grade in this lint" } elseif ($golden[$name] -ne $grade) { $f += "(R) $name graded $grade, golden $($golden[$name])" }
     }
     foreach ($g in $golden.Keys) { if (-not $seen.ContainsKey($g)) { $f += "(R) golden row $g missing from the manifest" } }
+    # ---- E (mcp-regrade-1): golden effect per console row; no note cites the const-signature phrase
+    $eSeen = @{}
+    foreach ($m in [regex]::Matches($d, '\{ TEXT\("(NodeShuffle\.\w+)"\), TEXT\("(read|write)"\), (?:true|false),')) {
+        $n = $m.Groups[1].Value; $eSeen[$n] = 1
+        if (-not $effectGolden.ContainsKey($n)) { $f += "(E) $n has no golden effect in this lint" }
+        elseif ($effectGolden[$n] -ne $m.Groups[2].Value) { $f += "(E) $n effect $($m.Groups[2].Value), golden $($effectGolden[$n])" }
+    }
+    foreach ($g in $effectGolden.Keys) { if (-not $eSeen.ContainsKey($g)) { $f += "(E) golden effect row $g missing from the manifest" } }
+    foreach ($tbl in @('GNsMcpConfigKeys', 'GNsMcpConsole')) {
+        $blk = [regex]::Match($d, $tbl + '\[\] = \{([\s\S]*?)\n    \};')
+        if (-not $blk.Success) { $f += "(E) manifest table $tbl not found" }
+        elseif ($blk.Groups[1].Value.IndexOf($constPhrase, [StringComparison]::OrdinalIgnoreCase) -ge 0) { $f += "(E) a note in $tbl cites the const-signature phrase as grading evidence" }
+    }
     foreach ($k in @($pin.desc, $pin.snap, $pin.lr)) {
         $calls =([regex]::Matches($Cod[$k], '(?<!::)\bErrorJson\(')).Count
         $good = ([regex]::Matches($Txt[$k], '(?<!::)\bErrorJson\(TEXT\("(?:' + $errKinds + ')"\),')).Count
@@ -338,7 +362,7 @@ function Invoke-McpChecks($Txt, $Cod) {
     $hdrLoaded = [regex]::Match($mh, 'LoadedLineTag = TEXT\("([\w-]+)"\)')
     if (($lineTags -join '|') -ne ($hdrTags -join '|')) { $f += "(C4) markers header does not list NodeShuffle.cpp's packet markers in order (cpp: $($lineTags -join ','); header: $($hdrTags -join ','))" }
     if (-not $loaded.Success -or -not $hdrLoaded.Success -or $loaded.Groups[1].Value -ne $hdrLoaded.Groups[1].Value) { $f += '(C4) LOADED tag differs between NodeShuffle.cpp and the markers header' }
-    $own = '2026-11-10-' + 'mcp-lastroll-1'
+    $own = '2026-11-10-' + 'mcp-regrade-1'
     if ($hdrTags.Count -eq 0 -or $hdrTags[-1] -ne $own -or (Count $nsm $own) -ne 1) { $f += '(C4) this packet marker must be the newest, once, on its own line' }
     if ((Count $Txt[$pin.desc] $newestExpr) -ne 1 -or [regex]::IsMatch($Txt[$pin.desc], 'TEXT\("20\d\d-\d\d-\d\d-')) { $f += '(C4) buildMarker must come from the markers header (newest entry), never a literal in Describe' }
     # ---- F (contract R4.4: finite numbers only)
@@ -389,7 +413,7 @@ function Invoke-McpChecks($Txt, $Cod) {
 
 $base = Invoke-McpChecks $text $code
 if ($base.Count -gt 0) { $base | ForEach-Object { Write-Host "FAIL$_" }; Write-Host "MCPCONTRACT lint: FAIL -- baseline $($base.Count) problem(s)"; exit 1 }
-Write-Host "BASELINE GREEN: M1..M5, R, C1..C4, F, L hold across $($text.Count) loaded files"
+Write-Host "BASELINE GREEN: M1..M5, R, E, C1..C4, F, L hold across $($text.Count) loaded files"
 
 $H = $pin.hdr; $D = $pin.desc; $S = $pin.snap; $CMN = $pin.com; $MK = $pin.mark; $NS = $pin.nsmod; $CF = $pin.cfg; $SG = $pin.sg
 $LRC = $pin.lr; $LRH = $pin.lrh; $SU = $pin.sub; $DN = $pin.dens
@@ -465,7 +489,15 @@ $mutants = @(
     @{ Name = 'LR16 error text loses lastRoll'; Key = $S; Expect = 'L'; Find = 'is not help, near, summary or lastRoll'; Repl = 'is not help, near or summary' }
     @{ Name = 'LR17 dispatch dropped'; Key = $S; Expect = 'L'; Find = 'return LastRoll(Sub, OutBranch); }'; Repl = 'return Help(); }' }
     @{ Name = 'LR19 density sequence copy dropped'; Key = $DN; Expect = 'L'; Find = ('LastRoll.Density' + $lrSeqStore); Repl = '' }
-    @{ Name = 'LR20 reader loads a class'; Key = $LRC; Expect = 'M3'; Find = 'const bool bCaptured = L.RollSeq > 0;'; Repl = ('const bool bCaptured = L.RollSeq > 0; ' + 'Load' + 'Class<UObject>(nullptr, TEXT("x"));') }
+    @{ Name = 'E1 WhereCaveNodes back to read (lazy cave-store load)'; Key = $D; Expect = 'E'; Find = '{ TEXT("NodeShuffle.WhereCaveNodes"), TEXT("write"), true,'; Repl = '{ TEXT("NodeShuffle.WhereCaveNodes"), TEXT("read"), true,' }
+    @{ Name = 'E2 NearestCave back to read (map-mode latch)'; Key = $D; Expect = 'E'; Find = '{ TEXT("NodeShuffle.NearestCave"), TEXT("write"), false,'; Repl = '{ TEXT("NodeShuffle.NearestCave"), TEXT("read"), false,' }
+    @{ Name = 'E3 DumpExtractors back to read (object loads)'; Key = $D; Expect = 'E'; Find = '{ TEXT("NodeShuffle.DumpExtractors"), TEXT("write"), false,'; Repl = '{ TEXT("NodeShuffle.DumpExtractors"), TEXT("read"), false,' }
+    @{ Name = 'E4 ProbeNearestNode effect drifts from its golden read'; Key = $D; Expect = 'E'; Find = '{ TEXT("NodeShuffle.ProbeNearestNode"), TEXT("read"), false,'; Repl = '{ TEXT("NodeShuffle.ProbeNearestNode"), TEXT("write"), false,' }
+    @{ Name = 'E5 a console note cites the const-signature phrase again'; Key = $D; Expect = 'E'; Find = 'Logs a census of every loaded resource well.'; Repl = ('Logs a census of every loaded resource well (' + $constPhrase + ').') }
+    @{ Name = 'E6 a config note cites the phrase in upper case'; Key = $D; Expect = 'E'; Find = 'Read only by RollLayout (the new-location quota).'; Repl = ('Read only by RollLayout (the new-location quota; ' + $constPhrase.ToUpper() + ').') }
+    @{ Name = 'X13 AuditPlacements back to save-safe (water-grid loader)'; Key = $D; Expect = 'R'; Find = '{ TEXT("NodeShuffle.AuditPlacements"), TEXT("write"), true, TEXT("structural"),'; Repl = '{ TEXT("NodeShuffle.AuditPlacements"), TEXT("write"), false, TEXT("none"),' }
+    @{ Name = 'X14 WhereCaveNodes back to save-safe (cave-store loader)'; Key = $D; Expect = 'R'; Find = '{ TEXT("NodeShuffle.WhereCaveNodes"), TEXT("write"), true, TEXT("structural"),'; Repl = '{ TEXT("NodeShuffle.WhereCaveNodes"), TEXT("write"), false, TEXT("none"),' }
+    @{ Name = 'LR20 reader loads a class';Key = $LRC; Expect = 'M3'; Find = 'const bool bCaptured = L.RollSeq > 0;'; Repl = ('const bool bCaptured = L.RollSeq > 0; ' + 'Load' + 'Class<UObject>(nullptr, TEXT("x"));') }
 )
 $bad = 0
 foreach ($m in $mutants) {
@@ -485,5 +517,5 @@ foreach ($m in $mutants) {
     else { Write-Host "GREEN (BAD) $($m.Name): expected $($m.Expect), got: $($r -join ' | ')"; $bad++ }
 }
 if ($bad -gt 0) { Write-Host "FAIL: $bad mutant(s) not caught"; exit 1 }
-Write-Host "PASS: MCPCONTRACT lint -- M1..M5, R, C1..C4, F, L hold across $($text.Count) loaded files; mutants caught $($mutants.Count)/$($mutants.Count)."
+Write-Host "PASS: MCPCONTRACT lint -- M1..M5, R, E, C1..C4, F, L hold across $($text.Count) loaded files; mutants caught $($mutants.Count)/$($mutants.Count)."
 exit 0
