@@ -101,6 +101,8 @@ $finDx    = 'const double Dx = E.' + 'Location.X - XCm;'
 $finEmit  = 'Root->SetNumberField(TEXT("nonFinite' + 'Skipped"), NonFiniteSkipped);'
 $finHelp  = 'nonFinite' + 'Skipped ('
 $finPawn  = 'if (!FMath::IsFinite(P.' + 'X) || !FMath::IsFinite(P.Y))'
+$finPawnRet = 'return ErrorJson(TEXT("no-player"), FString::Printf(TEXT("player %d: the pawn location has a non-' + 'finite X or Y component"), PlayerIndex)); }'
+$finPawnRetC = 'return ErrorJson(TEXT(""), FString::Printf(TEXT(""), PlayerIndex)); }' # code-only shape of $finPawnRet (string literals blanked by Code-Only)
 $errKinds = 'bad-args|no-world|no-player|not-ready|unsupported|too-large'
 # GOLDEN (touchesSave/saveEffect) from the review's R2.1 table. Any difference in the manifest is RED.
 $golden = @{
@@ -269,7 +271,7 @@ function Invoke-McpChecks($Txt, $Cod) {
     $nearT = FnBody $Txt[$pin.snap] $nearHead
     if ((Count $Txt[$pin.snap] $finEmit) -ne 1 -or (Count $nearT $finEmit) -ne 1) { $f += '(F) near must emit the non-finite skip count' }
     if ((Count (FnBody $Txt[$pin.snap] 'FString FNodeShuffleMcpReader::Help()') $finHelp) -ne 1) { $f += '(F) help must name the non-finite skip count' }
-    if ((Count $nearC $finPawn) -ne 1 -or -not (Ordered $nearC @('FoundPawn->GetActorLocation();', $finPawn, 'XCm = P.X;'))) { $f += '(F) near must refuse a pawn location with a non-finite X or Y before using it as the point' }
+    if ((Count $nearC $finPawn) -ne 1 -or -not (Ordered $nearC @('FoundPawn->GetActorLocation();', $finPawn, $finPawnRetC, 'XCm = P.X;'))) { $f += '(F) near must refuse a pawn location with a non-finite X or Y before using it as the point' }
     return ,$f
 }
 
@@ -330,6 +332,7 @@ $mutants = @(
     @{ Name = 'F3 nonFiniteSkipped not emitted'; Key = $S; Expect = 'F'; Find = $finEmit; Repl = '' }
     @{ Name = 'F4 help loses the nonFiniteSkipped clause'; Key = $S; Expect = 'F'; Find = $finHelp; Repl = 'returned (' }
     @{ Name = 'F5 pawn-location finite guard disabled'; Key = $S; Expect = 'F'; Find = $finPawn; Repl = 'if (false)' }
+    @{ Name = 'F6 pawn guard body gutted'; Key = $S; Expect = 'F'; Find = $finPawnRet; Repl = '}' }
 )
 $bad = 0
 foreach ($m in $mutants) {
