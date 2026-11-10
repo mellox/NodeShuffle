@@ -69,7 +69,7 @@ FString FNodeShuffleMcpReader::LastRoll(const ANodeShuffleSubsystem& Sub, FStrin
     Root->SetStringField(TEXT("section"), TEXT("lastRoll"));
     Root->SetBoolField(TEXT("captured"), bCaptured);
     Root->SetNumberField(TEXT("rollSeq"), L.RollSeq);
-    if (!bCaptured) { Root->SetStringField(TEXT("note"), TEXT("rollSeq is 0: the roll routine has not been entered in this session")); }
+    if (!bCaptured) { Root->SetStringField(TEXT("note"), TEXT("rollSeq is 0: the roll routine has not been entered since this subsystem was created (the count is not saved)")); }
     else
     {
         Root->SetNumberField(TEXT("seed"), L.Seed);

@@ -120,11 +120,11 @@ FString FNodeShuffleMcpReader::Help()
         TEXT("wells{...}, session{...}, saved{...}, activeByResource[{resource, active}] (top 40), resourceKindsActive, resourcesTruncated."));
     Sections->SetStringField(TEXT("lastRoll"),
         TEXT("censuses the roll code copied as it printed them, during the latest entry into the roll routine in THIS session; never saved, so ")
-        TEXT("it is filled only in a session where a roll or re-roll ran (a session in which the roll routine never ran reads empty). Never not-ready. ")
+        TEXT("it is filled only after the roll routine ran since this subsystem was created (while rollSeq is 0, every family reads captured false). Never not-ready. ")
         TEXT("Top-level: contract, mod, buildMarker, section, captured (rollSeq above 0), rollSeq (entries into the roll routine this session, ")
         TEXT("including one that aborted), note (only while rollSeq is 0), seed and isReroll (only when captured: the arguments of that entry), ")
         TEXT("rollDensity{...}. Each family object carries captured (its copy ran, right after its census log statement, during entry ")
-        TEXT("rollSeq); a family not printed in that roll reads captured false and carries no other field. rollDensity: the ROLLDENSITY ")
+        TEXT("rollSeq); a family whose copy did not run in that roll reads captured false and carries no other field. rollDensity: the ROLLDENSITY ")
         TEXT("line's fields (printed on Random World Generator maps only), without cellsAtCap; flags as booleans; cellCm and landSampleMs ")
         TEXT("rounded to whole numbers and left out when not finite, counted in nonFiniteOmitted. Not served: REROLLPOOL-CARRY, PURITYCENSUS, ")
         TEXT("RWGDEAL-RES and MODQUOTA-CFG."));
