@@ -9,6 +9,7 @@
 #include "UObject/ObjectKey.h"  // RWG P4: FObjectKey, RwgClaimedOriginals
 #include "NodeShuffleLastRoll.h" // mcp-lastroll-1: FNodeShuffleLastRoll, held by value in a member below (plain C++, not reflected)
 struct FNodeShuffleRwgDensityState; // rwg-density-1 (2026-11-01, budget): NodeShuffleRwgDensityBudget.h, held by TSharedPtr below
+struct FNodeShuffleFarRestore; // ns-lead-restore-1 (2026-11-11): NodeShuffleSettledRestore.h (Private, plain C++); EnsureNewNodeSpawned's optional last argument
 class AFGWaterVolume; // RWG P2b: RwgWaterVolumes cache (weak pointers only)
 #include "NodeShuffleSubsystem.generated.h"
 
@@ -1487,6 +1488,14 @@ private:
     // right after the one-time adopt-on-load.
     bool bPinnedHealDone = false;
     void HealDeactivatedPinnedEntriesOnce();
+    // ns-lead-restore-1 (2026-11-11): THE SETTLED RESTORE. Once per load (runtime latch, armed only once adopt-on-load has run and
+    // the Layout is non-empty), every active new-node entry with no slot in SpawnedNodes that the RWG provisional pass refuses
+    // because of bPinned or bRayCasted is passed to EnsureNewNodeSpawned with a far-restore argument, at any pawn distance and
+    // outside the attempt budget; any gate refusal HOLDS (no Layout or bookkeeping write) and the entry keeps the attempt-loop
+    // path. Called from ApplyLayout after the pinned heal and before RwgSpawnPass, off vanilla only. NodeShuffleSettledRestore.cpp.
+    bool bSettledRestoreDone = false;
+    void RunSettledRestoreOnce(float SpawnRadiusCm, bool& bChangedWorld);
+    void EmitAdoptWorldCensus(); // ADOPTWORLD, one line per spawn class; called by RunSettledRestoreOnce before it spawns
     // rwg-pinnedspawn-1 I1: pinned entries whose building overlap the occupancy gate ignored, so the
     // OVERLAPGATE-PINNED line prints once per entry per session.
     TSet<FGuid> PinnedBuildingSkipLogged;
@@ -1509,7 +1518,9 @@ private:
     int32 ScannerDeregisterCount = 0;
     // redesign-1: spawn one of OUR relocated nodes (the only kind of active node besides the
     // untouched occupied originals). Handles solid (authored rock or quartz placeholder) and oil.
-    void EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool& bOutChangedWorld);
+    // ns-lead-restore-1: FarRestore non-null = the settled-restore caller; every refusing exit then HOLDS (records the gate in
+    // *FarRestore and returns before any write). nullptr (every other caller) = the unchanged path.
+    void EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool& bOutChangedWorld, FNodeShuffleFarRestore* FarRestore = nullptr);
     // ns-t35-gatereach: THE SOLID-NODE PATH'S GATE CENSUS -- the symmetric half of the well path's
     // WELLH2-PROBECENSUS. Every counter here comes in a REACHED/REJECTED pair, because a rejection
     // count on its own cannot be told from a gate that never ran; that indistinguishability is T35.

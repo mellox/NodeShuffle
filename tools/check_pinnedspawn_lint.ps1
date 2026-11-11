@@ -57,7 +57,7 @@ $bldReject   = "                            ++NodeGateCallOccupiedRejected; // n
 $primCall    = '        const bool bSpotOccupied = OverlapsAt(Entry.Location);'
 $primPair    = "        if (bSpotOccupied) { ++NodeGatePrimaryOccupiedRejected; }`n        else { ++NodeGatePrimaryEnclosedReached; }"
 $primCopy    = '        const FString PrimaryHitKind = bSpotOccupied ? FString(GateHitKind) : FString(TEXT("none"));'
-$pinLogGuard = '        if (Entry.bPinned && PinnedBuildingHitsIgnored > 0 && !PinnedBuildingSkipLogged.Contains(Entry.EntryGuid))'
+$pinLogGuard = '        if (!FarRestore && Entry.bPinned && PinnedBuildingHitsIgnored > 0 && !PinnedBuildingSkipLogged.Contains(Entry.EntryGuid))' # ns-lead-restore-1: the far-restore caller leaves this once-latch unconsumed
 $pinLogFmt   = 'TEXT("OVERLAPGATE-PINNED entry=%s res=%s at=%s buildingOverlapHitsIgnored=%d firstBuildingClass=%s firstBuildingPath=%s occupiedAfterExemption=%d"),'
 $refusedAt   = '            const FVector RefusedAt = Entry.Location; // rwg-pinnedspawn-1 I2: the refused spot, before a nudge moves it'
 $spiralLoop  = '            for (int32 i = 1; i <= LandRelocationTries && !bRelocated; i++)'
@@ -167,7 +167,7 @@ $mutants = @(
     @{ Name = 'X2 exemption removed'; Key = 'sub'; Expect = 'S1'; Find = $pinCount; Repl = "                                ++PinnedBuildingHitsIgnored;`n                            }" }
     @{ Name = 'X3 pinned exemption added to the resource-node branch'; Key = 'sub'; Expect = 'S1'; Find = '                if (FVector::DistSquared(Other->GetActorLocation(), At) < RejSq)'; Repl = '                if (!Entry.bPinned && FVector::DistSquared(Other->GetActorLocation(), At) < RejSq)' }
     @{ Name = 'X4 non-pinned refusal dropped (everyone exempt)'; Key = 'sub'; Expect = 'S1'; Find = '                            if (Entry.bPinned)' + "`n"; Repl = '                            if (true)' + "`n" }
-    @{ Name = 'X5 pinned line gated'; Key = 'sub'; Expect = 'S1'; Find = $pinLogGuard; Repl = $pinLogGuard.Replace('if (Entry.bPinned', 'if (FNodeShuffleModule::' + $diagGate + '() && Entry.bPinned') }
+    @{ Name = 'X5 pinned line gated'; Key = 'sub'; Expect = 'S1'; Find = $pinLogGuard; Repl = $pinLogGuard.Replace('if (!FarRestore && Entry.bPinned', 'if (FNodeShuffleModule::' + $diagGate + '() && !FarRestore && Entry.bPinned') }
     @{ Name = 'X28 block inserted between the primary census if and its else'; Key = 'sub'; Expect = 'S2'; Find = $primPair; Repl = "        if (bSpotOccupied) { ++NodeGatePrimaryOccupiedRejected; }`n        if (Entry.bPinned) { }`n        else { ++NodeGatePrimaryEnclosedReached; }" }
     @{ Name = 'X29 pinned entry applies the enclosure verdict (R1 dropped)'; Key = 'sub'; Expect = 'S1'; Find = '        const bool bSpotEnclosed = bSpotEnclosedRaw && !Entry.bPinned;'; Repl = '        const bool bSpotEnclosed = bSpotEnclosedRaw;' }
     @{ Name = 'X6 buildable hit not recorded'; Key = 'sub'; Expect = 'S2'; Find = "                            GateHitPath = HitActor->GetPathName();`n"; Repl = '' }

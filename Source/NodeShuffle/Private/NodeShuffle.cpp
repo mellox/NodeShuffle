@@ -595,6 +595,7 @@ void FNodeShuffleModule::StartupModule()
     UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle packet marker (2026-11-09-mcp-contract-1)=====")); // own line, same reason as the lines above; also listed in NodeShuffleBuildMarkers.h
     UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle packet marker (2026-11-10-mcp-lastroll-1)=====")); // own line, same reason as the lines above; also listed in NodeShuffleBuildMarkers.h
     UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle packet marker (2026-11-10-mcp-regrade-1)=====")); // own line, same reason as the lines above; also listed in NodeShuffleBuildMarkers.h
+    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle packet marker (2026-11-11-lead-restore-1)=====")); // own line, same reason as the lines above; also listed in NodeShuffleBuildMarkers.h
     FNodeShuffleModule::LogAutoAllowExtractorsState(); // Packet G: log the CVar state once at startup
 
 #if !WITH_EDITOR

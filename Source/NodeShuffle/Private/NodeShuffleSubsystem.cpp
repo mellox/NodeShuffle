@@ -14,6 +14,7 @@
 #include "NodeShuffleRwgSeedGas.h" // rwg-seedgas-1: the RWG modded vanilla-count table
 #include "NodeShuffleRerollWipe.h" // rwg-rerollwipe-1: the re-roll wipe's per-wipe tally (REROLLWIPE census)
 #include "NodeShuffleRerollIdentity.h" // rwg-rerolldup-2: original identity beyond the path (anchor leg), vanilla-deal class restamp
+#include "NodeShuffleSettledRestore.h" // ns-lead-restore-1: FNodeShuffleFarRestore, EnsureNewNodeSpawned's hold channel
 
 #include "EngineUtils.h"
 #include "TimerManager.h"
@@ -2828,6 +2829,9 @@ void ANodeShuffleSubsystem::ApplyLayout()
     // yet is written on whichever later pass it appears, exactly like SuppressOriginalNodes' hide funnel.
     // NOTHING ELSE IN THIS PASS TOUCHES WELLS: they are excluded from the regular node population by
     // IsFrackingActor, so this call is the mod's entire well surface.
+    // ns-lead-restore-1: once per load, after adopt and the pinned heal above, before RwgSpawnPass, so ReassociateOrphanedExtractors
+    // below binds extractors to what it spawns in this same ApplyLayout. Off vanilla only (NodeShuffleSettledRestore.cpp).
+    if (GetMapMode() != ENodeShuffleMapMode::Vanilla) { RunSettledRestoreOnce(SpawnRadiusCm, bChangedWorld); }
     if (GetMapMode() != ENodeShuffleMapMode::Vanilla) { RwgSpawnPass(SpawnRadiusCm, bChangedWorld); }
     // rwg-seedgas-1: SEEDGASSPAWN, change-driven (prints only when a seeded gas resource's spawn counts move).
     NodeShuffleRwgSeedGas::EmitSpawnCensus(this, GetMapMode() == ENodeShuffleMapMode::Rwg, Layout, SpawnedNodes, SpawnFailCounts,
@@ -4778,7 +4782,7 @@ void ANodeShuffleSubsystem::DeregisterNodeFromManager(AFGResourceNodeBase* Node)
     }
 }
 
-void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool& bOutChangedWorld)
+void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool& bOutChangedWorld, FNodeShuffleFarRestore* FarRestore)
 {
     // coexist-1 §1: dormant entries sleep until the next world load (belt to the ApplyLayout skip —
     // this is the only spawn path, so the guard here makes the invariant local too).
@@ -4788,6 +4792,9 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
     }
 
     AFGResourceNode* const* Existing = SpawnedNodes.Find(Entry.EntryGuid);
+    // ns-lead-restore-1 HOLD: the far-restore caller takes slotless entries only; a slot (dead or alive) holds here, before the
+    // external-destroy backoff and the alive re-assert chain below write anything.
+    if (FarRestore && Existing) { FarRestore->HeldGate = IsValid(*Existing) ? TEXT("slotAlive") : TEXT("slotDead"); return; }
 
     // coexist-1 §1 (EXTERNAL-DESTROY BACKOFF): the slot holds a dead actor. NodeShuffle's only
     // self-destroy (the re-roll wipe in RollLayout) removes the slot in the same synchronous block, so
@@ -5052,8 +5059,11 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
     UClass* ResourceClass = LoadClassByPath(Entry.AssignedResourceClassPath);
     if (!NodeClass || !ResourceClass)
     {
+        if (FarRestore) { FarRestore->HeldGate = TEXT("classNull"); } // ns-lead-restore-1: the same return; no write on either path
         return;
     }
+    // ns-lead-restore-1 HOLD: the settle block below writes Location, redeal and defer state; the far-restore caller never enters it.
+    if (FarRestore && !Entry.bRayCasted) { FarRestore->HeldGate = TEXT("notSettled"); return; }
 
     // SPAWN-ON-DISCOVERY: raycast the ground FIRST and only materialize the node
     // if the ray HITS terrain (i.e. the region has actually streamed in). On a hit,
@@ -5147,6 +5157,7 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
         const TCHAR* GateHitKind = TEXT("none");
         FString GateHitClass = TEXT("-");
         FString GateHitPath = TEXT("-");
+        double GateHitDistCm = -1.0; // ns-lead-restore-1: the hit actor's 3-D distance, written beside kind/class/path (read only by the far-restore hold)
         int32 PinnedBuildingHitsIgnored = 0;
         FString PinnedFirstBuildingClass = TEXT("-");
         FString PinnedFirstBuildingPath = TEXT("-");
@@ -5173,6 +5184,7 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
                 }
                 if (FVector::DistSquared(Other->GetActorLocation(), At) < RejSq)
                 {
+                    GateHitDistCm = FVector::Dist(Other->GetActorLocation(), At); // ns-lead-restore-1 (node half)
                     ++NodeGateCallOccupiedRejected; // ns-t35-gatereach (resource-node half)
                     GateHitKind = TEXT("resourceNode"); // rwg-pinnedspawn-1 I2
                     GateHitClass = Other->GetClass()->GetName();
@@ -5215,6 +5227,7 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
                                 ++PinnedBuildingHitsIgnored;
                                 continue;
                             }
+                            GateHitDistCm = FVector::Dist(HitActor->GetActorLocation(), At); // ns-lead-restore-1 (buildable half)
                             ++NodeGateCallOccupiedRejected; // ns-t35-gatereach (buildable half)
                             GateHitKind = TEXT("buildable"); // rwg-pinnedspawn-1 I2
                             GateHitClass = HitActor->GetClass()->GetName();
@@ -5268,9 +5281,20 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
         const FString PrimaryHitKind = bSpotOccupied ? FString(GateHitKind) : FString(TEXT("none"));
         const FString PrimaryHitClass = bSpotOccupied ? GateHitClass : FString(TEXT("-"));
         const FString PrimaryHitPath = bSpotOccupied ? GateHitPath : FString(TEXT("-"));
+        const double PrimaryHitDistCm = bSpotOccupied ? GateHitDistCm : -1.0; // ns-lead-restore-1
+        // ns-lead-restore-1 HOLD: records the primary spot's reading into the far-restore argument (writes only *FarRestore).
+        auto FarHold = [&](const TCHAR* Gate)
+        {
+            FarRestore->HeldGate = Gate;
+            FarRestore->HitKind = PrimaryHitKind;
+            FarRestore->HitClass = PrimaryHitClass;
+            FarRestore->HitPath = PrimaryHitPath;
+            FarRestore->HitDistCm = PrimaryHitDistCm;
+            FarRestore->PinnedBuildingHitsIgnored = PinnedBuildingHitsIgnored;
+        };
         // rwg-pinnedspawn-1 I1: once per pinned entry per session, the building overlap the gate ignored at
         // its primary spot (the exemption's positive evidence: normally the player's own miner).
-        if (Entry.bPinned && PinnedBuildingHitsIgnored > 0 && !PinnedBuildingSkipLogged.Contains(Entry.EntryGuid))
+        if (!FarRestore && Entry.bPinned && PinnedBuildingHitsIgnored > 0 && !PinnedBuildingSkipLogged.Contains(Entry.EntryGuid)) // ns-lead-restore-1: the far restore prints its own line and leaves this once-latch unconsumed
         {
             PinnedBuildingSkipLogged.Add(Entry.EntryGuid);
             UE_LOG(LogNodeShuffle, Display,
@@ -5283,7 +5307,7 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
         // For a pinned entry the enclosure verdict is printed and not applied; a resource-node hit holds this visit's spawn
         // with no nudge and no strike, and the next visit tests again. Non-pinned entries take the unchanged path below.
         const bool bSpotEnclosedRaw = !bSpotOccupied && IsEnclosed(Entry.Location);
-        if (Entry.bPinned && (bSpotOccupied || bSpotEnclosedRaw) && !PinnedGateHoldLogged.Contains(Entry.EntryGuid))
+        if (!FarRestore && Entry.bPinned && (bSpotOccupied || bSpotEnclosedRaw) && !PinnedGateHoldLogged.Contains(Entry.EntryGuid)) // ns-lead-restore-1: as above
         {
             PinnedGateHoldLogged.Add(Entry.EntryGuid);
             UE_LOG(LogNodeShuffle, Display,
@@ -5293,9 +5317,17 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
                 *PrimaryHitClass, *PrimaryHitPath, // own line break: lint X8 anchors on the OVERLAPGATE argument run
                 static_cast<int32>(Entry.OverlapNudges), static_cast<int32>(MaxOverlapNudges));
         }
+        if (FarRestore && Entry.bPinned && bSpotOccupied) { FarHold(TEXT("pinnedOccupied")); return; } // ns-lead-restore-1: R1's own hold, recorded
         if (Entry.bPinned && bSpotOccupied) { return; } // R1: spawn held this visit; no nudge, no strike, no drop
         const bool bSpotEnclosed = bSpotEnclosedRaw && !Entry.bPinned;
         if (bSpotEnclosed) { ++NodeGatePrimaryEnclosedRejected; }
+        // ns-lead-restore-1 HOLD: a far-restore refusal never reaches the spiral (no Location/Rotation nudge), the strike (OverlapNudges)
+        // or the give-up (bActive/bRayCasted); the entry stays exactly as it was and the attempt loop tests it on approach.
+        if (FarRestore && (bSpotOccupied || bSpotEnclosed))
+        {
+            FarHold(bSpotEnclosed ? TEXT("enclosed") : (PrimaryHitKind == TEXT("buildable")) ? TEXT("occupiedBuilding") : TEXT("occupiedNode"));
+            return;
+        }
         if (bSpotOccupied || bSpotEnclosed)
         {
             if (bSpotEnclosed && FNodeShuffleModule::AreDiagnosticsEnabled())
@@ -5427,6 +5459,11 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
             UE_LOG(LogNodeShuffle, Display, TEXT("INSIDEGATE-PINNED entry=%s res=%s at=%s pinnedSpawnProceeds=1"),
                 *Entry.EntryGuid.ToString(), *ResourceClass->GetName(), *Entry.Location.ToCompactString());
         }
+        else if (bGateRefuses && FarRestore)
+        {
+            FarRestore->HeldGate = TEXT("insideGate"); // ns-lead-restore-1 HOLD: no bActive/bRayCasted write
+            return;
+        }
         else if (bGateRefuses)
         {
             // ns-t54 cold review F11 -- ONE EVALUATION, THEN DROP. NO RETRY.
@@ -5487,6 +5524,8 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
     }
     if (!Node)
     {
+        // ns-lead-restore-1 HOLD: no SpawnFailCounts strike, no park, no class eviction (which rebinds OTHER entries).
+        if (FarRestore) { FarRestore->HeldGate = TEXT("spawnActorNull"); return; }
         UE_LOG(LogNodeShuffle, Warning, TEXT("Failed to spawn new node (%s) at %s"),
             *SpawnClass->GetName(), *Entry.Location.ToCompactString());
         // knowledge-1 item 3: consecutive-failure budget (evidence: 675 identical warnings in ~4 min
