@@ -15,4 +15,6 @@ struct FNodeShuffleFarRestore
     FString HitPath = TEXT("-");
     double HitDistCm = -1.0; // 3-D distance from the entry's Location to the hit actor's location; -1 = no hit recorded
     int32 PinnedBuildingHitsIgnored = 0; // building overlaps the gate skipped because the entry is pinned (I1 exemption)
+    int32 EnclosedRaysBlocked = -1;      // enclosure test at the entry's Location: rays that hit (-1 = the test did not run)
+    int32 EnclosedRaysTotal = -1;        // and rays cast
 };

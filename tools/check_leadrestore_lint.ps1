@@ -3,14 +3,15 @@
 # bPinned or bRayCasted; every refusing exit of EnsureNewNodeSpawned HOLDS for that caller (no Layout or bookkeeping write).
 # LOADS: NodeShuffleSubsystem.cpp (call site, hold sites, adopt predicate, gate radius), NodeShuffleSubsystem.h (declarations),
 #        NodeShuffleSettledRestore.cpp/.h (the pass, ADOPTWORLD, census), NodeShuffleMapModeProvisionalScan.cpp (the refusals the
-#        population is derived from), NodeShuffleMapModeSpawnPass.cpp (attempt-loop exclusions, existing callers), NodeShuffle.cpp and
+#        population is derived from), NodeShuffleMapModeSpawnPass.cpp + NodeShuffleMapModeProvisional.cpp (attempt-loop exclusions, existing callers), NodeShuffle.cpp and
 #        NodeShuffleBuildMarkers.h (marker).
 #   L1 order: adopt -> pinned heal -> RunSettledRestoreOnce -> RwgSpawnPass -> ReassociateOrphanedExtractors, one call, off vanilla
 #   L2 latch: runtime bool, armed only with adopt done and a non-empty Layout, before ADOPTWORLD and before any spawn
 #   L3 population: exact predicate lines, no distance or budget term, and the scan/attempt-loop source lines it is derived from
 #   L4 hold sites: slot, classNull, notSettled, pinned R1, occupied/enclosed (before spiral, strike, give-up), inside gate (before its
 #      bActive/bRayCasted writes), null spawn (before fail count, park, eviction), both pinned once-latches skipped for the far caller
-#   L5 the switch is a defaulted pointer PARAMETER; no member of that name; existing callers unchanged; only the pass passes it
+#   L5 the switch is a defaulted pointer PARAMETER; no member of that name; all five existing callers (Subsystem, SpawnPass x2,
+#      Provisional x2) unchanged; only the pass passes it
 #   L6 the census is printed on the zero-candidate path (one return in the pass: the latch)
 #   L7 exact formats of ADOPTWORLD, SETTLEDRESTORE, -SPAWNED, -HELD; ungated
 #   L8 mirrors: adopt radius 300, gate radius 800, gate deposit skip, adopt pass-2 tests in order (both sides pinned)
@@ -30,6 +31,7 @@ $files = [ordered]@{
     srh   = 'NodeShuffle\Private\NodeShuffleSettledRestore.h'
     scan  = 'NodeShuffle\Private\NodeShuffleMapModeProvisionalScan.cpp'
     spass = 'NodeShuffle\Private\NodeShuffleMapModeSpawnPass.cpp'
+    prov  = 'NodeShuffle\Private\NodeShuffleMapModeProvisional.cpp'
     nsmod = 'NodeShuffle\Private\NodeShuffle.cpp'
     mk    = 'NodeShuffle\Private\NodeShuffleBuildMarkers.h'
 }
@@ -84,7 +86,7 @@ $loopLines = @(
     '        if (SpawnParkedThisSession.Num() > 0 && SpawnParkedThisSession.Contains(E.EntryGuid)) { continue; }')
 $hSlot     = '    if (FarRestore && Existing) { FarRestore->HeldGate = IsValid(*Existing) ? TEXT("slotAlive") : TEXT("slotDead"); return; }'
 $deadSlot  = '    if (Existing && !IsValid(*Existing))'
-$hClass    = '        if (FarRestore) { FarRestore->HeldGate = TEXT("classNull"); } // ns-lead-restore-1: the same return; no write on either path' + $N + '        return;'
+$hClass    = '        if (FarRestore) { FarRestore->HeldGate = TEXT("classNull"); FarRestore->HitKind = !NodeClass ? TEXT("nodeClassNull") : TEXT("resourceClassNull"); FarRestore->HitPath = !NodeClass ? ResolvedNodeClassPath : Entry.AssignedResourceClassPath; } // ns-lead-restore-1: the same return; no write on either path' + $N + '        return;'
 $hSettle   = '    if (FarRestore && !Entry.bRayCasted) { FarRestore->HeldGate = TEXT("notSettled"); return; }'
 $settleBlk = '    if (!Entry.bRayCasted)' + $N + '    {'
 $hPinR1    = '        if (FarRestore && Entry.bPinned && bSpotOccupied) { FarHold(TEXT("pinnedOccupied")); return; }'
@@ -106,9 +108,9 @@ $latchPin2 = '        if (!FarRestore && Entry.bPinned && (bSpotOccupied || bSpo
 $decl      = '    void EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool& bOutChangedWorld, FNodeShuffleFarRestore* FarRestore = nullptr);'
 $defn      = 'void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool& bOutChangedWorld, FNodeShuffleFarRestore* FarRestore)'
 $fmtWorld  = 'TEXT("ADOPTWORLD class=%s worldActors=%d boundToEntry=%d unboundLegacyClass=%d unboundNetStartup=%d unboundFracking=%d unboundOurComponent=%d unboundWouldBindNow=%d unboundResourceDiffers=%d unboundEntryHasSlot=%d unboundNoActiveEntryIn300cm=%d netStartupAll=%d nullResourceAll=%d"),'
-$fmtCensus = 'TEXT("SETTLEDRESTORE candidates=%d spawned=%d held=%d heldSlotAlive=%d heldSlotDead=%d heldClassNull=%d heldNotSettled=%d heldPinnedOccupied=%d heldOccupiedNode=%d heldOccupiedBuilding=%d heldEnclosed=%d heldInsideGate=%d heldSpawnActorNull=%d heldNoGateRecorded=%d heldStateDiffs=%d xtabPinRayProv=111:%d/110:%d/101:%d/100:%d/011:%d/010:%d/001:%d/000:%d candNoPawn=%d candBeyondAttemptRadius=%d candWithinAttemptRadius=%d actorlessActiveNew=%d skipDormant=%d skipParked=%d skipDeadSlot=%d skipUnpinnedProvRefused=%d skipUnpinnedUnsettled=%d provFlagClearedOnSpawn=%d spawnedLinesCut=%d heldLinesCut=%d attemptRadiusM=%.0f pawns=%d"),'
+$fmtCensus = 'TEXT("SETTLEDRESTORE candidates=%d spawned=%d spawnedActorInvalidAfterCall=%d held=%d heldSlotAlive=%d heldSlotDead=%d heldClassNull=%d heldNotSettled=%d heldPinnedOccupied=%d heldOccupiedNode=%d heldOccupiedBuilding=%d heldEnclosed=%d heldInsideGate=%d heldSpawnActorNull=%d heldNoGateRecorded=%d heldStateDiffs=%d xtabPinRayProv=111:%d/110:%d/101:%d/100:%d/011:%d/010:%d/001:%d/000:%d candNoPawn=%d candBeyondAttemptRadius=%d candWithinAttemptRadius=%d actorlessActiveNew=%d skipDormant=%d skipParked=%d skipDeadSlot=%d skipUnpinnedProvRefused=%d skipUnpinnedUnsettled=%d provFlagClearedOnSpawn=%d spawnedLinesCut=%d heldLinesCut=%d attemptRadiusM=%.0f pawns=%d"),'
 $fmtSpawn  = 'TEXT("SETTLEDRESTORE-SPAWNED guid=%s res=%s spawnClass=%s at=%s nearestPawnDist2DM=%.0f gateNodesWithin8mAfterSpawn=%d pinned=%d pinnedBuildingHitsIgnored=%d"),'
-$fmtHeld   = 'TEXT("SETTLEDRESTORE-HELD guid=%s res=%s at=%s heldGate=%s hitKind=%s hitClass=%s hitPath=%s hitDistCm=%.0f pinned=%d nearestPawnDist2DM=%.0f entryStateDiffs=%d"),'
+$fmtHeld   = 'TEXT("SETTLEDRESTORE-HELD guid=%s res=%s at=%s heldGate=%s hitKind=%s hitClass=%s hitPath=%s hitDistCm=%.0f enclosedRaysBlocked=%d enclosedRaysTotal=%d pinned=%d nearestPawnDist2DM=%.0f entryStateDiffs=%d"),'
 $adoptPred = @(
     '        if (Node->IsA<ANodeShuffleResourceNode>()) { continue; }  // handled in pass 1',
     '        if (Node->IsNetStartupActor()) { continue; }              // level-placed original, not ours',
@@ -162,7 +164,7 @@ function Invoke-Checks($T) {
     if ((Count $T.hdr $decl) -ne 1 -or (Count $s $defn) -ne 1) { $f += '(L5) the switch is a defaulted pointer parameter (declaration and definition)' }
     $memberRx = '(?m)^\s+(bool|FNodeShuffleFarRestore\*?|TOptional<[^>]*>)\s+b?FarRestore\w*\s*(=|;)'
     foreach ($k in @('hdr', 'sub', 'sr')) { if ([regex]::IsMatch($T[$k], $memberRx) -or $T[$k].Contains('b' + 'FarRestore')) { $f += "(L5) no member or flag named FarRestore ($k)" } }
-    if ((Count $T.spass 'EnsureNewNodeSpawned(E, bChangedWorld);') -ne 2 -or (Count $s 'EnsureNewNodeSpawned(Entry, bChangedWorld);') -ne 1 -or (Count $T.spass ('EnsureNewNodeSpawned(E, bChangedWorld, ' + '&')) -ne 0) { $f += '(L5) existing callers pass no far argument' }
+    if ((Count $T.spass 'EnsureNewNodeSpawned(E, bChangedWorld);') -ne 2 -or (Count $s 'EnsureNewNodeSpawned(Entry, bChangedWorld);') -ne 1 -or (Count $T.prov 'EnsureNewNodeSpawned(E, bChangedWorld);') -ne 2 -or (Count $T.prov 'EnsureNewNodeSpawned(') -ne 2 -or (Count $T.spass ('EnsureNewNodeSpawned(E, bChangedWorld, ' + '&')) -ne 0) { $f += '(L5) existing callers pass no far argument' }
     if ((Count $sr 'EnsureNewNodeSpawned(') -ne 1 -or (Count $sr $farCall) -ne 1) { $f += '(L5) the pass is the only far caller, once' }
     if ($T.srh.Contains('USTR' + 'UCT') -or $T.srh.Contains('UPROP' + 'ERTY')) { $f += '(L5) the far-restore struct is not reflected' }
     # L6
@@ -215,6 +217,7 @@ $mutants = @(
     @{ Name = 'M14 a member flag instead of the parameter'; Key = 'hdr'; Expect = 'L5'; Find = '    bool bSettledRestoreDone = false;'; Repl = ('    bool bSettledRestoreDone = false;' + $N + '    bool b' + 'FarRestore = false;') }
     @{ Name = 'M15 default argument dropped'; Key = 'hdr'; Expect = 'L5'; Find = 'FNodeShuffleFarRestore* FarRestore = nullptr);'; Repl = 'FNodeShuffleFarRestore* FarRestore);' }
     @{ Name = 'M16 an existing caller passes a far argument'; Key = 'spass'; Expect = 'L5'; Find = '        EnsureNewNodeSpawned(E, bChangedWorld);' + $N + '        bRwgSteepArmed = false;'; Repl = '        EnsureNewNodeSpawned(E, bChangedWorld, &Far);' + $N + '        bRwgSteepArmed = false;' }
+    @{ Name = 'M16b a provisional-path caller passes a far argument'; Key = 'prov'; Expect = 'L5'; Find = 'EnsureNewNodeSpawned(E, bChangedWorld);'; Repl = 'EnsureNewNodeSpawned(E, bChangedWorld, nullptr);' }
     @{ Name = 'M17 census skipped with zero candidates'; Key = 'sr'; Expect = 'L6'; Find = '    Cands.Append(Rest);'; Repl = ('    Cands.Append(Rest);' + $N + '    if (Cands.Num() ' + '== 0) { return; }') }
     @{ Name = 'M18 census diagnostics-gated'; Key = 'sr'; Expect = 'L7'; Find = ('    UE_LOG(LogNodeShuffle, Display, ' + $fmtCensus); Repl = ('    if (FNodeShuffleModule::' + $diagGate + '()) UE_LOG(LogNodeShuffle, Display, ' + $fmtCensus) }
     @{ Name = 'M19 census drops heldStateDiffs'; Key = 'sr'; Expect = 'L7'; Find = ' heldStateDiffs=%d xtabPinRayProv'; Repl = ' xtabPinRayProv' }

@@ -158,7 +158,7 @@ void ANodeShuffleSubsystem::RunSettledRestoreOnce(float SpawnRadiusCm, bool& bCh
         return M;
     };
 
-    int32 Spawned = 0, HeldTotal = 0, HeldNoGateName = 0, HeldStateDiffs = 0, ProvFlagCleared = 0, SpawnedCut = 0, HeldCut = 0;
+    int32 Spawned = 0, SpawnedThenInvalid = 0, HeldTotal = 0, HeldNoGateName = 0, HeldStateDiffs = 0, ProvFlagCleared = 0, SpawnedCut = 0, HeldCut = 0;
     int32 CandNoPawn = 0, CandBeyondAttempt = 0, CandWithinAttempt = 0;
     int32 Xtab[8] = { 0, 0, 0, 0, 0, 0, 0, 0 }; // index = pinned*4 + rayCasted*2 + provisionalFlag
     TMap<FString, int32> HeldByGate;
@@ -197,6 +197,14 @@ void ANodeShuffleSubsystem::RunSettledRestoreOnce(float SpawnRadiusCm, bool& bCh
                 *E.Location.ToCompactString(), PawnDistM, GateNodesWithin, E.bPinned ? 1 : 0, Far.PinnedBuildingHitsIgnored);
             continue;
         }
+        if (Far.HeldGate == nullptr && SpawnedNodes.Contains(E.EntryGuid))
+        {
+            // The spawn chain ran to its slot write but no valid actor is in the slot now (destroyed during or right after the spawn).
+            // Not a hold: the spawn path's own writes happened. Counted apart so heldStateDiffs measures holds only.
+            ++SpawnedThenInvalid;
+            bChangedWorld |= bLocalChanged;
+            continue;
+        }
         ++HeldTotal;
         const int32 Diffs = SettledRestoreFieldDiffs(Before, E) + ((Memberships(E.EntryGuid) != MemBefore) ? 1 : 0)
             + ((DeferredThisPass != DeferredBefore) ? 1 : 0) + (bLocalChanged ? 1 : 0) + (IsValid(Now) ? 1 : 0);
@@ -204,17 +212,18 @@ void ANodeShuffleSubsystem::RunSettledRestoreOnce(float SpawnRadiusCm, bool& bCh
         const TCHAR* Gate = Far.HeldGate ? Far.HeldGate : TEXT("noGateRecorded");
         if (int32* Slot = HeldByGate.Find(Gate)) { ++*Slot; } else { ++HeldNoGateName; }
         if (HeldTotal > SettledRestoreHeldLinesMax) { ++HeldCut; continue; }
-        UE_LOG(LogNodeShuffle, Display, TEXT("SETTLEDRESTORE-HELD guid=%s res=%s at=%s heldGate=%s hitKind=%s hitClass=%s hitPath=%s hitDistCm=%.0f pinned=%d nearestPawnDist2DM=%.0f entryStateDiffs=%d"),
+        UE_LOG(LogNodeShuffle, Display, TEXT("SETTLEDRESTORE-HELD guid=%s res=%s at=%s heldGate=%s hitKind=%s hitClass=%s hitPath=%s hitDistCm=%.0f enclosedRaysBlocked=%d enclosedRaysTotal=%d pinned=%d nearestPawnDist2DM=%.0f entryStateDiffs=%d"),
             *E.EntryGuid.ToString(), *FPackageName::ObjectPathToObjectName(E.AssignedResourceClassPath), *E.Location.ToCompactString(), Gate,
-            *Far.HitKind, *Far.HitClass, *Far.HitPath, Far.HitDistCm, E.bPinned ? 1 : 0, PawnDistM, Diffs);
+            *Far.HitKind, *Far.HitClass, *Far.HitPath, Far.HitDistCm, Far.EnclosedRaysBlocked, Far.EnclosedRaysTotal, E.bPinned ? 1 : 0, PawnDistM, Diffs);
     }
     // Legend (prose only). candidates counts the entries the predicate in this file's header took; the skip counters split the active
-    // new-node entries with no valid actor that it did not take, by the first exclusion they met. Each held counter names the refusing exit
+    // new-node entries with no valid actor that it did not take, by the first exclusion they met. spawnedActorInvalidAfterCall counts calls
+    // that wrote a SpawnedNodes slot whose actor was not valid when read back (neither spawned nor held). Each held counter names the refusing exit
     // EnsureNewNodeSpawned recorded; heldNoGateRecorded counts held entries for which it recorded none. heldStateDiffs sums, over held
     // entries, the persisted fields and session bookkeeping that differ from their value before the call (the hold contract reads zero).
     // The cross-tab digits are pinned, rayCasted, provisional flag. The three distance counters split candidates by the pawns at this pass.
-    UE_LOG(LogNodeShuffle, Display, TEXT("SETTLEDRESTORE candidates=%d spawned=%d held=%d heldSlotAlive=%d heldSlotDead=%d heldClassNull=%d heldNotSettled=%d heldPinnedOccupied=%d heldOccupiedNode=%d heldOccupiedBuilding=%d heldEnclosed=%d heldInsideGate=%d heldSpawnActorNull=%d heldNoGateRecorded=%d heldStateDiffs=%d xtabPinRayProv=111:%d/110:%d/101:%d/100:%d/011:%d/010:%d/001:%d/000:%d candNoPawn=%d candBeyondAttemptRadius=%d candWithinAttemptRadius=%d actorlessActiveNew=%d skipDormant=%d skipParked=%d skipDeadSlot=%d skipUnpinnedProvRefused=%d skipUnpinnedUnsettled=%d provFlagClearedOnSpawn=%d spawnedLinesCut=%d heldLinesCut=%d attemptRadiusM=%.0f pawns=%d"),
-        Cands.Num(), Spawned, HeldTotal, HeldByGate[TEXT("slotAlive")], HeldByGate[TEXT("slotDead")], HeldByGate[TEXT("classNull")], HeldByGate[TEXT("notSettled")],
+    UE_LOG(LogNodeShuffle, Display, TEXT("SETTLEDRESTORE candidates=%d spawned=%d spawnedActorInvalidAfterCall=%d held=%d heldSlotAlive=%d heldSlotDead=%d heldClassNull=%d heldNotSettled=%d heldPinnedOccupied=%d heldOccupiedNode=%d heldOccupiedBuilding=%d heldEnclosed=%d heldInsideGate=%d heldSpawnActorNull=%d heldNoGateRecorded=%d heldStateDiffs=%d xtabPinRayProv=111:%d/110:%d/101:%d/100:%d/011:%d/010:%d/001:%d/000:%d candNoPawn=%d candBeyondAttemptRadius=%d candWithinAttemptRadius=%d actorlessActiveNew=%d skipDormant=%d skipParked=%d skipDeadSlot=%d skipUnpinnedProvRefused=%d skipUnpinnedUnsettled=%d provFlagClearedOnSpawn=%d spawnedLinesCut=%d heldLinesCut=%d attemptRadiusM=%.0f pawns=%d"),
+        Cands.Num(), Spawned, SpawnedThenInvalid, HeldTotal,HeldByGate[TEXT("slotAlive")], HeldByGate[TEXT("slotDead")], HeldByGate[TEXT("classNull")], HeldByGate[TEXT("notSettled")],
         HeldByGate[TEXT("pinnedOccupied")], HeldByGate[TEXT("occupiedNode")], HeldByGate[TEXT("occupiedBuilding")], HeldByGate[TEXT("enclosed")],
         HeldByGate[TEXT("insideGate")], HeldByGate[TEXT("spawnActorNull")], HeldNoGateName, HeldStateDiffs,
         Xtab[7], Xtab[6], Xtab[5], Xtab[4], Xtab[3], Xtab[2], Xtab[1], Xtab[0], CandNoPawn, CandBeyondAttempt, CandWithinAttempt,

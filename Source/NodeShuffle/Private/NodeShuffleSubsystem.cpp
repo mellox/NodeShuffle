@@ -5059,7 +5059,7 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
     UClass* ResourceClass = LoadClassByPath(Entry.AssignedResourceClassPath);
     if (!NodeClass || !ResourceClass)
     {
-        if (FarRestore) { FarRestore->HeldGate = TEXT("classNull"); } // ns-lead-restore-1: the same return; no write on either path
+        if (FarRestore) { FarRestore->HeldGate = TEXT("classNull"); FarRestore->HitKind = !NodeClass ? TEXT("nodeClassNull") : TEXT("resourceClassNull"); FarRestore->HitPath = !NodeClass ? ResolvedNodeClassPath : Entry.AssignedResourceClassPath; } // ns-lead-restore-1: the same return; no write on either path
         return;
     }
     // ns-lead-restore-1 HOLD: the settle block below writes Location, redeal and defer state; the far-restore caller never enters it.
@@ -5158,6 +5158,7 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
         FString GateHitClass = TEXT("-");
         FString GateHitPath = TEXT("-");
         double GateHitDistCm = -1.0; // ns-lead-restore-1: the hit actor's 3-D distance, written beside kind/class/path (read only by the far-restore hold)
+        int32 GateEncBlocked = -1, GateEncTotal = -1; // ns-lead-restore-1: enclosure rays of the last IsEnclosed call (-1 = not called)
         int32 PinnedBuildingHitsIgnored = 0;
         FString PinnedFirstBuildingClass = TEXT("-");
         FString PinnedFirstBuildingPath = TEXT("-");
@@ -5260,6 +5261,7 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
             // and the counters are written from that stored result rather than from a second call.
             ++NodeGateCallEnclosedReached;
             const bool bEnclosed = IsSpotEnclosed(At, Blocked, Total);
+            GateEncBlocked = Blocked; GateEncTotal = Total; // ns-lead-restore-1: the last call's rays (the far hold reads the primary spot's)
             if (bEnclosed) { ++NodeGateCallEnclosedRejected; }
             return bEnclosed;
         };
@@ -5291,6 +5293,8 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
             FarRestore->HitPath = PrimaryHitPath;
             FarRestore->HitDistCm = PrimaryHitDistCm;
             FarRestore->PinnedBuildingHitsIgnored = PinnedBuildingHitsIgnored;
+            FarRestore->EnclosedRaysBlocked = GateEncBlocked;
+            FarRestore->EnclosedRaysTotal = GateEncTotal;
         };
         // rwg-pinnedspawn-1 I1: once per pinned entry per session, the building overlap the gate ignored at
         // its primary spot (the exemption's positive evidence: normally the player's own miner).
