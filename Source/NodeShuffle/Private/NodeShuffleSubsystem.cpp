@@ -8733,6 +8733,9 @@ void ANodeShuffleSubsystem::ReassociateOrphanedExtractors()
     // (no binding and no SpawnedNodes actor within ExtractorSnapDistance -- vanilla nodes are not searched),
     // bindingPresent (a binding object is present, valid or not). Printed only when the tuple changes.
     int32 RelinkExtractors = 0, RelinkLinked = 0, RelinkLinkNoEffect = 0, RelinkNoNode = 0, RelinkAlreadyLinked = 0;
+    // ns-lead-restore-1b: bindingPresent extractors whose binding this pass refreshed via SetResourceNode, split by the predicate that
+    // selected the refresh, in the same precedence as the "relink: refreshed" line (stale, else res-null, else wrong-node).
+    int32 RelinkRefreshedStale = 0, RelinkRefreshedResNull = 0, RelinkRefreshedWrongNode = 0;
     constexpr int32 RelinkNoNodeLinesMax = 40; // EXTRACTOR-UNBOUND-NOSPAWNEDNODE lines per session; the census carries the full count
     for (TActorIterator<AFGBuildableResourceExtractorBase> It(GetWorld()); It; ++It)
     {
@@ -8820,6 +8823,7 @@ void ANodeShuffleSubsystem::ReassociateOrphanedExtractors()
                 {
                     ExtractorsHealed.Add(Extractor);
                     Extractor->SetResourceNode(HealTarget);
+                    if (bStale) { ++RelinkRefreshedStale; } else if (bResNull) { ++RelinkRefreshedResNull; } else { ++RelinkRefreshedWrongNode; } // ns-lead-restore-1b
                     UClass* HealedClass = nullptr;
                     if (IFGExtractableResourceInterface* HealedRes = Cast<IFGExtractableResourceInterface>(HealTarget))
                     {
@@ -8867,13 +8871,16 @@ void ANodeShuffleSubsystem::ReassociateOrphanedExtractors()
     }
     {
         // rwg-pinnedspawn-1 I4: the census, change-driven (this function runs every pass).
-        const FString RelinkKey = FString::Printf(TEXT("%d|%d|%d|%d|%d"),
-            RelinkLinked, RelinkNoNode, RelinkAlreadyLinked, RelinkLinkNoEffect, RelinkExtractors);
+        // ns-lead-restore-1b: the three refresh counters are part of the tuple, so a pass that refreshes a binding prints a line.
+        const FString RelinkKey = FString::Printf(TEXT("%d|%d|%d|%d|%d|%d|%d|%d"),
+            RelinkLinked, RelinkNoNode, RelinkAlreadyLinked, RelinkLinkNoEffect, RelinkExtractors,
+            RelinkRefreshedStale, RelinkRefreshedResNull, RelinkRefreshedWrongNode);
         if (RelinkKey != RelinkCensusLastKey)
         {
             RelinkCensusLastKey = RelinkKey;
-            UE_LOG(LogNodeShuffle, Display, TEXT("EXTRACTOR-RELINK linked=%d unboundNoSpawnedNodeInSnap=%d bindingPresent=%d linkNoEffect=%d extractors=%d spawnedNodes=%d"),
-                RelinkLinked, RelinkNoNode, RelinkAlreadyLinked, RelinkLinkNoEffect, RelinkExtractors, SpawnedNodes.Num());
+            UE_LOG(LogNodeShuffle, Display, TEXT("EXTRACTOR-RELINK linked=%d unboundNoSpawnedNodeInSnap=%d bindingPresent=%d linkNoEffect=%d extractors=%d spawnedNodes=%d refreshedStale=%d refreshedResNull=%d refreshedWrongNode=%d"),
+                RelinkLinked, RelinkNoNode, RelinkAlreadyLinked, RelinkLinkNoEffect, RelinkExtractors, SpawnedNodes.Num(),
+                RelinkRefreshedStale, RelinkRefreshedResNull, RelinkRefreshedWrongNode);
         }
     }
 

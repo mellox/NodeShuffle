@@ -13,6 +13,8 @@
 #      the apply loop and RwgSpawnPass; members declared in the header
 #   S4 (I4) EXTRACTOR-RELINK: the four branch counters partition the loop, linked is read back after SetResourceNode, the census
 #      has its exact format, is change-driven and sits between the extractor loop and the portable-miner loop
+#   S7 (ns-lead-restore-1b) the census also splits refreshed bindings by stale / res-null / wrong-node (refresh-line precedence),
+#      counted once per SetResourceNode heal, appended last and part of the change tuple
 #   S5 marker rwg-pinnedspawn-1 once on its own line in NodeShuffle.cpp and nowhere in the packet sources
 #   S6 every new field token appears exactly once in its file (no legend echoes a field in field=value form)
 # Every forbidden needle is BUILT BY CONCATENATION. Mutants run in-file. Exit 0 = all hold; 1 = a rule or mutant fails; 2 = missing file.
@@ -95,9 +97,15 @@ $readBack    = "            const bool bBoundAfter = Extractor->GetExtractableRe
 $linkFmt     = 'TEXT("EXTRACTOR-RELINK-LINK extractor=%s node=%s at=%s nodeDistM=%.1f boundAfter=%d"),'
 $noNodeCount = "        else`n        {`n            // rwg-pinnedspawn-1 I4: no binding and no spawned node within ExtractorSnapDistance. Named once per`n            // extractor per session (capped), so a miner standing without a node is visible in the log.`n            ++RelinkNoNode;"
 $noNodeFmt   = 'TEXT("EXTRACTOR-UNBOUND-NOSPAWNEDNODE extractor=%s class=%s at=%s spawnedNodes=%d snapRadiusM=%.0f"),'
-$relinkKey   = "        const FString RelinkKey = FString::Printf(TEXT(""%d|%d|%d|%d|%d""),`n            RelinkLinked, RelinkNoNode, RelinkAlreadyLinked, RelinkLinkNoEffect, RelinkExtractors);`n        if (RelinkKey != RelinkCensusLastKey)`n        {`n            RelinkCensusLastKey = RelinkKey;"
-$relinkFmt   = 'TEXT("EXTRACTOR-RELINK linked=%d unboundNoSpawnedNodeInSnap=%d bindingPresent=%d linkNoEffect=%d extractors=%d spawnedNodes=%d"),'
-$relinkArgs  = '                RelinkLinked, RelinkNoNode, RelinkAlreadyLinked, RelinkLinkNoEffect, RelinkExtractors, SpawnedNodes.Num());'
+$relinkKey   = "        const FString RelinkKey = FString::Printf(TEXT(""%d|%d|%d|%d|%d|%d|%d|%d""),`n            RelinkLinked, RelinkNoNode, RelinkAlreadyLinked, RelinkLinkNoEffect, RelinkExtractors,`n            RelinkRefreshedStale, RelinkRefreshedResNull, RelinkRefreshedWrongNode);`n        if (RelinkKey != RelinkCensusLastKey)`n        {`n            RelinkCensusLastKey = RelinkKey;"
+$relinkFmt   = 'TEXT("EXTRACTOR-RELINK linked=%d unboundNoSpawnedNodeInSnap=%d bindingPresent=%d linkNoEffect=%d extractors=%d spawnedNodes=%d refreshedStale=%d refreshedResNull=%d refreshedWrongNode=%d"),'
+$relinkArgs  = "                RelinkLinked, RelinkNoNode, RelinkAlreadyLinked, RelinkLinkNoEffect, RelinkExtractors, SpawnedNodes.Num(),`n                RelinkRefreshedStale, RelinkRefreshedResNull, RelinkRefreshedWrongNode);"
+# ns-lead-restore-1b S7: the refresh split, counted once per SetResourceNode heal, in the refresh line's own precedence
+$refreshInit = '    int32 RelinkRefreshedStale = 0, RelinkRefreshedResNull = 0, RelinkRefreshedWrongNode = 0;'
+$healSet     = '                    Extractor->SetResourceNode(HealTarget);'
+$refreshCnt  = '                    if (bStale) { ++RelinkRefreshedStale; } else if (bResNull) { ++RelinkRefreshedResNull; } else { ++RelinkRefreshedWrongNode; } // ns-lead-restore-1b'
+$refreshLog  = '                    UE_LOG(LogNodeShuffle, Display, TEXT("relink: refreshed resource binding on %s -> %s (%s)"),'
+$refreshLbl  = '                        bStale ? TEXT("stale binding") : bResNull ? TEXT("null resource") : TEXT("wrong node"));'
 $portable    = '    for (TActorIterator<AFGPortableMiner> It(GetWorld()); It; ++It)'
 $marker      = '2026-11-01-rwg-' + 'pinnedspawn-1'
 
@@ -144,12 +152,15 @@ function Invoke-PinnedSpawnChecks($T) {
         if ((Count $rb $relinkFmt) -ne 1 -or (Count $rb ($relinkFmt + "`n" + $relinkArgs)) -ne 1) { $f += '(S4) EXTRACTOR-RELINK format or argument list changed' }
         if ((Count $rb $relinkKey) -ne 1) { $f += '(S4) census must be change-driven on the full tuple' }
         if ((Count $rb '++RelinkNoNode;') -ne 1 -or (Count $rb '++RelinkAlreadyLinked;') -ne 1 -or (Count $rb '++RelinkExtractors;') -ne 1) { $f += '(S4) branch counters missing' }
+        # S7 (ns-lead-restore-1b) refresh split: one increment per heal, directly after the setter, before the refresh line, same precedence
+        if (-not (Ordered $rb @($relinkInit, $refreshInit, $extLoop, $boundCount, ($healSet + "`n" + $refreshCnt), $refreshLog, $refreshLbl, '            continue;', $setter, $relinkKey))) { $f += '(S7) order: refresh counters -> setter -> split increment -> refresh line -> census' }
+        if ((Count $rb $refreshCnt) -ne 1 -or (Count $rb '++RelinkRefreshedStale;') -ne 1 -or (Count $rb '++RelinkRefreshedResNull;') -ne 1 -or (Count $rb '++RelinkRefreshedWrongNode;') -ne 1 -or (Count $rb $refreshLbl) -ne 1) { $f += '(S7) each refresh counter incremented once, in the refresh line''s precedence (stale, res-null, wrong-node)' }
     }
     # S5
     if ((Count $T.nsmod ('    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle packet marker (' + $marker + ')====="));')) -ne 1 -or (Count $T.nsmod $marker) -ne 1) { $f += '(S5) marker missing or not on its own line' }
     if ((Count $s $marker) -ne 0 -or (Count $h $marker) -ne 0) { $f += '(S5) marker must not appear in the packet sources' }
     # S6 (anchored on a non-letter before the token, so a legend's "(tok=" or " tok=" both count and "alreadyLinked=" is not "linked=")
-    foreach ($tok in @('overlapKind=', 'overlapClass=', 'overlapPath=', 'strike=', 'buildingOverlapHitsIgnored=', 'unboundNoSpawnedNodeInSnap=', 'bindingPresent=', 'linkNoEffect=', 'boundAfter=', 'linked=')) {
+    foreach ($tok in @('overlapKind=', 'overlapClass=', 'overlapPath=', 'strike=', 'buildingOverlapHitsIgnored=', 'unboundNoSpawnedNodeInSnap=', 'bindingPresent=', 'linkNoEffect=', 'boundAfter=', 'linked=', 'refreshedStale=', 'refreshedResNull=', 'refreshedWrongNode=')) {
         if ((TokCount $s $tok) -ne 1) { $f += "(S6) field token echoed or missing in the subsystem: $tok" }
     }
     foreach ($tok in @('reactivated=', 'pinnedTotal=', 'pinnedInactiveBefore=', 'strikesBefore=')) {
@@ -190,6 +201,12 @@ $mutants = @(
     @{ Name = 'X22 no-node extractors not counted'; Key = 'sub'; Expect = 'S4'; Find = "            ++RelinkNoNode;`n"; Repl = '' }
     @{ Name = 'X23 already-linked not counted'; Key = 'sub'; Expect = 'S4'; Find = '            ++RelinkAlreadyLinked; // rwg-pinnedspawn-1 I4'; Repl = '            // counter removed' }
     @{ Name = 'X24 census field dropped'; Key = 'sub'; Expect = 'S4'; Find = ' unboundNoSpawnedNodeInSnap=%d'; Repl = '' }
+    @{ Name = 'X30 wrong-node refresh not counted'; Key = 'sub'; Expect = 'S7'; Find = ' else { ++RelinkRefreshedWrongNode; } // ns-lead-restore-1b'; Repl = ' // ns-lead-restore-1b' }
+    @{ Name = 'X31 refresh split precedence flipped'; Key = 'sub'; Expect = 'S7'; Find = 'if (bStale) { ++RelinkRefreshedStale; } else if (bResNull) { ++RelinkRefreshedResNull; }'; Repl = 'if (bResNull) { ++RelinkRefreshedResNull; } else if (bStale) { ++RelinkRefreshedStale; }' }
+    @{ Name = 'X32 refresh counted before the heal target test'; Key = 'sub'; Expect = 'S7'; Find = ($healSet + "`n" + $refreshCnt); Repl = $healSet
+       Find2 = '                if (HealTarget)' + "`n"; Repl2 = ($refreshCnt + "`n" + '                if (HealTarget)' + "`n") }
+    @{ Name = 'X33 census key omits the refresh counters'; Key = 'sub'; Expect = 'S4'; Find = "RelinkExtractors,`n            RelinkRefreshedStale, RelinkRefreshedResNull, RelinkRefreshedWrongNode);"; Repl = 'RelinkExtractors);' }
+    @{ Name = 'X34 census drops refreshedResNull'; Key = 'sub'; Expect = 'S4'; Find = ' refreshedResNull=%d'; Repl = '' }
     @{ Name = 'X25 marker reverted'; Key = 'nsmod'; Expect = 'S5'; Find = $marker; Repl = ('2026-11-01-rwg-' + 'pinnedspawn-0') }
     @{ Name = 'X26 legend echoes a gate field'; Key = 'sub'; Expect = 'S6'; Find = '            // the entry''s nudge counter after this visit;'; Repl = ('            // the entry''s nudge counter after this visit (' + 'strike=' + 'N/8);') }
     @{ Name = 'X27 legend echoes a heal field'; Key = 'heal'; Expect = 'S6'; Find = '// ONCE PER LOAD.'; Repl = ('// ONCE PER LOAD (' + 'reactivated=' + 'N).') }
