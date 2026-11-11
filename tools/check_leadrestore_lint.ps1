@@ -19,6 +19,9 @@
 #   L10 every new field token once in its file; legend is prose without an = sign
 #   L11 bRwgProvisional cleared only in the spawned branch
 #   L12 the pass file writes no other entry field and no session bookkeeping
+#   L13 no bookkeeping write before the far slot hold; exactly the recorded far hold sites; pinned never held on enclosure (R1)
+#   L14 (ns-lead-restore-1b) SETTLEDRESTORE-SKIPPED from exclusions (8) and (9) only, capped at 40, cut counted, cut count last in the census
+#       (L7/L10 also cover the SKIPPED format)
 # Every forbidden needle is BUILT BY CONCATENATION. Mutants run in-file. Exit 0 = all hold; 1 = a rule or mutant fails; 2 = missing file.
 
 $ErrorActionPreference = 'Stop'
@@ -73,8 +76,8 @@ $popLines = @(
     '        if (Slot) { ++SkipDeadSlot; continue; }',
     '        if (!E.bPinned && RwgProvRefused.Contains(E.EntryGuid)) { ++SkipProvRefused; continue; }',
     '        if (!E.bPinned && !E.bRayCasted) { ++SkipUnpinnedUnsettled; continue; }',
-    '        if (!E.bPinned && E.OverlapNudges > 0) { ++SkipUnpinnedStruck; continue; }',
-    '        if (!E.bPinned && !E.bRwgSettledOnTerrain && !E.bUnderground && !E.bRwgCave) { ++SkipUnpinnedNotTerrainSettled; continue; }',
+    '        if (!E.bPinned && E.OverlapNudges > 0) { ++SkipUnpinnedStruck; LogSkipped(E, TEXT("overlapNudgesAboveZero")); continue; }',
+    '        if (!E.bPinned && !E.bRwgSettledOnTerrain && !E.bUnderground && !E.bRwgCave) { ++SkipUnpinnedNotTerrainSettled; LogSkipped(E, TEXT("settledOnTerrainUndergroundCaveAllFalse")); continue; }',
     '        (E.bPinned ? Pinned : Rest).Add(I);')
 $scanLines = @(
     '        if (!E.bIsNewNode || !E.bActive || E.bPinned) { return false; }',
@@ -110,7 +113,11 @@ $latchPin2 = '        if (!FarRestore && Entry.bPinned && (bSpotOccupied || bSpo
 $decl      = '    void EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool& bOutChangedWorld, FNodeShuffleFarRestore* FarRestore = nullptr);'
 $defn      = 'void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool& bOutChangedWorld, FNodeShuffleFarRestore* FarRestore)'
 $fmtWorld  = 'TEXT("ADOPTWORLD class=%s worldActors=%d boundToEntry=%d unboundLegacyClass=%d unboundNetStartup=%d unboundFracking=%d unboundOurComponent=%d unboundWouldBindNow=%d unboundResourceDiffers=%d unboundEntryHasSlot=%d unboundNoActiveEntryIn300cm=%d netStartupAll=%d nullResourceAll=%d"),'
-$fmtCensus = 'TEXT("SETTLEDRESTORE candidates=%d spawned=%d spawnedActorInvalidAfterCall=%d held=%d heldSlotAlive=%d heldSlotDead=%d heldClassNull=%d heldNotSettled=%d heldPinnedOccupied=%d heldOccupiedNode=%d heldOccupiedBuilding=%d heldEnclosed=%d heldInsideGate=%d heldSpawnActorNull=%d heldNoGateRecorded=%d heldStateDiffs=%d xtabPinRayProv=111:%d/110:%d/101:%d/100:%d/011:%d/010:%d/001:%d/000:%d candNoPawn=%d candBeyondAttemptRadius=%d candWithinAttemptRadius=%d actorlessActiveNew=%d skipDormant=%d skipParked=%d skipDeadSlot=%d skipUnpinnedProvRefused=%d skipUnpinnedUnsettled=%d skipUnpinnedStruck=%d skipUnpinnedNotTerrainSettled=%d provFlagClearedOnSpawn=%d spawnedLinesCut=%d heldLinesCut=%d attemptRadiusM=%.0f pawns=%d"),'
+$fmtCensus = 'TEXT("SETTLEDRESTORE candidates=%d spawned=%d spawnedActorInvalidAfterCall=%d held=%d heldSlotAlive=%d heldSlotDead=%d heldClassNull=%d heldNotSettled=%d heldPinnedOccupied=%d heldOccupiedNode=%d heldOccupiedBuilding=%d heldEnclosed=%d heldInsideGate=%d heldSpawnActorNull=%d heldNoGateRecorded=%d heldStateDiffs=%d xtabPinRayProv=111:%d/110:%d/101:%d/100:%d/011:%d/010:%d/001:%d/000:%d candNoPawn=%d candBeyondAttemptRadius=%d candWithinAttemptRadius=%d actorlessActiveNew=%d skipDormant=%d skipParked=%d skipDeadSlot=%d skipUnpinnedProvRefused=%d skipUnpinnedUnsettled=%d skipUnpinnedStruck=%d skipUnpinnedNotTerrainSettled=%d provFlagClearedOnSpawn=%d spawnedLinesCut=%d heldLinesCut=%d attemptRadiusM=%.0f pawns=%d skippedLinesCut=%d"),'
+$fmtSkip   = 'TEXT("SETTLEDRESTORE-SKIPPED guid=%s res=%s at=%s skipTest=%s overlapNudges=%d settledOnTerrain=%d underground=%d cave=%d"),'
+$skipCap   = '    constexpr int32 SettledRestoreSkippedLinesMax = 40;'
+$skipGate  = '        if (++SkippedLines <= SettledRestoreSkippedLinesMax)' + $N + '        {' + $N + '            UE_LOG(LogNodeShuffle, Display, ' + $fmtSkip
+$skipArgs  = '                static_cast<int32>(S.OverlapNudges), S.bRwgSettledOnTerrain ? 1 : 0, S.bUnderground ? 1 : 0, S.bRwgCave ? 1 : 0);' + $N + '        }' + $N + '        else { ++SkippedCut; }'
 $fmtSpawn  = 'TEXT("SETTLEDRESTORE-SPAWNED guid=%s res=%s spawnClass=%s at=%s nearestPawnDist2DM=%.0f gateNodesWithin8mAfterSpawn=%d pinned=%d pinnedBuildingHitsIgnored=%d enclosedRaysBlocked=%d enclosedRaysTotal=%d"),'
 $fmtHeld   = 'TEXT("SETTLEDRESTORE-HELD guid=%s res=%s at=%s heldGate=%s hitKind=%s hitClass=%s hitPath=%s hitDistCm=%.0f enclosedRaysBlocked=%d enclosedRaysTotal=%d pinned=%d nearestPawnDist2DM=%.0f entryStateDiffs=%d"),'
 $adoptPred = @(
@@ -171,10 +178,10 @@ function Invoke-Checks($T) {
     if ($T.srh.Contains('USTR' + 'UCT') -or $T.srh.Contains('UPROP' + 'ERTY')) { $f += '(L5) the far-restore struct is not reflected' }
     # L6
     if ((Count $pass 'return;') -ne 1 -or $pass.Contains('Cands.Num() ' + '==') -or $pass.Contains('Cands.Num() ' + '>') -or $pass.Contains('Cands.' + 'IsEmpty()')) { $f += '(L6) the census prints on the zero-candidate path (only the latch returns)' }
-    $tail = Span $sr '    // Legend (prose only).' 'AttemptRadiusCm / 100.f, Pawns.Num());'
+    $tail = Span $sr '    // Legend (prose only).' 'AttemptRadiusCm / 100.f, Pawns.Num(), SkippedCut);'
     if ($tail -eq '' -or (Count $tail $fmtCensus) -ne 1) { $f += '(L6) the census follows the candidate loop' }
     # L7
-    foreach ($fmt in @($fmtWorld, $fmtCensus, $fmtSpawn, $fmtHeld)) { if ((Count $sr ('UE_LOG(LogNodeShuffle, Display, ' + $fmt)) -ne 1) { $f += "(L7) format missing or changed: $($fmt.Substring(6, 26))" } }
+    foreach ($fmt in @($fmtWorld, $fmtCensus, $fmtSpawn, $fmtHeld, $fmtSkip)) { if ((Count $sr ('UE_LOG(LogNodeShuffle, Display, ' + $fmt)) -ne 1) { $f += "(L7) format missing or changed: $($fmt.Substring(6, 26))" } }
     if ($sr.Contains($diagGate)) { $f += '(L7) all four lines ungated' }
     # L8
     if ((Count $sr 'constexpr float SettledRestoreAdoptMirrorCm = 300.0f;') -ne 1 -or (Count $s 'constexpr float AdoptMatchRadiusCm = 300.0f;') -ne 1) { $f += '(L8) adopt radius mirror (300 cm)' }
@@ -189,8 +196,8 @@ function Invoke-Checks($T) {
     if (($hdrTags | Where-Object { $_ -eq $marker }).Count -ne 1 -or (Count $T.nsmod ('packet marker (' + $marker + ')=====')) -ne 1) { $f += '(L9) marker once in the header and once in NodeShuffle.cpp' } # ns-thorium-half-1: no longer the newest; pinned present
     foreach ($k in @('sr', 'srh')) { if ($T[$k].Contains($marker)) { $f += "(L9) no marker literal in $k" } }
     # L10
-    foreach ($fmt in @($fmtWorld, $fmtCensus, $fmtSpawn, $fmtHeld)) {
-        foreach ($m in [regex]::Matches($fmt, '([A-Za-z0-9]+)=')) { $tok = $m.Groups[1].Value + '='; if (([regex]::Matches($sr, '(?<![A-Za-z0-9])' + [regex]::Escape($tok))).Count -ne (([regex]::Matches(($fmtWorld + $fmtCensus + $fmtSpawn + $fmtHeld), '(?<![A-Za-z0-9])' + [regex]::Escape($tok))).Count)) { $f += "(L10) field token '$tok' appears outside its format string" } }
+    foreach ($fmt in @($fmtWorld, $fmtCensus, $fmtSpawn, $fmtHeld, $fmtSkip)) {
+        foreach ($m in [regex]::Matches($fmt, '([A-Za-z0-9]+)=')) { $tok = $m.Groups[1].Value + '='; if (([regex]::Matches($sr, '(?<![A-Za-z0-9])' + [regex]::Escape($tok))).Count -ne (([regex]::Matches(($fmtWorld + $fmtCensus + $fmtSpawn + $fmtHeld + $fmtSkip),'(?<![A-Za-z0-9])' + [regex]::Escape($tok))).Count)) { $f += "(L10) field token '$tok' appears outside its format string" } }
     }
     $leg = Span $sr '    // Legend (prose only).' '    UE_LOG(LogNodeShuffle, Display, TEXT("SETTLEDRESTORE candidates'
     if ($leg -eq '' -or $leg.Contains('=')) { $f += '(L10) the census legend is prose with no = sign' }
@@ -204,6 +211,10 @@ function Invoke-Checks($T) {
     $rxEncl = '(?<!!)FarRestore\s*&&\s*\(?\s*bSpotEnclosed' + 'Raw'
     if ([regex]::IsMatch($ens, $rxEncl)) { $f += '(L13) the far path holds on the raw enclosure verdict (pinned entries must spawn, R1)' }
     if ((Count $ens ('FarHold' + '(')) -ne 2 -or (Count $ens ('HeldGate' + ' =')) -ne 6 -or (Count $ens ('const bool bSpotEnclosed = bSpotEnclosedRaw && !Entry.' + 'bPinned;')) -ne 1) { $f += '(L13) the far hold sites are exactly the recorded six; pinned entries are never held on enclosure (R1)' }
+    # L14 (ns-lead-restore-1b N5) a SKIPPED line per entry skipped by exclusion (8) or (9), capped at 40 with the cut counted, cut count last in the census
+    if ((Count $sr $skipCap) -ne 1 -or -not (Ordered $sr @($skipGate, $skipArgs, '    TArray<int32> Pinned, Rest;')) -or (Count $sr $skipArgs) -ne 1) { $f += '(L14) SKIPPED line gated by its 40-line cap with every cut counted, defined before the population' }
+    if ((Count $pop 'LogSkipped(E, ') -ne 2 -or (Count $sr 'LogSkipped(') -ne 2) { $f += '(L14) SKIPPED printed from exactly the two unpinned exclusions (8) and (9)' }
+    if ((Count $sr 'AttemptRadiusCm / 100.f, Pawns.Num(), SkippedCut);') -ne 1) { $f += '(L14) the census carries the SKIPPED cut count as its last argument' }
     if (([regex]::Matches($pop, 'continue;')).Count -ne 9) { $f += '(L3) the population has exactly nine exclusions (add one here deliberately)' }
     return $f
 }
@@ -242,6 +253,12 @@ $mutants = @(
     @{ Name = 'M29 population gains an unlisted exclusion'; Key = 'sr'; Expect = 'L3'; Find = '        (E.bPinned ? Pinned : Rest).Add(I);'; Repl = ('        if (E.bPinned && !E.bRwgSettledOnTerrain) { ' + 'continue; }' + $N + '        (E.bPinned ? Pinned : Rest).Add(I);') }
     @{ Name = 'M30 terrain exclusion loses its unpinned guard'; Key = 'sr'; Expect = 'L3'; Find = '        if (!E.bPinned && !E.bRwgSettledOnTerrain'; Repl = '        if (!E.bRwgSettledOnTerrain' }
     @{ Name = 'M31 pinned enclosed held on the far path, second spelling'; Key = 'sub'; Expect = 'L13'; Find = $hPinR1; Repl = ($hPinR1 + $N + '        if (FarRestore && Entry.bPinned && bSpotEnclosed' + 'Raw) { FarHold(TEXT("enclosed")); return; }') }
+    @{ Name = 'M32 struck exclusion prints no SKIPPED line'; Key = 'sr'; Expect = 'L14'; Find = '{ ++SkipUnpinnedStruck; LogSkipped(E, TEXT("overlapNudgesAboveZero")); continue; }'; Repl = '{ ++SkipUnpinnedStruck; continue; }' }
+    @{ Name = 'M33 SKIPPED lines past the cap not counted'; Key = 'sr'; Expect = 'L14'; Find = ($N + '        else { ++SkippedCut; }'); Repl = '' }
+    @{ Name = 'M34 SKIPPED cap raised'; Key = 'sr'; Expect = 'L14'; Find = 'SettledRestoreSkippedLinesMax = 40;'; Repl = 'SettledRestoreSkippedLinesMax = 4000;' }
+    @{ Name = 'M35 SKIPPED drops the strike value'; Key = 'sr'; Expect = 'L7'; Find = ' overlapNudges=%d settledOnTerrain'; Repl = ' settledOnTerrain' }
+    @{ Name = 'M36 census drops the SKIPPED cut count'; Key = 'sr'; Expect = 'L14'; Find = 'AttemptRadiusCm / 100.f, Pawns.Num(), SkippedCut);'; Repl = 'AttemptRadiusCm / 100.f, Pawns.Num(), 0);' }
+    @{ Name = 'M37 SKIPPED printed from a third exclusion'; Key = 'sr'; Expect = 'L14'; Find = '{ ++SkipDeadSlot; continue; }'; Repl = ('{ ++SkipDeadSlot; LogSkipped(E, TEXT("deadSlot")); ' + 'continue; }') }
 )
 $mutantFails = @(); $caught = 0
 foreach ($m in $mutants) {

@@ -10,7 +10,8 @@
 //   2. Every candidate (predicate below) is passed to EnsureNewNodeSpawned with a far-restore argument, pinned candidates first, each group
 //      in Layout order. No pawn distance test, no attempt budget. Any refusing exit HOLDS: EnsureNewNodeSpawned records the exit in the
 //      argument and returns before any write, so the entry keeps today's attempt-loop path on approach.
-//   3. SETTLEDRESTORE census (always printed, also with zero candidates), per-entry SPAWNED/HELD lines (capped).
+//   3. SETTLEDRESTORE census (always printed, also with zero candidates), per-entry SPAWNED/HELD lines (capped), and a capped per-entry
+//      SKIPPED line for each entry exclusion (8) or (9) below skipped (ns-lead-restore-1b).
 // CANDIDATE PREDICATE (the provisional scan's refusals by bPinned or bRayCasted, the attempt loop's own exclusions, and two unpinned exclusions the attempt loop does not apply). The nine
 // exclusions, in code order: (1) not bIsNewNode or not bActive; (2) a valid SpawnedNodes slot; (3) DormantThisSession; (4) SpawnParkedThisSession;
 // (5) a dead slot; and for unpinned entries only: (6) RwgProvRefused; (7) not bRayCasted; (8) OverlapNudges above zero;
@@ -38,6 +39,7 @@ namespace
     constexpr float SettledRestoreGateRadiusCm = 800.0f;  // mirrors OverlapRejectRadius in EnsureNewNodeSpawned; lint leadrestore pins both
     constexpr int32 SettledRestoreSpawnedLinesMax = 60;
     constexpr int32 SettledRestoreHeldLinesMax = 40;
+    constexpr int32 SettledRestoreSkippedLinesMax = 40; // ns-lead-restore-1b N5: SETTLEDRESTORE-SKIPPED lines per load
 
     // Persisted fields of one entry that differ between two copies (the hold contract's field half).
     int32 SettledRestoreFieldDiffs(const FNodeShuffleEntry& A, const FNodeShuffleEntry& B)
@@ -129,6 +131,19 @@ void ANodeShuffleSubsystem::RunSettledRestoreOnce(float SpawnRadiusCm, bool& bCh
     const float AttemptRadiusCm = FMath::Min(SpawnRadiusCm, NodeShuffleMapMode::RwgAttemptRadiusCm);
 
     int32 ActorlessActiveNew = 0, SkipDormant = 0, SkipParked = 0, SkipDeadSlot = 0, SkipProvRefused = 0, SkipUnpinnedUnsettled = 0, SkipUnpinnedStruck = 0, SkipUnpinnedNotTerrainSettled = 0;
+    // ns-lead-restore-1b N5: one line per entry skipped by exclusion (8) or (9), capped; prints the test that skipped it and the values
+    // that test read (the strike counter and the three flags), for every such entry whichever test it met.
+    int32 SkippedLines = 0, SkippedCut = 0;
+    const auto LogSkipped = [&SkippedLines, &SkippedCut](const FNodeShuffleEntry& S, const TCHAR* Test)
+    {
+        if (++SkippedLines <= SettledRestoreSkippedLinesMax)
+        {
+            UE_LOG(LogNodeShuffle, Display, TEXT("SETTLEDRESTORE-SKIPPED guid=%s res=%s at=%s skipTest=%s overlapNudges=%d settledOnTerrain=%d underground=%d cave=%d"),
+                *S.EntryGuid.ToString(), *FPackageName::ObjectPathToObjectName(S.AssignedResourceClassPath), *S.Location.ToCompactString(), Test,
+                static_cast<int32>(S.OverlapNudges), S.bRwgSettledOnTerrain ? 1 : 0, S.bUnderground ? 1 : 0, S.bRwgCave ? 1 : 0);
+        }
+        else { ++SkippedCut; }
+    };
     TArray<int32> Pinned, Rest;
     for (int32 I = 0; I < Layout.Num(); ++I)
     {
@@ -142,8 +157,8 @@ void ANodeShuffleSubsystem::RunSettledRestoreOnce(float SpawnRadiusCm, bool& bCh
         if (Slot) { ++SkipDeadSlot; continue; } // a dead slot: EnsureNewNodeSpawned's external-destroy backoff owns it
         if (!E.bPinned && RwgProvRefused.Contains(E.EntryGuid)) { ++SkipProvRefused; continue; }
         if (!E.bPinned && !E.bRayCasted) { ++SkipUnpinnedUnsettled; continue; } // the provisional pass takes these at any distance
-        if (!E.bPinned && E.OverlapNudges > 0) { ++SkipUnpinnedStruck; continue; } // the strike counter is above zero: EnsureNewNodeSpawned increments it on an unrelocated overlap/enclosure refusal and no later nudge or spawn resets it
-        if (!E.bPinned && !E.bRwgSettledOnTerrain && !E.bUnderground && !E.bRwgCave) { ++SkipUnpinnedNotTerrainSettled; continue; } // the same bRwgSettledOnTerrain/bUnderground/bRwgCave test as RwgResettlePass's actorless requeue
+        if (!E.bPinned && E.OverlapNudges > 0) { ++SkipUnpinnedStruck; LogSkipped(E, TEXT("overlapNudgesAboveZero")); continue; } // the strike counter is above zero: EnsureNewNodeSpawned increments it on an unrelocated overlap/enclosure refusal and no later nudge or spawn resets it
+        if (!E.bPinned && !E.bRwgSettledOnTerrain && !E.bUnderground && !E.bRwgCave) { ++SkipUnpinnedNotTerrainSettled; LogSkipped(E, TEXT("settledOnTerrainUndergroundCaveAllFalse")); continue; } // the same bRwgSettledOnTerrain/bUnderground/bRwgCave test as RwgResettlePass's actorless requeue
         (E.bPinned ? Pinned : Rest).Add(I);
     }
     TArray<int32> Cands = MoveTemp(Pinned);
@@ -229,11 +244,12 @@ void ANodeShuffleSubsystem::RunSettledRestoreOnce(float SpawnRadiusCm, bool& bCh
     // changed, when the deferred count changed, when the call reported a world change, and when a valid actor is in the slot after it (the hold
     // contract reads zero).
     // The cross-tab digits are pinned, rayCasted, provisional flag. The three distance counters split candidates by the pawns at this pass.
-    UE_LOG(LogNodeShuffle, Display, TEXT("SETTLEDRESTORE candidates=%d spawned=%d spawnedActorInvalidAfterCall=%d held=%d heldSlotAlive=%d heldSlotDead=%d heldClassNull=%d heldNotSettled=%d heldPinnedOccupied=%d heldOccupiedNode=%d heldOccupiedBuilding=%d heldEnclosed=%d heldInsideGate=%d heldSpawnActorNull=%d heldNoGateRecorded=%d heldStateDiffs=%d xtabPinRayProv=111:%d/110:%d/101:%d/100:%d/011:%d/010:%d/001:%d/000:%d candNoPawn=%d candBeyondAttemptRadius=%d candWithinAttemptRadius=%d actorlessActiveNew=%d skipDormant=%d skipParked=%d skipDeadSlot=%d skipUnpinnedProvRefused=%d skipUnpinnedUnsettled=%d skipUnpinnedStruck=%d skipUnpinnedNotTerrainSettled=%d provFlagClearedOnSpawn=%d spawnedLinesCut=%d heldLinesCut=%d attemptRadiusM=%.0f pawns=%d"),
+    // skippedLinesCut counts the entries skipped by exclusion (8) or (9) past the SKIPPED line cap (appended last, ns-lead-restore-1b).
+    UE_LOG(LogNodeShuffle, Display, TEXT("SETTLEDRESTORE candidates=%d spawned=%d spawnedActorInvalidAfterCall=%d held=%d heldSlotAlive=%d heldSlotDead=%d heldClassNull=%d heldNotSettled=%d heldPinnedOccupied=%d heldOccupiedNode=%d heldOccupiedBuilding=%d heldEnclosed=%d heldInsideGate=%d heldSpawnActorNull=%d heldNoGateRecorded=%d heldStateDiffs=%d xtabPinRayProv=111:%d/110:%d/101:%d/100:%d/011:%d/010:%d/001:%d/000:%d candNoPawn=%d candBeyondAttemptRadius=%d candWithinAttemptRadius=%d actorlessActiveNew=%d skipDormant=%d skipParked=%d skipDeadSlot=%d skipUnpinnedProvRefused=%d skipUnpinnedUnsettled=%d skipUnpinnedStruck=%d skipUnpinnedNotTerrainSettled=%d provFlagClearedOnSpawn=%d spawnedLinesCut=%d heldLinesCut=%d attemptRadiusM=%.0f pawns=%d skippedLinesCut=%d"),
         Cands.Num(), Spawned, SpawnedThenInvalid, HeldTotal,HeldByGate[TEXT("slotAlive")], HeldByGate[TEXT("slotDead")], HeldByGate[TEXT("classNull")], HeldByGate[TEXT("notSettled")],
         HeldByGate[TEXT("pinnedOccupied")], HeldByGate[TEXT("occupiedNode")], HeldByGate[TEXT("occupiedBuilding")], HeldByGate[TEXT("enclosed")],
         HeldByGate[TEXT("insideGate")], HeldByGate[TEXT("spawnActorNull")], HeldNoGateName, HeldStateDiffs,
         Xtab[7], Xtab[6], Xtab[5], Xtab[4], Xtab[3], Xtab[2], Xtab[1], Xtab[0], CandNoPawn, CandBeyondAttempt, CandWithinAttempt,
         ActorlessActiveNew, SkipDormant, SkipParked, SkipDeadSlot, SkipProvRefused, SkipUnpinnedUnsettled, SkipUnpinnedStruck, SkipUnpinnedNotTerrainSettled, ProvFlagCleared, SpawnedCut, HeldCut,
-        AttemptRadiusCm / 100.f, Pawns.Num());
+        AttemptRadiusCm / 100.f, Pawns.Num(), SkippedCut);
 }
