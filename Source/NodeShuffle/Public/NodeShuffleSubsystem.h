@@ -1960,6 +1960,15 @@ private:
     int32 SpawnedRockVanilla = 0;
     int32 SpawnedRockQuartz = 0;
     int32 SpawnedRockLiquid = 0;
+    // ns-thorium-half-1 (2026-11-11): THORIUMHALF census counters (plain members, never saved). Written by SpawnVisualRockForNode,
+    // printed and zeroed by ApplyLayout's census block; the latch makes that block print once per load even when every count is 0.
+    int32 ThoriumHalfDressCalls = 0;
+    int32 ThoriumHalfNameSeen = 0;
+    int32 ThoriumHalfPathMatched = 0;
+    int32 ThoriumHalfApplied = 0;
+    int32 ThoriumHalfOffTarget = 0;
+    int32 ThoriumHalfNoCapture = 0;
+    bool bThoriumHalfCensusDone = false;
     // redesign-6 FIX 1: limit the per-node RENDERDIAG runtime-state log to the first N spawned + first N
     // adopted nodes (so we get the truth without spamming thousands of lines). Session counters.
     int32 RenderDiagSpawnLogged = 0;

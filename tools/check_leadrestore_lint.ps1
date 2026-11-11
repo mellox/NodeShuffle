@@ -15,7 +15,7 @@
 #   L6 the census is printed on the zero-candidate path (one return in the pass: the latch)
 #   L7 exact formats of ADOPTWORLD, SETTLEDRESTORE, -SPAWNED, -HELD; ungated
 #   L8 mirrors: adopt radius 300, gate radius 800, gate deposit skip, adopt pass-2 tests in order (both sides pinned)
-#   L9 marker 2026-11-11-lead-restore-1 newest in the header, once in NodeShuffle.cpp, absent from the packet files
+#   L9 marker 2026-11-11-lead-restore-1 once in the header (newest until ns-thorium-half-1), once in NodeShuffle.cpp, absent from the packet files
 #   L10 every new field token once in its file; legend is prose without an = sign
 #   L11 bRwgProvisional cleared only in the spawned branch
 #   L12 the pass file writes no other entry field and no session bookkeeping
@@ -184,7 +184,7 @@ function Invoke-Checks($T) {
     if ($world -eq '' -or -not (Ordered $world $mirrorPred)) { $f += '(L8) ADOPTWORLD mirror order: bound, legacy, net-startup, fracking, component, entry search' }
     # L9
     $hdrTags = @([regex]::Matches($T.mk, 'TEXT\("(20\d\d-[\w-]+)"\)') | ForEach-Object { $_.Groups[1].Value })
-    if ($hdrTags.Count -eq 0 -or $hdrTags[-1] -ne $marker -or (Count $T.nsmod ('packet marker (' + $marker + ')=====')) -ne 1) { $f += '(L9) marker newest in the header and once in NodeShuffle.cpp' }
+    if (($hdrTags | Where-Object { $_ -eq $marker }).Count -ne 1 -or (Count $T.nsmod ('packet marker (' + $marker + ')=====')) -ne 1) { $f += '(L9) marker once in the header and once in NodeShuffle.cpp' } # ns-thorium-half-1: no longer the newest; pinned present
     foreach ($k in @('sr', 'srh')) { if ($T[$k].Contains($marker)) { $f += "(L9) no marker literal in $k" } }
     # L10
     foreach ($fmt in @($fmtWorld, $fmtCensus, $fmtSpawn, $fmtHeld)) {

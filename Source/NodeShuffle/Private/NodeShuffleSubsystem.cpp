@@ -92,6 +92,7 @@ namespace
     constexpr float SettleDistance = 25000.0f;      // 250 m: settle new nodes near players
     constexpr float ExtractorSnapDistance = 700.0f; // 7 m
     constexpr float PortableMinerSnapDistance = 1500.0f; // 15 m
+    constexpr float ThoriumHalfVisualFactor = 0.5f; // ns-thorium-half-1: captured Refined Power thorium visual only (SpawnVisualRockForNode)
     constexpr float MinNodeSpacing = 2500.0f;       // 25 m between pool locations
     // ns-truth-diagnostics: DO NOT change this value, and do not restore the old comment.
     // Old comment: "world considered streamed in". That was a CLAIM, never a derivation -- unchanged
@@ -2905,6 +2906,19 @@ void ANodeShuffleSubsystem::ApplyLayout()
     // resolve must be visible without EnableDiagnostics; the per-branch detail lines above it are not).
     EmitT72DressCensus();
 
+    // ns-thorium-half-1: THORIUMHALF census. Ungated; once per load (the first pass after adopt-on-load, even with every count 0),
+    // then only on a pass that dressed a thorium-named or thorium-path rock. Counts cover SpawnVisualRockForNode calls since the
+    // previous census line, and reset after it prints.
+    if ((!bThoriumHalfCensusDone && bAdoptedRestoredNodes) || ThoriumHalfNameSeen > 0 || ThoriumHalfPathMatched > 0)
+    {
+        bThoriumHalfCensusDone = true;
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("THORIUMHALF census dressCalls=%d thoriumNameSeen=%d thoriumPathMatched=%d factorApplied=%d offTarget=%d noCapture=%d factor=%.3f"),
+            ThoriumHalfDressCalls, ThoriumHalfNameSeen, ThoriumHalfPathMatched, ThoriumHalfApplied, ThoriumHalfOffTarget,
+            ThoriumHalfNoCapture, ThoriumHalfVisualFactor);
+        ThoriumHalfDressCalls = ThoriumHalfNameSeen = ThoriumHalfPathMatched = ThoriumHalfApplied = ThoriumHalfOffTarget = ThoriumHalfNoCapture = 0;
+    }
+
     // playtest-fixes-1 (defer-log backoff): ONE summary line when the deferral count changes, instead
     // of re-logging every stuck entry every 5 s (153k lines / 35 MB in one session). Per-entry detail
     // still logs once per session at Verbose (DeferLoggedThisSession).
@@ -3829,8 +3843,19 @@ void ANodeShuffleSubsystem::SpawnVisualRockForNode(AFGResourceNode* Node, UClass
     }
     // Per-mesh scale: captured world scale for a captured visual (the original's authored scale);
     // else the table row; empirical 2.0 only if a mesh resolved with no table row.
-    const FVector WantScale = bCaptured && !CapturedScale.IsNearlyZero() ? CapturedScale
-                            : Visual ? Visual->MeshScale : FVector(2.0f, 2.0f, 2.0f);
+    const FVector SourceScale = bCaptured && !CapturedScale.IsNearlyZero() ? CapturedScale
+                              : Visual ? Visual->MeshScale : FVector(2.0f, 2.0f, 2.0f);
+    // ns-thorium-half-1 (2026-11-11, user request): Refined Power thorium's CAPTURED visual renders at x0.5. Keyed on the exact
+    // class path (case-sensitive) of NodeShuffleRwgSeedGas::DefaultThoriumResource. Set = SourceScale x factor, where SourceScale
+    // is the persisted capture (never the component's current scale), so re-dress, adopt and reload cannot compound it. Every
+    // other resource takes SourceScale unchanged. WantScale feeds the centring offset below too, so the rock stays centred.
+    ++ThoriumHalfDressCalls;
+    const bool bThoriumNameSeen = ResourceClass->GetName() == TEXT("Desc_RP_Thorium_C"); // census cross-check only; gates nothing
+    const bool bThoriumPath = ResourceClass->GetPathName().Equals(NodeShuffleRwgSeedGas::DefaultThoriumResource, ESearchCase::CaseSensitive);
+    const bool bThoriumHalf = bThoriumPath && bCaptured;
+    if (bThoriumNameSeen) { ++ThoriumHalfNameSeen; }
+    if (bThoriumPath) { ++ThoriumHalfPathMatched; if (!bCaptured) { ++ThoriumHalfNoCapture; } }
+    const FVector WantScale = bThoriumHalf ? SourceScale * ThoriumHalfVisualFactor : SourceScale;
     // Centered laterally; keep the table's Z (a vertical sink), clamped so we never sink the rock absurdly.
     const float TableZ = Visual ? Visual->MeshOffset.Z : -40.0f;
     // issue #1 (snap off-center): the donor mesh's geometric center is offset from its pivot (ROCK-CENTER showed
@@ -3903,6 +3928,26 @@ void ANodeShuffleSubsystem::SpawnVisualRockForNode(AFGResourceNode* Node, UClass
     else { Legacy->DressRock(Mesh, MatPtrs, WantScale, RelOffset, RockRelQuat.Rotator()); }
 
     UStaticMeshComponent* RockMC = Comp ? Comp->RockMesh : Legacy->RockMesh;
+    // ns-thorium-half-1: read-back after DressRock. relScaleOffTarget = the rock's relative scale is not within DressRock's own 0.01
+    // tolerance of SourceScale x factor. Source (2,2,2) x 0.5 equals a fresh component's default (1,1,1), so this count alone cannot
+    // show the dress ran: the per-dress line prints world scale, bounds radius and mesh name for that.
+    if (bThoriumHalf)
+    {
+        ++ThoriumHalfApplied;
+        const bool bOffTarget = !IsValid(RockMC) || !RockMC->GetRelativeScale3D().Equals(WantScale, 0.01f);
+        if (bOffTarget) { ++ThoriumHalfOffTarget; }
+        if (FNodeShuffleModule::AreDiagnosticsEnabled() && IsValid(RockMC))
+        {
+            const FVector Rel = RockMC->GetRelativeScale3D();
+            const FVector World = RockMC->GetComponentScale();
+            const float BottomDz = static_cast<float>(RockMC->Bounds.Origin.Z - RockMC->Bounds.BoxExtent.Z - Node->GetActorLocation().Z);
+            UE_LOG(LogNodeShuffle, Display,
+                TEXT("THORIUMHALF-DRESS node=%s mesh=%s srcScale=%.3f/%.3f/%.3f factor=%.3f relScale=%.3f/%.3f/%.3f worldScale=%.3f/%.3f/%.3f boundsR=%.0f boundsBottomMinusNodeZ=%.1f offTarget=%d"),
+                *Node->GetName(), RockMC->GetStaticMesh() ? *RockMC->GetStaticMesh()->GetName() : TEXT("none"),
+                SourceScale.X, SourceScale.Y, SourceScale.Z, ThoriumHalfVisualFactor, Rel.X, Rel.Y, Rel.Z,
+                World.X, World.Y, World.Z, RockMC->Bounds.SphereRadius, BottomDz, bOffTarget ? 1 : 0);
+        }
+    }
     // DIAGNOSTIC (issue #1 snap off-center): the miner snaps to the node ORIGIN / GetPlacementLocation,
     // but the rock renders at its mesh bounds center. Log both so we can measure the lateral offset (the
     // rock's pivot is not its visual center). Gated behind EnableDiagnostics.
