@@ -11,7 +11,7 @@
 //      in Layout order. No pawn distance test, no attempt budget. Any refusing exit HOLDS: EnsureNewNodeSpawned records the exit in the
 //      argument and returns before any write, so the entry keeps today's attempt-loop path on approach.
 //   3. SETTLEDRESTORE census (always printed, also with zero candidates), per-entry SPAWNED/HELD lines (capped).
-// CANDIDATE PREDICATE (the provisional scan's refusals by bPinned or bRayCasted, with the attempt loop's own exclusions). The nine
+// CANDIDATE PREDICATE (the provisional scan's refusals by bPinned or bRayCasted, the attempt loop's own exclusions, and two unpinned exclusions the attempt loop does not apply). The nine
 // exclusions, in code order: (1) not bIsNewNode or not bActive; (2) a valid SpawnedNodes slot; (3) DormantThisSession; (4) SpawnParkedThisSession;
 // (5) a dead slot; and for unpinned entries only: (6) RwgProvRefused; (7) not bRayCasted; (8) OverlapNudges above zero;
 // (9) none of bRwgSettledOnTerrain, bUnderground, bRwgCave. Equivalently:
@@ -225,7 +225,9 @@ void ANodeShuffleSubsystem::RunSettledRestoreOnce(float SpawnRadiusCm, bool& bCh
     // new-node entries with no valid actor that it did not take, by the first exclusion they met. spawnedActorInvalidAfterCall counts calls
     // that wrote a SpawnedNodes slot whose actor was not valid when read back (neither spawned nor held). Each held counter names the refusing exit
     // EnsureNewNodeSpawned recorded; heldNoGateRecorded counts held entries for which it recorded none. heldStateDiffs sums, over held
-    // entries, how many of the compared field groups (SettledRestoreFieldDiffs) and session bookkeeping sets differ from their value before the call (the hold contract reads zero).
+    // entries, the compared field groups (SettledRestoreFieldDiffs) that differ from their value before the call, plus one each when any session bookkeeping membership
+    // changed, when the deferred count changed, when the call reported a world change, and when a valid actor is in the slot after it (the hold
+    // contract reads zero).
     // The cross-tab digits are pinned, rayCasted, provisional flag. The three distance counters split candidates by the pawns at this pass.
     UE_LOG(LogNodeShuffle, Display, TEXT("SETTLEDRESTORE candidates=%d spawned=%d spawnedActorInvalidAfterCall=%d held=%d heldSlotAlive=%d heldSlotDead=%d heldClassNull=%d heldNotSettled=%d heldPinnedOccupied=%d heldOccupiedNode=%d heldOccupiedBuilding=%d heldEnclosed=%d heldInsideGate=%d heldSpawnActorNull=%d heldNoGateRecorded=%d heldStateDiffs=%d xtabPinRayProv=111:%d/110:%d/101:%d/100:%d/011:%d/010:%d/001:%d/000:%d candNoPawn=%d candBeyondAttemptRadius=%d candWithinAttemptRadius=%d actorlessActiveNew=%d skipDormant=%d skipParked=%d skipDeadSlot=%d skipUnpinnedProvRefused=%d skipUnpinnedUnsettled=%d skipUnpinnedStruck=%d skipUnpinnedNotTerrainSettled=%d provFlagClearedOnSpawn=%d spawnedLinesCut=%d heldLinesCut=%d attemptRadiusM=%.0f pawns=%d"),
         Cands.Num(), Spawned, SpawnedThenInvalid, HeldTotal,HeldByGate[TEXT("slotAlive")], HeldByGate[TEXT("slotDead")], HeldByGate[TEXT("classNull")], HeldByGate[TEXT("notSettled")],

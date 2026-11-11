@@ -73,6 +73,8 @@ $popLines = @(
     '        if (Slot) { ++SkipDeadSlot; continue; }',
     '        if (!E.bPinned && RwgProvRefused.Contains(E.EntryGuid)) { ++SkipProvRefused; continue; }',
     '        if (!E.bPinned && !E.bRayCasted) { ++SkipUnpinnedUnsettled; continue; }',
+    '        if (!E.bPinned && E.OverlapNudges > 0) { ++SkipUnpinnedStruck; continue; }',
+    '        if (!E.bPinned && !E.bRwgSettledOnTerrain && !E.bUnderground && !E.bRwgCave) { ++SkipUnpinnedNotTerrainSettled; continue; }',
     '        (E.bPinned ? Pinned : Rest).Add(I);')
 $scanLines = @(
     '        if (!E.bIsNewNode || !E.bActive || E.bPinned) { return false; }',
@@ -145,7 +147,7 @@ function Invoke-Checks($T) {
     if ((Count $T.hdr '    bool bSettledRestoreDone = false;') -ne 1 -or (Count $T.hdr ('UPROPERTY()' + $N + '    bool bSettledRestoreDone')) -ne 0) { $f += '(L2) latch is a plain runtime member' }
     # L3
     $pop = Span $sr '    TArray<int32> Pinned, Rest;' '    TArray<int32> Cands = MoveTemp(Pinned);'
-    if ($pop -eq '' -or -not (Ordered $pop $popLines)) { $f += '(L3) population predicate lines (order: new+active, actor, dormant, parked, dead slot, prov refused, unsettled, pinned split)' }
+    if ($pop -eq '' -or -not (Ordered $pop $popLines)) { $f += '(L3) population predicate lines (order: new+active, actor, dormant, parked, dead slot, prov refused, unsettled, struck, not terrain-settled, pinned split)' }
     foreach ($bad in @(('IsLocationNear' + 'AnyPlayer'), ('RwgMaxSpawn' + 'AttemptsPerPass'), ('RwgNearest' + 'PawnDist2D'))) { if ($pop.Contains($bad)) { $f += "(L3) the population must carry no distance or budget term ('$bad')" } }
     if (-not (Ordered $T.scan $scanLines)) { $f += '(L3) the provisional scan refusals the predicate is derived from changed (re-derive the population)' }
     if (-not (Ordered $T.spass $loopLines)) { $f += '(L3) the attempt-loop exclusions the predicate honours changed' }
@@ -198,9 +200,10 @@ function Invoke-Checks($T) {
     foreach ($bad in @(('E.bActive' + ' ='), ('E.Location' + ' ='), ('E.Rotation' + ' ='), ('E.OverlapNudges' + ' ='), ('E.OverlapNudges' + '++'), ('E.bRayCasted' + ' ='), ('E.bPinned' + ' ='), ('SpawnFailCounts.' + 'FindOrAdd'), ('SpawnParkedThisSession.' + 'Add'), ('DormantThisSession.' + 'Add'), ('Destroy' + '('), ('SpawnedNodes.' + 'Add('), ('SpawnedNodes.' + 'Remove('))) { if ($sr.Contains($bad)) { $f += "(L12) the pass file must not write '$bad'" } }
     # L13 no bookkeeping write before the far slot hold; a pinned entry is never held on its enclosure verdict (R1)
     $preHold = Span $s $defn $hSlot
-    foreach ($bad in @(('SpawnFailCounts.' + 'FindOrAdd'), ('Entry.OverlapNudges' + ' ='), ('Entry.bActive' + ' ='), ('Entry.Location' + ' ='))) { if ($preHold.Contains($bad)) { $f += "(L13) a write before the far slot hold ('$bad')" } }
+    foreach ($bad in @(('SpawnFailCounts.' + 'FindOrAdd'), ('Entry.OverlapNudges' + ' ='), ('Entry.bActive' + ' ='), ('Entry.Location' + ' ='), ('Entry.OverlapNudges' + '++'))) { if ($preHold.Contains($bad)) { $f += "(L13) a write before the far slot hold ('$bad')" } }
     $rxEncl = '(?<!!)FarRestore\s*&&\s*\(?\s*bSpotEnclosed' + 'Raw'
     if ([regex]::IsMatch($ens, $rxEncl)) { $f += '(L13) the far path holds on the raw enclosure verdict (pinned entries must spawn, R1)' }
+    if ((Count $ens ('FarHold' + '(')) -ne 2 -or (Count $ens ('HeldGate' + ' =')) -ne 6 -or (Count $ens ('const bool bSpotEnclosed = bSpotEnclosedRaw && !Entry.' + 'bPinned;')) -ne 1) { $f += '(L13) the far hold sites are exactly the recorded six; pinned entries are never held on enclosure (R1)' }
     if (([regex]::Matches($pop, 'continue;')).Count -ne 9) { $f += '(L3) the population has exactly nine exclusions (add one here deliberately)' }
     return $f
 }
@@ -237,6 +240,8 @@ $mutants = @(
     @{ Name = 'M27 a bookkeeping write before the far slot hold'; Key = 'sub'; Expect = 'L13'; Find = $hSlot; Repl = ('    if (FarRestore) { SpawnFailCounts.' + 'FindOrAdd(Entry.EntryGuid); }' + $N + $hSlot) }
     @{ Name = 'M28 pinned enclosed held on the far path'; Key = 'sub'; Expect = 'L13'; Find = $hPinR1; Repl = ($hPinR1 + $N + '        if (FarRestore && bSpotEnclosed' + 'Raw) { FarHold(TEXT("enclosed")); return; }') }
     @{ Name = 'M29 population gains an unlisted exclusion'; Key = 'sr'; Expect = 'L3'; Find = '        (E.bPinned ? Pinned : Rest).Add(I);'; Repl = ('        if (E.bPinned && !E.bRwgSettledOnTerrain) { ' + 'continue; }' + $N + '        (E.bPinned ? Pinned : Rest).Add(I);') }
+    @{ Name = 'M30 terrain exclusion loses its unpinned guard'; Key = 'sr'; Expect = 'L3'; Find = '        if (!E.bPinned && !E.bRwgSettledOnTerrain'; Repl = '        if (!E.bRwgSettledOnTerrain' }
+    @{ Name = 'M31 pinned enclosed held on the far path, second spelling'; Key = 'sub'; Expect = 'L13'; Find = $hPinR1; Repl = ($hPinR1 + $N + '        if (FarRestore && Entry.bPinned && bSpotEnclosed' + 'Raw) { FarHold(TEXT("enclosed")); return; }') }
 )
 $mutantFails = @(); $caught = 0
 foreach ($m in $mutants) {
