@@ -92,8 +92,9 @@ namespace NodeShuffleRwgSeedGas
         TSet<FString> PurityFromGameSolid;           // seeded kinds given that source (absent: map-wide deck, purityDeck=mapwide)
     };
 
-    // Config panel: registers ModdedVanillaCountRows on Root with the lead + lithium rows as BOTH the runtime value and the
-    // reset default. Called once from UNodeShuffleConfig::PostInitProperties.
+    // Config panel: registers ModdedVanillaCountRows on Root with the lead, lithium and thorium rows as BOTH the runtime value and
+    // the reset default (no rows are written if a row element does not own its sub-properties). Called once from
+    // UNodeShuffleConfig::PostInitProperties.
     void RegisterConfigRows(UConfigPropertySection* Root, UClass* ArrayClass, UClass* SectionClass, UClass* StringClass,
         UClass* IntegerClass);
 
