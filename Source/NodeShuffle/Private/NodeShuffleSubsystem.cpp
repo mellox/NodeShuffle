@@ -3846,12 +3846,12 @@ void ANodeShuffleSubsystem::SpawnVisualRockForNode(AFGResourceNode* Node, UClass
     const FVector SourceScale = bCaptured && !CapturedScale.IsNearlyZero() ? CapturedScale
                               : Visual ? Visual->MeshScale : FVector(2.0f, 2.0f, 2.0f);
     // ns-thorium-half-1 (2026-11-11, user request): Refined Power thorium's CAPTURED visual renders at x0.5. Keyed on the exact
-    // class path (case-sensitive) of NodeShuffleRwgSeedGas::DefaultThoriumResource. Set = SourceScale x factor, where SourceScale
+    // class path (full-path equality, case-insensitive like the repo's other path compares) of NodeShuffleRwgSeedGas::DefaultThoriumResource. Set = SourceScale x factor, where SourceScale
     // is the persisted capture (never the component's current scale), so re-dress, adopt and reload cannot compound it. Every
     // other resource takes SourceScale unchanged. WantScale feeds the centring offset below too, so the rock stays centred.
     ++ThoriumHalfDressCalls;
     const bool bThoriumNameSeen = ResourceClass->GetName() == TEXT("Desc_RP_Thorium_C"); // census cross-check only; gates nothing
-    const bool bThoriumPath = ResourceClass->GetPathName().Equals(NodeShuffleRwgSeedGas::DefaultThoriumResource, ESearchCase::CaseSensitive);
+    const bool bThoriumPath = ResourceClass->GetPathName().Equals(NodeShuffleRwgSeedGas::DefaultThoriumResource, ESearchCase::IgnoreCase);
     const bool bThoriumHalf = bThoriumPath && bCaptured;
     if (bThoriumNameSeen) { ++ThoriumHalfNameSeen; }
     if (bThoriumPath) { ++ThoriumHalfPathMatched; if (!bCaptured) { ++ThoriumHalfNoCapture; } }

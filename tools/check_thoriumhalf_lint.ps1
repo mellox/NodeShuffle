@@ -3,9 +3,10 @@
 # path (spawn, adopt, capture re-dress, provisional move) reaches. SourceScale is the persisted capture; nothing reads a component's
 # current scale into the computation, and neither the capture nor the resolve stores a factored value, so nothing compounds.
 # LOADS: NodeShuffleSubsystem.cpp (factor, key, dress, read-back, census, capture/resolve sites), NodeShuffleSubsystem.h (counters),
-#        NodeShuffleRwgSeedGas.cpp/.h (the thorium class path), NodeShuffle.cpp + NodeShuffleBuildMarkers.h (marker).
+#        NodeShuffleRwgSeedGas.cpp/.h (the thorium class path), NodeShuffle.cpp + NodeShuffleBuildMarkers.h (marker),
+#        NodeShuffleNodeComponent.cpp + NodeShuffleResourceNode.cpp (the two DressRock bodies that SET the scale).
 #   T1 the factor: one constexpr definition, value 0.5f
-#   T2 the key: exact case-sensitive Equals on NodeShuffleRwgSeedGas::DefaultThoriumResource; that constant's exact path; its extern
+#   T2 the key: full-path Equals (IgnoreCase) on NodeShuffleRwgSeedGas::DefaultThoriumResource; that constant's exact path; its extern
 #   T3 source, not current: SourceScale from CapturedScale/table; WantScale from SourceScale; no current-scale read in the function
 #      before DressRock; the capture and resolve sites store the unfactored scale; the factor never appears in the capture function
 #   T4 only thorium: bThoriumHalf = bThoriumPath && bCaptured; exactly one multiplication by the factor, under that ternary
@@ -15,6 +16,7 @@
 #   T8 the counters are plain members (no reflection macro on their lines)
 #   T9 exact formats of THORIUMHALF-DRESS and THORIUMHALF census
 #   T10 the read-back compares against WantScale
+#   T11 both DressRock bodies SET the relative scale to the passed Scale (never multiply the current one)
 # Every forbidden needle is BUILT BY CONCATENATION. Mutants run in-file. Exit 0 = all hold; 1 = a rule or mutant fails; 2 = missing file.
 
 $ErrorActionPreference = 'Stop'
@@ -27,6 +29,8 @@ $files = [ordered]@{
     sgh   = 'NodeShuffle\Private\NodeShuffleRwgSeedGas.h'
     nsmod = 'NodeShuffle\Private\NodeShuffle.cpp'
     mk    = 'NodeShuffle\Private\NodeShuffleBuildMarkers.h'
+    nc    = 'NodeShuffle\Private\NodeShuffleNodeComponent.cpp'
+    rn    = 'NodeShuffle\Private\NodeShuffleResourceNode.cpp'
 }
 $text = [ordered]@{}
 foreach ($k in $files.Keys) {
@@ -56,7 +60,7 @@ $reflRx   = 'U' + 'PROPERTY'
 
 # ---- anchors (unique context) ----
 $facDef    = '    constexpr float ' + $fac + ' = 0.5f; // ns-thorium-half-1: captured Refined Power thorium visual only (SpawnVisualRockForNode)'
-$keyLine   = '    const bool bThoriumPath = ResourceClass->GetPathName().Equals(NodeShuffleRwgSeedGas::DefaultThoriumResource, ESearchCase::CaseSensitive);'
+$keyLine   = '    const bool bThoriumPath = ResourceClass->GetPathName().Equals(NodeShuffleRwgSeedGas::DefaultThoriumResource, ESearchCase::IgnoreCase);'
 $sgDef     = '    const TCHAR* const DefaultThoriumResource = TEXT("/RefinedPower/World/ResourceNodes/Thorium/Desc_RP_Thorium.Desc_RP_Thorium_C");'
 $sgExtern  = '    extern const TCHAR* const DefaultThoriumResource;'
 $srcLine   = '    const FVector SourceScale = bCaptured && !CapturedScale.IsNearlyZero() ? CapturedScale' + $N + '                              : Visual ? Visual->MeshScale : FVector(2.0f, 2.0f, 2.0f);'
@@ -77,6 +81,8 @@ $resetLine = '        ThoriumHalfDressCalls = ThoriumHalfNameSeen = ThoriumHalfP
 $fmtCensus = 'TEXT("THORIUMHALF census dressCalls=%d thoriumNameSeen=%d thoriumPathMatched=%d factorApplied=%d offTarget=%d noCapture=%d factor=%.3f")'
 $fmtDress  = 'TEXT("THORIUMHALF-DRESS node=%s mesh=%s srcScale=%.3f/%.3f/%.3f factor=%.3f relScale=%.3f/%.3f/%.3f worldScale=%.3f/%.3f/%.3f boundsR=%.0f boundsBottomMinusNodeZ=%.1f offTarget=%d")'
 $readBack  = '        const bool bOffTarget = !IsValid(RockMC) || !RockMC->' + $curRel + ').Equals(WantScale, 0.01f);'
+$setScale  = '        RockMesh->SetRelative' + 'Scale3D(Scale);'
+$dressHead = @{ nc = 'void UNodeShuffleNodeComponent::DressRock('; rn = 'void ANodeShuffleResourceNode::DressRock(' }
 $members   = @('    int32 ThoriumHalfDressCalls = 0;', '    int32 ThoriumHalfNameSeen = 0;', '    int32 ThoriumHalfPathMatched = 0;',
                '    int32 ThoriumHalfApplied = 0;', '    int32 ThoriumHalfOffTarget = 0;', '    int32 ThoriumHalfNoCapture = 0;',
                '    bool bThoriumHalfCensusDone = false;')
@@ -87,7 +93,7 @@ function Invoke-Checks($T) {
     # T1
     if ((Count $s $facDef) -ne 1 -or (Count $s ('constexpr float ' + $fac)) -ne 1) { $f += '(T1) the factor is one constexpr definition of value 0.5f' }
     # T2
-    if ((Count $s $keyLine) -ne 1 -or (Count $T.sg $sgDef) -ne 1 -or (Count $T.sgh $sgExtern) -ne 1) { $f += '(T2) the key is a case-sensitive Equals on the exact thorium class path constant' }
+    if ((Count $s $keyLine) -ne 1 -or (Count $T.sg $sgDef) -ne 1 -or (Count $T.sgh $sgExtern) -ne 1) { $f += '(T2) the key is a full-path Equals on the exact thorium class path constant' }
     # T3
     $fn = Span $s $fnHead $dressComp
     if ($fn -eq '' -or (Count $fn $srcLine) -ne 1 -or (Count $fn $wantLine) -ne 1 -or -not (Ordered $fn @($srcLine, $keyLine, $halfLine, $wantLine))) { $f += '(T3) WantScale is computed from SourceScale (capture/table) after the key' }
@@ -112,13 +118,18 @@ function Invoke-Checks($T) {
     if ((Count $s $fmtCensus) -ne 1 -or (Count $s $fmtDress) -ne 1) { $f += '(T9) THORIUMHALF formats changed' }
     # T10
     if ((Count $s $readBack) -ne 1) { $f += '(T10) the read-back compares the relative scale against WantScale' }
+    # T11
+    foreach ($k in @('nc', 'rn')) {
+        $body = Span $T[$k] $dressHead[$k] 'ForceVisible();'
+        if ($body -eq '' -or (Count $body $setScale) -ne 1 -or (Count $body ('Scale3D() ' + '*')) -ne 0 -or (Count $body ('* ' + 'Scale)')) -ne 0) { $f += "(T11) DressRock in $k sets the relative scale to Scale" }
+    }
     return $f
 }
 
 $fails = @(Invoke-Checks $text)
 $mutants = @(
     @{ Name = 'M1 factor 0.25'; Key = 'sub'; Expect = 'T1'; Find = ($fac + ' = 0.5f;'); Repl = ($fac + ' = 0.25f;') }
-    @{ Name = 'M2 key ignores case'; Key = 'sub'; Expect = 'T2'; Find = 'DefaultThoriumResource, ESearchCase::CaseSensitive'; Repl = ('DefaultThoriumResource, ESearchCase::' + 'IgnoreCase') }
+    @{ Name = 'M2 key becomes a suffix match'; Key = 'sub'; Expect = 'T2'; Find = 'GetPathName().Equals(NodeShuffleRwgSeedGas::DefaultThoriumResource'; Repl = ('GetPathName().' + 'EndsWith(NodeShuffleRwgSeedGas::DefaultThoriumResource') }
     @{ Name = 'M3 key on the lead constant'; Key = 'sub'; Expect = 'T2'; Find = 'Equals(NodeShuffleRwgSeedGas::DefaultThoriumResource'; Repl = ('Equals(NodeShuffleRwgSeedGas::Default' + 'LeadResource') }
     @{ Name = 'M4 thorium path edited'; Key = 'sg'; Expect = 'T2'; Find = 'Thorium/Desc_RP_Thorium.Desc_RP_Thorium_C'; Repl = ('Thorium/Desc_RP_' + 'thorium.Desc_RP_Thorium_C') }
     @{ Name = 'M5 current scale read before the dress'; Key = 'sub'; Expect = 'T3'; Find = $wantLine; Repl = ('    const FVector NowScale = Comp ? Comp->RockMesh->' + $curRel + ') : FVector::OneVector;' + $N + $wantLine) }
@@ -135,6 +146,8 @@ $mutants = @(
     @{ Name = 'M16 centring uses the source scale'; Key = 'sub'; Expect = 'T7'; Find = $center; Repl = ('    const FVector ScaledCenter(' + 'SourceScale.X * MeshLocalCenter.X, SourceScale.Y * MeshLocalCenter.Y, 0.0f);') }
     @{ Name = 'M17 counter saved'; Key = 'hdr'; Expect = 'T8'; Find = '    int32 ThoriumHalfApplied = 0;'; Repl = ('    ' + $reflRx + '(SaveGame)' + $N + '    int32 ThoriumHalfApplied = 0;') }
     @{ Name = 'M18 census field renamed'; Key = 'sub'; Expect = 'T9'; Find = 'noCapture=%d factor=%.3f")'; Repl = ('noCaptured' + '=%d factor=%.3f")') }
+    @{ Name = 'M20 component DressRock scales in place'; Key = 'nc'; Expect = 'T11'; Find = $setScale; Repl = ('        RockMesh->SetRelative' + 'Scale3D(RockMesh->' + $curRel + ') * Scale);') }
+    @{ Name = 'M21 legacy DressRock scales in place'; Key = 'rn'; Expect = 'T11'; Find = $setScale; Repl = ('        RockMesh->SetRelative' + 'Scale3D(RockMesh->' + $curRel + ') * Scale);') }
     @{ Name = 'M19 read-back against the source'; Key = 'sub'; Expect = 'T10'; Find = '.Equals(WantScale, 0.01f);'; Repl = ('.Equals(' + 'SourceScale, 0.01f);') }
 )
 $mutantFails = @(); $caught = 0
@@ -147,5 +160,5 @@ foreach ($m in $mutants) {
 }
 $all = @($fails) + @($mutantFails)
 if ($all.Count -gt 0) { foreach ($x in $all) { Write-Host "FAIL: $x" }; Write-Host "THORIUMHALF lint: FAIL -- $($all.Count) problem(s). Mutants caught $caught/$($mutants.Count)."; exit 1 }
-Write-Host "PASS: THORIUMHALF lint -- T1..T10 hold across $($text.Count) loaded files; mutants caught $caught/$($mutants.Count)."
+Write-Host "PASS: THORIUMHALF lint -- T1..T11 hold across $($text.Count) loaded files; mutants caught $caught/$($mutants.Count)."
 exit 0
