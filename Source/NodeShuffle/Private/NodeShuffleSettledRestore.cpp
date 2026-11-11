@@ -11,9 +11,12 @@
 //      in Layout order. No pawn distance test, no attempt budget. Any refusing exit HOLDS: EnsureNewNodeSpawned records the exit in the
 //      argument and returns before any write, so the entry keeps today's attempt-loop path on approach.
 //   3. SETTLEDRESTORE census (always printed, also with zero candidates), per-entry SPAWNED/HELD lines (capped).
-// CANDIDATE PREDICATE (the provisional scan's refusals by bPinned or bRayCasted, with the attempt loop's own exclusions):
+// CANDIDATE PREDICATE (the provisional scan's refusals by bPinned or bRayCasted, with the attempt loop's own exclusions). The nine
+// exclusions, in code order: (1) not bIsNewNode or not bActive; (2) a valid SpawnedNodes slot; (3) DormantThisSession; (4) SpawnParkedThisSession;
+// (5) a dead slot; and for unpinned entries only: (6) RwgProvRefused; (7) not bRayCasted; (8) OverlapNudges above zero;
+// (9) none of bRwgSettledOnTerrain, bUnderground, bRwgCave. Equivalently:
 //   bIsNewNode && bActive && no SpawnedNodes slot && !DormantThisSession && !SpawnParkedThisSession
-//   && (bPinned || (bRayCasted && !RwgProvRefused))
+//   && (bPinned || (!RwgProvRefused && bRayCasted && OverlapNudges == 0 && (bRwgSettledOnTerrain || bUnderground || bRwgCave)))
 // On a spawn, a set bRwgProvisional is cleared: RwgSpawnPass clears it on every actorless entry before its attempt loop, and a live actor
 // carrying it would be re-settled (moved) by that loop.
 #include "NodeShuffleSubsystem.h"
@@ -139,8 +142,8 @@ void ANodeShuffleSubsystem::RunSettledRestoreOnce(float SpawnRadiusCm, bool& bCh
         if (Slot) { ++SkipDeadSlot; continue; } // a dead slot: EnsureNewNodeSpawned's external-destroy backoff owns it
         if (!E.bPinned && RwgProvRefused.Contains(E.EntryGuid)) { ++SkipProvRefused; continue; }
         if (!E.bPinned && !E.bRayCasted) { ++SkipUnpinnedUnsettled; continue; } // the provisional pass takes these at any distance
-        if (!E.bPinned && E.OverlapNudges > 0) { ++SkipUnpinnedStruck; continue; } // a gate refused this spot with a pawn in range; the attempt loop re-tests it there
-        if (!E.bPinned && !E.bRwgSettledOnTerrain && !E.bUnderground && !E.bRwgCave) { ++SkipUnpinnedNotTerrainSettled; continue; } // RwgResettlePass clears bRayCasted on this actorless entry later in this ApplyLayout
+        if (!E.bPinned && E.OverlapNudges > 0) { ++SkipUnpinnedStruck; continue; } // the strike counter is above zero: EnsureNewNodeSpawned increments it on an unrelocated overlap/enclosure refusal and no later nudge or spawn resets it
+        if (!E.bPinned && !E.bRwgSettledOnTerrain && !E.bUnderground && !E.bRwgCave) { ++SkipUnpinnedNotTerrainSettled; continue; } // the same bRwgSettledOnTerrain/bUnderground/bRwgCave test as RwgResettlePass's actorless requeue
         (E.bPinned ? Pinned : Rest).Add(I);
     }
     TArray<int32> Cands = MoveTemp(Pinned);
