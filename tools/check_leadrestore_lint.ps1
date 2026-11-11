@@ -258,6 +258,7 @@ $mutants = @(
     @{ Name = 'M34 SKIPPED cap raised'; Key = 'sr'; Expect = 'L14'; Find = 'SettledRestoreSkippedLinesMax = 40;'; Repl = 'SettledRestoreSkippedLinesMax = 4000;' }
     @{ Name = 'M35 SKIPPED drops the strike value'; Key = 'sr'; Expect = 'L7'; Find = ' overlapNudges=%d settledOnTerrain'; Repl = ' settledOnTerrain' }
     @{ Name = 'M36 census drops the SKIPPED cut count'; Key = 'sr'; Expect = 'L14'; Find = 'AttemptRadiusCm / 100.f, Pawns.Num(), SkippedCut);'; Repl = 'AttemptRadiusCm / 100.f, Pawns.Num(), 0);' }
+    @{ Name = 'M38 legend echoes a SKIPPED field'; Key = 'sr'; Expect = 'L10'; Find = '    // skippedLinesCut counts the entries'; Repl = ('    // skippedLinesCut (' + 'skipTest' + '=N) counts the entries') }
     @{ Name = 'M37 SKIPPED printed from a third exclusion'; Key = 'sr'; Expect = 'L14'; Find = '{ ++SkipDeadSlot; continue; }'; Repl = ('{ ++SkipDeadSlot; LogSkipped(E, TEXT("deadSlot")); ' + 'continue; }') }
 )
 $mutantFails = @(); $caught = 0
@@ -270,5 +271,5 @@ foreach ($m in $mutants) {
 }
 $all = @($fails) + @($mutantFails)
 if ($all.Count -gt 0) { foreach ($x in $all) { Write-Host "FAIL: $x" }; Write-Host "LEADRESTORE lint: FAIL -- $($all.Count) problem(s). Mutants caught $caught/$($mutants.Count)."; exit 1 }
-Write-Host "PASS: LEADRESTORE lint -- L1..L12 hold across $($text.Count) loaded files; mutants caught $caught/$($mutants.Count)."
+Write-Host "PASS: LEADRESTORE lint -- L1..L14 hold across $($text.Count) loaded files; mutants caught $caught/$($mutants.Count)."
 exit 0

@@ -171,7 +171,7 @@ function Invoke-PinnedSpawnChecks($T) {
 
 $base = Invoke-PinnedSpawnChecks $text
 if ($base.Count -gt 0) { $base | ForEach-Object { Write-Host "FAIL$_" }; Write-Host "PINNEDSPAWN lint: FAIL -- baseline $($base.Count) problem(s)"; exit 1 }
-Write-Host 'BASELINE GREEN: S1..S6 hold across 4 loaded files'
+Write-Host 'BASELINE GREEN: S1..S7 hold across 4 loaded files'
 
 $mutants = @(
     @{ Name = 'X1 exempt only when NOT pinned (sign flip)'; Key = 'sub'; Expect = 'S1'; Find = $pinExempt; Repl = $pinExempt.Replace('if (Entry.bPinned)', 'if (' + '!Entry.bPinned)') }
@@ -207,6 +207,7 @@ $mutants = @(
        Find2 = '                if (HealTarget)' + "`n"; Repl2 = ($refreshCnt + "`n" + '                if (HealTarget)' + "`n") }
     @{ Name = 'X33 census key omits the refresh counters'; Key = 'sub'; Expect = 'S4'; Find = "RelinkExtractors,`n            RelinkRefreshedStale, RelinkRefreshedResNull, RelinkRefreshedWrongNode);"; Repl = 'RelinkExtractors);' }
     @{ Name = 'X34 census drops refreshedResNull'; Key = 'sub'; Expect = 'S4'; Find = ' refreshedResNull=%d'; Repl = '' }
+    @{ Name = 'X35 comment echoes a refresh field'; Key = 'sub'; Expect = 'S6'; Find = '        // ns-lead-restore-1b: the three refresh counters are part of the tuple'; Repl = ('        // ns-lead-restore-1b (' + 'refreshedStale' + '=N): the three refresh counters are part of the tuple') }
     @{ Name = 'X25 marker reverted'; Key = 'nsmod'; Expect = 'S5'; Find = $marker; Repl = ('2026-11-01-rwg-' + 'pinnedspawn-0') }
     @{ Name = 'X26 legend echoes a gate field'; Key = 'sub'; Expect = 'S6'; Find = '            // the entry''s nudge counter after this visit;'; Repl = ('            // the entry''s nudge counter after this visit (' + 'strike=' + 'N/8);') }
     @{ Name = 'X27 legend echoes a heal field'; Key = 'heal'; Expect = 'S6'; Find = '// ONCE PER LOAD.'; Repl = ('// ONCE PER LOAD (' + 'reactivated=' + 'N).') }
@@ -226,5 +227,5 @@ foreach ($m in $mutants) {
     else { Write-Host "GREEN (BAD) $($m.Name): expected $($m.Expect), got: $($r -join ' | ')"; $bad++ }
 }
 if ($bad -gt 0) { Write-Host "FAIL: $bad mutant(s) not caught"; exit 1 }
-Write-Host "PASS: PINNEDSPAWN lint -- S1..S6 hold across 4 loaded files; mutants caught $($mutants.Count)/$($mutants.Count)."
+Write-Host "PASS: PINNEDSPAWN lint -- S1..S7 hold across 4 loaded files; mutants caught $($mutants.Count)/$($mutants.Count)."
 exit 0
