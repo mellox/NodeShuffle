@@ -108,8 +108,8 @@ $latchPin2 = '        if (!FarRestore && Entry.bPinned && (bSpotOccupied || bSpo
 $decl      = '    void EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool& bOutChangedWorld, FNodeShuffleFarRestore* FarRestore = nullptr);'
 $defn      = 'void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool& bOutChangedWorld, FNodeShuffleFarRestore* FarRestore)'
 $fmtWorld  = 'TEXT("ADOPTWORLD class=%s worldActors=%d boundToEntry=%d unboundLegacyClass=%d unboundNetStartup=%d unboundFracking=%d unboundOurComponent=%d unboundWouldBindNow=%d unboundResourceDiffers=%d unboundEntryHasSlot=%d unboundNoActiveEntryIn300cm=%d netStartupAll=%d nullResourceAll=%d"),'
-$fmtCensus = 'TEXT("SETTLEDRESTORE candidates=%d spawned=%d spawnedActorInvalidAfterCall=%d held=%d heldSlotAlive=%d heldSlotDead=%d heldClassNull=%d heldNotSettled=%d heldPinnedOccupied=%d heldOccupiedNode=%d heldOccupiedBuilding=%d heldEnclosed=%d heldInsideGate=%d heldSpawnActorNull=%d heldNoGateRecorded=%d heldStateDiffs=%d xtabPinRayProv=111:%d/110:%d/101:%d/100:%d/011:%d/010:%d/001:%d/000:%d candNoPawn=%d candBeyondAttemptRadius=%d candWithinAttemptRadius=%d actorlessActiveNew=%d skipDormant=%d skipParked=%d skipDeadSlot=%d skipUnpinnedProvRefused=%d skipUnpinnedUnsettled=%d provFlagClearedOnSpawn=%d spawnedLinesCut=%d heldLinesCut=%d attemptRadiusM=%.0f pawns=%d"),'
-$fmtSpawn  = 'TEXT("SETTLEDRESTORE-SPAWNED guid=%s res=%s spawnClass=%s at=%s nearestPawnDist2DM=%.0f gateNodesWithin8mAfterSpawn=%d pinned=%d pinnedBuildingHitsIgnored=%d"),'
+$fmtCensus = 'TEXT("SETTLEDRESTORE candidates=%d spawned=%d spawnedActorInvalidAfterCall=%d held=%d heldSlotAlive=%d heldSlotDead=%d heldClassNull=%d heldNotSettled=%d heldPinnedOccupied=%d heldOccupiedNode=%d heldOccupiedBuilding=%d heldEnclosed=%d heldInsideGate=%d heldSpawnActorNull=%d heldNoGateRecorded=%d heldStateDiffs=%d xtabPinRayProv=111:%d/110:%d/101:%d/100:%d/011:%d/010:%d/001:%d/000:%d candNoPawn=%d candBeyondAttemptRadius=%d candWithinAttemptRadius=%d actorlessActiveNew=%d skipDormant=%d skipParked=%d skipDeadSlot=%d skipUnpinnedProvRefused=%d skipUnpinnedUnsettled=%d skipUnpinnedStruck=%d skipUnpinnedNotTerrainSettled=%d provFlagClearedOnSpawn=%d spawnedLinesCut=%d heldLinesCut=%d attemptRadiusM=%.0f pawns=%d"),'
+$fmtSpawn  = 'TEXT("SETTLEDRESTORE-SPAWNED guid=%s res=%s spawnClass=%s at=%s nearestPawnDist2DM=%.0f gateNodesWithin8mAfterSpawn=%d pinned=%d pinnedBuildingHitsIgnored=%d enclosedRaysBlocked=%d enclosedRaysTotal=%d"),'
 $fmtHeld   = 'TEXT("SETTLEDRESTORE-HELD guid=%s res=%s at=%s heldGate=%s hitKind=%s hitClass=%s hitPath=%s hitDistCm=%.0f enclosedRaysBlocked=%d enclosedRaysTotal=%d pinned=%d nearestPawnDist2DM=%.0f entryStateDiffs=%d"),'
 $adoptPred = @(
     '        if (Node->IsA<ANodeShuffleResourceNode>()) { continue; }  // handled in pass 1',
@@ -195,7 +195,13 @@ function Invoke-Checks($T) {
     # L11
     if ((Count $sr ('bRwgProvisional' + ' = false')) -ne 1 -or -not (Ordered $pass @('        if (IsValid(Now) && Far.HeldGate == nullptr)', '            if (E.bRwgProvisional) { E.bRwgProvisional = false; ++ProvFlagCleared; }', '        ++HeldTotal;'))) { $f += '(L11) the provisional flag is cleared only in the spawned branch' }
     # L12
-    foreach ($bad in @(('E.bActive' + ' ='), ('E.Location' + ' ='), ('E.Rotation' + ' ='), ('E.OverlapNudges'), ('E.bRayCasted' + ' ='), ('E.bPinned' + ' ='), ('SpawnFailCounts.' + 'FindOrAdd'), ('SpawnParkedThisSession.' + 'Add'), ('DormantThisSession.' + 'Add'), ('Destroy' + '('), ('SpawnedNodes.' + 'Add('), ('SpawnedNodes.' + 'Remove('))) { if ($sr.Contains($bad)) { $f += "(L12) the pass file must not write '$bad'" } }
+    foreach ($bad in @(('E.bActive' + ' ='), ('E.Location' + ' ='), ('E.Rotation' + ' ='), ('E.OverlapNudges' + ' ='), ('E.OverlapNudges' + '++'), ('E.bRayCasted' + ' ='), ('E.bPinned' + ' ='), ('SpawnFailCounts.' + 'FindOrAdd'), ('SpawnParkedThisSession.' + 'Add'), ('DormantThisSession.' + 'Add'), ('Destroy' + '('), ('SpawnedNodes.' + 'Add('), ('SpawnedNodes.' + 'Remove('))) { if ($sr.Contains($bad)) { $f += "(L12) the pass file must not write '$bad'" } }
+    # L13 no bookkeeping write before the far slot hold; a pinned entry is never held on its enclosure verdict (R1)
+    $preHold = Span $s $defn $hSlot
+    foreach ($bad in @(('SpawnFailCounts.' + 'FindOrAdd'), ('Entry.OverlapNudges' + ' ='), ('Entry.bActive' + ' ='), ('Entry.Location' + ' ='))) { if ($preHold.Contains($bad)) { $f += "(L13) a write before the far slot hold ('$bad')" } }
+    $rxEncl = '(?<!!)FarRestore\s*&&\s*\(?\s*bSpotEnclosed' + 'Raw'
+    if ([regex]::IsMatch($ens, $rxEncl)) { $f += '(L13) the far path holds on the raw enclosure verdict (pinned entries must spawn, R1)' }
+    if (([regex]::Matches($pop, 'continue;')).Count -ne 9) { $f += '(L3) the population has exactly nine exclusions (add one here deliberately)' }
     return $f
 }
 
@@ -228,6 +234,9 @@ $mutants = @(
     @{ Name = 'M24 legend echoes a field'; Key = 'sr'; Expect = 'L10'; Find = '    // Legend (prose only). candidates counts'; Repl = ('    // Legend (prose only). candidates' + '=N counts') }
     @{ Name = 'M25 provisional flag cleared on the hold path too'; Key = 'sr'; Expect = 'L11'; Find = '        ++HeldTotal;'; Repl = ('        ++HeldTotal;' + $N + '        E.bRwgProvisional' + ' = false;') }
     @{ Name = 'M26 the pass resets the strike counter'; Key = 'sr'; Expect = 'L12'; Find = '        ++HeldTotal;'; Repl = ('        ++HeldTotal;' + $N + '        E.OverlapNudges' + ' = 0;') }
+    @{ Name = 'M27 a bookkeeping write before the far slot hold'; Key = 'sub'; Expect = 'L13'; Find = $hSlot; Repl = ('    if (FarRestore) { SpawnFailCounts.' + 'FindOrAdd(Entry.EntryGuid); }' + $N + $hSlot) }
+    @{ Name = 'M28 pinned enclosed held on the far path'; Key = 'sub'; Expect = 'L13'; Find = $hPinR1; Repl = ($hPinR1 + $N + '        if (FarRestore && bSpotEnclosed' + 'Raw) { FarHold(TEXT("enclosed")); return; }') }
+    @{ Name = 'M29 population gains an unlisted exclusion'; Key = 'sr'; Expect = 'L3'; Find = '        (E.bPinned ? Pinned : Rest).Add(I);'; Repl = ('        if (E.bPinned && !E.bRwgSettledOnTerrain) { ' + 'continue; }' + $N + '        (E.bPinned ? Pinned : Rest).Add(I);') }
 )
 $mutantFails = @(); $caught = 0
 foreach ($m in $mutants) {

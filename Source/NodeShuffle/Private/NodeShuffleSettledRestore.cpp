@@ -125,7 +125,7 @@ void ANodeShuffleSubsystem::RunSettledRestoreOnce(float SpawnRadiusCm, bool& bCh
     }
     const float AttemptRadiusCm = FMath::Min(SpawnRadiusCm, NodeShuffleMapMode::RwgAttemptRadiusCm);
 
-    int32 ActorlessActiveNew = 0, SkipDormant = 0, SkipParked = 0, SkipDeadSlot = 0, SkipProvRefused = 0, SkipUnpinnedUnsettled = 0;
+    int32 ActorlessActiveNew = 0, SkipDormant = 0, SkipParked = 0, SkipDeadSlot = 0, SkipProvRefused = 0, SkipUnpinnedUnsettled = 0, SkipUnpinnedStruck = 0, SkipUnpinnedNotTerrainSettled = 0;
     TArray<int32> Pinned, Rest;
     for (int32 I = 0; I < Layout.Num(); ++I)
     {
@@ -139,6 +139,8 @@ void ANodeShuffleSubsystem::RunSettledRestoreOnce(float SpawnRadiusCm, bool& bCh
         if (Slot) { ++SkipDeadSlot; continue; } // a dead slot: EnsureNewNodeSpawned's external-destroy backoff owns it
         if (!E.bPinned && RwgProvRefused.Contains(E.EntryGuid)) { ++SkipProvRefused; continue; }
         if (!E.bPinned && !E.bRayCasted) { ++SkipUnpinnedUnsettled; continue; } // the provisional pass takes these at any distance
+        if (!E.bPinned && E.OverlapNudges > 0) { ++SkipUnpinnedStruck; continue; } // a gate refused this spot with a pawn in range; the attempt loop re-tests it there
+        if (!E.bPinned && !E.bRwgSettledOnTerrain && !E.bUnderground && !E.bRwgCave) { ++SkipUnpinnedNotTerrainSettled; continue; } // RwgResettlePass clears bRayCasted on this actorless entry later in this ApplyLayout
         (E.bPinned ? Pinned : Rest).Add(I);
     }
     TArray<int32> Cands = MoveTemp(Pinned);
@@ -192,9 +194,9 @@ void ANodeShuffleSubsystem::RunSettledRestoreOnce(float SpawnRadiusCm, bool& bCh
                 if (!IsValid(*It) || It->IsA<AFGResourceDeposit>()) { continue; }
                 if (FVector::DistSquared(It->GetActorLocation(), E.Location) < FMath::Square(SettledRestoreGateRadiusCm)) { ++GateNodesWithin; }
             }
-            UE_LOG(LogNodeShuffle, Display, TEXT("SETTLEDRESTORE-SPAWNED guid=%s res=%s spawnClass=%s at=%s nearestPawnDist2DM=%.0f gateNodesWithin8mAfterSpawn=%d pinned=%d pinnedBuildingHitsIgnored=%d"),
+            UE_LOG(LogNodeShuffle, Display, TEXT("SETTLEDRESTORE-SPAWNED guid=%s res=%s spawnClass=%s at=%s nearestPawnDist2DM=%.0f gateNodesWithin8mAfterSpawn=%d pinned=%d pinnedBuildingHitsIgnored=%d enclosedRaysBlocked=%d enclosedRaysTotal=%d"),
                 *E.EntryGuid.ToString(), *FPackageName::ObjectPathToObjectName(E.AssignedResourceClassPath), *Now->GetClass()->GetName(),
-                *E.Location.ToCompactString(), PawnDistM, GateNodesWithin, E.bPinned ? 1 : 0, Far.PinnedBuildingHitsIgnored);
+                *E.Location.ToCompactString(), PawnDistM, GateNodesWithin, E.bPinned ? 1 : 0, Far.PinnedBuildingHitsIgnored, Far.EnclosedRaysBlocked, Far.EnclosedRaysTotal);
             continue;
         }
         if (Far.HeldGate == nullptr && SpawnedNodes.Contains(E.EntryGuid))
@@ -220,13 +222,13 @@ void ANodeShuffleSubsystem::RunSettledRestoreOnce(float SpawnRadiusCm, bool& bCh
     // new-node entries with no valid actor that it did not take, by the first exclusion they met. spawnedActorInvalidAfterCall counts calls
     // that wrote a SpawnedNodes slot whose actor was not valid when read back (neither spawned nor held). Each held counter names the refusing exit
     // EnsureNewNodeSpawned recorded; heldNoGateRecorded counts held entries for which it recorded none. heldStateDiffs sums, over held
-    // entries, the persisted fields and session bookkeeping that differ from their value before the call (the hold contract reads zero).
+    // entries, how many of the compared field groups (SettledRestoreFieldDiffs) and session bookkeeping sets differ from their value before the call (the hold contract reads zero).
     // The cross-tab digits are pinned, rayCasted, provisional flag. The three distance counters split candidates by the pawns at this pass.
-    UE_LOG(LogNodeShuffle, Display, TEXT("SETTLEDRESTORE candidates=%d spawned=%d spawnedActorInvalidAfterCall=%d held=%d heldSlotAlive=%d heldSlotDead=%d heldClassNull=%d heldNotSettled=%d heldPinnedOccupied=%d heldOccupiedNode=%d heldOccupiedBuilding=%d heldEnclosed=%d heldInsideGate=%d heldSpawnActorNull=%d heldNoGateRecorded=%d heldStateDiffs=%d xtabPinRayProv=111:%d/110:%d/101:%d/100:%d/011:%d/010:%d/001:%d/000:%d candNoPawn=%d candBeyondAttemptRadius=%d candWithinAttemptRadius=%d actorlessActiveNew=%d skipDormant=%d skipParked=%d skipDeadSlot=%d skipUnpinnedProvRefused=%d skipUnpinnedUnsettled=%d provFlagClearedOnSpawn=%d spawnedLinesCut=%d heldLinesCut=%d attemptRadiusM=%.0f pawns=%d"),
+    UE_LOG(LogNodeShuffle, Display, TEXT("SETTLEDRESTORE candidates=%d spawned=%d spawnedActorInvalidAfterCall=%d held=%d heldSlotAlive=%d heldSlotDead=%d heldClassNull=%d heldNotSettled=%d heldPinnedOccupied=%d heldOccupiedNode=%d heldOccupiedBuilding=%d heldEnclosed=%d heldInsideGate=%d heldSpawnActorNull=%d heldNoGateRecorded=%d heldStateDiffs=%d xtabPinRayProv=111:%d/110:%d/101:%d/100:%d/011:%d/010:%d/001:%d/000:%d candNoPawn=%d candBeyondAttemptRadius=%d candWithinAttemptRadius=%d actorlessActiveNew=%d skipDormant=%d skipParked=%d skipDeadSlot=%d skipUnpinnedProvRefused=%d skipUnpinnedUnsettled=%d skipUnpinnedStruck=%d skipUnpinnedNotTerrainSettled=%d provFlagClearedOnSpawn=%d spawnedLinesCut=%d heldLinesCut=%d attemptRadiusM=%.0f pawns=%d"),
         Cands.Num(), Spawned, SpawnedThenInvalid, HeldTotal,HeldByGate[TEXT("slotAlive")], HeldByGate[TEXT("slotDead")], HeldByGate[TEXT("classNull")], HeldByGate[TEXT("notSettled")],
         HeldByGate[TEXT("pinnedOccupied")], HeldByGate[TEXT("occupiedNode")], HeldByGate[TEXT("occupiedBuilding")], HeldByGate[TEXT("enclosed")],
         HeldByGate[TEXT("insideGate")], HeldByGate[TEXT("spawnActorNull")], HeldNoGateName, HeldStateDiffs,
         Xtab[7], Xtab[6], Xtab[5], Xtab[4], Xtab[3], Xtab[2], Xtab[1], Xtab[0], CandNoPawn, CandBeyondAttempt, CandWithinAttempt,
-        ActorlessActiveNew, SkipDormant, SkipParked, SkipDeadSlot, SkipProvRefused, SkipUnpinnedUnsettled, ProvFlagCleared, SpawnedCut, HeldCut,
+        ActorlessActiveNew, SkipDormant, SkipParked, SkipDeadSlot, SkipProvRefused, SkipUnpinnedUnsettled, SkipUnpinnedStruck, SkipUnpinnedNotTerrainSettled, ProvFlagCleared, SpawnedCut, HeldCut,
         AttemptRadiusCm / 100.f, Pawns.Num());
 }

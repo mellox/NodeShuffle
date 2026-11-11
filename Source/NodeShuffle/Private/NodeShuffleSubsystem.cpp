@@ -2822,13 +2822,6 @@ void ANodeShuffleSubsystem::ApplyLayout()
         // location is in OriginalNodeRecord whenever it is not occupied.)
     }
 
-    // Packet H1 (ns-wells-h1): apply the rolled well retype. Placed AFTER the VanillaNodeCache refresh
-    // above, because that is what makes the path->live-actor lookup work — fracking cores and satellites
-    // are AFGResourceNodeBase actors and the cache's own iterator already includes them (it excludes only
-    // OUR spawned nodes). Idempotent and re-run every pass on purpose: a well that has not streamed in
-    // yet is written on whichever later pass it appears, exactly like SuppressOriginalNodes' hide funnel.
-    // NOTHING ELSE IN THIS PASS TOUCHES WELLS: they are excluded from the regular node population by
-    // IsFrackingActor, so this call is the mod's entire well surface.
     // ns-lead-restore-1: once per load, after adopt and the pinned heal above, before RwgSpawnPass, so ReassociateOrphanedExtractors
     // below binds extractors to what it spawns in this same ApplyLayout. Off vanilla only (NodeShuffleSettledRestore.cpp).
     if (GetMapMode() != ENodeShuffleMapMode::Vanilla) { RunSettledRestoreOnce(SpawnRadiusCm, bChangedWorld); }
@@ -2842,6 +2835,13 @@ void ANodeShuffleSubsystem::ApplyLayout()
     // RWG P4b (2026-10-18): every pass, re-try the satellites the re-bind left on RWGUNBOUND_ paths (RWG restores a saved
     // world over frames), and suppress a re-bound group at once. Before ApplyWellRetype for the same reason as the re-bind.
     if (GetMapMode() != ENodeShuffleMapMode::Vanilla) { RwgRetryUnboundWellSatellites(); }
+    // Packet H1 (ns-wells-h1): apply the rolled well retype. Placed AFTER the VanillaNodeCache refresh
+    // above, because that is what makes the path->live-actor lookup work — fracking cores and satellites
+    // are AFGResourceNodeBase actors and the cache's own iterator already includes them (it excludes only
+    // OUR spawned nodes). Idempotent and re-run every pass on purpose: a well that has not streamed in
+    // yet is written on whichever later pass it appears, exactly like SuppressOriginalNodes' hide funnel.
+    // NOTHING ELSE IN THIS PASS TOUCHES WELLS: they are excluded from the regular node population by
+    // IsFrackingActor, so this call is the mod's entire well surface.
     {
     ApplyWellRetype();
 
@@ -5311,6 +5311,7 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
         // For a pinned entry the enclosure verdict is printed and not applied; a resource-node hit holds this visit's spawn
         // with no nudge and no strike, and the next visit tests again. Non-pinned entries take the unchanged path below.
         const bool bSpotEnclosedRaw = !bSpotOccupied && IsEnclosed(Entry.Location);
+        if (FarRestore) { FarRestore->PinnedBuildingHitsIgnored = PinnedBuildingHitsIgnored; FarRestore->EnclosedRaysBlocked = GateEncBlocked; FarRestore->EnclosedRaysTotal = GateEncTotal; } // ns-lead-restore-1: the primary spot's gate reading, recorded for a spawn as well as a hold
         if (!FarRestore && Entry.bPinned && (bSpotOccupied || bSpotEnclosedRaw) && !PinnedGateHoldLogged.Contains(Entry.EntryGuid)) // ns-lead-restore-1: as above
         {
             PinnedGateHoldLogged.Add(Entry.EntryGuid);
