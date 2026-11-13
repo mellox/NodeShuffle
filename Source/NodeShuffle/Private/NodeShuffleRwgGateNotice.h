@@ -24,14 +24,25 @@ namespace NodeShuffleRwgGate
     // Unlisted trial, cave half: resolves the five FPWCarvedCaves-group exports from the bound RWG module and compares
     // their leading bytes with the masks (a copy of NodeShuffleMapModeCave.cpp's). Returns the number of exports whose
     // PINNED bytes differed; OutMissing / OutMismatched carry the export names. A missing export is not a mismatch.
-    int32 CheckCaveSignatures(void* Hmod, FString& OutMissing, FString& OutMismatched);
+    // rwg-0-2-0-1 (2026-11-13): Gen selects the mask generation the height-API bind accepted (GenA = the 705/745/802 masks,
+    // GenB = the build-1063 masks); CarvedCaves / AnyNear / FloorCmAt differ per generation, Num / IsInsideAt are shared.
+    int32 CheckCaveSignatures(void* Hmod, int32 Gen, FString& OutMissing, FString& OutMismatched);
+
+    // rwg-0-2-0-1: mask generations (D1, _team/test-logs/2026-11-13-rwg-0.2.0-export-diff.md). 0 = matched neither.
+    constexpr int32 GenA = 1;
+    constexpr int32 GenB = 2;
+    // Measurement only (binds nothing): which generation's mask each of the three generation-specific cave exports matches.
+    // Returns a bit set: bit GenA = at least one matched ONLY generation A's mask, bit GenB = at least one matched ONLY B's.
+    // OutDetail lists each export as Name:A|B|both|none|missing. A missing, both-matching or neither-generation export sets no bit.
+    int32 ClassifyCaveGenerations(void* Hmod, FString& OutDetail);
 
     // Queue the player notice for a REFUSAL (callsAllowed=0): Status is the refusal status the log prints, Detail the
     // measured list behind it (mismatched exports, missing exports). Replaces any earlier queued body (the gate binds once
     // per process; the latest verdict is the one to show).
     void QueueRefusalNotice(const FString& SemVer, int32 Build, const FString& Status, const FString& Detail);
     // Queue the player notice for an UNLISTED build that passed the full check (callsAllowed=1).
-    void QueueUnlistedVerifiedNotice(const FString& SemVer, int32 Build, const FString& Accepted);
+    // rwg-0-2-0-1: Checked = the number of functions the trial resolved and matched (16 on generation A, 18 on B).
+    void QueueUnlistedVerifiedNotice(const FString& SemVer, int32 Build, const FString& Accepted, int32 Checked);
     // Drain: posts the queued body to chat once per World (a second save loaded in the same process gets it again, because
     // the gate verdict still holds there). Cheap when nothing is queued. Game thread.
     void TickNotice(UWorld* World);

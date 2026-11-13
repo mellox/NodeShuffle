@@ -70,6 +70,21 @@ namespace
         static const int16 SigAnyNear[] = { 0x48,0x8B,0xC4,0x48,0x89,0x58,0x08,0x48,0x89,0x68,0x10,0x48,0x89,0x70,0x18,0x57,0x48,0x83,0xEC,0x70,0x8B,0x59,0x48,0x48,0x8B,0xF1 };
         static const int16 SigFloor[] = { 0x4C,0x8B,0xDC,0x53,0x41,0x55,0x48,0x81,0xEC,0xF8,0x00,0x00,0x00,0x8B,0x59,0x48,0x4C,0x8B,0xE9 };
         static const int16 SigInside[] = { 0x48,0x83,0xEC,0x28,0xF2,0x0F,0x10,0x15,-1,-1,-1,-1,0xE8,-1,-1,-1,-1,0x0F,0x57,0xC9,0x66,0x0F,0x2F,0xC8,0x0F,0x97,0xC0 };
+        // rwg-0-2-0-1 (2026-11-13): GENERATION B = RWG 0.2.0 build 1063 (sha256 6AEF57A9652D77AD; _team/test-logs/2026-11-13-rwg-0.2.0-export-diff.md).
+        // Member offsets stay PINNED (the rule above, orchestrator decision D2): CarvedCaves disp8 @3 = 0x38 (A 0x28); AnyNear disp8 @22 = 0x50
+        // (A 0x48); FloorCmAt has a new prologue (frame 0x118), its disp8 @30 = 0x50 pinned. Copied token-equal into NodeShuffleRwgGateNotice.cpp
+        // (GateSig*1063; check_rwg020_lint.ps1 pins the pairs). The height-API bind decides the generation; this bind only follows it.
+        static const int16 SigCaves1063[] = { 0x48,0x8D,0x41,0x38,0xC3 };
+        static const int16 SigAnyNear1063[] = { 0x48,0x8B,0xC4,0x48,0x89,0x58,0x08,0x48,0x89,0x68,0x10,0x48,0x89,0x70,0x18,0x57,0x48,0x83,0xEC,0x70,0x8B,0x59,0x50,0x48,0x8B,0xF1 };
+        static const int16 SigFloor1063[] = { 0x48,0x8B,0xC4,0xF2,0x0F,0x11,0x58,0x20,0xF2,0x0F,0x11,0x50,0x18,0xF2,0x0F,0x11,0x48,0x10,0x53,0x41,0x55,0x48,0x81,0xEC,0x18,0x01,0x00,0x00,0x8B,0x59,0x50,0x4C,0x8B,0xE9 };
+        const int32 Gen = NodeShuffleMapMode::RwgHeightApiGeneration();
+        const bool bGenB = Gen == NodeShuffleMapMode::RwgHeightApiGenB;
+        const int16* const CavesSig = bGenB ? SigCaves1063 : SigCaves;
+        const int32 CavesN = bGenB ? static_cast<int32>(UE_ARRAY_COUNT(SigCaves1063)) : static_cast<int32>(UE_ARRAY_COUNT(SigCaves));
+        const int16* const AnyNearSig = bGenB ? SigAnyNear1063 : SigAnyNear;
+        const int32 AnyNearN = bGenB ? static_cast<int32>(UE_ARRAY_COUNT(SigAnyNear1063)) : static_cast<int32>(UE_ARRAY_COUNT(SigAnyNear));
+        const int16* const FloorSig = bGenB ? SigFloor1063 : SigFloor;
+        const int32 FloorN = bGenB ? static_cast<int32>(UE_ARRAY_COUNT(SigFloor1063)) : static_cast<int32>(UE_ARRAY_COUNT(SigFloor));
         FString Missing, SigBad;
         const auto Bind = [&](const char* Sym, const int16* Sig, int32 N, const TCHAR* Name) -> void*
         {
@@ -78,15 +93,15 @@ namespace
             for (int32 I = 0; I < N; ++I) { if (Sig[I] >= 0 && B[I] != static_cast<uint8>(Sig[I])) { SigBad += FString(SigBad.IsEmpty() ? TEXT("") : TEXT(" ")) + Name; return nullptr; } }
             return const_cast<uint8*>(B);
         };
-        A.Caves = reinterpret_cast<FnCaves>(Bind(SymCaves, SigCaves, UE_ARRAY_COUNT(SigCaves), TEXT("CarvedCaves")));
+        A.Caves = reinterpret_cast<FnCaves>(Bind(SymCaves, CavesSig, CavesN, TEXT("CarvedCaves")));
         A.Num = reinterpret_cast<FnNum>(Bind(SymNum, SigNum, UE_ARRAY_COUNT(SigNum), TEXT("Num")));
-        A.AnyNear = reinterpret_cast<FnAnyNear>(Bind(SymAnyNear, SigAnyNear, UE_ARRAY_COUNT(SigAnyNear), TEXT("AnyNear")));
-        A.Floor = reinterpret_cast<FnFloor>(Bind(SymFloor, SigFloor, UE_ARRAY_COUNT(SigFloor), TEXT("FloorCmAt")));
+        A.AnyNear = reinterpret_cast<FnAnyNear>(Bind(SymAnyNear, AnyNearSig, AnyNearN, TEXT("AnyNear")));
+        A.Floor = reinterpret_cast<FnFloor>(Bind(SymFloor, FloorSig, FloorN, TEXT("FloorCmAt")));
         A.Inside = reinterpret_cast<FnInside>(Bind(SymInside, SigInside, UE_ARRAY_COUNT(SigInside), TEXT("IsInsideAt")));
         A.Status = !Missing.IsEmpty() ? TEXT("exportMissing") : (!SigBad.IsEmpty() ? TEXT("signatureMismatch") : TEXT("bound"));
         if (!A.Bound()) { A.Caves = nullptr; A.Num = nullptr; A.AnyNear = nullptr; A.Floor = nullptr; A.Inside = nullptr; } // all-or-nothing
-        UE_LOG(LogNodeShuffle, Display, TEXT("RWGCAVEBIND: status=%s missing='%s' signatureMismatched='%s' optional=1; the cave share counts only after RWGCAVECHECK grades it"),
-            *A.Status, *Missing, *SigBad);
+        UE_LOG(LogNodeShuffle, Display, TEXT("RWGCAVEBIND: status=%s missing='%s' signatureMismatched='%s' generation=%s optional=1; the cave share counts only after RWGCAVECHECK grades it"),
+            *A.Status, *Missing, *SigBad, bGenB ? TEXT("B") : TEXT("A"));
         if (!A.Bound()) { UE_LOG(LogNodeShuffle, Warning, TEXT("RWGCAVEBIND-OFF: status=%s; the cave share is 0 this session (every spot is a surface spot)"), *A.Status); }
 #else
         A.Status = TEXT("notWindows");

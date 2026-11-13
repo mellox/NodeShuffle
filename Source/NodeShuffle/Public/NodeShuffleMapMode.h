@@ -169,7 +169,20 @@ namespace NodeShuffleMapMode
         const void* G = nullptr; // RWG P2f: the generator (GetKillboxTop's this); set only when usable
         double HalfExtentCm = -1.0;
         FString StatusText;
+        // rwg-0-2-0-1 (2026-11-13): the generation-B edge-strip guard (D4). StripInnerCm = HalfWorldCm() - GridCmValue()/2 read from RWG's own
+        // getters when the bind accepted generation B; -1 on generation A, where Outside() is exactly RWG's IsOutsideWorld. Outside() answers
+        // true for max(|X|,|Y|) > StripInnerCm. The counters are measurement only (printed by RWGEDGEGUARD), never read by a decision.
+        double StripInnerCm = -1.0;
+        mutable int32 EdgeOutsideCalls = 0;
+        mutable int32 EdgeRejectedByApi = 0;
+        mutable int32 EdgeRejectedByStripOnly = 0;
     };
+
+    // rwg-0-2-0-1: the mask generation the height-API bind accepted (0 = none / not bound, RwgHeightApiGenA = the 705/745/802 masks,
+    // RwgHeightApiGenB = the build-1063 masks). Equal to NodeShuffleRwgGate::GenA / GenB (static_assert in NodeShuffleMapModeHeightApi.cpp).
+    constexpr int32 RwgHeightApiGenA = 1;
+    constexpr int32 RwgHeightApiGenB = 2;
+    int32 RwgHeightApiGeneration();
 
     // RWG P2a (2026-10-17, brief `_team/nodeshuffle-rwg-p2-spec.md` §1): readiness v2 needs this many
     // consecutive 5 s ticks with an unchanged non-ours node count, counted ONLY from the first tick that read

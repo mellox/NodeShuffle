@@ -27,6 +27,13 @@ namespace
     const int16 SigAnyNear[] = { 0x48,0x8B,0xC4,0x48,0x89,0x58,0x08,0x48,0x89,0x68,0x10,0x48,0x89,0x70,0x18,0x57,0x48,0x83,0xEC,0x70,0x8B,0x59,0x48,0x48,0x8B,0xF1 };
     const int16 SigFloor[] = { 0x4C,0x8B,0xDC,0x53,0x41,0x55,0x48,0x81,0xEC,0xF8,0x00,0x00,0x00,0x8B,0x59,0x48,0x4C,0x8B,0xE9 };
     const int16 SigInside[] = { 0x48,0x83,0xEC,0x28,0xF2,0x0F,0x10,0x15,-1,-1,-1,-1,0xE8,-1,-1,-1,-1,0x0F,0x57,0xC9,0x66,0x0F,0x2F,0xC8,0x0F,0x97,0xC0 };
+    // rwg-0-2-0-1 (2026-11-13): GENERATION B (RWG 0.2.0 build 1063, sha256 6AEF57A9652D77AD), a COPY of NodeShuffleMapModeCave.cpp's
+    // SigCaves1063 / SigAnyNear1063 / SigFloor1063 (check_rwg020_lint.ps1 pins the pairs token-equal). Member offsets are PINNED to their
+    // measured 1063 values, as the generation-A masks above pin theirs (orchestrator decision D2: a moved field fails closed):
+    // CarvedCaves disp8 @3 = 0x38 (A 0x28); AnyNear disp8 @22 = 0x50 (A 0x48); FloorCmAt has a new prologue, its disp8 @30 = 0x50 pinned.
+    const int16 GateSigCaves1063[] = { 0x48,0x8D,0x41,0x38,0xC3 };
+    const int16 GateSigAnyNear1063[] = { 0x48,0x8B,0xC4,0x48,0x89,0x58,0x08,0x48,0x89,0x68,0x10,0x48,0x89,0x70,0x18,0x57,0x48,0x83,0xEC,0x70,0x8B,0x59,0x50,0x48,0x8B,0xF1 };
+    const int16 GateSigFloor1063[] = { 0x48,0x8B,0xC4,0xF2,0x0F,0x11,0x58,0x20,0xF2,0x0F,0x11,0x50,0x18,0xF2,0x0F,0x11,0x48,0x10,0x53,0x41,0x55,0x48,0x81,0xEC,0x18,0x01,0x00,0x00,0x8B,0x59,0x50,0x4C,0x8B,0xE9 };
 
     // ---- notice state. Per process, like the gate itself (the RWG DLL never unloads, TryBind runs once).
     constexpr int32 MaxNoticeAttempts = 8; // the drain runs <= 11 times per world (latch + every 60 s while SinceReady <= RwgReprobeWindowTicks = 120), one spent on the hold tick; 8 keeps "abandoned" reachable when a pawn exists by SinceReady = 24, later the window ends first
@@ -57,12 +64,20 @@ namespace
     }
 }
 
-int32 NodeShuffleRwgGate::CheckCaveSignatures(void* Hmod, FString& OutMissing, FString& OutMismatched)
+int32 NodeShuffleRwgGate::CheckCaveSignatures(void* Hmod, int32 Gen, FString& OutMissing, FString& OutMismatched)
 {
     int32 Bad = 0;
 #if PLATFORM_WINDOWS
     HMODULE H = static_cast<HMODULE>(Hmod);
     if (!H) { OutMissing = TEXT("<module null>"); return 0; }
+    // rwg-0-2-0-1: the generation the height-API bind accepted picks the three generation-specific masks; Num / IsInsideAt are shared.
+    const bool bGenB = Gen == GenB;
+    const int16* const CavesSig = bGenB ? GateSigCaves1063 : SigCaves;
+    const int32 CavesN = bGenB ? static_cast<int32>(UE_ARRAY_COUNT(GateSigCaves1063)) : static_cast<int32>(UE_ARRAY_COUNT(SigCaves));
+    const int16* const AnyNearSig = bGenB ? GateSigAnyNear1063 : SigAnyNear;
+    const int32 AnyNearN = bGenB ? static_cast<int32>(UE_ARRAY_COUNT(GateSigAnyNear1063)) : static_cast<int32>(UE_ARRAY_COUNT(SigAnyNear));
+    const int16* const FloorSig = bGenB ? GateSigFloor1063 : SigFloor;
+    const int32 FloorN = bGenB ? static_cast<int32>(UE_ARRAY_COUNT(GateSigFloor1063)) : static_cast<int32>(UE_ARRAY_COUNT(SigFloor));
     const auto Check = [&](const char* Sym, const int16* Sig, int32 N, const TCHAR* Name)
     {
         const uint8* B = reinterpret_cast<const uint8*>(::GetProcAddress(H, Sym));
@@ -77,17 +92,47 @@ int32 NodeShuffleRwgGate::CheckCaveSignatures(void* Hmod, FString& OutMissing, F
             }
         }
     };
-    Check(SymCaves, SigCaves, UE_ARRAY_COUNT(SigCaves), TEXT("CarvedCaves"));
+    Check(SymCaves, CavesSig, CavesN, TEXT("CarvedCaves"));
     Check(SymNum, SigNum, UE_ARRAY_COUNT(SigNum), TEXT("Num"));
-    Check(SymAnyNear, SigAnyNear, UE_ARRAY_COUNT(SigAnyNear), TEXT("AnyNear"));
-    Check(SymFloor, SigFloor, UE_ARRAY_COUNT(SigFloor), TEXT("FloorCmAt"));
+    Check(SymAnyNear, AnyNearSig, AnyNearN, TEXT("AnyNear"));
+    Check(SymFloor, FloorSig, FloorN, TEXT("FloorCmAt"));
     Check(SymInside, SigInside, UE_ARRAY_COUNT(SigInside), TEXT("IsInsideAt"));
 #else
     OutMissing = TEXT("<notWindows>");
 #endif
-    UE_LOG(LogNodeShuffle, Display, TEXT("RWGGATE-CAVESIG: unlisted trial, cave half: mismatched=%d missing='%s' mismatchedList='%s' (each item is the export and the offset of its first differing pinned byte; the cave bind re-checks the same five masks later)"),
-        Bad, *OutMissing, *OutMismatched);
+    UE_LOG(LogNodeShuffle, Display, TEXT("RWGGATE-CAVESIG: unlisted trial, cave half: generation=%s mismatched=%d missing='%s' mismatchedList='%s' (each item is the export and the offset of its first differing pinned byte; the cave bind re-checks the same five masks later)"),
+        Gen == GenB ? TEXT("B") : TEXT("A"), Bad, *OutMissing, *OutMismatched);
     return Bad;
+}
+
+int32 NodeShuffleRwgGate::ClassifyCaveGenerations(void* Hmod, FString& OutDetail)
+{
+    int32 Bits = 0;
+#if PLATFORM_WINDOWS
+    HMODULE H = static_cast<HMODULE>(Hmod);
+    if (!H) { OutDetail = TEXT("<module null>"); return 0; }
+    const auto Matches = [](const uint8* B, const int16* Sig, int32 N) -> bool
+    {
+        for (int32 I = 0; I < N; ++I) { if (Sig[I] >= 0 && B[I] != static_cast<uint8>(Sig[I])) { return false; } }
+        return true;
+    };
+    const auto One = [&](const char* Sym, const int16* SigGenA, int32 NA, const int16* SigGenB, int32 NB, const TCHAR* Name)
+    {
+        const uint8* B = reinterpret_cast<const uint8*>(::GetProcAddress(H, Sym));
+        const bool bA = B != nullptr && Matches(B, SigGenA, NA);
+        const bool bB = B != nullptr && Matches(B, SigGenB, NB);
+        const TCHAR* Label = !B ? TEXT("missing") : ((bA && bB) ? TEXT("both") : (bA ? TEXT("A") : (bB ? TEXT("B") : TEXT("none"))));
+        if (bA && !bB) { Bits |= (1 << GenA); }
+        if (bB && !bA) { Bits |= (1 << GenB); }
+        OutDetail += FString::Printf(TEXT("%s%s:%s"), OutDetail.IsEmpty() ? TEXT("") : TEXT(" "), Name, Label);
+    };
+    One(SymCaves, SigCaves, UE_ARRAY_COUNT(SigCaves), GateSigCaves1063, UE_ARRAY_COUNT(GateSigCaves1063), TEXT("CarvedCaves"));
+    One(SymAnyNear, SigAnyNear, UE_ARRAY_COUNT(SigAnyNear), GateSigAnyNear1063, UE_ARRAY_COUNT(GateSigAnyNear1063), TEXT("AnyNear"));
+    One(SymFloor, SigFloor, UE_ARRAY_COUNT(SigFloor), GateSigFloor1063, UE_ARRAY_COUNT(GateSigFloor1063), TEXT("FloorCmAt"));
+#else
+    OutDetail = TEXT("<notWindows>");
+#endif
+    return Bits;
 }
 
 // ---- bodies. PLAYER-FACING COPY: every sentence is graded in the comment above it. Nothing names a cause ("RWG updated",
@@ -110,18 +155,20 @@ void NodeShuffleRwgGate::QueueRefusalNotice(const FString& SemVer, int32 Build, 
         *SemVer, *BuildClause, *Status, Detail.IsEmpty() ? TEXT("no detail") : *Detail));
 }
 
-void NodeShuffleRwgGate::QueueUnlistedVerifiedNotice(const FString& SemVer, int32 Build, const FString& Accepted)
+void NodeShuffleRwgGate::QueueUnlistedVerifiedNotice(const FString& SemVer, int32 Build, const FString& Accepted, int32 Checked)
 {
-    // MEASURED: SemVer/Build from the .uplugin; "not on the tested list" = the accept-list walk matched no entry; "all 16
-    // functions matched" = this run resolved all 16 exports (bAllSixteenResolved) and the 11 HeightApi + 5 cave masks returned no
-    // pinned-byte mismatch -- that is the only path that queues this body. "height API is in use" -- MEASURED: callsAllowed=1. The
+    // MEASURED: SemVer/Build from the .uplugin; "not on the tested list" = the accept-list walk matched no entry; "all N
+    // functions matched" = this run resolved all N exports (bAllSixteenResolved, plus on generation B the two edge getters) and their
+    // masks (11 HeightApi + 5 cave, + 2 getters on generation B) returned no pinned-byte mismatch -- that is the only path that queues
+    // this body; N is passed by the caller (rwg-0-2-0-1: 16 on generation A, 18 on B). "height API is in use" -- MEASURED: callsAllowed=1
+    // at the moment of queueing (a later edge-getter value refusal can still turn it off; that refusal queues its own notice). The
     // last sentence is a request, not a claim.
     const FString BuildClause = Build > 0 ? FString::Printf(TEXT(" (build %d)"), Build) : FString();
     Queue(TEXT("unlistedVerified"), FString::Printf(
         TEXT("NODE SHUFFLE - Random World Generator %s%s is not on the tested list\n\n")
-        TEXT("Tested versions: %s. All 16 RWG functions Node Shuffle uses matched their expected signatures on this build, so the\n")
+        TEXT("Tested versions: %s. All %d RWG functions Node Shuffle uses matched their expected signatures on this build, so the\n")
         TEXT("RWG height API is in use this session. If nodes land in water or over void, include the RWG version when reporting."),
-        *SemVer, *BuildClause, *Accepted));
+        *SemVer, *BuildClause, *Accepted, Checked));
 }
 
 void NodeShuffleRwgGate::TickNotice(UWorld* World)

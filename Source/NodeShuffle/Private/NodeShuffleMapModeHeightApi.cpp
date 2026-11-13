@@ -24,8 +24,16 @@
 
 class FPWDensityField; // RWG's type. Never completed here: only an opaque pointer and a TSharedPtr slot are used.
 
+static_assert(NodeShuffleMapMode::RwgHeightApiGenA == NodeShuffleRwgGate::GenA && NodeShuffleMapMode::RwgHeightApiGenB == NodeShuffleRwgGate::GenB,
+    "rwg-0-2-0-1: the two mask-generation constant pairs must agree");
+
 namespace
 {
+    // rwg-0-2-0-1 (2026-11-13): mask generations (orchestrator decision D1). A = the 705/745/802 masks (byte-unchanged), B = build 1063.
+    constexpr int32 kRwgHapiGenA = NodeShuffleMapMode::RwgHeightApiGenA;
+    constexpr int32 kRwgHapiGenB = NodeShuffleMapMode::RwgHeightApiGenB;
+    const TCHAR* RwgHapiGenLabel(int32 Gen) { return Gen == kRwgHapiGenA ? TEXT("A") : (Gen == kRwgHapiGenB ? TEXT("B") : TEXT("none")); }
+
     // ACCEPTED RWG BUILDS -- code constants, deliberately NOT a config row. Each {SemVersion, PWBuildNumber} pair was measured
     // (dumpbin /EXPORTS + /DISASM on FactoryGameSteam-ProceduralWorld-Win64-Shipping.dll):
     //   0.1.7 build 705, sha256 EE60A003A44A4ABC..., 2026-10-17;
@@ -36,8 +44,13 @@ namespace
     // SemVersion AND build must both equal ONE entry to be LISTED. SINCE RWG 0.1.12 (user decision 2026-10-26) an unlisted pair is
     // not refused on its label: it is TRIED on the full 16-function signature check (TryBind below) and refused on any pinned-byte
     // mismatch. Add an entry only after re-measuring every bound export on that build AND re-running the RWGHEIGHTAPI census on it.
+    //   0.2.0 build 1063, sha256 6AEF57A9652D77AD..., 2026-11-13 (rwg-0-2-0-1; _team/test-logs/2026-11-13-rwg-0.2.0-export-diff.md and
+    //   -height-semantics.md): 11 of 16 masks byte-identical; SurfaceHeightCm, InSeaVolume, CarvedCaves, AnyNear, FloorCmAt match only the
+    //   GENERATION-B masks below (offline: tools/check_rwg_masks.py on the archived DLL). SurfaceHeightCm gained edge branches, so generation B
+    //   also REQUIRES the HalfWorldCm / GridCmValue getters and the ground query's edge-strip guard. OWED: the RWGHEIGHTAPI census (plus
+    //   RWGEDGESTRIP, RWGSEACHECK, RWGVOIDCHECK, RWGCAVECHECK) on this build at its first load, BEFORE the rwg-0-2-0-1 branch is merged.
     struct FRwgAcceptedBuild { const TCHAR* SemVer; int32 Build; };
-    const FRwgAcceptedBuild RwgHeightApiAccepted[] = { { TEXT("0.1.7"), 705 }, { TEXT("0.1.9"), 745 }, { TEXT("0.1.12"), 802 } };
+    const FRwgAcceptedBuild RwgHeightApiAccepted[] = { { TEXT("0.1.7"), 705 }, { TEXT("0.1.9"), 745 }, { TEXT("0.1.12"), 802 }, { TEXT("0.2.0"), 1063 } };
     // RWG 0.1.9 (2026-10-18): the accept list as printed by the census and the refusals, e.g. {0.1.7,705} {0.1.9,745}.
     FString RwgAcceptedList()
     {
@@ -76,6 +89,9 @@ namespace
     const char* const SymVoidAt = "?VoidAt@FPWSplicedWorld@@QEBA_NNN@Z";       // RWG P2f: optional; its term counts only after RWGVOIDCHECK grades it
     const char* const SymKillboxTop = "?GetKillboxTop@APWWorldGenerator@@QEBA_NAEAN@Z"; // RWG P2f: optional; compared with the measured volume top
     // RWG P2f: RWG's integer-index classifiers (per-sample iy,ix) are NEVER bound -- they `int 3` on an out-of-range index in Shipping.
+    // rwg-0-2-0-1 (D4): FPWSplicedWorld getters, REQUIRED on generation B only (never resolved on A). this = the spliced world (RCX), double in XMM0.
+    const char* const SymHalfWorld = "?HalfWorldCm@FPWSplicedWorld@@QEBANXZ";
+    const char* const SymGridCm = "?GridCmValue@FPWSplicedWorld@@QEBANXZ";
 
     struct FRwgHeightApi
     {
@@ -105,6 +121,16 @@ namespace
         FString VoidStatus = TEXT("notTried");
         FString KillboxStatus = TEXT("notTried");
         void* Hmod = nullptr;                 // RWG P5: the bound module, set only together with bUsable (the cave group binds from it)
+        // rwg-0-2-0-1: the mask generation SurfaceHeightCm matched (0 = neither; the bind is then refused). Every other generation-specific
+        // export must match the same one (D1). HalfWorld / GridCm are resolved and REQUIRED on generation B only (D4).
+        int32 Gen = 0;
+        FString GenDetail = TEXT("<none>");
+        FnScalar HalfWorld = nullptr;
+        FnScalar GridCm = nullptr;
+        double EdgeLoggedH = std::numeric_limits<double>::quiet_NaN(); // the value pair RWGEDGESTRIP last printed
+        double EdgeLoggedG = std::numeric_limits<double>::quiet_NaN();
+        int64 EdgeQueries = 0, EdgeOutsideCallsTotal = 0, EdgeRejApiTotal = 0, EdgeRejStripTotal = 0; // summed from finished ground queries
+        int32 EdgeQueryLines = 0;
     };
     FRwgHeightApi& Api() { static FRwgHeightApi A; return A; } // per process: the RWG DLL never unloads
 
@@ -212,6 +238,15 @@ namespace
         static const int16 SigWater[] = { 0x48,0x8B,0xC4,0x44,0x89,0x48,0x20,0x48,0x89,0x48,0x08 };
         static const int16 SigGMin[] = { 0xF2,0x0F,0x10,0x41,-1,0xC3 }; // disp8 @4: 705 = 0x18, 745 = 0x18, 802 = 0x18
         static const int16 SigGMax[] = { 0xF2,0x0F,0x10,0x41,-1,0xC3 }; // disp8 @4: 705 = 0x20, 745 = 0x20, 802 = 0x20
+        // rwg-0-2-0-1 (2026-11-13): GENERATION-B masks, from the build-1063 bytes (dumpbin + two independent byte checks, then
+        // tools/check_rwg_masks.py). SurfaceHeightCm: new prologue (frame 0x70) + `cmp byte [rcx+disp32],0` edge-band flag, its member disp32
+        // @14..17 wildcarded (1063 = 0x150) per the member-offset rule; InSeaVolume: new prologue (frame 0x40), no member displacement in the
+        // prefix. Edge getters: `movsd xmm0,[rcx+disp32]; ret`, disp32 @4..7 wildcarded (1063: HalfWorldCm 0x308, GridCmValue 0x300); 11
+        // exports of build 1063 share that shape, so a match proves the shape only -- the runtime value check (G > 0, H > G) is the rest.
+        static const int16 SigSurface1063[] = { 0x48,0x8B,0xC4,0x48,0x89,0x58,0x10,0x57,0x48,0x83,0xEC,0x70,0x80,0xB9,-1,-1,-1,-1,0x00,0x48,0x8B,0xD9 }; // disp32 @14..17: 1063 = 0x150
+        static const int16 SigInSea1063[] = { 0x40,0x53,0x56,0x41,0x54,0x48,0x83,0xEC,0x40,0x0F,0x57,0xC0,0x0F,0x28,0xEA,0x66,0x0F,0x2F,0xD8,0x48,0x8B,0xD9 };
+        static const int16 SigHalfWorld1063[] = { 0xF2,0x0F,0x10,0x81,-1,-1,-1,-1,0xC3 }; // disp32 @4..7: 1063 = 0x308
+        static const int16 SigGridCm1063[] = { 0xF2,0x0F,0x10,0x81,-1,-1,-1,-1,0xC3 }; // disp32 @4..7: 1063 = 0x300
         // RWG 0.1.9: SigOk also records the index of the first PINNED byte that differed (LastSigDiff; -1 = every pinned byte matched)
         // so each signature refusal can print it.
         int32 LastSigDiff = -1;
@@ -221,6 +256,16 @@ namespace
             LastSigDiff = -1;
             for (int32 I = 0; I < N; ++I) { if (Sig[I] >= 0 && B[I] != static_cast<uint8>(Sig[I])) { LastSigDiff = I; return false; } }
             return true;
+        };
+        // rwg-0-2-0-1 D1: which generation's mask a generation-specific export matches (A, B, or 0 = neither or both). Records each mask's
+        // first differing pinned byte (-1 = matched). Leaves LastSigDiff at generation B's value; callers that refuse re-run SigOk on A.
+        const auto ClassifyGen = [&SigOk, &LastSigDiff](const void* Fn, const int16* SigGenA, int32 NA, const int16* SigGenB, int32 NB, int32& OutDiffA, int32& OutDiffB) -> int32
+        {
+            const bool bA = SigOk(Fn, SigGenA, NA);
+            OutDiffA = LastSigDiff;
+            const bool bB = SigOk(Fn, SigGenB, NB);
+            OutDiffB = LastSigDiff;
+            return (bA && !bB) ? kRwgHapiGenA : ((bB && !bA) ? kRwgHapiGenB : 0);
         };
         // RWG 0.1.9: one Warning per refused export (required or optional), measured values only. RWG 0.1.12: it also counts the
         // optional refusals, which decide the unlisted trial below (a listed build only drops the export).
@@ -240,9 +285,35 @@ namespace
         Check(A.Get, SigGet, UE_ARRAY_COUNT(SigGet), TEXT("Get"));
         Check(A.GetField, SigField, UE_ARRAY_COUNT(SigField), TEXT("GetField"));
         Check(A.GetSpliced, SigSpliced, UE_ARRAY_COUNT(SigSpliced), TEXT("GetSpliced"));
-        Check(A.Surface, SigSurface, UE_ARRAY_COUNT(SigSurface), TEXT("SurfaceHeightCm"));
+        // rwg-0-2-0-1 D1: SurfaceHeightCm is the REQUIRED generation-specific export, so it fixes the bind's generation; every other
+        // generation-specific export must then match the SAME one. Neither generation -> the established required refusal through Check
+        // (its firstDiffByte is generation A's, as before build 1063); RWGGENERATION prints both masks' first differing bytes.
+        int32 SurfDiffA = -1, SurfDiffB = -1;
+        A.Gen = ClassifyGen(A.Surface, SigSurface, UE_ARRAY_COUNT(SigSurface), SigSurface1063, UE_ARRAY_COUNT(SigSurface1063), SurfDiffA, SurfDiffB);
+        if (A.Gen == 0) { Check(A.Surface, SigSurface, UE_ARRAY_COUNT(SigSurface), TEXT("SurfaceHeightCm")); }
         Check(A.Outside, SigOutside, UE_ARRAY_COUNT(SigOutside), TEXT("IsOutsideWorld"));
         Check(A.Water, SigWater, UE_ARRAY_COUNT(SigWater), TEXT("WaterLevelCmAt"));
+        // rwg-0-2-0-1 D4: on generation B the two edge getters are REQUIRED -- the ground query's strip guard reads them before it answers
+        // anything, so an unguarded build-1063 SurfaceHeightCm is never reachable through it. Missing = exportMissing refusal; a mask
+        // mismatch joins the required signature refusal below. Never resolved on generation A.
+        int32 EdgeGettersResolved = 0;
+        if (A.Gen == kRwgHapiGenB)
+        {
+            A.HalfWorld = reinterpret_cast<FnScalar>(::GetProcAddress(H, SymHalfWorld));
+            A.GridCm = reinterpret_cast<FnScalar>(::GetProcAddress(H, SymGridCm));
+            EdgeGettersResolved = (A.HalfWorld ? 1 : 0) + (A.GridCm ? 1 : 0);
+            if (EdgeGettersResolved != 2)
+            {
+                A.Status = TEXT("exportMissing");
+                const FString EdgeMissing = FString::Printf(TEXT("%s%s"), A.HalfWorld ? TEXT("") : TEXT("HalfWorldCm "), A.GridCm ? TEXT("") : TEXT("GridCmValue"));
+                UE_LOG(LogNodeShuffle, Warning, TEXT("RWGHEIGHTAPI-REFUSED: status=exportMissing semVer='%s' build=%d matchedEntry='%s' generation=B edgeGettersResolved=%d of 2 missing='%s' callsAllowed=0"),
+                    *A.SemVer, A.Build, *A.Matched, EdgeGettersResolved, *EdgeMissing);
+                NodeShuffleRwgGate::QueueRefusalNotice(A.SemVer, A.Build, A.Status, FString::Printf(TEXT("missing: %s"), *EdgeMissing));
+                return;
+            }
+            Check(A.HalfWorld, SigHalfWorld1063, UE_ARRAY_COUNT(SigHalfWorld1063), TEXT("HalfWorldCm"));
+            Check(A.GridCm, SigGridCm1063, UE_ARRAY_COUNT(SigGridCm1063), TEXT("GridCmValue"));
+        }
         if (A.GMin && !SigOk(A.GMin, SigGMin, UE_ARRAY_COUNT(SigGMin))) { A.GMin = nullptr; SigBad += FString::Printf(TEXT(" GlobalMinSurfaceCm@+%d(optional,dropped)"), LastSigDiff); WarnSigRefused(TEXT("GlobalMinSurfaceCm"), false); }
         if (A.GMax && !SigOk(A.GMax, SigGMax, UE_ARRAY_COUNT(SigGMax))) { A.GMax = nullptr; SigBad += FString::Printf(TEXT(" GlobalMaxSurfaceCm@+%d(optional,dropped)"), LastSigDiff); WarnSigRefused(TEXT("GlobalMaxSurfaceCm"), false); }
         // RWG 0.1.9: the member displacement GetField actually carries (bytes 3..6, little-endian) -- read, never compared.
@@ -254,6 +325,11 @@ namespace
         const uint32 OutsideDisp = reinterpret_cast<const uint8*>(A.Outside)[12];
         UE_LOG(LogNodeShuffle, Display, TEXT("RWGHEIGHTAPI: signature check mismatched='%s' matchedEntry='%s' optionalResolved=%d getFieldDisp=0x%X getSplicedDisp=0x%X gMinDisp=0x%X gMaxDisp=0x%X isOutsideWorldDisp=0x%X (empty list = every resolved export matched its mask; each Disp value is that export's wildcarded member-offset bytes read back, a displacement only while the export is absent from the list, 0 = optional export missing or dropped on a mismatch; each item is the export and the offset of its first differing pinned byte)"),
             *SigBad, *A.Matched, A.Optional, FieldDisp, SplicedDisp, GMinDisp, GMaxDisp, OutsideDisp);
+        if (A.Gen == 0)
+        {
+            UE_LOG(LogNodeShuffle, Display, TEXT("RWGGENERATION: accepted=none surfaceFirstDiffA=%d surfaceFirstDiffB=%d; SurfaceHeightCm matched neither generation's mask, the required refusal follows"),
+                SurfDiffA, SurfDiffB);
+        }
         if (bRequiredSigBad) { UE_LOG(LogNodeShuffle, Warning, TEXT("RWGHEIGHTAPI-REFUSED: status=signatureMismatch semVer='%s' build=%d matchedEntry='%s' accepted='%s' mismatched='%s' callsAllowed=0"), *A.SemVer, A.Build, *A.Matched, *RwgAcceptedList(), *SigBad); NodeShuffleRwgGate::QueueRefusalNotice(A.SemVer, A.Build, TEXT("signatureMismatch"), FString::Printf(TEXT("mismatched: %s"), *SigBad)); }
         if (bRequiredSigBad) { A.Status = TEXT("signatureMismatch"); return; }
         // RWG P2e (2026-10-18): InSeaVolume, OPTIONAL like GMin/GMax -- resolved only after the version, export and required-signature
@@ -262,7 +338,13 @@ namespace
         // (comisd xmm3,0 / jae), so callers pass the surface Z. These leading bytes carry no RIP displacement (no wildcard).
         static const int16 SigInSea[] = { 0x48,0x89,0x5C,0x24,0x08,0x57,0x48,0x83,0xEC,0x30,0x0F,0x57,0xC0,0x0F,0x28,0xEA,0x66,0x0F,0x2F,0xD8,0x48,0x8B,0xF9 };
         A.InSea = reinterpret_cast<FnInSea>(::GetProcAddress(H, SymInSea));
+        // rwg-0-2-0-1 D1: InSeaVolume is generation-specific. A match on the OTHER generation is "generationMixed" (refused with the whole API
+        // below); generation B's own mask binds it; anything else keeps the established generation-A path, byte for byte.
+        int32 SeaDiffA = -1, SeaDiffB = -1;
+        const int32 SeaGen = A.InSea ? ClassifyGen(reinterpret_cast<const void*>(A.InSea), SigInSea, UE_ARRAY_COUNT(SigInSea), SigInSea1063, UE_ARRAY_COUNT(SigInSea1063), SeaDiffA, SeaDiffB) : -1; // -1 = export missing
         if (!A.InSea) { A.SeaStatus = TEXT("exportMissing"); }
+        else if (SeaGen > 0 && SeaGen != A.Gen) { A.InSea = nullptr; A.SeaStatus = TEXT("generationMixed"); }
+        else if (SeaGen == kRwgHapiGenB) { A.SeaStatus = TEXT("bound"); }
         else if (!SigOk(reinterpret_cast<const void*>(A.InSea), SigInSea, UE_ARRAY_COUNT(SigInSea))) { A.InSea = nullptr; A.SeaStatus = TEXT("signatureMismatch"); WarnSigRefused(TEXT("InSeaVolume"), false); }
         else { A.SeaStatus = TEXT("bound"); }
         UE_LOG(LogNodeShuffle, Display, TEXT("RWGSEABIND: status=%s export='%s' optional=1; its term counts only after RWGSEACHECK grades it"), *A.SeaStatus, ANSI_TO_TCHAR(SymInSea));
@@ -299,13 +381,33 @@ namespace
         UE_LOG(LogNodeShuffle, Display, TEXT("RWGVOIDBIND: voidAtStatus=%s killboxTopStatus=%s optional=1 voidCountDisp=0x%X killboxTopDisps=0x%X/0x%X; the void term counts only after RWGVOIDCHECK grades it, the killbox floor reads the damage volumes first"),
             *A.VoidStatus, *A.KillboxStatus, VoidDisp, KillboxDispA, KillboxDispB);
         if (!A.VoidAt) { UE_LOG(LogNodeShuffle, Warning, TEXT("RWGVOIDBIND-OFF: voidAtStatus=%s; the void term is off this session (the killbox floor still applies when measured)"), *A.VoidStatus); }
+        // rwg-0-2-0-1 D1: GENERATION COHERENCE, on every build (listed or not). The three generation-specific cave exports are classified
+        // here, because the lazy cave bind runs only after bUsable. A positive match on the OTHER generation (InSeaVolume or any cave
+        // export) refuses the whole API, fail closed. An export matching NEITHER keeps its established handling: listed = dropped (the
+        // cave group then stays off at its own bind), unlisted = refused by the strict verdict below.
+        FString CaveGenDetail;
+        const int32 CaveGenBits = NodeShuffleRwgGate::ClassifyCaveGenerations(H, CaveGenDetail);
+        const int32 OtherGen = A.Gen == kRwgHapiGenB ? kRwgHapiGenA : kRwgHapiGenB;
+        const bool bCaveMixed = (CaveGenBits & (1 << OtherGen)) != 0;
+        const bool bSeaMixed = A.SeaStatus == TEXT("generationMixed");
+        A.GenDetail = FString::Printf(TEXT("SurfaceHeightCm:%s InSeaVolume:%s %s"), RwgHapiGenLabel(A.Gen), SeaGen < 0 ? TEXT("missing") : RwgHapiGenLabel(SeaGen), *CaveGenDetail);
+        UE_LOG(LogNodeShuffle, Display, TEXT("RWGGENERATION: accepted=%s perExport='%s' surfaceFirstDiffA=%d surfaceFirstDiffB=%d inSeaFirstDiffA=%d inSeaFirstDiffB=%d edgeGettersResolved=%d of 2 mixed=%d (perExport items are Name:A|B|both|none|missing; a FirstDiff of -1 means every pinned byte of that mask matched; edge getters are resolved on generation B only)"),
+            RwgHapiGenLabel(A.Gen), *A.GenDetail, SurfDiffA, SurfDiffB, SeaDiffA, SeaDiffB, EdgeGettersResolved, (bCaveMixed || bSeaMixed) ? 1 : 0);
+        if (bCaveMixed || bSeaMixed)
+        {
+            A.Status = TEXT("generationMixed");
+            UE_LOG(LogNodeShuffle, Warning, TEXT("RWGHEIGHTAPI-REFUSED: status=generationMixed semVer='%s' build=%d matchedEntry='%s' accepted='%s' generation=%s perExport='%s' callsAllowed=0"),
+                *A.SemVer, A.Build, *A.Matched, *RwgAcceptedList(), RwgHapiGenLabel(A.Gen), *A.GenDetail);
+            NodeShuffleRwgGate::QueueRefusalNotice(A.SemVer, A.Build, A.Status, FString::Printf(TEXT("generation-specific exports matched different mask generations: %s"), *A.GenDetail));
+            return;
+        }
         // RWG 0.1.12: the unlisted trial's VERDICT. Strict: any optional mismatch above, any of the five cave masks mismatching, or any of
         // the 16 exports MISSING refuses the whole API (a listed build reaches this point with a mismatched or absent optional merely
         // dropped). The cave bind in NodeShuffleMapModeCave.cpp re-checks the same five masks lazily; its verdict is then consistent.
         if (bUnlisted)
         {
             FString CaveMissing, CaveBad;
-            const int32 CaveSigBad = NodeShuffleRwgGate::CheckCaveSignatures(H, CaveMissing, CaveBad);
+            const int32 CaveSigBad = NodeShuffleRwgGate::CheckCaveSignatures(H, A.Gen, CaveMissing, CaveBad);
             // With OptionalSigBad == 0 a null optional pointer means the export was MISSING (a mismatch also nulls it, but is counted).
             const bool bAllSixteenResolved = A.GMin && A.GMax && A.InSea && A.VoidAt && A.KillboxTop && CaveMissing.IsEmpty();
             // InSeaVolume / VoidAt / GetKillboxTop resolve by raw GetProcAddress: neither SigBad nor A.Missing names them. Name them from the
@@ -328,9 +430,9 @@ namespace
                 NodeShuffleRwgGate::QueueRefusalNotice(A.SemVer, A.Build, A.Status, FString::Printf(TEXT("mismatched: %s %s %s; missing: %s %s %s"), *SigBad, *CaveBad, *OptBadNames, *OptMissingNames, *A.Missing, *CaveMissing));
                 return;
             }
-            UE_LOG(LogNodeShuffle, Warning, TEXT("RWGHEIGHTAPI-UNLISTED: status=signatureVerifiedUnlisted semVer='%s' build=%d accepted='%s' heightApiChecked=11 caveChecked=5 allSixteenResolved=1 callsAllowed=1"),
-                *A.SemVer, A.Build, *RwgAcceptedList());
-            NodeShuffleRwgGate::QueueUnlistedVerifiedNotice(A.SemVer, A.Build, RwgAcceptedList());
+            UE_LOG(LogNodeShuffle, Warning, TEXT("RWGHEIGHTAPI-UNLISTED: status=signatureVerifiedUnlisted semVer='%s' build=%d accepted='%s' heightApiChecked=11 caveChecked=5 allSixteenResolved=1 generation=%s edgeGettersChecked=%d callsAllowed=1"),
+                *A.SemVer, A.Build, *RwgAcceptedList(), RwgHapiGenLabel(A.Gen), EdgeGettersResolved);
+            NodeShuffleRwgGate::QueueUnlistedVerifiedNotice(A.SemVer, A.Build, RwgAcceptedList(), 16 + EdgeGettersResolved);
         }
         A.Hmod = H; // RWG P5: published only on the path that also sets bUsable
         A.bUsable = true;
@@ -338,6 +440,44 @@ namespace
 #else
         A.Status = TEXT("notWindows");
 #endif
+    }
+
+    // rwg-0-2-0-1 D4 (generation B only): reads HalfWorldCm() / GridCmValue() on the spliced world and checks the values. Implausible
+    // (non-finite, G <= 0, H <= G, getter or spliced pointer null) REFUSES the height API for the rest of the process, like a required-
+    // signature failure: bUsable false, Warning, player notice. On a value pair not printed before it prints RWGEDGESTRIP once, with
+    // IsOutsideWorld's +X threshold MEASURED by bisection (never computed from WorldSizeMeters).
+    bool RwgEdgeGuardRead(FRwgHeightApi& A, const void* F, const void* S, double& OutH, double& OutG)
+    {
+        OutH = std::numeric_limits<double>::quiet_NaN();
+        OutG = OutH;
+        const bool bGetters = A.HalfWorld != nullptr && A.GridCm != nullptr;
+        if (bGetters && S) { OutH = A.HalfWorld(S); OutG = A.GridCm(S); }
+        const bool bOk = bGetters && S && F && FMath::IsFinite(OutH) && FMath::IsFinite(OutG) && OutG > 0.0 && OutH > OutG;
+        if (!bOk)
+        {
+            if (A.bUsable)
+            {
+                A.bUsable = false;
+                A.Status = TEXT("edgeGuardImplausible");
+                UE_LOG(LogNodeShuffle, Warning, TEXT("RWGHEIGHTAPI-REFUSED: status=edgeGuardImplausible semVer='%s' build=%d matchedEntry='%s' generation=B gettersBound=%d splicedFound=%d halfWorldCm=%.3f gridCm=%.3f callsAllowed=0 (plausible needs both finite, gridCm above 0 and halfWorldCm above gridCm)"),
+                    *A.SemVer, A.Build, *A.Matched, bGetters ? 1 : 0, S ? 1 : 0, OutH, OutG);
+                NodeShuffleRwgGate::QueueRefusalNotice(A.SemVer, A.Build, A.Status, FString::Printf(TEXT("edge getters returned HalfWorldCm %.3f and GridCmValue %.3f"), OutH, OutG));
+            }
+            return false;
+        }
+        if (OutH != A.EdgeLoggedH || OutG != A.EdgeLoggedG)
+        {
+            A.EdgeLoggedH = OutH;
+            A.EdgeLoggedG = OutG;
+            double Lo = 0.0, Hi = 1.0e8;
+            const bool bBisect = !A.Outside(F, 0.0, 0.0) && A.Outside(F, Hi, 0.0);
+            if (bBisect) { for (int32 I = 0; I < 60; ++I) { const double Mid = 0.5 * (Lo + Hi); if (A.Outside(F, Mid, 0.0)) { Hi = Mid; } else { Lo = Mid; } } }
+            const double Strip = OutH - 0.5 * OutG;
+            const double T = bBisect ? Lo : std::numeric_limits<double>::quiet_NaN();
+            UE_LOG(LogNodeShuffle, Display, TEXT("RWGEDGESTRIP: generation=B halfWorldCm=%.3f gridCm=%.3f stripInnerCm=%.3f outsideThresholdPlusXCm=%.3f bisectionValid=%d thresholdMinusStripInnerCm=%.3f; the ground query answers outside for max(|x|,|y|) above stripInnerCm and gives RWG's IsOutsideWorld answer elsewhere"),
+                OutH, OutG, Strip, T, bBisect ? 1 : 0, T - Strip);
+        }
+        return true;
     }
 
     // GenerationParams.WorldSizeMeters by reflection (type-checked); <= 0 = unread.
@@ -374,9 +514,9 @@ void ANodeShuffleSubsystem::RwgLogHeightApi(bool bFull)
     if (bFull)
     {
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("RWGHEIGHTAPI: bind status=%s module='%s' uplugin='%s' semVer='%s' build=%d accepted='%s' matchedEntry='%s' requiredResolved=%d of 6 optionalResolved=%d of 2 missing='%s' callsAllowed=%d"),
+            TEXT("RWGHEIGHTAPI: bind status=%s module='%s' uplugin='%s' semVer='%s' build=%d accepted='%s' matchedEntry='%s' requiredResolved=%d of 6 optionalResolved=%d of 2 missing='%s' generation=%s callsAllowed=%d"),
             *A.Status, *A.Module, *A.Uplugin, *A.SemVer, A.Build, *RwgAcceptedList(), *A.Matched,
-            A.Required, A.Optional, *A.Missing, A.bUsable ? 1 : 0);
+            A.Required, A.Optional, *A.Missing, RwgHapiGenLabel(A.Gen), A.bUsable ? 1 : 0);
     }
     UWorld* World = GetWorld();
     APawn* Pawn = World ? NodeShuffleMapMode::FirstPlayerPawn(World) : nullptr;
@@ -394,6 +534,18 @@ void ANodeShuffleSubsystem::RwgLogHeightApi(bool bFull)
     const void* F = Field.Get();
     if (!F) { UE_LOG(LogNodeShuffle, Display, TEXT("RWGHEIGHTAPI: unavailable; GetField returned an empty pointer sameGeneratorAsReflected=%d"), SameGen); return; }
     const void* S = A.GetSpliced(F);
+    // rwg-0-2-0-1 D4: on generation B no SurfaceHeightCm call (pawn, ring, edge) runs before the edge guard read its values.
+    double EdgeH = NodeShuffleMapMode::RwgNaN(), EdgeG = NodeShuffleMapMode::RwgNaN();
+    if (A.Gen == kRwgHapiGenB)
+    {
+        if (!RwgEdgeGuardRead(A, F, S, EdgeH, EdgeG))
+        {
+            UE_LOG(LogNodeShuffle, Display, TEXT("RWGHEIGHTAPI: census not run; edgeGuardRead=0 generation=B splicedFound=%d status=%s"), S ? 1 : 0, *A.Status);
+            return;
+        }
+        UE_LOG(LogNodeShuffle, Display, TEXT("RWGEDGEGUARD: cumulative finishedQueries=%lld outsideCalls=%lld rejectedByIsOutsideWorld=%lld rejectedByStripOnly=%lld (summed over ground queries on generation B since the process started)"),
+            A.EdgeQueries, A.EdgeOutsideCallsTotal, A.EdgeRejApiTotal, A.EdgeRejStripTotal);
+    }
     const FVector P = Pawn->GetActorLocation();
     const double GMin = A.GMin ? A.GMin(F) : TNumericLimits<double>::Max();
     const double GMax = A.GMax ? A.GMax(F) : TNumericLimits<double>::Lowest();
@@ -493,6 +645,33 @@ void ANodeShuffleSubsystem::RwgLogHeightApi(bool bFull)
         TEXT("RWGHEIGHTAPI: edge halfExtentCm=%.0f edgeSource=%s outsideTrue=%d of 8 pawnControlOutside=%d [%s]"),
         Half, WorldM > 0.0 ? TEXT("GenerationParams.WorldSizeMeters") : TEXT("researchConstant"), OutsideTrue,
         A.Outside(F, P.X, P.Y) ? 1 : 0, *Pts);
+    // rwg-0-2-0-1 D5: generation B -- RWG's raw answers just inside / outside the strip's inner limit L on the four axes, plus a control two
+    // grid cells inside, each against a line trace at the same XY (measurement only; gates nothing; traces hit only where terrain is resident).
+    if (A.Gen == kRwgHapiGenB && FMath::IsFinite(EdgeH) && FMath::IsFinite(EdgeG))
+    {
+        const double L = EdgeH - 0.5 * EdgeG;
+        const double Offs[3] = { -2.0 * EdgeG, -50.0, 50.0 };
+        FString StripPts;
+        int32 StripTraceHits = 0;
+        for (int32 Ax = 0; Ax < 4; ++Ax)
+        {
+            for (int32 K = 0; K < 3; ++K)
+            {
+                const double X = Sx[Ax] * (L + Offs[K]);
+                const double Y = Sy[Ax] * (L + Offs[K]);
+                const bool bApiOut = A.Outside(F, X, Y);
+                const bool bStripOut = FMath::Max(FMath::Abs(X), FMath::Abs(Y)) > L;
+                const double ApiZ = A.Surface(F, X, Y);
+                FHitResult StripHit;
+                const bool bHit = World->LineTraceSingleByChannel(StripHit, FVector(X, Y, Top), FVector(X, Y, Bottom), ECC_WorldStatic, Params);
+                StripTraceHits += bHit ? 1 : 0;
+                StripPts += FString::Printf(TEXT("%s%.0f,%.0f:%d,%d,%.1f,%.1f"), StripPts.IsEmpty() ? TEXT("") : TEXT("; "), X, Y, bApiOut ? 1 : 0, bStripOut ? 1 : 0, ApiZ,
+                    bHit ? StripHit.ImpactPoint.Z : NodeShuffleMapMode::RwgNaN());
+            }
+        }
+        UE_LOG(LogNodeShuffle, Display, TEXT("RWGEDGESTRIP-SAMPLE: stripInnerCm=%.1f points=12 traceHits=%d [%s] (each item: x,y:isOutsideWorld,stripOutside,apiZ,traceZ; nan traceZ = no hit in the trace window; per axis the offsets from stripInnerCm are minus two grid cells, minus 50 cm, plus 50 cm)"),
+            L, StripTraceHits, *StripPts);
+    }
 }
 
 // ---------------------------------------------------------------- RWG P2b ground query ----
@@ -520,17 +699,56 @@ NodeShuffleMapMode::FRwgGroundQuery::FRwgGroundQuery(UWorld* World, UObject* Gen
         S = nullptr;
         return;
     }
+    // rwg-0-2-0-1 D4: generation B -- the edge-strip guard must read plausible values or this query stays unusable (F null), and the
+    // helper then refuses the API process-wide. Generation A never enters this branch (StripInnerCm stays -1).
+    if (A.Gen == kRwgHapiGenB)
+    {
+        double EdgeH = 0.0, EdgeG = 0.0;
+        if (!RwgEdgeGuardRead(A, Fp, S, EdgeH, EdgeG))
+        {
+            StatusText = FString::Printf(TEXT("refused edgeGuard values %.3f/%.3f"), EdgeH, EdgeG);
+            S = nullptr;
+            return;
+        }
+        StripInnerCm = EdgeH - 0.5 * EdgeG;
+    }
     HalfExtentCm = WorldM * 50.0; // WorldSizeMeters is the full side; half of it, in cm (R2: 1,500,000)
     F = Fp;
     G = Gen; // RWG P2f: GetKillboxTop's this
     StatusText = TEXT("usable");
 }
 
-NodeShuffleMapMode::FRwgGroundQuery::~FRwgGroundQuery() = default;
+NodeShuffleMapMode::FRwgGroundQuery::~FRwgGroundQuery()
+{
+    // rwg-0-2-0-1 D5: one query = one deal / pass / census. Generation B only (StripInnerCm > 0); measurement, gates nothing.
+    if (StripInnerCm <= 0.0 || EdgeOutsideCalls == 0) { return; }
+    FRwgHeightApi& A = Api();
+    ++A.EdgeQueries;
+    A.EdgeOutsideCallsTotal += EdgeOutsideCalls;
+    A.EdgeRejApiTotal += EdgeRejectedByApi;
+    A.EdgeRejStripTotal += EdgeRejectedByStripOnly;
+    if (EdgeRejectedByStripOnly > 0 && A.EdgeQueryLines < 200)
+    {
+        ++A.EdgeQueryLines;
+        UE_LOG(LogNodeShuffle, Display, TEXT("RWGEDGEGUARD: query outsideCalls=%d rejectedByIsOutsideWorld=%d rejectedByStripOnly=%d stripInnerCm=%.1f lineIndex=%d of 200 (printed only for a query whose strip test refused at least one point)"),
+            EdgeOutsideCalls, EdgeRejectedByApi, EdgeRejectedByStripOnly, StripInnerCm, A.EdgeQueryLines);
+    }
+}
 
+// rwg-0-2-0-1 D4: THE choke point for "is this XY outside the world" -- every consumer asks through here (check_rwg020_lint.ps1 pins
+// that nothing else calls RWG's raw test outside this file). Generation A (StripInnerCm -1): exactly RWG's IsOutsideWorld, as before.
+// Generation B: also true where max(|X|,|Y|) > HalfWorldCm - GridCmValue/2, the gate of SurfaceHeightCm's two edge branches (measured by
+// disassembly, height-semantics report Q1), so every consumer treats the strip exactly as it treats IsOutsideWorld == true.
 bool NodeShuffleMapMode::FRwgGroundQuery::Outside(double X, double Y) const
 {
-    return F ? Api().Outside(F, X, Y) : true;
+    if (!F) { return true; }
+    const bool bApiOutside = Api().Outside(F, X, Y);
+    if (StripInnerCm <= 0.0) { return bApiOutside; }
+    ++EdgeOutsideCalls;
+    const bool bStripOutside = FMath::Max(FMath::Abs(X), FMath::Abs(Y)) > StripInnerCm;
+    if (bApiOutside) { ++EdgeRejectedByApi; }
+    else if (bStripOutside) { ++EdgeRejectedByStripOnly; }
+    return bApiOutside || bStripOutside;
 }
 
 double NodeShuffleMapMode::FRwgGroundQuery::SurfaceZ(double X, double Y) const
@@ -594,6 +812,12 @@ void* NodeShuffleMapMode::RwgHeightApiBoundModule()
     FRwgHeightApi& A = Api();
     if (!A.bTried) { TryBind(A); }
     return A.bUsable ? A.Hmod : nullptr; // RWG P5: null = the version/export/signature gates did not pass; the cave group then stays unbound
+}
+
+int32 NodeShuffleMapMode::RwgHeightApiGeneration()
+{
+    const FRwgHeightApi& A = Api();
+    return A.bUsable ? A.Gen : 0; // rwg-0-2-0-1: read by the cave bind right after RwgHeightApiBoundModule returned non-null
 }
 
 FString NodeShuffleMapMode::RwgSeaBindStatus()
