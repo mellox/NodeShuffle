@@ -25,6 +25,8 @@
 #       verdict, and the D2 pair modulePathUnread / upluginUnread, each pinned adjacent to its Warning line and return) and QueueUnlistedVerifiedNotice in the verified branch; TickNotice runs in RwgLogHeightApi BEFORE the callsAllowed
 #       guard; the drain posts through FNodeShuffleModule::PostChatNotice with tag RWGGATE, holds for a player pawn, one further
 #       tick, bounded by MaxNoticeAttempts; it posts once per world (PostedWorld); the posted/abandoned lines say what they measured.
+# rwg-0-2-0-1 (2026-11-13): V1 holds four entries ({0.2.0,1063} added), V4 scopes 20 formats, V6/V7 anchors follow the generation
+# parameter; the generation-B rules themselves are pinned by check_rwg020_lint.ps1.
 # Mutants run in-file. Exit 0 = all hold; 1 = at least one does not; 2 = a pinned FILE is missing.
 
 $ErrorActionPreference = 'Stop'
@@ -56,7 +58,7 @@ function Lines-Between([string]$t, [int]$a, [int]$b) { if ($a -lt 0 -or $b -lt $
 function Invoke-019Checks($T) {
     $f = @()
     # V1
-    if ((Count $T.hapi ('const FRwgAcceptedBuild RwgHeightApiAccepted[] = { { TEXT("0.1.7"), 705 }, { TEXT("0.1.9"), 745 }, { TEXT("0.1.12"), ' + '802 } };')) -ne 1) { $f += '(V1) the accept list must be exactly {0.1.7,705} {0.1.9,745} {0.1.12,802} in one declaration' }
+    if ((Count $T.hapi ('const FRwgAcceptedBuild RwgHeightApiAccepted[] = { { TEXT("0.1.7"), 705 }, { TEXT("0.1.9"), 745 }, { TEXT("0.1.12"), ' + '802 }, { TEXT("0.2.0"), 1063 } };')) -ne 1) { $f += '(V1) the accept list must be exactly {0.1.7,705} {0.1.9,745} {0.1.12,802} {0.2.0,1063} in one declaration' } # rwg-0-2-0-1 added {0.2.0,1063}
     if ((Count $T.hapi 'struct FRwgAcceptedBuild { const TCHAR* SemVer; int32 Build; };') -ne 1) { $f += '(V1) FRwgAcceptedBuild must pair a SemVer with a build' }
     if ((Count $T.hapi ('if (A.Build == E.Build && A.SemVer == E.SemVer) { bVersion = ' + 'true;')) -ne 1 -or (Count $T.hapi ('bVersion = ' + 'true')) -ne 1) { $f += '(V1) the lookup must require BOTH build and SemVer of one entry, at the only bVersion = true site' }
     if ((Count $T.hapi 'for (const FRwgAcceptedBuild& E : RwgHeightApiAccepted)') -lt 1 -or (Count $T.hapi 'bool bVersion = false;') -ne 1) { $f += '(V1) bVersion must start false and be set only by walking the accept list' }
@@ -119,7 +121,7 @@ function Invoke-019Checks($T) {
         $dup = (Fmt-Fields $m.Groups[1].Value) | Group-Object | Where-Object { $_.Count -gt 1 }
         if ($dup) { $f += "(V4) repeated field(s) $(($dup | ForEach-Object { $_.Name }) -join ',') in '$($m.Groups[1].Value.Substring(0, [Math]::Min(40, $m.Groups[1].Value.Length)))'" }
     }
-    if ($v4n -ne 17) { $f += "(V4) expected 17 scoped formats (bind census, signature check, 5 REFUSED, 2 UNLISTED, RWGSIGREFUSED, RWGVOIDBIND, CAVESIG, 5 GATENOTICE), found $v4n -- the duplicate scan would be vacuous" }
+    if ($v4n -ne 20) { $f += "(V4) expected 20 scoped formats (bind census, signature check, 8 REFUSED, 2 UNLISTED, RWGSIGREFUSED, RWGVOIDBIND, CAVESIG, 5 GATENOTICE), found $v4n -- the duplicate scan would be vacuous" } # rwg-0-2-0-1: +3 REFUSED (edge getters missing, generationMixed, edgeGuardImplausible)
     # V5
     if ((Count $T.nsmod ('LOADED (2026-10-31-rwg-' + 'farspawn-1f)')) -ne 1 -or (Count $T.nsmod ('2026-10-31-rwg-' + 'farspawn-1e)')) -ne 0 -or (Count $T.nsmod ('2026-10-31-rwg-' + 'seedgas-1b)')) -ne 0 -or (Count $T.nsmod ('2026-10-31-rwg-' + 'seedgas-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-30-rwg-' + 'clifftop-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-29-rwg-' + 'layout-dump-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-28-rwg-' + 'trace-diag-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-27-rwg-' + 'trace-diag-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-26-rwg-' + '0-1-12-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-26-rwg-' + '0-1-12-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'steep-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'deal-1)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'density-2)')) -ne 0 -or (Count $T.nsmod ('2026-10-19-rwg-' + 'rockcache-2')) -ne 0 -or (Count $T.nsmod ('2026-10-18-rwg-' + 'p4c-2')) -ne 0) { $f += '(V5) marker must be rwg-0-1-12-1 with rwg-steep-2 and the earlier markers absent' }
     if ($T.gate.Contains('LOADED' + ' (') -or $T.gateh.Contains('LOADED' + ' (')) { $f += '(V5) no build-marker string in the notice files' }
@@ -135,7 +137,7 @@ function Invoke-019Checks($T) {
         if ((Count $b 'const bool bAllSixteenResolved = A.GMin && A.GMax && A.InSea && A.VoidAt && A.KillboxTop && CaveMissing.IsEmpty();') -ne 1) { $f += '(V6) the trial must require all five optional exports and all five cave exports resolved' }
         if ((Count $b 'NameOpt(A.VoidStatus, TEXT("VoidAt"));') -ne 1 -or (Count $b 'NameOpt(A.SeaStatus, TEXT("InSeaVolume"));') -ne 1 -or (Count $b 'NameOpt(A.KillboxStatus, TEXT("GetKillboxTop"));') -ne 1) { $f += '(V6) the unlisted refusal must name the raw-resolved optionals it refused on' }
         if ((Count $b ('if (!bRequired) { ++' + 'OptionalSigBad; }')) -ne 1 -or (Count $b 'int32 OptionalSigBad = 0;') -ne 1) { $f += '(V6) WarnSigRefused must count optional refusals into OptionalSigBad' }
-        $iOff = $b.IndexOf('TEXT("RWGVOIDBIND-OFF:'); $iV = $b.IndexOf('if (bUnlisted)'); $iC = $b.IndexOf('NodeShuffleRwgGate::CheckCaveSignatures(H, CaveMissing, CaveBad);')
+        $iOff = $b.IndexOf('TEXT("RWGVOIDBIND-OFF:'); $iV = $b.IndexOf('if (bUnlisted)'); $iC = $b.IndexOf('NodeShuffleRwgGate::CheckCaveSignatures(H, A.Gen, CaveMissing, CaveBad);')
         $iRef = $b.IndexOf('if (OptionalSigBad > 0 || CaveSigBad > 0 || !bAllSixteenResolved)'); $iVer = $b.IndexOf('TEXT("RWGHEIGHTAPI-UNLISTED: status=signatureVerifiedUnlisted '); $iH = $b.IndexOf('A.Hmod = H;')
         if ($iOff -lt 0 -or $iV -lt $iOff -or $iC -lt $iV -or $iRef -lt $iC -or $iVer -lt $iRef -or $iH -lt $iVer) { $f += '(V6) the unlisted verdict (cave check, strict refusal, then the verified line) must sit between RWGVOIDBIND-OFF and A.Hmod = H' }
         if ($iRef -ge 0 -and $iVer -gt $iRef) {
@@ -154,18 +156,19 @@ function Invoke-019Checks($T) {
         $ra = [regex]::Match($T.cave, 'const char\* const ' + $sym + ' = "([^"]*)";'); $rg = [regex]::Match($T.gate, 'const char\* const ' + $sym + ' = "([^"]*)";')
         if (-not $ra.Success -or -not $rg.Success -or $ra.Groups[1].Value -ne $rg.Groups[1].Value) { $f += "(V6) decorated name $sym must be identical in the cave file and the gate notice file" }
     }
-    if ((Count $T.gate 'Check(SymCaves, SigCaves, UE_ARRAY_COUNT(SigCaves), TEXT("CarvedCaves"));') -ne 1 -or (Count $T.gate 'Check(SymInside, SigInside, UE_ARRAY_COUNT(SigInside), TEXT("IsInsideAt"));') -ne 1 -or ([regex]::Matches($T.gate, '(?m)^\s*Check\(Sym[A-Za-z]+, Sig[A-Za-z]+, UE_ARRAY_COUNT\(Sig[A-Za-z]+\), TEXT\("[A-Za-z]+"\)\);')).Count -ne 5) { $f += '(V6) CheckCaveSignatures must check all five cave exports' }
-    if ((Count $T.gate ('if (Sig[I] >= 0 && B[I] != static_cast<uint8>(Sig[I]))')) -ne 1 -or (Count $T.gate ('++' + 'Bad;')) -ne 1) { $f += '(V6) the cave check must compare pinned bytes only and count each mismatching export once' }
+    if ((Count $T.gate 'Check(SymCaves, CavesSig, CavesN, TEXT("CarvedCaves"));') -ne 1 -or (Count $T.gate 'Check(SymInside, SigInside, UE_ARRAY_COUNT(SigInside), TEXT("IsInsideAt"));') -ne 1 -or ([regex]::Matches($T.gate, '(?m)^\s*Check\(Sym[A-Za-z]+, [A-Za-z]+, [A-Za-z_()]+, TEXT\("[A-Za-z]+"\)\);')).Count -ne 5) { $f += '(V6) CheckCaveSignatures must check all five cave exports' } # rwg-0-2-0-1: three of them through the generation-selected mask
+    $ccs = $T.gate.IndexOf('int32 NodeShuffleRwgGate::CheckCaveSignatures('); $ccsEnd = $T.gate.IndexOf('int32 NodeShuffleRwgGate::ClassifyCaveGenerations('); $ccsB = if ($ccs -ge 0 -and $ccsEnd -gt $ccs) { $T.gate.Substring($ccs, $ccsEnd - $ccs) } else { '' }
+    if ((Count $ccsB ('if (Sig[I] >= 0 && B[I] != static_cast<uint8>(Sig[I]))')) -ne 1 -or (Count $T.gate ('++' + 'Bad;')) -ne 1) { $f += '(V6) the cave check must compare pinned bytes only and count each mismatching export once' }
     # V7 -- the in-game notice
-    if ((Count $T.hapi 'NodeShuffleRwgGate::QueueRefusalNotice(') -ne 5) { $f += '(V7) every refusal statement (exportMissing, required signatureMismatch, unlisted verdict, modulePathUnread, upluginUnread) must queue the refusal notice: expected 5 call sites' }
+    if ((Count $T.hapi 'NodeShuffleRwgGate::QueueRefusalNotice(') -ne 8) { $f += '(V7) every refusal statement (exportMissing, required signatureMismatch, unlisted verdict, modulePathUnread, upluginUnread, + rwg-0-2-0-1 edge getters missing, generationMixed, edgeGuardImplausible) must queue the refusal notice: expected 8 call sites' }
     # D2 (2026-10-26): the two DLL-loaded-but-unread refusals. Each pin anchors on the status assignment, the Warning line, the notice call and the return being ADJACENT,
     # with the call's own unique arguments (unread version, build 0), so a sibling refusal's call cannot satisfy it.
     if (-not ($T.hapi -match ('A\.Status = TEXT\("modulePathUnread"\);\n[^\n]*UE_LOG\(LogNodeShuffle, Warning, TEXT\("RWGHEIGHTAPI-REFUSED: status=modulePathUnread [^\n]*callsAllowed=0"[^\n]*\n[^\n]*NodeShuffleRwgGate::QueueRefusalNotice\(TEXT\("\(version unread\)"\), 0, A\.Status, [^\n]*\n\s*ret' + 'urn;'))) { $f += '(V7) the modulePathUnread refusal must set the status, log RWGHEIGHTAPI-REFUSED at Warning, queue the notice (version unread, build 0) and return, adjacent' }
     if (-not ($T.hapi -match ('A\.Status = TEXT\("upluginUnread"\);\n[^\n]*\n[^\n]*UE_LOG\(LogNodeShuffle, Warning, TEXT\("RWGHEIGHTAPI-REFUSED: status=upluginUnread [^\n]*callsAllowed=0"[^\n]*\n[^\n]*NodeShuffleRwgGate::QueueRefusalNotice\(TEXT\("\(version unread\)"\), 0, A\.Status, [^\n]*\n\s*ret' + 'urn;'))) { $f += '(V7) the upluginUnread refusal must set the status, log RWGHEIGHTAPI-REFUSED at Warning, queue the notice (version unread, build 0) and return, adjacent' }
-    if ((Count $T.gate 'const FString BuildClause = Build > 0 ? FString::Printf(TEXT(" (build %d)"), Build) : FString();') -ne 2 -or (Count $T.gate '*SemVer, *BuildClause, *Status,') -ne 1 -or (Count $T.gate '*SemVer, *BuildClause, *Accepted));') -ne 1) { $f += '(V7) the refusal heading and the unlisted-verified heading must each print the build clause only when Build > 0 (one declaration each), as their second argument' }
+    if ((Count $T.gate 'const FString BuildClause = Build > 0 ? FString::Printf(TEXT(" (build %d)"), Build) : FString();') -ne 2 -or (Count $T.gate '*SemVer, *BuildClause, *Status,') -ne 1 -or (Count $T.gate '*SemVer, *BuildClause, *Accepted, Checked));') -ne 1) { $f += '(V7) the refusal heading and the unlisted-verified heading must each print the build clause only when Build > 0 (one declaration each), as their second argument' }
     if (-not ($T.hapi -match ('status=exportMissing[^\n]*NodeShuffleRwgGate::QueueRefusalNotice\(A\.SemVer, A\.Build, A\.Status, [^\n]*ret' + 'urn; \}'))) { $f += '(V7) the exportMissing refusal statement must queue the notice before its return' }
     if (-not ($T.hapi -match ('status=signatureMismatch semVer=[^\n]*NodeShuffleRwgGate::QueueRefusalNotice\(A\.SemVer, A\.Build, TEXT\("signatureMismatch"\),'))) { $f += '(V7) the required signatureMismatch refusal statement must queue the notice' }
-    if ((Count $T.hapi 'NodeShuffleRwgGate::QueueUnlistedVerifiedNotice(A.SemVer, A.Build, RwgAcceptedList());') -ne 1) { $f += '(V7) the verified-unlisted branch must queue its notice exactly once' }
+    if ((Count $T.hapi 'NodeShuffleRwgGate::QueueUnlistedVerifiedNotice(A.SemVer, A.Build, RwgAcceptedList(), 16 + EdgeGettersResolved);') -ne 1) { $f += '(V7) the verified-unlisted branch must queue its notice exactly once' }
     $lh = $T.hapi.IndexOf('void ANodeShuffleSubsystem::RwgLogHeightApi(bool bFull)')
     if ($lh -lt 0) { $f += '(V7) RwgLogHeightApi not found' } else {
         $lb = $T.hapi.Substring($lh)
@@ -225,7 +228,7 @@ $mutants = @(
     @{ Name = 'M27 cave check skips IsInsideAt'; Key = 'gate'; Expect = 'V6'; Find = '    Check(SymInside, SigInside, UE_ARRAY_COUNT(SigInside), TEXT("IsInsideAt"));' + "`n"; Repl = '' }
     @{ Name = 'M28 exportMissing refusal no longer queues the notice'; Key = 'hapi'; Expect = 'V7'; Find = ' NodeShuffleRwgGate::QueueRefusalNotice(A.SemVer, A.Build, A.Status, FString::Printf(TEXT("missing: %s"), *A.Missing));'; Repl = '' }
     @{ Name = 'M29 required signatureMismatch refusal no longer queues the notice'; Key = 'hapi'; Expect = 'V7'; Find = ' NodeShuffleRwgGate::QueueRefusalNotice(A.SemVer, A.Build, TEXT("signatureMismatch"), FString::Printf(TEXT("mismatched: %s"), *SigBad));'; Repl = '' }
-    @{ Name = 'M30 verified-unlisted branch no longer queues the notice'; Key = 'hapi'; Expect = 'V7'; Find = '            NodeShuffleRwgGate::QueueUnlistedVerifiedNotice(A.SemVer, A.Build, RwgAcceptedList());' + "`n"; Repl = '' }
+    @{ Name = 'M30 verified-unlisted branch no longer queues the notice'; Key = 'hapi'; Expect = 'V7'; Find = '            NodeShuffleRwgGate::QueueUnlistedVerifiedNotice(A.SemVer, A.Build, RwgAcceptedList(), 16 + EdgeGettersResolved);' + "`n"; Repl = '' }
     @{ Name = 'M31 TickNotice moved behind the callsAllowed guard'; Key = 'hapi'; Expect = 'V7'; Find = "    NodeShuffleRwgGate::TickNotice(GetWorld()); // RWG 0.1.12: drain the refusal / unlisted-verified notice; runs before the callsAllowed guard so a refused bind still posts`n    if (bFull)"; Repl = "    if (bFull)" }
     @{ Name = 'M32 drain posts every tick (once-per-world test removed)'; Key = 'gate'; Expect = 'V7'; Find = '    if (N.PostedWorld.Get() == World) { return; } // delivered (or abandoned) for this world already' + "`n"; Repl = '' }
     @{ Name = 'M33 drain no longer waits for a pawn'; Key = 'gate'; Expect = 'V7'; Find = 'if (!PC || !Pawn)'; Repl = 'if (!PC)' }

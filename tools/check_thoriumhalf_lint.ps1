@@ -107,7 +107,7 @@ function Invoke-Checks($T) {
     if ($census -eq '' -or -not (Ordered $s @($t72Call, $censusIf, $latchSet, $fmtCensus, $resetLine)) -or (Count $census $diagGate) -ne 0) { $f += '(T5) census once per load on the zero path, ungated, after the T72 census, reset after print' }
     # T6
     $hdrTags = @([regex]::Matches($T.mk, 'TEXT\("(20\d\d-[\w-]+)"\)') | ForEach-Object { $_.Groups[1].Value })
-    if ($hdrTags.Count -eq 0 -or $hdrTags[-1] -ne $marker -or (Count $T.nsmod ('packet marker (' + $marker + ')=====')) -ne 1) { $f += '(T6) marker newest in the header and once in NodeShuffle.cpp' }
+    if (($hdrTags | Where-Object { $_ -eq $marker }).Count -ne 1 -or (Count $T.nsmod ('packet marker (' + $marker + ')=====')) -ne 1) { $f += '(T6) marker once in the header and once in NodeShuffle.cpp' } # rwg-0-2-0-1: no longer the newest; pinned present
     foreach ($k in @('sub', 'hdr')) { if ($T[$k].Contains($marker)) { $f += "(T6) no marker literal in $k" } }
     # T7
     if ((Count $s $dressComp) -ne 1 -or (Count $s $dressLeg) -ne 1 -or (Count $s $center) -ne 1) { $f += '(T7) both DressRock calls and the centring term take WantScale' }

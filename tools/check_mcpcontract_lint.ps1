@@ -378,7 +378,7 @@ function Invoke-McpChecks($Txt, $Cod) {
     $hdrLoaded = [regex]::Match($mh, 'LoadedLineTag = TEXT\("([\w-]+)"\)')
     if (($lineTags -join '|') -ne ($hdrTags -join '|')) { $f += "(C4) markers header does not list NodeShuffle.cpp's packet markers in order (cpp: $($lineTags -join ','); header: $($hdrTags -join ','))" }
     if (-not $loaded.Success -or -not $hdrLoaded.Success -or $loaded.Groups[1].Value -ne $hdrLoaded.Groups[1].Value) { $f += '(C4) LOADED tag differs between NodeShuffle.cpp and the markers header' }
-    $own = '2026-11-11-' + 'thorium-half-1' # ns-thorium-half-1 bumped the newest marker (was the lead-restore-1 marker); McpDescribe's buildMarker reads it
+    $own = '2026-11-13-' + 'rwg-0-2-0-1' # rwg-0-2-0-1 bumped the newest marker (was the thorium-half-1 marker); McpDescribe's buildMarker reads it
     if ($hdrTags.Count -eq 0 -or $hdrTags[-1] -ne $own -or (Count $nsm $own) -ne 1) { $f += '(C4) this packet marker must be the newest, once, on its own line' }
     if ((Count $Txt[$pin.desc] $newestExpr) -ne 1 -or [regex]::IsMatch($Txt[$pin.desc], 'TEXT\("20\d\d-\d\d-\d\d-')) { $f += '(C4) buildMarker must come from the markers header (newest entry), never a literal in Describe' }
     # ---- F (contract R4.4: finite numbers only)
