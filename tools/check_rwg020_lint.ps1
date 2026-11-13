@@ -76,6 +76,13 @@ function Invoke-020Checks($T, $others) {
     if ((Count $T.hapi 'GetProcAddress(H, SymHalfWorld)') -ne 1 -or (Count $T.hapi 'GetProcAddress(H, SymGridCm)') -ne 1) { $f += '(G2) the edge getters must be resolved at one site only (generation B)' }
     if ($gb -eq '' -or -not ($gb -match ('if \(EdgeGettersResolved != 2\)\s*\{[^}]*A\.Status = TEXT\("exportMissing"\);[\s\S]*?QueueRefusalNotice\([\s\S]*?' + [regex]::Escape($R) + '\s*\}'))) { $f += '(G2) a missing edge getter on generation B must refuse with a notice and return' }
     if ((Count $gb 'Check(A.HalfWorld, SigHalfWorld1063, UE_ARRAY_COUNT(SigHalfWorld1063), TEXT("HalfWorldCm"));') -ne 1 -or (Count $gb 'Check(A.GridCm, SigGridCm1063, UE_ARRAY_COUNT(SigGridCm1063), TEXT("GridCmValue"));') -ne 1) { $f += '(G2) both edge-getter masks must go through the REQUIRED Check' }
+    $expB = @{ SigSurface1063 = '0x48,0x8B,0xC4,0x48,0x89,0x58,0x10,0x57,0x48,0x83,0xEC,0x70,0x80,0xB9,-1,-1,-1,-1,0x00,0x48,0x8B,0xD9'; SigInSea1063 = '0x40,0x53,0x56,0x41,0x54,0x48,0x83,0xEC,0x40,0x0F,0x57,0xC0,0x0F,0x28,0xEA,0x66,0x0F,0x2F,0xD8,0x48,0x8B,0xD9' }
+    foreach ($n in $expB.Keys) { $m = Mask $T.hapi $n; if (-not $m -or ($m -join ',') -ne $expB[$n]) { $f += "(G2) generation-B mask $n must be exactly the measured 1063 bytes (only SurfaceHeightCm's member disp32 @14..17 wildcarded)" } }
+    if ((Count $tb 'else if (SeaGen == kRwgHapiGenB) { A.SeaStatus = TEXT("bound"); }') -ne 1 -or -not (Ordered $tb @('else if (SeaGen > 0 && SeaGen != A.Gen)', 'else if (SeaGen == kRwgHapiGenB)', 'else if (!SigOk(reinterpret_cast<const void*>(A.InSea), SigInSea, UE_ARRAY_COUNT(SigInSea)))'))) { $f += '(G1) InSeaVolume: other-generation first, then the generation-B bind, then the unchanged generation-A check' }
+    $lhS = Span $T.hapi 'void ANodeShuffleSubsystem::RwgLogHeightApi(bool bFull)' 'NodeShuffleMapMode::FRwgGroundQuery::FRwgGroundQuery('
+    if (-not (Ordered $lhS @('if (A.Gen == kRwgHapiGenB)', 'if (!S)', $R, 'if (!RwgEdgeGuardRead(A, F, S, EdgeH, EdgeG))'))) { $f += '(G2) the census must skip (not refuse) on a null spliced world before the edge-guard read' }
+    if ((Count $T.mmh 'mutable int32 EdgeRejectedByStripOnly = 0;') -ne 1 -or (Count $T.mmh 'double StripInnerCm = -1.0;') -ne 1) { $f += '(G3) StripInnerCm must default to -1 (generation A = raw answer)' }
+    if ((Count $T.gateh 'int32 CheckCaveSignatures(void* Hmod, int32 Gen, FString& OutMissing, FString& OutMismatched);') -ne 1) { $f += '(G4) the gate header must declare the generation-aware cave check' }
     foreach ($n in @('SigHalfWorld1063', 'SigGridCm1063')) { $m = Mask $T.hapi $n; if (-not $m -or ($m -join ',') -ne '0xF2,0x0F,0x10,0x81,-1,-1,-1,-1,0xC3') { $f += "(G2) $n must be movsd xmm0,[rcx+disp32]; ret with only the disp32 wildcarded" } }
     $eg = Span $T.hapi 'bool RwgEdgeGuardRead(' '// GenerationParams.WorldSizeMeters'
     if ((Count $eg 'const bool bOk = bGetters && S && F && FMath::IsFinite(OutH) && FMath::IsFinite(OutG) && OutG > 0.0 && OutH > OutG;') -ne 1 -or (Count $eg 'A.bUsable = false;') -ne 1 -or (Count $eg 'A.Status = TEXT("edgeGuardImplausible");') -ne 1 -or (Count $eg 'NodeShuffleRwgGate::QueueRefusalNotice(') -ne 1) { $f += '(G2) an implausible edge-getter value must refuse the API process-wide with a notice' }
@@ -157,6 +164,15 @@ $mutants = @(
     @{ Name = 'M23 RWGEDGESTRIP repeats a field'; Key = 'hapi'; Expect = 'G7'; Find = 'bisectionValid=%d thresholdMinusStripInnerCm='; Repl = 'bisectionValid=%d gridCm=' }
     @{ Name = 'M24 mask tool hard-codes a mask'; Key = 'tool'; Expect = 'G8'; Find = 'BASE_COMMIT = '; Repl = ('X = [0x48,' + '0x8B,0xC4]' + $N + 'BASE_COMMIT = ') }
     @{ Name = 'M25 rwg019 lint loses the 1063 entry'; Key = 'l019'; Expect = 'G8'; Find = '{ TEXT("0.2.0"), 1063 } };'; Repl = '};' }
+    @{ Name = 'M27 SigSurface1063 widened (pinned byte wildcarded)'; Key = 'hapi'; Expect = 'G2'; Find = '0x80,0xB9,-1,-1,-1,-1,0x00,0x48,0x8B,0xD9 };'; Repl = '0x80,0xB9,-1,-1,-1,-1,-1,0x48,0x8B,0xD9 };' }
+    @{ Name = 'M28 SigInSea1063 widened (pinned byte wildcarded)'; Key = 'hapi'; Expect = 'G2'; Find = '0x0F,0x28,0xEA,0x66,0x0F,0x2F,0xD8,0x48,0x8B,0xD9 };'; Repl = '0x0F,0x28,0xEA,0x66,0x0F,0x2F,0xD8,0x48,-1,0xD9 };' }
+    @{ Name = 'M29 InSea generation-B bind removed'; Key = 'hapi'; Expect = 'G1'; Find = 'else if (SeaGen == kRwgHapiGenB) { A.SeaStatus = TEXT("bound"); }'; Repl = '' }
+    @{ Name = 'M30 census null-spliced skip removed'; Key = 'hapi'; Expect = 'G2'; Find = '        if (!S)' + $N + '        {' + $N; Repl = '        if (false)' + $N + '        {' + $N }
+    @{ Name = 'M31 StripInnerCm defaults active'; Key = 'mmh'; Expect = 'G3'; Find = 'double StripInnerCm = -1.0;'; Repl = 'double StripInnerCm = 0.0;' }
+    @{ Name = 'M32 gate header drops the generation'; Key = 'gateh'; Expect = 'G4'; Find = 'CheckCaveSignatures(void* Hmod, int32 Gen, FString&'; Repl = 'CheckCaveSignatures(void* Hmod, FString&' }
+    @{ Name = 'M33 marker line dropped from NodeShuffle.cpp'; Key = 'nsmod'; Expect = 'G6'; Find = ('packet marker (' + $marker + ')====='); Repl = 'packet marker (x)=====' }
+    @{ Name = 'M34 mcpcontract lint keeps the old newest marker'; Key = 'lmcp'; Expect = 'G8'; Find = "'2026-11-13-' + 'rwg-0-2-0-1'"; Repl = "'2026-11-11-' + 'thorium-half-1'" }
+    @{ Name = 'M35 thoriumhalf lint pins newest again'; Key = 'lthh'; Expect = 'G8'; Find = '# rwg-0-2-0-1: no longer the newest; pinned present'; Repl = '' }
     @{ Name = 'M26 unlisted cave half checks generation A always'; Key = 'hapi'; Expect = 'G1'; Find = 'CheckCaveSignatures(H, A.Gen, CaveMissing, CaveBad);'; Repl = 'CheckCaveSignatures(H, 1, CaveMissing, CaveBad);' }
 )
 $mutantFails = @(); $caught = 0

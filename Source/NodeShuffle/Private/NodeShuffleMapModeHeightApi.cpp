@@ -538,6 +538,12 @@ void ANodeShuffleSubsystem::RwgLogHeightApi(bool bFull)
     double EdgeH = NodeShuffleMapMode::RwgNaN(), EdgeG = NodeShuffleMapMode::RwgNaN();
     if (A.Gen == kRwgHapiGenB)
     {
+        if (!S)
+        {
+            // A null spliced world is a per-call condition (the plausibility branch below handles it on generation A); never a process-wide refusal.
+            UE_LOG(LogNodeShuffle, Display, TEXT("RWGHEIGHTAPI: census not run; splicedFound=0 generation=B; no edge-guard read and no SurfaceHeightCm call"));
+            return;
+        }
         if (!RwgEdgeGuardRead(A, F, S, EdgeH, EdgeG))
         {
             UE_LOG(LogNodeShuffle, Display, TEXT("RWGHEIGHTAPI: census not run; edgeGuardRead=0 generation=B splicedFound=%d status=%s"), S ? 1 : 0, *A.Status);
