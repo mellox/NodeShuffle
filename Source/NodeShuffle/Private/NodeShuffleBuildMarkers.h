@@ -27,6 +27,7 @@ namespace NodeShuffleBuildMarkers
         TEXT("2026-11-10-mcp-regrade-1"),
         TEXT("2026-11-11-lead-restore-1"),
         TEXT("2026-11-11-thorium-half-1"),
+        TEXT("2026-11-13-rwg-0-2-0-1"),
     };
     static constexpr int32 PacketMarkerCount = UE_ARRAY_COUNT(PacketMarkers);
 }
