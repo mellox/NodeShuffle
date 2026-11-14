@@ -409,7 +409,10 @@ public:
     // manager was not available (the caller decides whether to retry); it never queues or drops.
     // SourceTag names the CALLER in every line this emits (cold review F1): both notices now share these
     // log lines, so without it a log carrying both cannot attribute either.
-    static bool PostChatNotice(class UWorld* World, const FString& Body, const TCHAR* SourceTag);
+    // ns-quietchat-1: bPassFirstPlayerAsInstigator (default false = nullptr, the pre-packet behaviour) passes the
+    // world's first player controller as BroadcastChatMessage's instigator; only ROLLCHAT sets it.
+    static bool PostChatNotice(class UWorld* World, const FString& Body, const TCHAR* SourceTag,
+        bool bPassFirstPlayerAsInstigator = false);
 
     // Packet G (ns-automatch): "allow an extractor if it natively accepts a node type NodeShuffle
     // manages" -- generates a machine-written KDataForge pack under DataForge/NodeShuffleAutoAllow/ that

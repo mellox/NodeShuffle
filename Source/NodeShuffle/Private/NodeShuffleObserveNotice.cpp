@@ -68,7 +68,8 @@ namespace
 // without the tag a log carrying both could attribute neither -- and a pre-T61 grep for
 // `PENDINGNOTICE: EMITTED` finds nothing on this build, which is why the rename is called out in the
 // pending notice's comment and in docs/DIAGNOSTICS.md rather than left for a reader to discover.
-bool FNodeShuffleModule::PostChatNotice(UWorld* World, const FString& Body, const TCHAR* SourceTag)
+bool FNodeShuffleModule::PostChatNotice(UWorld* World, const FString& Body, const TCHAR* SourceTag,
+    bool bPassFirstPlayerAsInstigator)
 {
     AFGChatManager* Chat = World ? AFGChatManager::Get(World) : nullptr;
     if (!Chat)
@@ -90,10 +91,22 @@ bool FNodeShuffleModule::PostChatNotice(UWorld* World, const FString& Body, cons
     Msg.MessageSender = FText::FromString(TEXT("NODE SHUFFLE"));
     Msg.MessageSenderColor = FLinearColor(1.0f, 0.55f, 0.10f); // FICSIT orange
     // ServerTimeStamp / bIsLocalPlayerMessage are set by the chat manager -- do not touch.
-    Chat->BroadcastChatMessage(Msg, nullptr);
+    // ns-quietchat-1: the instigator argument. Default (flag off) passes nullptr, as every caller did before.
+    // With the flag on, the FIRST player controller is passed, taken exactly as NodeShuffleChatProbe.cpp does
+    // (no loop: a loop whose body always breaks fails this build with C4702). If none exists, nullptr as before.
+    // OBSERVED, not explained (2026-11-14, one player, by ear, two probe runs): the probe variant that passed the
+    // first player controller here seemed to make no chat sound. What the game does with the instigator is unknown.
+    APlayerController* Instigator = nullptr;
+    if (bPassFirstPlayerAsInstigator)
+    {
+        FConstPlayerControllerIterator PcIt = World->GetPlayerControllerIterator();
+        if (PcIt) { Instigator = PcIt->Get(); }
+    }
+    Chat->BroadcastChatMessage(Msg, Instigator);
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("CHATNOTICE[%s]: EMITTED via AFGChatManager::BroadcastChatMessage (type=%d sender='NODE SHUFFLE' bodyChars=%d)"),
-        SourceTag, (int32)EFGChatMessageType::CMT_CustomMessage, Body.Len());
+        TEXT("CHATNOTICE[%s]: EMITTED via AFGChatManager::BroadcastChatMessage (type=%d sender='NODE SHUFFLE' bodyChars=%d instigatorRequested=%d instigatorPassed=%d)"),
+        SourceTag, (int32)EFGChatMessageType::CMT_CustomMessage, Body.Len(),
+        bPassFirstPlayerAsInstigator ? 1 : 0, Instigator ? 1 : 0);
     // ASSUMED: a NetMulticast RPC executes locally in Standalone, so the host sees this without a
     // separate local echo. If in-game testing shows it does not, add AddChatMessageToReceived(Msg)
     // HERE -- this comment names the exact line so the fix needs no re-investigation.

@@ -25,6 +25,9 @@
 #   RC13 drop-on-new-roll: the queue function first clears any table still draining; the clear stops the timer, logs the drop, resets
 #   RC14 (r3, review F2) interleave gate: while RollChatIsDraining() the pending and T61 emitters are NOT called (deferred, not
 #        dropped); the helper reads our own armed flag, not a timer query
+#   RC16 (ns-quietchat-1) the shared emitter (NodeShuffleObserveNotice.cpp, LOADED) passes the first player controller as the
+#        broadcast instigator ONLY under bPassFirstPlayerAsInstigator (default false in NodeShuffle.h, LOADED); otherwise nullptr;
+#        the EMITTED line prints instigatorRequested and instigatorPassed; ROLLCHAT is the caller that sets the flag (RC6)
 #   RC15 (r3, review F4) duplicate display names get the short class name appended inside RollChatTableRows, before the rows are composed
 #   r3 also: no repeat-character helper and no timer-active query anywhere in the packet files (zero-new-import rule, needles by
 #        concatenation, in RC11); the armed flag is set on every arm and cleared on fire and on clear (RC12); one DONE-family line
@@ -41,6 +44,8 @@ $files = [ordered]@{
     nsmod = 'NodeShuffle\Private\NodeShuffle.cpp'
     mark  = 'NodeShuffle\Private\NodeShuffleBuildMarkers.h'
     place = 'NodeShuffle\Private\NodeShuffleMapModePlace.cpp'
+    emit  = 'NodeShuffle\Private\NodeShuffleObserveNotice.cpp'   # ns-quietchat-1
+    modh  = 'NodeShuffle\Public\NodeShuffle.h'                   # ns-quietchat-1
 }
 $lintFiles = [ordered]@{
     lwipe = 'check_rerollwipe_lint.ps1'
@@ -92,11 +97,18 @@ $mLine      = 'const int32 CountDigitsM = FMath::Max(3, FString::FromInt(NodeTot
 $rowSig     = 'FString RollChatCountRow(const FString& Count, const FString& Label, int32 M, bool bHeader)'
 $oldComposer = @(('RollChat' + 'FixedRow'), ('Name' + 'Width'), ('Count' + 'Width'), ('line' + 'Length'))
 $opening    = 'RollChatRows.Add(FString::Printf(TEXT("New layout (%s), counted at the shuffle:"), Trigger));'
-$postCall   = 'FNodeShuffleModule::PostChatNotice(World, RollChatRows[RollChatNext], TEXT("ROLLCHAT"))'
+$postCall   = 'FNodeShuffleModule::PostChatNotice(World, RollChatRows[RollChatNext], TEXT("ROLLCHAT"), /*bPassFirstPlayerAsInstigator=*/true)'
 $armOnce    = 'World->GetTimerManager().SetTimer(RollChatDrainTimer, this, &ANodeShuffleSubsystem::RollChatDrainStep,' + "`n" + '        RollChatRowGapSeconds, false);'
 $armNext    = 'World->GetTimerManager().SetTimer(RollChatDrainTimer, this, &ANodeShuffleSubsystem::RollChatDrainStep,' + "`n" + '            RollChatRowGapSeconds, false);'
 $supersede  = '    RollChatClear(TEXT("superseded by a new roll"));'
 $teardown   = '    RollChatClear(TEXT("world teardown"));'
+$bcast      = 'Chat->' + 'BroadcastChat' + 'Message(Msg, '
+$instSeq    = @('    APlayerController* Instigator = nullptr;', '    if (bPassFirstPlayerAsInstigator)', '    {',
+                '        FConstPlayerControllerIterator PcIt = World->GetPlayerControllerIterator();', '        if (PcIt) { Instigator = PcIt->Get(); }',
+                '    }', ($bcast + 'Instigator);'))
+$emitSig    = 'bool FNodeShuffleModule::PostChatNotice(UWorld* World, const FString& Body, const TCHAR* SourceTag,' + "`n" + '    bool bPassFirstPlayerAsInstigator)'
+$emitDecl   = '    static bool PostChatNotice(class UWorld* World, const FString& Body, const TCHAR* SourceTag,' + "`n" + '        bool bPassFirstPlayerAsInstigator = false);'
+$emitLog    = 'bodyChars=%d instigatorRequested=%d instigatorPassed=%d)"),' + "`n" + '        SourceTag, (int32)EFGChatMessageType::CMT_CustomMessage, Body.Len(),' + "`n" + '        bPassFirstPlayerAsInstigator ? 1 : 0, Instigator ? 1 : 0);'
 $guard      = '    if (bRollChatTimerArmed) { return; }'
 $isDraining = 'return RollChatNext < RollChatRows.Num() && bRollChatTimerArmed;'
 $giveUp     = '        { const FString Why = FString::Printf(TEXT("emitter refused %d time(s)"), RollChatAttempts); RollChatClear(*Why); return; }'
@@ -196,6 +208,11 @@ function Invoke-Checks($T) {
     # RC13
     if ($qb -eq '' -or -not (Ordered $qb @($supersede, 'RollChatRows.Add('))) { $f += '(RC13) a new roll first drops any table still draining' }
     if ($clear -eq '' -or -not (Ordered $clear @('ClearTimer(RollChatDrainTimer);', 'table dropped part-way', 'RollChatRows.Reset();', 'RollChatNext = 0;'))) { $f += '(RC13) the clear stops the timer, logs the drop, resets the rows and index' }
+    # RC16 (ns-quietchat-1)
+    $emitFn = Span $T.emit $emitSig 'void FNodeShuffleModule::ResetForeignNoticeState()'
+    if ($emitFn -eq '' -or -not (Ordered $emitFn ($instSeq + @($emitLog))) -or (Count $emitFn $bcast) -ne 1 -or (Count $emitFn ($bcast + 'nullptr')) -ne 0) { $f += '(RC16) the emitter passes the first player controller only under the flag (nullptr otherwise) and logs requested/passed' }
+    if ((Count $T.modh $emitDecl) -ne 1) { $f += '(RC16) the flag defaults to false in the declaration (the other four callers keep nullptr)' }
+    if ((Count $T.chat '/*bPassFirstPlayerAsInstigator=*/true') -ne 1) { $f += '(RC16) only the ROLLCHAT call in RollChat.cpp sets the flag' }
     # RC14
     if ((Count $T.sub $gateSeq[0]) -ne 1 -or -not (Ordered $T.sub $gateSeq) -or (Count $T.sub $gateSeq[2]) -ne 1 -or (Count $T.sub $gateSeq[3]) -ne 1) { $f += '(RC14) the pending and T61 emitters are called only when no table is draining' }
     if ($helper -eq '' -or (Count $helper $isDraining) -ne 1 -or (Count $T.subh 'bool RollChatIsDraining() const;') -ne 1) { $f += '(RC14) RollChatIsDraining reads rows-unsent AND the armed flag' }
@@ -246,6 +263,10 @@ $mutants = @(
     @{ Name = 'M32 give-up logs two DONE lines';       Key = 'chat';  Expect = 'RC8';  Find = $giveUp; Repl = ('        { UE_LOG(LogNodeShuffle, Warning, TEXT("ROLLCHAT-' + 'DONE: x")); }' + "`n" + $giveUp) }
     @{ Name = 'M33 duplicate suffix removed';          Key = 'chat';  Expect = 'RC15'; Find = $dupAppend; Repl = '' }
     @{ Name = 'M34 totals member back';                Key = 'subh';  Expect = 'RC4';  Find = '    bool bRollChatTimerArmed = false;'; Repl = ('    bool ' + $totalsMember + ' = true;' + "`n" + '    bool bRollChatTimerArmed = false;') }
+    @{ Name = 'M39 ROLLCHAT call drops the flag';      Key = 'chat';  Expect = 'RC6';  Find = ', /*bPassFirstPlayerAsInstigator=*/true)'; Repl = ')' }
+    @{ Name = 'M40 controller passed unconditionally'; Key = 'emit';  Expect = 'RC16'; Find = "    if (bPassFirstPlayerAsInstigator)`n    {`n        FConstPlayerControllerIterator"; Repl = "    {`n        FConstPlayerControllerIterator" }
+    @{ Name = 'M41 flag ignored, nullptr passed';      Key = 'emit';  Expect = 'RC16'; Find = ($bcast + 'Instigator);'); Repl = ($bcast + 'nullptr);') }
+    @{ Name = 'M42 flag defaults to true';             Key = 'modh';  Expect = 'RC16'; Find = 'bool bPassFirstPlayerAsInstigator = false);'; Repl = 'bool bPassFirstPlayerAsInstigator = true);' }
     @{ Name = 'M25 index advances before acceptance';  Key = 'chat';  Expect = 'RC12'; Find = ('    if (!' + $postCall + ')'); Repl = ('    ++RollChatNext;' + "`n    if (!" + $postCall + ')') }
 )
 $caught = 0
@@ -258,6 +279,6 @@ foreach ($m in $mutants) {
     else { Write-Host "FAIL(mutant) $($m.Name) survived (expected $($m.Expect))"; $fails += 'mutant-survived' }
 }
 
-if ($fails.Count -eq 0) { Write-Host "PASS check_rollchat_lint: RC1-RC15 hold; $caught/$($mutants.Count) mutants caught"; exit 0 }
+if ($fails.Count -eq 0) { Write-Host "PASS check_rollchat_lint: RC1-RC16 hold; $caught/$($mutants.Count) mutants caught"; exit 0 }
 Write-Host "check_rollchat_lint: $($fails.Count) failure(s); $caught/$($mutants.Count) mutants caught"
 exit 1

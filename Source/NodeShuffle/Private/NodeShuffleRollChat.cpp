@@ -260,7 +260,7 @@ void ANodeShuffleSubsystem::RollChatDrainStep()
         return;
     }
     // ONE ROW PER EMITTER CALL. The index advances only on acceptance, so a refusal resumes at this row.
-    if (!FNodeShuffleModule::PostChatNotice(World, RollChatRows[RollChatNext], TEXT("ROLLCHAT")))
+    if (!FNodeShuffleModule::PostChatNotice(World, RollChatRows[RollChatNext], TEXT("ROLLCHAT"), /*bPassFirstPlayerAsInstigator=*/true))
     {
         World->GetTimerManager().ClearTimer(RollChatDrainTimer); // Draining -> Stalled
         ++RollChatAttempts;
