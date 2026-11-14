@@ -217,7 +217,8 @@ namespace NodeShuffleMapMode
     inline double RwgNaN() { return std::numeric_limits<double>::quiet_NaN(); } // RWG P2f: census value printed for an unmeasured field -- PRINT ONLY:
     // the module builds with /fp:fast, so never compare against it (check_rwgnan_lint.ps1 N1); test with FMath::IsFinite / FMath::IsNaN first.
     // rwg-0-2-0-2 item 4: the four RWG readiness getters (GetState / IsWorldComplete / IsStartReady / IsContentSpawned), LOG-ONLY. Returns
-    // " worldComplete=.. startReady=.. contentSpawnedApi=.. genStateRaw=.. readinessGetters=<status>"; an unbound getter prints -1. Never gates.
+    // " worldComplete=.. startReady=.. contentSpawnedApi=.. genStateRaw=.. readinessGetters=<status>"; an unbound getter prints -1. Feeds no decision;
+    // its first call can trigger the height-API TryBind (review F1).
     FString RwgReadinessFields(UWorld* World);
     void RwgNoteNonFinite(const TCHAR* Site, double X, double Y, double Value); // rwg-0-2-0-2: RWGNANGUARD (NodeShuffleMapModeHeightApi.cpp)
     FString RwgKillboxBindStatus(); // RWG P2f: GetKillboxTop binding status (NodeShuffleMapModeHeightApi.cpp)

@@ -296,7 +296,7 @@ bool ANodeShuffleSubsystem::RwgEnsureCaveCheck(const NodeShuffleMapMode::FRwgGro
     // inside; every FloorCmAt at a stand point must find a floor within its headroom; and the node sample must not be ALL inside (a
     // stub answering true everywhere fails this; RWG cave nodes, if any, are expected to be a minority).
     const bool bNumOk = Num >= 0 && (JsonStatus != TEXT("read") || JsonCaves == Num);
-    const bool bStandOk = StandsTested == 0 || StandInside == StandsTested; // rwg-0-2-0-2: excluded stands are not in the denominator
+    const bool bStandOk = (Stands.Num() == 0 || StandsTested > 0) && StandInside == StandsTested; // rwg-0-2-0-2 review: stands read but all excluded = no positive control
     const bool bFloorOk = FloorN == 0 || FloorWithin == FloorN;
     const bool bNotAllInside = SampleN == 0 || SampleInside < SampleN;
     bRwgCaveUsable = bNumOk && bStandOk && bFloorOk && bNotAllInside;

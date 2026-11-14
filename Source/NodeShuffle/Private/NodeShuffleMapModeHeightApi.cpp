@@ -847,7 +847,9 @@ namespace
 {
     // rwg-0-2-0-2 item 4 (design Q2): RWG's four readiness getters, LOG-ONLY. Each 8-byte body was measured on build 1063
     // (`movzx eax, byte [rcx+disp32]; ret`); the displacement is PINNED (only 0.2.0 is supported). A getter whose export is missing or whose
-    // bytes differ is left unbound and prints -1; nothing here refuses the height API or feeds a decision.
+    // bytes differ is left unbound and prints -1; the readiness bind never writes height-API state itself and feeds no decision, but its
+    // first call can trigger the height-API TryBind (via RwgHeightApiBoundModule), i.e. at the first RWGWAIT line on a new world
+    // (review F1; RWGGETTERS prints heightApiBindRanInThisCall).
     const char* const SymGetState = "?GetState@APWWorldGenerator@@QEBA?AW4EPWGeneratorState@@XZ";
     const char* const SymWorldComplete = "?IsWorldComplete@APWWorldGenerator@@QEBA_NXZ";
     const char* const SymStartReady = "?IsStartReady@APWWorldGenerator@@QEBA_NXZ";
@@ -862,6 +864,9 @@ namespace
 
     void TryBindReadyGetters(FRwgReadyGetters& R)
     {
+        // RwgHeightApiBoundModule() runs the height-API TryBind on its FIRST call; on a new world that first call is this one (the first
+        // RWGWAIT line), so the bind runs here, before any ground query. TryBind reads only the RWG module, its .uplugin and code bytes.
+        const bool bHeightBindRanHere = NodeShuffleMapMode::RwgVoidBindStatus() == TEXT("notTried");
         void* Hmod = NodeShuffleMapMode::RwgHeightApiBoundModule(); // non-null only when the height API bound; the module is then loaded
         if (!Hmod) { R.Status = TEXT("heightApiNotBound"); return; } // retried on the next call (bTried stays false)
         R.bTried = true;
@@ -885,8 +890,7 @@ namespace
             Detail += FString::Printf(TEXT("%s%s:%s@%d"), Detail.IsEmpty() ? TEXT("") : TEXT(" "), Names[I], St, Diff);
         }
         R.Status = Bound == 4 ? TEXT("bound") : (Bound == 0 ? TEXT("none") : TEXT("partial"));
-        UE_LOG(LogNodeShuffle, Display, TEXT("RWGGETTERS: bind status=%s boundOf4=%d detail='%s'; log-only, an unbound getter prints -1 and gates nothing"),
-            *R.Status, Bound, *Detail);
+        UE_LOG(LogNodeShuffle, Display, TEXT("RWGGETTERS: bind status=%s boundOf4=%d detail='%s' heightApiBindRanInThisCall=%d; log-only, an unbound getter prints -1 and gates nothing"), *R.Status, Bound, *Detail, bHeightBindRanHere ? 1 : 0);
 #else
         R.Status = TEXT("notWindows");
 #endif

@@ -90,12 +90,18 @@ function Invoke-NChecks($T) {
     if (-not (Ordered $tt @('Rooms != 0) { return false; }', 'return Stand == Mouth;'))) { $f += '(N5) the through-tunnel predicate must be rooms 0 AND stand == mouth' }
     $vx = Span $T.cjson 'bool ANodeShuffleSubsystem::RwgVerifyCaveCandidate(' 'OutSpot = FVector(X, Y, Floor);'
     if (-not (Ordered $vx @('if (Q.Outside(X, Y)) { return false; }', 'for (const FRwgCaveCandidateGen& Ex : RwgCaveExcludedShapes) { if (RwgInsideCaveShape(Ex, X, Y)) { ++RwgRcCaveRejExcluded; return false; } }', 'const double SurfZ = Q.SurfaceZ(X, Y);'))) { $f += '(N5) the cave verify must refuse an excluded footprint first' }
-    if (-not (Ordered $T.cave @('const bool bExcluded = RwgCaveIsThroughTunnel(O);', 'StandExcluded.Add(bExcluded);', 'if (bExcluded)', 'ExcludedShapeLog +=', 'continue;', 'RwgCaveGensFromJson(O, Gens);', 'if (StandExcluded[I])', 'const bool bStandOk = StandsTested == 0 || StandInside == StandsTested;', 'RwgCaveExcludedShapes = ExcludedShapes;'))) { $f += '(N5) RWGCAVECHECK must skip excluded stands and generators and latch the footprints' }
+    if (-not (Ordered $T.cave @('const bool bExcluded = RwgCaveIsThroughTunnel(O);', 'StandExcluded.Add(bExcluded);', 'if (bExcluded)', 'ExcludedShapeLog +=', 'continue;', 'RwgCaveGensFromJson(O, Gens);', 'if (StandExcluded[I])', 'const bool bStandOk = (Stands.Num() == 0 || StandsTested > 0) && StandInside == StandsTested;', 'RwgCaveExcludedShapes = ExcludedShapes;'))) { $f += '(N5) RWGCAVECHECK must skip excluded stands and generators and latch the footprints' }
     if (-not $T.cave.Contains('usable=%d excludedCaves=%d excludedCaveIds=%s excludedShapesPerCave=%s standsTested=%d"),') -or -not $T.place.Contains('caveRejExcluded=%d excludedCaves=%d excludedCaveIds=%s"),')) { $f += '(N5) RWGCAVECHECK and ROLLCENSUS must print the exclusion' }
-    # N6 (item 4) readiness getters are LOG-ONLY: called only as the trailing %s argument of RWGWAIT / RWGREADY; the bind never writes the
-    #    height-API state; a missing module retries and returns.
+    # N6 (item 4, review F1) the readiness getters feed no decision: the bind never writes height-API state itself (its first call can trigger
+    #    TryBind, reported as heightApiBindRanInThisCall); the getter section writes only its own R.* / locals; RwgReadinessFields is called
+    #    only as an argument INSIDE the RWGWAIT / RWGREADY UE_LOG calls (no ';' between that UE_LOG( and the call).
     $rb = Span $T.hapi '    void TryBindReadyGetters(FRwgReadyGetters& R)' 'FString NodeShuffleMapMode::RwgReadinessFields('
-    if ($rb -eq '' -or $rb.Contains('Usable') -or $rb.Contains('A.Status') -or -not $rb.Contains('if (!Hmod) { R.Status = TEXT("heightApiNotBound"); return; }')) { $f += '(N6) the readiness bind must never touch the height-API state' }
+    $gs = Span $T.hapi '    void TryBindReadyGetters(FRwgReadyGetters& R)' 'void NodeShuffleMapMode::RwgNoteNonFinite('
+    $gsCode = (($gs -split "`n") | ForEach-Object { ($_ -split '//')[0] }) -join "`n"
+    $badWrite = @(); foreach ($ln in ($gsCode -split "`n")) { $c2 = [regex]::Replace($ln, 'TEXT\("[^"]*"\)', '""'); foreach ($w in [regex]::Matches($c2, '(?<![\w.>])(b[A-Z]\w*|Rwg\w*|A\.\w+|Api\(\)\.\w+)\s*(=|\+=|-=)(?!=)')) { if ($c2 -notmatch ('\bbool\s+' + [regex]::Escape($w.Groups[1].Value) + '\s*=')) { $badWrite += $w } } }
+    if ($rb -eq '' -or $gsCode -match '\bA\.\w+\s*=[^=]' -or $gsCode -match 'Api\(\)\.\w+\s*=[^=]' -or @($badWrite).Count -gt 0 -or -not $rb.Contains('if (!Hmod) { R.Status = TEXT("heightApiNotBound"); return; }')) { $f += '(N6) the readiness getter section must write only its own state (found: ' + ((@($badWrite) | ForEach-Object { $_.Value }) -join ' | ') + ')' }
+    if (-not (Ordered $rb @('const bool bHeightBindRanHere = NodeShuffleMapMode::RwgVoidBindStatus() == TEXT("notTried");', 'void* Hmod = NodeShuffleMapMode::RwgHeightApiBoundModule();', 'heightApiBindRanInThisCall=%d; log-only', '*R.Status, Bound, *Detail, bHeightBindRanHere ? 1 : 0);'))) { $f += '(N6) RWGGETTERS must print heightApiBindRanInThisCall, read before the module call' }
+    foreach ($mm in [regex]::Matches($T.mmc, 'RwgReadinessFields\(')) { $u = $T.mmc.LastIndexOf('UE_LOG(', $mm.Index); if ($u -lt 0 -or $T.mmc.Substring($u, $mm.Index - $u).Contains(';')) { $f += '(N6) RwgReadinessFields must be called only as a UE_LOG argument' } }
     if ((Count $T.mmc '*NodeShuffleMapMode::RwgReadinessFields(GetWorld())') -ne 2 -or ([regex]::Matches($T.mmc, 'RwgReadinessFields\(')).Count -ne 2 -or -not $T.mmc.Contains('stableAnyStage=%d/%d%s"),') -or -not $T.mmc.Contains('rollOffVanillaEnabled=%d%s"),')) { $f += '(N6) the getters print only on RWGWAIT and RWGREADY' }
     # N7 (item 5) the killbox comparison uses the highest volume top; the CONSUMED value is unchanged (bottom-first actor value, max rule).
     $kb = Span $T.void 'void ANodeShuffleSubsystem::RwgEnsureKillboxTop(' 'TEXT("RWGKILLBOX: known=%d'
@@ -130,6 +136,10 @@ $mut += @(
     @{ Name = 'M19 getter read feeds a decision'; Key = 'mmc'; Expect = 'N6'; Find = '        RwgLogReadyDiagnostics();'; Repl = ('            if (NodeShuffleMapMode::RwgReadiness' + 'Fields(GetWorld()).Contains(TEXT("x"))) { return; } RwgLogReadyDiagnostics();') }
     @{ Name = 'M20 agree back on the bottom-first value'; Key = 'void'; Expect = 'N7'; Find = 'HighestN > 0 && FMath::Abs(HighestTop - RwgKillboxTopApiZ)'; Repl = 'FMath::Abs(RwgKillboxTopActorZ - RwgKillboxTopApiZ)' }
     @{ Name = 'M21 consumed value moves to the highest top'; Key = 'void'; Expect = 'N7'; Find = '{ RwgKillboxTopActorZ = BottomTop;'; Repl = '{ RwgKillboxTopActorZ = HighestTop;' }
+    @{ Name = 'M22 all-excluded stands pass vacuously'; Key = 'cave'; Expect = 'N5'; Find = '(Stands.Num() == 0 || StandsTested > 0) && StandInside == StandsTested;'; Repl = 'StandsTested == 0 || StandInside == StandsTested;' }
+    @{ Name = 'M23 RWGGETTERS drops the bind field'; Key = 'hapi'; Expect = 'N6'; Find = ' heightApiBindRanInThisCall=%d; log-only'; Repl = '; log-only' }
+    @{ Name = 'M24 getter bind flips a decision flag'; Key = 'hapi'; Expect = 'N6'; Find = '        R.Status = Bound == 4 ?'; Repl = ('        bRwgRoll' + 'Enabled = Bound == 4; R.Status = Bound == 4 ?') }
+    @{ Name = 'M25 getter value stored outside a log'; Key = 'mmc'; Expect = 'N6'; Find = '        RwgLogReadyDiagnostics();'; Repl = ('        const FString Rf = NodeShuffleMapMode::RwgReadiness' + 'Fields(GetWorld()); RwgLogReadyDiagnostics();') }
     @{ Name = 'M16 stand denominator counts excluded stands'; Key = 'cave'; Expect = 'N5'; Find = 'StandInside == StandsTested;'; Repl = ('StandInside == Stands.' + 'Num();') }
 )
 $caught = 0
