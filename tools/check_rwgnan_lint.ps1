@@ -22,6 +22,7 @@ $files = [ordered]@{
     cjson = 'Source\NodeShuffle\Private\NodeShuffleMapModeCaveJson.cpp'
     cave  = 'Source\NodeShuffle\Private\NodeShuffleMapModeCave.cpp'
     mmh   = 'Source\NodeShuffle\Public\NodeShuffleMapMode.h'
+    rset  = 'Source\NodeShuffle\Private\NodeShuffleMapModeResettle.cpp'
 }
 $T = [ordered]@{}
 foreach ($k in $files.Keys) {
@@ -77,6 +78,7 @@ function Invoke-NChecks($T) {
     $vc = Span $T.cjson 'bool ANodeShuffleSubsystem::RwgVerifyCaveCandidate(' 'OutSpot = FVector(X, Y, Floor);'
     if (-not (Ordered $vc @('if (!Q.CaveFloorAt(X, Y, Hint, Floor)) { return false; }', 'if (!FMath::IsFinite(Floor) || !FMath::IsFinite(SurfZ)) {', 'return false; }', 'if (!(Floor < SurfZ - RwgCaveInsideProbeCm))'))) { $f += '(N3) the cave verify must refuse a non-finite Floor or SurfZ before its first compare' }
     if ((Count $T.cave 'bWithin = bFound && FMath::IsFinite(Fz) && FMath::Abs(Fz - S.Z) <= RwgCaveFloorMatchCm;') -ne 1) { $f += '(N3) the cave check floor control must test Fz with IsFinite' }
+    if ((Count $T.rset 'const double DzApi = (Q.IsUsable() && FMath::IsFinite(ResettleApiZ)) ? HitLoc.Z - ResettleApiZ : DzMove;') -ne 1) { $f += '(N3) the resettle dz measurement must test the API surface with IsFinite' }
     # N4
     if ((Count $T.mmh 'void RwgNoteNonFinite(const TCHAR* Site, double X, double Y, double Value);') -ne 1 -or (Count $T.hapi 'void NodeShuffleMapMode::RwgNoteNonFinite(const TCHAR* Site, double X, double Y, double Value)') -ne 1) { $f += '(N4) RwgNoteNonFinite must be declared once and defined once' }
     $ng = Span $T.hapi 'void NodeShuffleMapMode::RwgNoteNonFinite(' 'Site, X, Y, Value, N);'
@@ -112,6 +114,7 @@ $mut += @(
     @{ Name = 'M13 predicate drops stand == mouth'; Key = 'cjson'; Expect = 'N5'; Find = 'return Stand == Mouth;'; Repl = ('return ' + 'true;') }
     @{ Name = 'M14 verify ignores the footprints'; Key = 'cjson'; Expect = 'N5'; Find = '{ if (RwgInsideCaveShape(Ex, X, Y)) { ++RwgRcCaveRejExcluded; return false; } }'; Repl = '{ }' }
     @{ Name = 'M15 excluded cave still yields generators'; Key = 'cave'; Expect = 'N5'; Find = ('CaveIdx, Shapes);' + "`n" + '                    continue;'); Repl = 'CaveIdx, Shapes);' }
+    @{ Name = 'M17 resettle dz unguarded'; Key = 'rset'; Expect = 'N3'; Find = '(Q.IsUsable() && FMath::IsFinite(ResettleApiZ)) ?'; Repl = 'Q.IsUsable() ?' }
     @{ Name = 'M16 stand denominator counts excluded stands'; Key = 'cave'; Expect = 'N5'; Find = 'StandInside == StandsTested;'; Repl = ('StandInside == Stands.' + 'Num();') }
 )
 $caught = 0

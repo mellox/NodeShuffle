@@ -244,7 +244,10 @@ void ANodeShuffleSubsystem::RwgResettlePass()
             continue;
         }
         const double DzMove = HitLoc.Z - Cur.Z;
-        const double DzApi = Q.IsUsable() ? HitLoc.Z - Q.SurfaceZ(HitLoc.X, HitLoc.Y) : DzMove;
+        // rwg-0-2-0-2 (NaN audit): measurement only (census band + the saved RwgApiToTerrainDzCm, read by no decision). A non-finite API surface
+        // falls back to DzMove, as an unusable query already did, so a NaN never reaches the dz sort or the save.
+        const double ResettleApiZ = Q.IsUsable() ? Q.SurfaceZ(HitLoc.X, HitLoc.Y) : 0.0;
+        const double DzApi = (Q.IsUsable() && FMath::IsFinite(ResettleApiZ)) ? HitLoc.Z - ResettleApiZ : DzMove;
         RwgRecordDz(HitLoc, DzApi);
         MaxDz = FMath::Max(MaxDz, static_cast<int32>(FMath::Abs(DzMove)));
         if (FMath::Abs(DzMove) <= NodeShuffleMapMode::RwgResettleKeepCm)
