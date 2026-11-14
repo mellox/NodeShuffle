@@ -168,6 +168,7 @@ void ANodeShuffleSubsystem::RwgSettleProvisional(FNodeShuffleEntry& E, bool& bCh
     E.bRayCasted = false;
     const int32 RingBefore = RwgPcSteepRing;
     bool bApiUsed = false, bWaterNoLand = false;
+    RwgRocksLastMove = 0; RwgRocksLastMoveCm = 0.0f; RwgRocksLastKind = -1; RwgRocksLastMesh.Reset(); RwgRocksLastWidthM = RwgRocksLastHeightM = 0.0f; // ns-rocks-1: PROVSETTLE fields are THIS settle's, even when the resolve returns before RaycastSettle
     bool bSettled = RwgResolveAtSpawn(E, bApiUsed, bWaterNoLand); // THE EXISTING SETTLE PATH, unchanged (trace, cliff top, spiral, water/void/killbox)
     if (!bApiUsed) { bSettled = RaycastSettle(E, nullptr, nullptr, &bWaterNoLand); } // as EnsureNewNodeSpawned: unusable API -> RaycastSettle
     const int32 HitClass = RwgProbeFirstClass;

@@ -7896,7 +7896,7 @@ bool ANodeShuffleSubsystem::RaycastSettle(FNodeShuffleEntry& Entry, const AActor
             bool bTryWater = false;
             bool bTrySteep = false;
             double ProbeBaseZ = OriginXY.Z;
-            if (RockQ.IsSet() && RockQ->IsUsable())
+            if (RockQ.IsSet() && RockQ->IsUsable() && !RockQ->Outside(Probe.X, Probe.Y)) // the API is read only inside the world, as Place.cpp does
             {
                 const double ApiAtProbe = RockQ->SurfaceZ(Probe.X, Probe.Y);
                 if (FMath::IsFinite(ApiAtProbe) && ApiAtProbe > ProbeBaseZ) { ProbeBaseZ = ApiAtProbe; ++RwgRkStartRaised; }

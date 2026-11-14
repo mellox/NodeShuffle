@@ -161,7 +161,7 @@ int32 ANodeShuffleSubsystem::RwgRocksSunkenVerdict(const FHitResult& Hit, double
         const int32 Bin = DepthBin(DepthCm);
         ++RwgRkSunkTested; ++RwgRkSunkBins[Bin];
         if (!FMath::IsFinite(TerrainZ)) { Verdict = 2; ++RwgRkSunkDeferred; Why = TEXT("noTerrainUnder"); }
-        else if (TerrainZ > P.Z + NodeShuffleRocks::TerrainAboveTolCm) { Verdict = 1; ++RwgRkSunkTerrainAbove; Why = TEXT("terrainAboveTop"); }
+        else if (FMath::IsFinite(TerrainZ) && TerrainZ > P.Z + NodeShuffleRocks::TerrainAboveTolCm) { Verdict = 1; ++RwgRkSunkTerrainAbove; Why = TEXT("terrainAboveTop"); }
         else
         {
             FCollisionQueryParams ColParams = Params;
