@@ -17,6 +17,8 @@
 #   K12 new files under 500 lines
 #   K14 (round 3) review F1/F2/F3/F5/F8: RunChatProbe public; sideways sunken top refused by API depth; primary defer only on land
 #       (deal's RwgRejectV3), no defer cap; ROCKDEFER per-entry census; per-probe rule B counters; firstTerrainZAtTopXY name
+#   K15 (round 4) review r2: RunChatProbe declared between public: and private: (position, not presence); ON_SCOPE_EXIT clears the
+#       active query (no local RAII struct); defer maps reset on roll; open-run field name; legends; untested-top trace only with diagnostics
 #   K13 (round 2) ROCKSETTLE per completed settle (XY, API Z at the settled XY and the difference, route, first hit, terrain under the top
 #       with named tokens); ROCKCAND per-candidate outcomes counted right after the shared loop's RaycastGroundAt, before its decision
 # Forbidden needles are built by concatenation. Mutants run in-file. Exit 0 = all hold and every mutant is caught; 1 = failure; 2 = missing file.
@@ -37,6 +39,7 @@ $files = [ordered]@{
     nsmod = 'NodeShuffle\Private\NodeShuffle.cpp'
     mark  = 'NodeShuffle\Private\NodeShuffleBuildMarkers.h'
     desc  = 'NodeShuffle\Private\NodeShuffleMcpDescribe.cpp'
+    dens  = 'NodeShuffle\Private\NodeShuffleMapModeDensity.cpp' # round 4: the defer maps are reset on roll
 }
 $lintFiles = [ordered]@{ lfar = 'check_farspawn_lint.ps1'; lroll = 'check_rollchat_lint.ps1'; lmcp = 'check_mcpcontract_lint.ps1'; ltrace = 'check_rwgtrace_lint.ps1' }
 $text = [ordered]@{}
@@ -146,10 +149,17 @@ function Invoke-Checks($T) {
     if ($settle -eq '' -or -not (Ordered $settle @('bRwgRocksSidewaysProbe = bTerrainOnly;', ('const bool bTryHit = RaycastGround' + 'At(Probe'), 'bRwgRocksSidewaysProbe = false;'))) { $f += '(K14) the sideways flag brackets only the near/spiral candidate trace' }
     if ((Count $T.rocks 'const bool bLand = const_cast<ANodeShuffleSubsystem*>(this)->RwgRejectV3(Q, FVector(P.X, P.Y, ApiZ)) == 0;') -ne 1 -or -not (Ordered $T.rocks @('const bool bLand =', 'if (bLand) { Verdict = 2;', 'else { Verdict = 1; ++RwgRkSunkNoLandRefused;'))) { $f += '(K14) a primary defer only where the deal land predicate holds; otherwise refuse' }
     foreach ($k in $text.Keys) { if ($k -notlike 'l*' -and (Count $T[$k] ('MaxPrimary' + 'RuleBDefers')) -ne 0) { $f += "(K14) no defer cap that turns waiting into a move ($k)" } }
-    if ((Count $T.rocks 'TEXT("ROCKDEFER: session rule-B primary defers per ENTRY; entriesLastPrimaryWasDefer=%d maxConsecutiveDefers=%d medianConsecutiveDefers=%d entriesEverDeferred=%d settledSinceOnTerrainNearApi=%d settledSinceOnTopAboveApi=%d settledSinceSideways=%d settledSinceOther=%d"),') -ne 1) { $f += '(K14) ROCKDEFER census' }
+    if ((Count $T.rocks 'TEXT("ROCKDEFER: session rule-B primary defers per ENTRY; entriesWithOpenDeferRun=%d maxConsecutiveDefers=%d medianConsecutiveDefers=%d entriesEverDeferred=%d settledSinceOnTerrainNearApi=%d settledSinceOnTopAboveApi=%d settledSinceSideways=%d settledSinceOther=%d"),') -ne 1) { $f += '(K14) ROCKDEFER census' }
     if ($settle -eq '' -or (Count $settle '++RwgRkPrimaryDefers.FindOrAdd(Entry.EntryGuid);') -ne 1) { $f += '(K14) consecutive primary defers are counted per entry' }
     if ((Count $T.rocks 'refusedSidewaysByDepthProbes=%d refusedTerrainAboveTopProbes=%d refusedColumnBlockedProbes=%d refusedNoTerrainNotLandProbes=%d deferredNoTerrainOnLandProbes=%d') -ne 1) { $f += '(K14) per-probe rule B counters, refusals split' }
     if ((Count $T.rocks ('terrainUnder' + 'Top=')) -ne 0) { $f += '(K14) the old field name asserting "under" is gone' }
+    # K15
+    if ((Count $T.subh "    bool bChatProbeLimitsLogged = false;`npublic: // ns-rocks-1 D: called from the console lambda in NodeShuffle.cpp (same reason as LogNearestCave's public tail); the rest of this block stays private`n    void RunChatProbe();`nprivate:`n    void ChatProbeStep();") -ne 1) { $f += '(K8) RunChatProbe must be declared between the public: and private: lines' }
+    if ((Count $T.sub '#include "Misc/ScopeExit.h"') -ne 1 -or $settle -eq '' -or -not (Ordered $settle @('RwgRocksActiveQ = RockQ.IsSet() ? &RockQ.GetValue() : nullptr;', 'ON_SCOPE_EXIT { RwgRocksActiveQ = nullptr; };')) -or (Count $T.sub ('struct FRocks' + 'ActiveQClear')) -ne 0) { $f += '(K15) the active query is cleared by ON_SCOPE_EXIT, no local RAII struct' }
+    $roll = Span $T.dens 'void ANodeShuffleSubsystem::RwgDensityOnRoll()' "`n}`n"
+    if ($roll -eq '' -or (Count $roll 'RwgRkPrimaryDefers.Reset(); RwgRkEverDeferred.Reset();') -ne 1) { $f += '(K15) the rule-B defer maps are reset on every roll' }
+    if ((Count $T.rocks ('entriesLastPrimary' + 'WasDefer')) -ne 0 -or (Count $T.rocks 'apiUnknownOrOutsideProbes counts tops with no API reading, which are outside the tested population;') -ne 1 -or (Count $T.rocks 'so a zero there is not evidence that no such tops exist;') -ne 1) { $f += '(K15) open-run field name and the two legend clauses' }
+    if ((Count $T.rocks 'if (!bSidewaysDepthRefuse && (bTest || FNodeShuffleModule::AreDiagnosticsEnabled()))') -ne 1 -or (Count $T.rocks 'RwgRocksProbeTerrainState = !bTerrainTraced ? 0 :') -ne 1) { $f += '(K15) the untested-top terrain trace runs only with diagnostics; not traced prints its token' }
     return ,$f
 }
 
@@ -191,6 +201,11 @@ $mutants = @(
     @{ Name = 'M33 refusals merged again';        Key = 'rocks'; Expect = 'K14'; Find = 'refusedColumnBlockedProbes=%d '; Repl = '' }
     @{ Name = 'M34 ROCKDEFER removed';            Key = 'rocks'; Expect = 'K14'; Find = 'TEXT("ROCKDEFER: '; Repl = 'TEXT("ROCKDEFERX: ' }
     @{ Name = 'M35 settle distance field dropped'; Key = 'rocks'; Expect = 'K13'; Find = 'nearestPlayerDist2DM=%.0f '; Repl = '' }
+    @{ Name = 'M36 RunChatProbe moved below private'; Key = 'subh'; Expect = 'K8'; Find = "    void RunChatProbe();`nprivate:`n    void ChatProbeStep();"; Repl = "private:`n    void RunChatProbe();`n    void ChatProbeStep();" }
+    @{ Name = 'M37 RAII struct back';              Key = 'sub';   Expect = 'K15'; Find = 'ON_SCOPE_EXIT { RwgRocksActiveQ = nullptr; };'; Repl = ('struct FRocks' + 'ActiveQClear { };') }
+    @{ Name = 'M38 no reset on roll';              Key = 'dens';  Expect = 'K15'; Find = 'RwgRkPrimaryDefers.Reset(); RwgRkEverDeferred.Reset();'; Repl = '' }
+    @{ Name = 'M39 old open-run name';             Key = 'rocks'; Expect = 'K14'; Find = 'entriesWithOpenDeferRun=%d'; Repl = 'entriesLastPrimaryWasDefer=%d' }
+    @{ Name = 'M40 untested trace always runs';    Key = 'rocks'; Expect = 'K15'; Find = 'if (!bSidewaysDepthRefuse && (bTest || FNodeShuffleModule::AreDiagnosticsEnabled()))'; Repl = 'if (!bSidewaysDepthRefuse)' }
     @{ Name = 'M19 near pattern changed';        Key = 'rockh'; Expect = 'K2';  Find = 'constexpr float NearRing1Cm = 1000.0f;'; Repl = 'constexpr float NearRing1Cm = 4000.0f;' }
 )
 $caught = 0
@@ -203,6 +218,6 @@ foreach ($m in $mutants) {
     else { Write-Host "FAIL(mutant) $($m.Name) survived (expected $($m.Expect))"; $fails += 'mutant-survived' }
 }
 
-if ($fails.Count -eq 0) { Write-Host "PASS check_rocks_lint: K1-K14 hold; $caught/$($mutants.Count) mutants caught"; exit 0 }
+if ($fails.Count -eq 0) { Write-Host "PASS check_rocks_lint: K1-K15 hold; $caught/$($mutants.Count) mutants caught"; exit 0 }
 Write-Host "check_rocks_lint: $($fails.Count) failure(s); $caught/$($mutants.Count) mutants caught"
 exit 1

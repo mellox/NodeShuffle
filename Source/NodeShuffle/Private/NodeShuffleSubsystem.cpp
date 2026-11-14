@@ -20,6 +20,7 @@
 #include "TimerManager.h"
 #include "Algo/Count.h"
 #include "Misc/PackageName.h"
+#include "Misc/ScopeExit.h" // ns-rocks-1 round 4 (review r2 C1): ON_SCOPE_EXIT in RaycastSettle
 #include "Dom/JsonObject.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
@@ -7843,8 +7844,8 @@ bool ANodeShuffleSubsystem::RaycastSettle(FNodeShuffleEntry& Entry, const AActor
     // reused by rule B through RwgRocksActiveQ while this settle runs. Built only when bTerrainOnly: the binding attempt never runs on vanilla.
     TOptional<NodeShuffleMapMode::FRwgGroundQuery> RockQ;
     if (bTerrainOnly) { RockQ.Emplace(GetWorld(), RwgGenerator.Get()); }
-    struct FRocksActiveQClear { const NodeShuffleMapMode::FRwgGroundQuery*& Ref; ~FRocksActiveQClear() { Ref = nullptr; } } RocksActiveQClear{ RwgRocksActiveQ };
     RwgRocksActiveQ = RockQ.IsSet() ? &RockQ.GetValue() : nullptr;
+    ON_SCOPE_EXIT { RwgRocksActiveQ = nullptr; }; // round 3 (F6): declared after RockQ, so it runs before RockQ is destroyed; clears on every return
 
     // 1. Primary probe at the entry's own XY. steepfix-1: a placeable spot is a hit that is neither
     //    water NOR steeper than the Miner hologram tolerates.

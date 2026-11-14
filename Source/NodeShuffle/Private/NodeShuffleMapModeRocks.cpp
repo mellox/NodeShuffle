@@ -152,7 +152,7 @@ int32 ANodeShuffleSubsystem::RwgRocksSunkenVerdict(const FHitResult& Hit, double
     const bool bSidewaysDepthRefuse = bTest && bRwgRocksSidewaysProbe;
     double TerrainZ = NodeShuffleMapMode::RwgNaN();
     int32 TerrainSkips = 0;
-    if (!bSidewaysDepthRefuse)
+    if (!bSidewaysDepthRefuse && (bTest || FNodeShuffleModule::AreDiagnosticsEnabled())) // round 4: the untested-top trace feeds only diagnostics-gated lines
     {
         FCollisionQueryParams DownParams = Params;
         FHitResult D;
@@ -164,7 +164,8 @@ int32 ANodeShuffleSubsystem::RwgRocksSunkenVerdict(const FHitResult& Hit, double
             DownParams.AddIgnoredComponent(D.GetComponent());
         }
     }
-    RwgRocksProbeTerrainState = bSidewaysDepthRefuse ? 0 : FMath::IsFinite(TerrainZ) ? 1 : 2;
+    const bool bTerrainTraced = !bSidewaysDepthRefuse && (bTest || FNodeShuffleModule::AreDiagnosticsEnabled());
+    RwgRocksProbeTerrainState = !bTerrainTraced ? 0 : FMath::IsFinite(TerrainZ) ? 1 : 2; // 0 prints notTraced on ROCKSETTLE
     RwgRocksProbeTerrainZ = FMath::IsFinite(TerrainZ) ? TerrainZ : 0.0;
 
     const UPrimitiveComponent* HitComp = Hit.GetComponent();
@@ -178,7 +179,7 @@ int32 ANodeShuffleSubsystem::RwgRocksSunkenVerdict(const FHitResult& Hit, double
         if (bRwgRocksSidewaysProbe) { Verdict = 1; ++RwgRkSunkSideways; Why = TEXT("sidewaysBelowApi"); } // near/spiral candidate: refused by API depth alone, no trace needed
         else if (!FMath::IsFinite(TerrainZ))
         {
-            // The deal's own land predicate at the top's XY (wet v2 | void | below killbox; inside is guaranteed by the Outside guard above).
+            // The deal's land predicate at the top's XY. For a primary this is the dealt XY, which RwgResolveAtSpawn (Place.cpp:315) and the ring (Steep.cpp:161) already passed in this frame, so in practice this always reads land and the defer is unbounded by design (coordinator, round 3).
             const bool bLand = const_cast<ANodeShuffleSubsystem*>(this)->RwgRejectV3(Q, FVector(P.X, P.Y, ApiZ)) == 0;
             if (bLand) { Verdict = 2; ++RwgRkSunkDeferred; Why = TEXT("noTerrainUnderOnLandDefer"); }
             else { Verdict = 1; ++RwgRkSunkNoLandRefused; Why = TEXT("noTerrainUnderNotLandRefused"); }
@@ -269,7 +270,7 @@ void ANodeShuffleSubsystem::RwgRocksEmitCensus() const
         RwgRkMoveNear + RwgRkMoveSpiralRock + RwgRkMoveSpiralOther, RwgRkMoveNear, RwgRkMoveSpiralRock, RwgRkMoveSpiralOther,
         M[0], M[1], M[2], M[3], M[4], M[5], M[6], RwgRkNearRun, RwgRkNearFound, RwgRkNearToSpiral, RwgRkSpiralAfterNear, RwgRkNoSpotAfterNear, RwgRkStartRaised);
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("ROCKSUNKEN-CENSUS: session solid-top PROBES that passed every earlier gate and lie more than %.1f m below the API Z at their own XY inside the world; testedProbes=%d refusedTotalProbes=%d refusedSidewaysByDepthProbes=%d refusedTerrainAboveTopProbes=%d refusedColumnBlockedProbes=%d refusedNoTerrainNotLandProbes=%d deferredNoTerrainOnLandProbes=%d keptProbes=%d apiUnknownOrOutsideProbes=%d below0p5to3m=%d below3to10m=%d below10to30m=%d below30to60m=%d belowGe60m=%d refused0p5to3m=%d refused3to10m=%d refused10to30m=%d refused30to60m=%d refusedGe60m=%d (the refused total is the sum of the four refused fields; these refusals and deferrals are in no PLACECENSUS solidTop bin)"),
+        TEXT("ROCKSUNKEN-CENSUS: session solid-top PROBES that passed every earlier gate and lie more than %.1f m below the API Z at their own XY inside the world; testedProbes=%d refusedTotalProbes=%d refusedSidewaysByDepthProbes=%d refusedTerrainAboveTopProbes=%d refusedColumnBlockedProbes=%d refusedNoTerrainNotLandProbes=%d deferredNoTerrainOnLandProbes=%d keptProbes=%d apiUnknownOrOutsideProbes=%d below0p5to3m=%d below3to10m=%d below10to30m=%d below30to60m=%d belowGe60m=%d refused0p5to3m=%d refused3to10m=%d refused10to30m=%d refused30to60m=%d refusedGe60m=%d (apiUnknownOrOutsideProbes counts tops with no API reading, which are outside the tested population; refusedNoTerrainNotLandProbes is expected to stay 0 because a primary's XY already passed the same land check earlier in its resolve, so a zero there is not evidence that no such tops exist; the refused total is the sum of the four refused fields; these refusals and deferrals are in no PLACECENSUS solidTop bin)"),
         NodeShuffleRocks::SunkenMarginCm / 100.0, RwgRkSunkTested, RwgRkSunkRefused, RwgRkSunkSideways, RwgRkSunkTerrainAbove, RwgRkSunkColumnRefused,
         RwgRkSunkNoLandRefused, RwgRkSunkDeferred, RwgRkSunkTested - RwgRkSunkRefused - RwgRkSunkDeferred, RwgRkSunkApiUnknown,
         RwgRkSunkBins[0], RwgRkSunkBins[1], RwgRkSunkBins[2], RwgRkSunkBins[3], RwgRkSunkBins[4],
@@ -280,7 +281,7 @@ void ANodeShuffleSubsystem::RwgRocksEmitCensus() const
         for (const TPair<FGuid, int32>& KV : RwgRkPrimaryDefers) { Runs.Add(KV.Value); }
         Runs.Sort();
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("ROCKDEFER: session rule-B primary defers per ENTRY; entriesLastPrimaryWasDefer=%d maxConsecutiveDefers=%d medianConsecutiveDefers=%d entriesEverDeferred=%d settledSinceOnTerrainNearApi=%d settledSinceOnTopAboveApi=%d settledSinceSideways=%d settledSinceOther=%d"),
+            TEXT("ROCKDEFER: session rule-B primary defers per ENTRY; entriesWithOpenDeferRun=%d maxConsecutiveDefers=%d medianConsecutiveDefers=%d entriesEverDeferred=%d settledSinceOnTerrainNearApi=%d settledSinceOnTopAboveApi=%d settledSinceSideways=%d settledSinceOther=%d"),
             Runs.Num(), Runs.Num() > 0 ? Runs.Last() : 0, Runs.Num() > 0 ? Runs[Runs.Num() / 2] : 0, RwgRkEverDeferredN,
             RwgRkDeferSettledTerrain, RwgRkDeferSettledTopAbove, RwgRkDeferSettledSideways, RwgRkDeferSettledOther);
     }

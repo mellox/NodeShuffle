@@ -90,6 +90,7 @@ void ANodeShuffleSubsystem::RwgDensityOnRoll()
 {
     // A roll mints new entry guids: the per-entry attempt history of the previous layout no longer names anything.
     RwgStuckTracker.Reset();
+    RwgRkPrimaryDefers.Reset(); RwgRkEverDeferred.Reset(); // ns-rocks-1 round 4 (review r2 R2): rule-B defer runs of the previous layout name nothing
     RwgEmitDensityCensus(TEXT("roll"));
 }
 
