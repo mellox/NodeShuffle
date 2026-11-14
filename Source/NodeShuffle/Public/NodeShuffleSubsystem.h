@@ -1967,7 +1967,10 @@ private:
     int32 ThoriumHalfPathMatched = 0;
     int32 ThoriumHalfApplied = 0;
     int32 ThoriumHalfOffTarget = 0;
-    int32 ThoriumHalfNoCapture = 0;
+    int32 ThoriumHalfNoCapture = 0;   // thorium-path dress with neither the authored row nor a capture (quartz or no mesh)
+    int32 ThoriumHalfFromAuthored = 0; // rwg-0-2-0-2: thorium-path dress from the authored Refined Power row
+    int32 ThoriumHalfFromCapture = 0;  // rwg-0-2-0-2: thorium-path dress from a captured visual
+    int32 ThoriumHalfQuartz = 0;       // rwg-0-2-0-2: thorium-path dress that took the quartz placeholder
     bool bThoriumHalfCensusDone = false;
     // redesign-6 FIX 1: limit the per-node RENDERDIAG runtime-state log to the first N spawned + first N
     // adopted nodes (so we get the truth without spamming thousands of lines). Session counters.

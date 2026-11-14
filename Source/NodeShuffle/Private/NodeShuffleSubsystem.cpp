@@ -2913,10 +2913,11 @@ void ANodeShuffleSubsystem::ApplyLayout()
     {
         bThoriumHalfCensusDone = true;
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("THORIUMHALF census dressCalls=%d thoriumNameSeen=%d thoriumPathMatched=%d factorApplied=%d offTarget=%d noCapture=%d factor=%.3f"),
+            TEXT("THORIUMHALF census dressCalls=%d thoriumNameSeen=%d thoriumPathMatched=%d factorApplied=%d offTarget=%d noCapture=%d factor=%.3f fromAuthoredRow=%d fromCapture=%d quartzFallback=%d"),
             ThoriumHalfDressCalls, ThoriumHalfNameSeen, ThoriumHalfPathMatched, ThoriumHalfApplied, ThoriumHalfOffTarget,
-            ThoriumHalfNoCapture, ThoriumHalfVisualFactor);
+            ThoriumHalfNoCapture, ThoriumHalfVisualFactor, ThoriumHalfFromAuthored, ThoriumHalfFromCapture, ThoriumHalfQuartz);
         ThoriumHalfDressCalls = ThoriumHalfNameSeen = ThoriumHalfPathMatched = ThoriumHalfApplied = ThoriumHalfOffTarget = ThoriumHalfNoCapture = 0;
+        ThoriumHalfFromAuthored = ThoriumHalfFromCapture = ThoriumHalfQuartz = 0; // rwg-0-2-0-2
     }
 
     // playtest-fixes-1 (defer-log backoff): ONE summary line when the deferral count changes, instead
@@ -3809,6 +3810,12 @@ void ANodeShuffleSubsystem::SpawnVisualRockForNode(AFGResourceNode* Node, UClass
     // (0,0,-40)). We derive the LATERAL offset from the mesh's own bounds (below) — the table's authored X was
     // wrong — and keep only the table's Z (clamped to a small sink) so each rock sits centered + grounded.
     const FNodeShuffleVisual* Visual = FNodeShuffleNodeAssets::FindVisual(FName(*ResourceClass->GetName()));
+    // rwg-0-2-0-2: true only when the AUTHORED row's mesh resolved (ResolveNodeMesh answers null without a row or on a failed load).
+    // Set HERE, before the capture fallback and before Visual is reassigned to the quartz row below, so a quartz dress can never read
+    // as authored. Precedence: authored row > captured visual > quartz (a capture is only tried when the row gave no mesh).
+    const bool bAuthoredRow = Mesh != nullptr && Visual != nullptr;
+    const bool bRowMissed = Mesh == nullptr && Visual != nullptr; // a row exists but its mesh did not load this call (T72RESOLVE names the path)
+    const TCHAR* const RowMeshPath = (Visual && Visual->MeshPath) ? Visual->MeshPath : TEXT("<none>"); // read before the quartz reassignment
     FVector CapturedScale = FVector::ZeroVector; // non-zero when a captured visual supplies the scale
     if (!Mesh)
     {
@@ -3852,9 +3859,24 @@ void ANodeShuffleSubsystem::SpawnVisualRockForNode(AFGResourceNode* Node, UClass
     ++ThoriumHalfDressCalls;
     const bool bThoriumNameSeen = ResourceClass->GetName() == TEXT("Desc_RP_Thorium_C"); // census cross-check only; gates nothing
     const bool bThoriumPath = ResourceClass->GetPathName().Equals(NodeShuffleRwgSeedGas::DefaultThoriumResource, ESearchCase::IgnoreCase);
-    const bool bThoriumHalf = bThoriumPath && bCaptured;
+    // rwg-0-2-0-2: the factor applies to the AUTHORED Refined Power row too (design Q7c option i). bAuthoredRow and bCaptured are exclusive
+    // (a capture is resolved only when the row gave no mesh) and SourceScale is the row's / the capture's own scale, never the
+    // component's current one, so the factor applies EXACTLY ONCE per dress whichever source dressed it; a quartz dress gets none.
+    const bool bThoriumHalf = bThoriumPath && (bCaptured || bAuthoredRow);
     if (bThoriumNameSeen) { ++ThoriumHalfNameSeen; }
-    if (bThoriumPath) { ++ThoriumHalfPathMatched; if (!bCaptured) { ++ThoriumHalfNoCapture; } }
+    if (bThoriumPath)
+    {
+        ++ThoriumHalfPathMatched;
+        if (bAuthoredRow) { ++ThoriumHalfFromAuthored; } else if (bCaptured) { ++ThoriumHalfFromCapture; } else { ++ThoriumHalfNoCapture; }
+        if (bQuartz) { ++ThoriumHalfQuartz; }
+        static bool bRowMissLogged = false; // first per process
+        if (bRowMissed && !bRowMissLogged)
+        {
+            bRowMissLogged = true;
+            UE_LOG(LogNodeShuffle, Warning, TEXT("THORIUMHALF-ROWMISS: node=%s authoredMesh='%s' dressedFrom=%s; the authored Refined Power thorium row did not resolve its mesh on this call (first per process; the T72RESOLVE line names the load result)"),
+                *Node->GetName(), RowMeshPath, bCaptured ? TEXT("capture") : (bQuartz ? TEXT("quartz") : TEXT("none")));
+        }
+    }
     const FVector WantScale = bThoriumHalf ? SourceScale * ThoriumHalfVisualFactor : SourceScale;
     // Centered laterally; keep the table's Z (a vertical sink), clamped so we never sink the rock absurdly.
     const float TableZ = Visual ? Visual->MeshOffset.Z : -40.0f;

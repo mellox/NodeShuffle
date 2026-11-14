@@ -17,6 +17,9 @@
 #   T9 exact formats of THORIUMHALF-DRESS and THORIUMHALF census
 #   T10 the read-back compares against WantScale
 #   T11 both DressRock bodies SET the relative scale to the passed Scale (never multiply the current one)
+#   T12 (rwg-0-2-0-2) authored Desc_RP_Thorium_C row (mesh, 2 materials, offset -40, scale 2) outranks a capture; bAuthoredRow set before the
+#       capture fallback and the quartz reassignment; the row stops capture; the gate is bThoriumPath && (bCaptured || bAuthoredRow)
+#   T13 (rwg-0-2-0-2) the census splits fromAuthoredRow / fromCapture / noCapture, counts quartzFallback, resets the new counters
 # Every forbidden needle is BUILT BY CONCATENATION. Mutants run in-file. Exit 0 = all hold; 1 = a rule or mutant fails; 2 = missing file.
 
 $ErrorActionPreference = 'Stop'
@@ -31,6 +34,7 @@ $files = [ordered]@{
     mk    = 'NodeShuffle\Private\NodeShuffleBuildMarkers.h'
     nc    = 'NodeShuffle\Private\NodeShuffleNodeComponent.cpp'
     rn    = 'NodeShuffle\Private\NodeShuffleResourceNode.cpp'
+    na    = 'NodeShuffle\Private\NodeShuffleNodeAssets.cpp'
 }
 $text = [ordered]@{}
 foreach ($k in $files.Keys) {
@@ -64,7 +68,12 @@ $keyLine   = '    const bool bThoriumPath = ResourceClass->GetPathName().Equals(
 $sgDef     = '    const TCHAR* const DefaultThoriumResource = TEXT("/RefinedPower/World/ResourceNodes/Thorium/Desc_RP_Thorium.Desc_RP_Thorium_C");'
 $sgExtern  = '    extern const TCHAR* const DefaultThoriumResource;'
 $srcLine   = '    const FVector SourceScale = bCaptured && !CapturedScale.IsNearlyZero() ? CapturedScale' + $N + '                              : Visual ? Visual->MeshScale : FVector(2.0f, 2.0f, 2.0f);'
-$halfLine  = '    const bool bThoriumHalf = bThoriumPath && bCaptured;'
+$halfLine  = '    const bool bThoriumHalf = bThoriumPath && (bCaptured || bAuthoredRow);' # rwg-0-2-0-2: the authored Refined Power row takes the factor too
+$authLine  = '    const bool bAuthoredRow = Mesh != nullptr && Visual != nullptr;'
+$splitLine = '        if (bAuthoredRow) { ++ThoriumHalfFromAuthored; } else if (bCaptured) { ++ThoriumHalfFromCapture; } else { ++ThoriumHalfNoCapture; }'
+$reset2    = '        ThoriumHalfFromAuthored = ThoriumHalfFromCapture = ThoriumHalfQuartz = 0;'
+$capStop   = '    if (FNodeShuffleNodeAssets::FindVisual(FName(*ShortName)) != nullptr) { return false; } // authored covers it'
+$rowHead   = '            M.Add("Desc_RP_Thorium_C", {'
 $wantLine  = '    const FVector WantScale = bThoriumHalf ? SourceScale * ' + $fac + ' : SourceScale;'
 $capStore  = '    Cap.MeshScale = Smc->' + $curWorld + '); // WORLD scale ' + [char]0x2014 + ' what the mesh visually renders at'
 $resStore  = '    Resolved.Scale = Cap->MeshScale;'
@@ -78,13 +87,13 @@ $t72Call   = '    EmitT72DressCensus();'
 $censusIf  = '    if ((!bThoriumHalfCensusDone && bAdoptedRestoredNodes) || ThoriumHalfNameSeen > 0 || ThoriumHalfPathMatched > 0)'
 $latchSet  = '        bThoriumHalfCensusDone = true;'
 $resetLine = '        ThoriumHalfDressCalls = ThoriumHalfNameSeen = ThoriumHalfPathMatched = ThoriumHalfApplied = ThoriumHalfOffTarget = ThoriumHalfNoCapture = 0;'
-$fmtCensus = 'TEXT("THORIUMHALF census dressCalls=%d thoriumNameSeen=%d thoriumPathMatched=%d factorApplied=%d offTarget=%d noCapture=%d factor=%.3f")'
+$fmtCensus = 'TEXT("THORIUMHALF census dressCalls=%d thoriumNameSeen=%d thoriumPathMatched=%d factorApplied=%d offTarget=%d noCapture=%d factor=%.3f fromAuthoredRow=%d fromCapture=%d quartzFallback=%d")'
 $fmtDress  = 'TEXT("THORIUMHALF-DRESS node=%s mesh=%s srcScale=%.3f/%.3f/%.3f factor=%.3f relScale=%.3f/%.3f/%.3f worldScale=%.3f/%.3f/%.3f boundsR=%.0f boundsBottomMinusNodeZ=%.1f offTarget=%d")'
 $readBack  = '        const bool bOffTarget = !IsValid(RockMC) || !RockMC->' + $curRel + ').Equals(WantScale, 0.01f);'
 $setScale  = '        RockMesh->SetRelative' + 'Scale3D(Scale);'
 $dressHead = @{ nc = 'void UNodeShuffleNodeComponent::DressRock('; rn = 'void ANodeShuffleResourceNode::DressRock(' }
 $members   = @('    int32 ThoriumHalfDressCalls = 0;', '    int32 ThoriumHalfNameSeen = 0;', '    int32 ThoriumHalfPathMatched = 0;',
-               '    int32 ThoriumHalfApplied = 0;', '    int32 ThoriumHalfOffTarget = 0;', '    int32 ThoriumHalfNoCapture = 0;',
+               '    int32 ThoriumHalfApplied = 0;', '    int32 ThoriumHalfOffTarget = 0;', '    int32 ThoriumHalfNoCapture = 0;   // thorium-path dress with neither the authored row nor a capture (quartz or no mesh)', '    int32 ThoriumHalfFromAuthored = 0; // rwg-0-2-0-2: thorium-path dress from the authored Refined Power row', '    int32 ThoriumHalfFromCapture = 0;  // rwg-0-2-0-2: thorium-path dress from a captured visual', '    int32 ThoriumHalfQuartz = 0;       // rwg-0-2-0-2: thorium-path dress that took the quartz placeholder',
                '    bool bThoriumHalfCensusDone = false;')
 
 function Invoke-Checks($T) {
@@ -101,7 +110,14 @@ function Invoke-Checks($T) {
     $cap = Span $s $capHead $capEnd
     if ($cap -eq '' -or (Count $cap $capStore) -ne 1 -or (Count $cap $fac) -ne 0 -or (Count $s $resStore) -ne 1) { $f += '(T3) capture and resolve store the unfactored scale' }
     # T4
-    if ((Count $s $halfLine) -ne 1 -or (Count $s ('bThoriumHalf =')) -ne 1 -or (Count $s ('* ' + $fac)) -ne 1 -or (Count $s ($fac + ' *')) -ne 0) { $f += '(T4) the factor multiplies only under bThoriumHalf = bThoriumPath && bCaptured' }
+    if ((Count $s $halfLine) -ne 1 -or (Count $s ('bThoriumHalf =')) -ne 1 -or (Count $s ('* ' + $fac)) -ne 1 -or (Count $s ($fac + ' *')) -ne 0) { $f += '(T4) the factor multiplies only under bThoriumHalf = bThoriumPath && (bCaptured || bAuthoredRow)' }
+    # T12 (rwg-0-2-0-2) authored row > capture > quartz; the authored flag is set right after the row resolve, before the capture fallback and the quartz reassignment; the row's paths/scale; a row stops capture
+    if ($fn -eq '' -or -not (Ordered $fn @('    UStaticMesh* Mesh = ResolveNodeMesh(ResourceClass);', '    const FNodeShuffleVisual* Visual = FNodeShuffleNodeAssets::FindVisual(FName(*ResourceClass->GetName()));', $authLine, 'if (const FNodeShuffleResolvedCapture* Cap = ResolveCapturedVisual(ResourceClass->GetName()))', 'Visual = FNodeShuffleNodeAssets::FindVisual(FName(TEXT("Desc_RawQuartz_C")));', $halfLine)) -or (Count $s 'bAuthoredRow =') -ne 1) { $f += '(T12) bAuthoredRow must be set once, from the row resolve, before the capture fallback and the quartz reassignment' }
+    $row = Span $T.na $rowHead 'return M;'
+    if ($row -eq '' -or -not $row.Contains('TEXT("/RefinedPower/World/ResourceNodes/Thorium/Mesh/SM_ThoriumNode.SM_ThoriumNode"),') -or -not $row.Contains('Thorium/Materials/Mat_OreElement65_Base.Mat_OreElement65_Base') -or -not $row.Contains('Thorium/Materials/M_Thorium_Middle.M_Thorium_Middle') -or -not $row.Contains('FVector(0.0f, 0.0f, -40.0f), FVector(2.0f, 2.0f, 2.0f) });')) { $f += '(T12) the authored Desc_RP_Thorium_C row must carry the measured mesh, both materials, offset -40 and scale 2' }
+    if ($cap -eq '' -or (Count $cap $capStop) -ne 1) { $f += '(T12) a row must stop capture for its resource' }
+    # T13 (rwg-0-2-0-2) the census splits authored / captured / neither and resets the new counters after print
+    if ((Count $s $splitLine) -ne 1 -or (Count $s '        if (bQuartz) { ++ThoriumHalfQuartz; }') -ne 1 -or -not (Ordered $s @($fmtCensus, $resetLine, $reset2))) { $f += '(T13) the census must split authored / capture / neither and reset the new counters' }
     # T5
     $census = Span $s $censusIf $resetLine
     if ($census -eq '' -or -not (Ordered $s @($t72Call, $censusIf, $latchSet, $fmtCensus, $resetLine)) -or (Count $census $diagGate) -ne 0) { $f += '(T5) census once per load on the zero path, ungated, after the T72 census, reset after print' }
@@ -135,8 +151,14 @@ $mutants = @(
     @{ Name = 'M5 current scale read before the dress'; Key = 'sub'; Expect = 'T3'; Find = $wantLine; Repl = ('    const FVector NowScale = Comp ? Comp->RockMesh->' + $curRel + ') : FVector::OneVector;' + $N + $wantLine) }
     @{ Name = 'M6 factor stored at capture'; Key = 'sub'; Expect = 'T3'; Find = ('Smc->' + $curWorld + ');'); Repl = ('Smc->' + $curWorld + ') * ' + $fac + ';') }
     @{ Name = 'M7 factor at resolve'; Key = 'sub'; Expect = 'T3'; Find = $resStore; Repl = ('    Resolved.Scale = Cap->MeshScale * ' + '0.5f;') }
-    @{ Name = 'M8 gate drops the path test'; Key = 'sub'; Expect = 'T4'; Find = $halfLine; Repl = ('    const bool bThoriumHalf = ' + 'bCaptured;') }
-    @{ Name = 'M9 gate on the short name'; Key = 'sub'; Expect = 'T4'; Find = $halfLine; Repl = ('    const bool bThoriumHalf = bThoriumName' + 'Seen && bCaptured;') }
+    @{ Name = 'M8 gate drops the path test'; Key = 'sub'; Expect = 'T4'; Find = $halfLine; Repl = ('    const bool bThoriumHalf = ' + '(bCaptured || bAuthoredRow);') }
+    @{ Name = 'M9 gate on the short name'; Key = 'sub'; Expect = 'T4'; Find = $halfLine; Repl = ('    const bool bThoriumHalf = bThoriumName' + 'Seen && (bCaptured || bAuthoredRow);') }
+    @{ Name = 'M22 authored row loses the factor'; Key = 'sub'; Expect = 'T4'; Find = $halfLine; Repl = ('    const bool bThoriumHalf = bThoriumPath && ' + 'bCaptured;') }
+    @{ Name = 'M23 authored flag keyed on the row alone'; Key = 'sub'; Expect = 'T12'; Find = $authLine; Repl = ('    const bool bAuthoredRow = ' + 'Visual != nullptr;') }
+    @{ Name = 'M24 row scale not halved source'; Key = 'na'; Expect = 'T12'; Find = 'FVector(0.0f, 0.0f, -40.0f), FVector(2.0f, 2.0f, 2.0f) });'; Repl = ('FVector(0.0f, 0.0f, -40.0f), FVector(' + '1.0f, 1.0f, 1.0f) });') }
+    @{ Name = 'M25 row removed'; Key = 'na'; Expect = 'T12'; Find = $rowHead; Repl = '            M.Add("Desc_RP_ThoriumX_C", {' }
+    @{ Name = 'M26 capture no longer stops at a row'; Key = 'sub'; Expect = 'T12'; Find = $capStop; Repl = '    // capture stop removed' }
+    @{ Name = 'M27 census counts authored as noCapture'; Key = 'sub'; Expect = 'T13'; Find = $splitLine; Repl = '        if (!bCaptured) { ++ThoriumHalfNoCapture; }' }
     @{ Name = 'M10 factor applied to every resource'; Key = 'sub'; Expect = 'T3'; Find = $wantLine; Repl = ('    const FVector WantScale = SourceScale * ' + $fac + ';') }
     @{ Name = 'M11 census loses its zero-path latch'; Key = 'sub'; Expect = 'T5'; Find = $censusIf; Repl = ('    if (ThoriumHalfNameSeen > 0 || ' + 'ThoriumHalfPathMatched > 0)') }
     @{ Name = 'M12 census gated'; Key = 'sub'; Expect = 'T5'; Find = $latchSet; Repl = ($latchSet + $N + '        if (!FNodeShuffleModule::' + $diagGate + '()) { return; }') }
@@ -145,7 +167,7 @@ $mutants = @(
     @{ Name = 'M15 legacy dress takes the source scale'; Key = 'sub'; Expect = 'T7'; Find = $dressLeg; Repl = ('    else { Legacy->DressRock(Mesh, MatPtrs, ' + 'SourceScale, RelOffset, RockRelQuat.Rotator()); }') }
     @{ Name = 'M16 centring uses the source scale'; Key = 'sub'; Expect = 'T7'; Find = $center; Repl = ('    const FVector ScaledCenter(' + 'SourceScale.X * MeshLocalCenter.X, SourceScale.Y * MeshLocalCenter.Y, 0.0f);') }
     @{ Name = 'M17 counter saved'; Key = 'hdr'; Expect = 'T8'; Find = '    int32 ThoriumHalfApplied = 0;'; Repl = ('    ' + $reflRx + '(SaveGame)' + $N + '    int32 ThoriumHalfApplied = 0;') }
-    @{ Name = 'M18 census field renamed'; Key = 'sub'; Expect = 'T9'; Find = 'noCapture=%d factor=%.3f")'; Repl = ('noCaptured' + '=%d factor=%.3f")') }
+    @{ Name = 'M18 census field renamed'; Key = 'sub'; Expect = 'T9'; Find = 'noCapture=%d factor=%.3f fromAuthoredRow=%d fromCapture=%d quartzFallback=%d")'; Repl = ('noCaptured' + '=%d factor=%.3f")') }
     @{ Name = 'M20 component DressRock scales in place'; Key = 'nc'; Expect = 'T11'; Find = $setScale; Repl = ('        RockMesh->SetRelative' + 'Scale3D(RockMesh->' + $curRel + ') * Scale);') }
     @{ Name = 'M21 legacy DressRock scales in place'; Key = 'rn'; Expect = 'T11'; Find = $setScale; Repl = ('        RockMesh->SetRelative' + 'Scale3D(RockMesh->' + $curRel + ') * Scale);') }
     @{ Name = 'M19 read-back against the source'; Key = 'sub'; Expect = 'T10'; Find = '.Equals(WantScale, 0.01f);'; Repl = ('.Equals(' + 'SourceScale, 0.01f);') }
@@ -160,5 +182,5 @@ foreach ($m in $mutants) {
 }
 $all = @($fails) + @($mutantFails)
 if ($all.Count -gt 0) { foreach ($x in $all) { Write-Host "FAIL: $x" }; Write-Host "THORIUMHALF lint: FAIL -- $($all.Count) problem(s). Mutants caught $caught/$($mutants.Count)."; exit 1 }
-Write-Host "PASS: THORIUMHALF lint -- T1..T11 hold across $($text.Count) loaded files; mutants caught $caught/$($mutants.Count)."
+Write-Host "PASS: THORIUMHALF lint -- T1..T13 hold across $($text.Count) loaded files; mutants caught $caught/$($mutants.Count)."
 exit 0

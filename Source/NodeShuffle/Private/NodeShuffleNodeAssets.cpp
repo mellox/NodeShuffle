@@ -94,6 +94,18 @@ namespace
                 TEXT("/FicsitFarming/World/ResourceNodes/Dirt/Mesh/SM_DirtNode.SM_DirtNode"),
                 {}, DirtOffset, DirtScale });
 
+            // rwg-0-2-0-2 (design Q7c option i): Refined Power thorium. Paths and scale from the stored capture of 2026-11-11 (RWG 0.1.12:
+            // 'CAPTURE: stored visual for Desc_RP_Thorium_C ... mesh .../SM_ThoriumNode.SM_ThoriumNode, 2 mat(s), scale=(2.00,2.00,2.00)');
+            // on RWG 0.2.0 no capture lands (the mesh actor is no longer attached). Offset Z -40 = what the captured dress used (no row ->
+            // the -40 default). SpawnVisualRockForNode applies the thorium x0.5 factor to this row exactly as to a capture. Refined Power
+            // absent or renamed: LoadObject misses, T72RESOLVE logs load-failed-fallback with the path, the dress takes capture then quartz.
+            // A row also stops capture attempts for this resource (CaptureVisualFromOriginal returns at "authored covers it").
+            M.Add("Desc_RP_Thorium_C", {
+                TEXT("/RefinedPower/World/ResourceNodes/Thorium/Mesh/SM_ThoriumNode.SM_ThoriumNode"),
+                { TEXT("/RefinedPower/World/ResourceNodes/Thorium/Materials/Mat_OreElement65_Base.Mat_OreElement65_Base"),
+                  TEXT("/RefinedPower/World/ResourceNodes/Thorium/Materials/M_Thorium_Middle.M_Thorium_Middle") },
+                FVector(0.0f, 0.0f, -40.0f), FVector(2.0f, 2.0f, 2.0f) });
+
             return M;
         }();
         return Map;
