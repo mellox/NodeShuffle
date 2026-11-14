@@ -41,6 +41,12 @@ namespace NodeShuffleScanFilter
         // class that goes away between Ticks is skipped by the hook rather than dereferenced.
         TArray<TWeakObjectPtr<UClass>> GAddOrder;
         FString GLastAddedNames; // the added=[...] set last seen by the hook; a change after the full lines prints addedSetChanged
+        // ns-scanfilter-3: the closest-pick bracket and its per-pick counters (reset by BeginClosestPick).
+        bool GInClosestPick = false;
+        TWeakObjectPtr<UWorld> GPickWorld;
+        int32 GPickAsked = 0;
+        int32 GPickGameYes = 0;
+        int32 GPickChangedYes = 0;
         int32 GCallsTotal = 0;
         int32 GCallsSinceLine = 0;
         double GLastCallLineTime = 0.0;
@@ -269,6 +275,48 @@ namespace NodeShuffleScanFilter
         return bRemovedAny || bAddedAny;
     }
 
+    // ---- ns-scanfilter-3: THE CLOSEST-PICK ANSWER. No config walk, no class resolve, no disk, no config write, no unlock. ----
+    void BeginClosestPick(const AFGResourceScanner* Scanner)
+    {
+        GInClosestPick = true;
+        GPickWorld = IsValid(Scanner) ? Scanner->GetWorld() : nullptr;
+        GPickAsked = 0;
+        GPickGameYes = 0;
+        GPickChangedYes = 0;
+    }
+
+    void EndClosestPick()
+    {
+        GInClosestPick = false;
+        GPickWorld.Reset();
+    }
+
+    bool ShouldAnswerScannable(UClass* ResourceClass, bool bGameAnswer)
+    {
+        if (!GInClosestPick) { return false; } // any other caller keeps the game's own answer, and is not counted
+        ++GPickAsked;
+        if (bGameAnswer) { ++GPickGameYes; return false; } // a true is never touched
+        const UWorld* PickWorld = GPickWorld.Get();
+        if (!ResourceClass || PickWorld == nullptr || !GSnapWorld.IsValid() || GSnapWorld.Get() != PickWorld) { return false; }
+        // The add step's key (R2-A): the class's OWN path must be modded and must have a row that is ON (last row wins).
+        const FClassInfo& PickInfo = ClassInfoFor(ResourceClass);
+        const bool* PickRow = GRowShown.Find(PickInfo.Path);
+        if (!PickInfo.bModded || PickRow == nullptr || !*PickRow) { return false; }
+        ++GPickChangedYes;
+        return true;
+    }
+
+    void EmitPickLine(const AFGResourceScanner* Scanner, int32 ClustersReturned)
+    {
+        const UClass* Res = IsValid(Scanner) ? Scanner->GetResourceDescriptorToScanFor().Get() : nullptr;
+        const UWorld* World = IsValid(Scanner) ? Scanner->GetWorld() : nullptr;
+        const bool bSnap = World != nullptr && GSnapWorld.IsValid() && GSnapWorld.Get() == World;
+        // Arity hand-counted: 6 format specifiers, 6 arguments. Counts are this pick's IsNodeScannable questions only.
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("SCANFILTER-PICK resource=%s scannableQuestions=%d gameAnsweredYes=%d changedToYes=%d clustersReturned=%d snapshotForThisWorld=%d"),
+            Res ? *Res->GetName() : TEXT("<none>"), GPickAsked, GPickGameYes, GPickChangedYes, ClustersReturned, bSnap ? 1 : 0);
+    }
+
     // ---- THE PERIODIC PASS ----
     void Tick(UObject* WorldContext, const TArray<FString>& ManagedModdedPaths, bool bModEnabled)
     {
@@ -448,7 +496,8 @@ namespace NodeShuffleScanFilter
         Rows->Tooltip = FText::FromString(
             TEXT("One row per resource added by another mod. ON: NodeShuffle adds the resource to the list of resources it hands ")
             TEXT("to the resource scanner, including a resource you have not researched. OFF: NodeShuffle takes it out of that list. ")
-            TEXT("Nothing is written to your save: the switches change only the list NodeShuffle hands to the scanner, and no ")
+            TEXT("When you scan for an ON resource, NodeShuffle also lets the scan look for its nodes; it does not promise that ")
+            TEXT("one is found. Nothing is written to your save: the switches change only what NodeShuffle tells the scanner, and no ")
             TEXT("research or scanner unlock is added or removed. An ON resource is added to that list only once the game has ")
             TEXT("loaded it.\n\n")
             TEXT("THIS LIST FILLS ITSELF IN in a world you host while NodeShuffle's 'Enabled' is on: a row is added for each modded resource NodeShuffle ")

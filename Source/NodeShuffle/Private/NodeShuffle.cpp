@@ -13,6 +13,8 @@
 #include "Equipment/FGResourceScanner.h"
 #include "Resources/FGResourceDescriptor.h" // ns-scanfilter-1: complete type for the GetScannableResources hook
 #include "NodeShuffleScanFilter.h"           // ns-scanfilter-1: the hook body
+#include "FGUnlockSubsystem.h"                 // ns-scanfilter-3: IsNodeScannable hook
+#include "Unlocks/FGUnlockScannableResource.h"  // ns-scanfilter-3: FScannableResourcePair (by value)
 #include "Equipment/FGPortableMinerDispenser.h"
 #include "NodeShuffleResourceNode.h"
 #include "NodeShuffleNodeComponent.h"
@@ -622,6 +624,7 @@ void FNodeShuffleModule::StartupModule()
     UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle packet marker (2026-11-14-quietchat-1)=====")); // own line, same reason as the lines above; also listed in NodeShuffleBuildMarkers.h
     UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle packet marker (2026-11-14-scanfilter-1)=====")); // own line, same reason as the lines above; also listed in NodeShuffleBuildMarkers.h
     UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle packet marker (2026-11-14-scanfilter-2)=====")); // own line, same reason as the lines above; also listed in NodeShuffleBuildMarkers.h
+    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle packet marker (2026-11-14-scanfilter-3)=====")); // own line, same reason as the lines above; also listed in NodeShuffleBuildMarkers.h
     FNodeShuffleModule::LogAutoAllowExtractorsState(); // Packet G: log the CVar state once at startup
 
 #if !WITH_EDITOR
@@ -1026,6 +1029,18 @@ void FNodeShuffleModule::StartupModule()
     // the address patch landed is SML's own log, and the SCANFILTER-CALL lines are the proof that the hook runs.
     UE_LOG(LogNodeShuffle, Display, TEXT("SCANFILTER-HOOK target=AFGResourceScanner::GetScannableResources handlerRegistered=%d"),
         ScanFilterHook.IsValid() ? 1 : 0);
+
+    // ns-scanfilter-3 (2026-11-14): the scanner's closest-cluster pick asks this about each cluster and it searches the SAVED
+    // unlock list. The game's answer runs first; ShouldAnswerScannable turns a false into true only inside that pick, with a
+    // snapshot for the pick's world and an ON own-path row. A true is never changed. Nothing is unlocked or saved.
+    const FDelegateHandle PickScannableHook = SUBSCRIBE_UOBJECT_METHOD(AFGUnlockSubsystem, IsNodeScannable,
+        [](auto& Scope, AFGUnlockSubsystem* Self, FScannableResourcePair Pair)
+    {
+        const bool bGameAnswer = Scope(Self, Pair);
+        if (NodeShuffleScanFilter::ShouldAnswerScannable(Pair.ResourceDescriptor.Get(), bGameAnswer)) { Scope.Override(true); }
+    });
+    UE_LOG(LogNodeShuffle, Display, TEXT("SCANFILTER-PICKHOOK target=AFGUnlockSubsystem::IsNodeScannable handlerRegistered=%d"),
+        PickScannableHook.IsValid() ? 1 : 0);
 
     // SCANNER PHANTOM-PING FIX (scanner-6). scanner-5 proved (SCANDIAG) the resource scanner groups EVERY
     // AFGResourceNode by resource class with NO filter on hidden/collision, so our hidden originals

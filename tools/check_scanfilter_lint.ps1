@@ -16,6 +16,9 @@
 #   S10 config: registration right after UnlockModdedKnowledge, editable in a running world (false x4, no true), struct mirror,
 #       required plain-words sentences, the old false knowledge sentence gone, the MCP manifest row
 #   S11 diagnostics: SCANFILTER-CALL full (first 20) + census (5 s), SCANFILTER-ROWS loaded/changed + emptied, SCANFILTER-ROWADD
+#   S14 (ns-scanfilter-3) PICK: the GetClosetClusters hook (NodeShuffleScanDiag.cpp, LOADED) sets the closest-pick flag right before the
+#       original and clears it by ON_SCOPE_EXIT right after; SCANPING is kept; the IsNodeScannable hook runs the game first and only
+#       ever overrides to true; ShouldAnswerScannable needs the flag, a snapshot for the pick world and an ON own-path row
 #   S13 (ns-scanfilter-2) ADD: inside the snapshot branch, after the removal, ON rows the list lacks are appended in row order from
 #       GAddOrder (weak classes resolved by Tick, ON + modded only, the only GAddOrder.Add); no duplicates; existing rows never rewritten
 #   S12 the knowledge pass (UnlockModdedScannerKnowledge + ProvideKAPIMinerInfo) is byte-identical to the parent commit 187df97
@@ -34,6 +37,7 @@ $files = [ordered]@{
     sub   = 'NodeShuffle\Private\NodeShuffleSubsystem.cpp'
     subh  = 'NodeShuffle\Public\NodeShuffleSubsystem.h'
     desc  = 'NodeShuffle\Private\NodeShuffleMcpDescribe.cpp'
+    sdiag = 'NodeShuffle\Private\NodeShuffleScanDiag.cpp'   # ns-scanfilter-3: the GetClosetClusters hook
 }
 $lintFiles = [ordered]@{ lmcp = 'check_mcpcontract_lint.ps1' }
 $text = [ordered]@{}
@@ -63,6 +67,7 @@ function Sha([string]$s) { return [Convert]::ToHexString([System.Security.Crypto
 
 $marker    = '2026-11-14-' + 'scanfilter-1'
 $marker2   = '2026-11-14-' + 'scanfilter-2'
+$marker3   = '2026-11-14-' + 'scanfilter-3'
 $prevMark  = '2026-11-14-' + 'quietchat-1'
 $hookHead  = 'bool FilterScannableResources(const AFGResourceScanner* Scanner, TArray<TSubclassOf<UFGResourceDescriptor>>& InOutList)' + "`n    {"
 $tickHead  = 'void Tick(UObject* WorldContext, const TArray<FString>& ManagedModdedPaths, bool bModEnabled)' + "`n    {"
@@ -96,12 +101,12 @@ $fmts = @('TEXT("SCANFILTER-CALL full call=%d snapshotForThisWorld=%d sizeIn=%d 
           'TEXT("SCANFILTER-ROWADD resource=%s name=''%s'' nameFromItemName=%d mount=%s startsShown=%d source=%s"),')
 $title = 'Show Modded Resources In ' + 'Scanner (Per Resource)'
 $plain = @('ON: NodeShuffle adds the resource to the list of resources it hands ', 'to the resource scanner, including a resource you have not researched. OFF: NodeShuffle takes it out of that list. ',
-           'Nothing is written to your save: the switches change only the list NodeShuffle hands to the scanner, and no ',
+           'one is found. Nothing is written to your save: the switches change only what NodeShuffle tells the scanner, and no ',
            'These switches apply to every world on this install, not to one save.')
 
 function Invoke-Checks($T) {
     $f = @()
-    $hook = Span $T.sf $hookHead '// ---- THE PERIODIC PASS ----'
+    $hook = Span $T.sf $hookHead '// ---- ns-scanfilter-3: THE CLOSEST-PICK ANSWER.'
     $tick = Span $T.sf $tickHead '// ---- THE ROWS ----'
     $reg  = Span $T.sf 'void RegisterConfigRows(UConfigPropertySection* Root,' "`n    }`n}"
     $refresh = Span $T.sub 'void ANodeShuffleSubsystem::RefreshTick()' 'RwgObserveTick();'
@@ -136,12 +141,13 @@ function Invoke-Checks($T) {
     if ((Count $T.subh '    void ScanFilterTick(bool bModEnabled);') -ne 1 -or (Count $T.sf 'if (!E.bActive || !NodeShuffleScanFilter::IsModdedPath(E.AssignedResourceClassPath)) { continue; }') -ne 1) { $f += '(S8) the managed set is active modded layout entries through the same predicate' }
     # S9
     $hdrTags = @([regex]::Matches($T.mark, 'TEXT\("(20\d\d-\d\d-\d\d-[\w-]+)"\),') | ForEach-Object { $_.Groups[1].Value })
-    if ($hdrTags.Count -eq 0 -or $hdrTags[-1] -ne $marker2 -or $hdrTags -notcontains $marker) { $f += '(S9) scanfilter-2 is the newest entry and scanfilter-1 stays listed' }
+    if ($hdrTags.Count -eq 0 -or $hdrTags[-1] -ne $marker3 -or $hdrTags -notcontains $marker -or $hdrTags -notcontains $marker2) { $f += '(S9) scanfilter-3 is the newest entry; scanfilter-1 and -2 stay listed' }
+    if ((Count $T.nsmod ('packet marker (' + $marker3 + ')=====')) -ne 1) { $f += '(S9) scanfilter-3 once on its own line in NodeShuffle.cpp' }
     if ((Count $T.nsmod ('packet marker (' + $marker2 + ')=====')) -ne 1) { $f += '(S9) scanfilter-2 once on its own line in NodeShuffle.cpp' }
     if ($hdrTags -notcontains $prevMark) { $f += '(S9) quietchat-1 stays listed in the markers header' }
     if ((Count $T.nsmod ('packet marker (' + $marker + ')=====')) -ne 1 -or (Count $T.nsmod ('packet marker (' + $prevMark + ')=====')) -ne 1) { $f += '(S9) both markers once on their own lines in NodeShuffle.cpp' }
-    foreach ($k in @('sf', 'sfh')) { if ((Count $T[$k] $marker) -ne 0 -or (Count $T[$k] $marker2) -ne 0) { $f += "(S9) no marker inside the new file ($k)" } }
-    if (-not $T.lmcp.Contains("`$own = '2026-11-14-' + 'scanfilter-2'")) { $f += '(S9) check_mcpcontract C4 must name scanfilter-2 as the newest' }
+    foreach ($k in @('sf', 'sfh')) { if ((Count $T[$k] $marker) -ne 0 -or (Count $T[$k] $marker2) -ne 0 -or (Count $T[$k] $marker3) -ne 0) { $f += "(S9) no marker inside the new file ($k)" } }
+    if (-not $T.lmcp.Contains("`$own = '2026-11-14-' + 'scanfilter-3'")) { $f += '(S9) check_mcpcontract C4 must name scanfilter-3 as the newest' }
     # S10
     $cfgKnow = Span $T.cfgc '    AddBool(TEXT("UnlockModdedKnowledge"), true,' 'AddBool(TEXT("ProtectOtherModsNodes"), true,'
     if ($cfgKnow -eq '' -or (Count $cfgKnow 'NodeShuffleScanFilter::RegisterConfigRows(Root, ArrayClass, SectionClass, StringClass, BoolClass);') -ne 1) { $f += '(S10) the rows are registered right after the knowledge option' }
@@ -175,6 +181,21 @@ function Invoke-Checks($T) {
     $mi = if ($tick -ne '') { $tick.IndexOf('Rows->MarkDirty();') } else { -1 }
     $vw = '->Value' + ' ='
     if ($ai -lt 0 -or $mi -lt $ai -or (Count $tick.Substring(0, $ai) $vw) -ne 0 -or (Count $tick.Substring($mi) $vw) -ne 0 -or (Count $tick $vw) -ne 4) { $f += '(S13) the row pass writes values only into rows it has just created' }
+    # S14
+    $diagHook = Span $T.sdiag 'SUBSCRIBE_UOBJECT_METHOD(AFGResourceScanner, GetClosetClusters,' 'void ANodeShuffleSubsystem::EmitScanPing('
+    if ($diagHook -eq '' -or -not (Ordered $diagHook @('NodeShuffleScanFilter::BeginClosestPick(Self);', 'ON_SCOPE_EXIT { NodeShuffleScanFilter::EndClosestPick(); };', 'Scope(Self, Closest);', '}', 'NodeShuffleScanFilter::EmitPickLine(Self, Closest.Num());', 'if (!FNodeShuffleModule::AreDiagnosticsEnabled() || !IsValid(Self) || !Self->GetWorld()) { return; }', 'It->EmitScanPing(Self, Closest); return; }')) -or (Count $diagHook 'BeginClosestPick(') -ne 1 -or (Count $diagHook 'Scope(Self, Closest);') -ne 1) { $f += '(S14) the pick flag brackets exactly the original call; SCANPING kept' }
+    if ((Count $T.sdiag '#include "Misc/ScopeExit.h"') -ne 1) { $f += '(S14) ON_SCOPE_EXIT include' }
+    $endPick = Span $T.sf 'void EndClosestPick()' 'bool ShouldAnswerScannable('
+    if ($endPick -eq '' -or (Count $endPick 'GInClosestPick = false;') -ne 1) { $f += '(S14) EndClosestPick clears the flag' }
+    $answer = Span $T.sf 'bool ShouldAnswerScannable(UClass* ResourceClass, bool bGameAnswer)' 'void EmitPickLine('
+    if ($answer -eq '' -or -not (Ordered $answer @('if (!GInClosestPick) { return false; }', 'if (bGameAnswer) { ++GPickGameYes; return false; }', 'if (!ResourceClass || PickWorld == nullptr || !GSnapWorld.IsValid() || GSnapWorld.Get() != PickWorld) { return false; }', 'const bool* PickRow = GRowShown.Find(PickInfo.Path);', 'if (!PickInfo.bModded || PickRow == nullptr || !*PickRow) { return false; }', '++GPickChangedYes;', 'return true;')) -or (Count $answer 'return true;') -ne 1) { $f += '(S14) a false becomes true only inside the pick, with a snapshot and an ON own-path row' }
+    foreach ($n in $cfgWrite) { if ($answer -ne '' -and (Count $answer $n) -ne 0) { $f += "(S14) the pick answer must not walk or write config or touch disk ($n)" } }
+    $pickHook = Span $T.nsmod 'SUBSCRIBE_UOBJECT_METHOD(AFGUnlockSubsystem, IsNodeScannable,' 'SCANFILTER-PICKHOOK target='
+    if ($pickHook -eq '' -or -not (Ordered $pickHook @('[](auto& Scope, AFGUnlockSubsystem* Self, FScannableResourcePair Pair)', 'const bool bGameAnswer = Scope(Self, Pair);', 'if (NodeShuffleScanFilter::ShouldAnswerScannable(Pair.ResourceDescriptor.Get(), bGameAnswer)) { Scope.Override(true); }')) -or (Count $pickHook ('Override(' + 'false)')) -ne 0) { $f += '(S14) IsNodeScannable: game first, override only to true' }
+    if ((Count $T.nsmod 'TEXT("SCANFILTER-PICKHOOK target=AFGUnlockSubsystem::IsNodeScannable handlerRegistered=%d"),') -ne 1 -or (Count $T.sf 'TEXT("SCANFILTER-PICK resource=%s scannableQuestions=%d gameAnsweredYes=%d changedToYes=%d clustersReturned=%d snapshotForThisWorld=%d"),') -ne 1) { $f += '(S14) PICK and PICKHOOK lines' }
+    $unlockCall = @(('UnlockScannable' + 'Resource'), ('GetUnlock' + 'Subsystem'), ('(Save' + 'Game'), ('SaveGame' + 'Subsystem')) # the pick hook must name the unlock subsystem and the pair type; these it may not
+    foreach ($n in $unlockCall) { if (($pickHook -ne '' -and (Count $pickHook $n) -ne 0) -or ($diagHook -ne '' -and (Count $diagHook $n) -ne 0)) { $f += "(S7) no unlock or save access in the pick hooks ($n)" } }
+    if ((Count $T.sdiag 'SUBSCRIBE_UOBJECT_METHOD(AFGUnlockSubsystem, GetScannableResources') + (Count $T.nsmod 'SUBSCRIBE_UOBJECT_METHOD(AFGUnlockSubsystem, GetScannableResources') -ne 0) { $f += '(S7) the unlock subsystem getter is not hooked' }
     # S12
     $know = Span $T.sub 'bool ANodeShuffleSubsystem::UnlockModdedScannerKnowledge()' 'bool ANodeShuffleSubsystem::IsEligibleVanillaNode('
     if ($know -eq '' -or (Sha $know) -ne $knowHash) { $f += '(S12) the knowledge pass must stay byte-identical' }
@@ -222,6 +243,16 @@ $mutants = @(
     @{ Name = 'M34 unlock call in the add step';      Key = 'sf';    Expect = 'S7';  Find = '                ++F.AddedByRow;'; Repl = ('                ++F.AddedByRow; // Unlocks->' + 'UnlockScannable' + 'Resource(Pair);') }
     @{ Name = 'M35 existing rows rewritten';          Key = 'sf';    Expect = 'S13'; Find = '            Existing.Add(Path);' + "`n" + '            if (bFirstPassThisWorld)'; Repl = '            Existing.Add(Path); R.Show->Value = true;' + "`n" + '            if (bFirstPassThisWorld)' }
     @{ Name = 'M36 marker not newest (scanfilter-2)'; Key = 'mark';  Expect = 'S9';  Find = ('        TEXT("' + $marker2 + '"),'); Repl = '' }
+    @{ Name = 'M40 pick flag never cleared';          Key = 'sf';    Expect = 'S14'; Find = "        GInClosestPick = false;`n        GPickWorld.Reset();"; Repl = "        GPickWorld.Reset();" }
+    @{ Name = 'M41 flag set outside the original';    Key = 'sdiag'; Expect = 'S14'; Find = "NodeShuffleScanFilter::BeginClosestPick(Self);`n            ON_SCOPE_EXIT { NodeShuffleScanFilter::EndClosestPick(); };`n            Scope(Self, Closest);"; Repl = "ON_SCOPE_EXIT { NodeShuffleScanFilter::EndClosestPick(); };`n            Scope(Self, Closest); NodeShuffleScanFilter::BeginClosestPick(Self);" }
+    @{ Name = 'M42 override without the flag';        Key = 'sf';    Expect = 'S14'; Find = 'if (!GInClosestPick) { return false; }'; Repl = 'if (!GInClosestPick) { }' }
+    @{ Name = 'M43 override without a snapshot';      Key = 'sf';    Expect = 'S14'; Find = 'if (!ResourceClass || PickWorld == nullptr || !GSnapWorld.IsValid() || GSnapWorld.Get() != PickWorld) { return false; }'; Repl = 'if (!ResourceClass) { return false; }' }
+    @{ Name = 'M44 override for an OFF row';          Key = 'sf';    Expect = 'S14'; Find = 'if (!PickInfo.bModded || PickRow == nullptr || !*PickRow) { return false; }'; Repl = 'if (!PickInfo.bModded || PickRow == nullptr) { return false; }' }
+    @{ Name = 'M45 override with no own-path row';    Key = 'sf';    Expect = 'S14'; Find = 'if (!PickInfo.bModded || PickRow == nullptr || !*PickRow) { return false; }'; Repl = 'if (!PickInfo.bModded || (PickRow && !*PickRow)) { return false; }' }
+    @{ Name = 'M46 a true turned to false';           Key = 'nsmod'; Expect = 'S14'; Find = '{ Scope.Override(true); }' + "`n    });`n    UE_LOG(LogNodeShuffle, Display, TEXT(`"SCANFILTER-PICKHOOK"; Repl = ('{ Scope.Override(true); } else if (bGameAnswer) { Scope.Override(' + 'false); }' + "`n    });`n    UE_LOG(LogNodeShuffle, Display, TEXT(`"SCANFILTER-PICKHOOK") }
+    @{ Name = 'M47 unlock call in the pick answer';   Key = 'sf';    Expect = 'S7';  Find = '        ++GPickChangedYes;'; Repl = ('        ++GPickChangedYes; // Unlocks->' + 'UnlockScannable' + 'Resource(Pair);') }
+    @{ Name = 'M48 SCANPING removed';                 Key = 'sdiag'; Expect = 'S14'; Find = 'It->EmitScanPing(Self, Closest); return; }'; Repl = 'return; }' }
+    @{ Name = 'M49 marker not newest (scanfilter-3)'; Key = 'mark';  Expect = 'S9';  Find = ('        TEXT("' + $marker3 + '"),'); Repl = '' }
     @{ Name = 'M26 tick census made unconditional'; Key = 'sf'; Expect = 'S11'; Find = 'CallCensusPeriodSeconds && (FNodeShuffleModule::AreDiagnosticsEnabled() || !SameFigures(GLatest, GLastCensus))) { EmitCallCensus(Now); }'; Repl = 'CallCensusPeriodSeconds) { EmitCallCensus(Now); }' }
     @{ Name = 'M21 census period widened';            Key = 'sfh';   Expect = 'S11'; Find = 'constexpr double CallCensusPeriodSeconds = 5.0;'; Repl = 'constexpr double CallCensusPeriodSeconds = 60.0;' }
 )
@@ -235,6 +266,6 @@ foreach ($m in $mutants) {
     else { Write-Host "FAIL(mutant) $($m.Name) survived (expected $($m.Expect))"; $fails += 'mutant-survived' }
 }
 
-if ($fails.Count -eq 0) { Write-Host "PASS check_scanfilter_lint: S1-S13 hold; $caught/$($mutants.Count) mutants caught"; exit 0 }
+if ($fails.Count -eq 0) { Write-Host "PASS check_scanfilter_lint: S1-S14 hold; $caught/$($mutants.Count) mutants caught"; exit 0 }
 Write-Host "check_scanfilter_lint: $($fails.Count) failure(s); $caught/$($mutants.Count) mutants caught"
 exit 1

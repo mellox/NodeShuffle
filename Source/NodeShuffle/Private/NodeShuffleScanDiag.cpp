@@ -16,6 +16,8 @@
 #include "Resources/FGResourceDeposit.h" // rwg-farspawn-1e C3: deposits are reported apart from the live set
 #include "Buildables/FGBuildableRadarTower.h"
 #include "GameFramework/Pawn.h"
+#include "Misc/ScopeExit.h"            // ns-scanfilter-3: the closest-pick bracket is cleared on every path
+#include "NodeShuffleScanFilter.h"     // ns-scanfilter-3: BeginClosestPick / EndClosestPick / EmitPickLine
 #include "Misc/OutputDevice.h"
 #include <atomic>
 
@@ -52,7 +54,14 @@ void ANodeShuffleSubsystem::InstallScanDiagHooks()
     SUBSCRIBE_UOBJECT_METHOD(AFGResourceScanner, GetClosetClusters,
         [](auto& Scope, AFGResourceScanner* Self, TArray<FNodeClusterData>& Closest)
     {
-        Scope(Self, Closest); // the scanner's own pick first; this hook only reads what it returned
+        // ns-scanfilter-3: the IsNodeScannable answer may change only while the game's own pick runs. The flag is set right
+        // before the original and cleared by ON_SCOPE_EXIT when this inner block ends, i.e. right after it returns.
+        {
+            NodeShuffleScanFilter::BeginClosestPick(Self);
+            ON_SCOPE_EXIT { NodeShuffleScanFilter::EndClosestPick(); };
+            Scope(Self, Closest); // the scanner's own pick first; this hook only reads what it returned
+        }
+        NodeShuffleScanFilter::EmitPickLine(Self, Closest.Num());
         if (!FNodeShuffleModule::AreDiagnosticsEnabled() || !IsValid(Self) || !Self->GetWorld()) { return; }
         for (TActorIterator<ANodeShuffleSubsystem> It(Self->GetWorld()); It; ++It) { It->EmitScanPing(Self, Closest); return; }
     });

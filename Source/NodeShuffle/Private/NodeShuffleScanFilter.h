@@ -54,6 +54,18 @@ namespace NodeShuffleScanFilter
     // The hook body. InOutList holds the original's result on entry. Returns true when it removed or added anything.
     bool FilterScannableResources(const AFGResourceScanner* Scanner, TArray<TSubclassOf<UFGResourceDescriptor>>& InOutList);
 
+    // ns-scanfilter-3 (2026-11-14): the scanner's closest-cluster pick asks the unlock subsystem's IsNodeScannable about each
+    // cluster, and that searches the SAVED unlock list, which hook-added resources are not on. The GetClosetClusters hook
+    // (NodeShuffleScanDiag.cpp) brackets the game's original call with BeginClosestPick / EndClosestPick; the IsNodeScannable
+    // hook (NodeShuffle.cpp) asks ShouldAnswerScannable whether to turn the game's false into true. Game thread only.
+    void BeginClosestPick(const AFGResourceScanner* Scanner);
+    void EndClosestPick();
+    // True only when: inside the pick (flag set), a snapshot exists for the pick's world, the class's OWN path is modded and its
+    // row is ON, and the game said false. Never asked to turn true into false. Counts every question for SCANFILTER-PICK.
+    bool ShouldAnswerScannable(UClass* ResourceClass, bool bGameAnswer);
+    // One SCANFILTER-PICK line per pick, after the original returned.
+    void EmitPickLine(const AFGResourceScanner* Scanner, int32 ClustersReturned);
+
     // The periodic pass (game thread, authority). ManagedModdedPaths = source (a). bModEnabled = the config's master
     // 'Enabled': false withdraws the snapshot, so the hook returns every list untouched while the mod is switched off.
     void Tick(UObject* WorldContext, const TArray<FString>& ManagedModdedPaths, bool bModEnabled);
