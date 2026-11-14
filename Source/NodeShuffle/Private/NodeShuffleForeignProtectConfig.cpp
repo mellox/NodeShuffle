@@ -27,7 +27,7 @@
 
 #include "NodeShuffle.h"
 #include "NodeShuffleConfig.h"
-#include "NodeShuffleScanFilter.h" // ns-scanfilter-4: the switch's starting value and the in-game row name
+#include "NodeShuffleScanFilter.h" // ns-scanfilter-4: the switch's AUTO value and the in-game row name
 
 #include "Configuration/ConfigManager.h"
 #include "Configuration/Properties/ConfigPropertyArray.h"
@@ -842,12 +842,13 @@ void FNodeShuffleModule::SyncForeignResourceRowsToConfig(UObject* WorldContext)
 
         ResourceProp->Value = Pair.Key;
         ProtectedProp->Value = true; // default PROTECTED -- the author's both-mods-work ruling
-        // ns-scanfilter-4: the row's 'Show in scanner' starting value, by the rule every row creator uses. Not a protection
-        // field: the latch and the veto never read it. A field shared with the template is left alone, never written through.
+        // ns-scanfilter-4: the row's 'Show in scanner' value, by the AUTO rule every row creator uses (round 3: AutoShowValue; the
+        // row has no record yet, so the scanner side treats it as AUTO and keeps the box on that rule). Not a protection field: the
+        // latch and the veto never read it. A field shared with the template is left alone, never written through.
         UConfigPropertyBool* ShowProp = NodeShuffleFindShowField(NewElement);
         const TCHAR* ShowBasis = TEXT("<notWritten>");
         const bool bShowWritten = ShowProp != nullptr && ShowProp != TemplateShow;
-        if (bShowWritten) { ShowProp->Value = NodeShuffleScanFilter::StartingShowValue(WorldContext, Pair.Key, &ShowBasis); }
+        if (bShowWritten) { ShowProp->Value = NodeShuffleScanFilter::AutoShowValue(WorldContext, Pair.Key, &ShowBasis, nullptr); }
         // Arity hand-counted: 4 format specifiers, 4 arguments.
         UE_LOG(LogNodeShuffle, Display, TEXT("SCANFILTER-PROTROW resource=%s showFieldWritten=%d showStartsOn=%d startBasis=%s"),
             *Pair.Key, bShowWritten ? 1 : 0, (bShowWritten && ShowProp->Value) ? 1 : 0, ShowBasis);

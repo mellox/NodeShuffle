@@ -1,6 +1,7 @@
 // ns-scanfilter-4 (2026-11-14, user: "Merge anyway"): the scanner switches are ONE field of the protection rows. This file holds the
 // periodic row pass (rows from the managed set and the scanner list, the one-time carry-over, the snapshot the hook reads), the
-// starting-value rule every row creator uses, and the registration of the RETIRED list and the hidden carry-over flag.
+// AUTO-value rule every row creator uses (round 3: AutoShowValue; row states in NodeShuffleScanFilterState.cpp), and the
+// registration of the RETIRED list and the hidden carry-over flag.
 // Shared state: NodeShuffleScanFilterInternal.h. Protection reads only 'Protected' (NodeShuffleForeignProtectConfig.cpp); every row
 // this file creates is written Protected=true, which the latch treats exactly like no row (handoff: item-3 proof).
 #include "NodeShuffleScanFilter.h"
@@ -44,9 +45,9 @@ namespace NodeShuffleScanFilter
         bool GCarryWaitLogged = false;          // the "waiting for the scannable list" line: once per world session
         TMap<FString, int32> GDeferPasses;      // per sighted path: passes the scanner side has left it to the protection pass
         constexpr int32 MaxDeferPasses = 24;    // TODO(2026-11-14, ns-scanfilter-4 review F3): 2 min at 5 s, unmeasured; bounds the wait where ApplyLayout never runs (Unknown map, RWG before its pipeline latches)
-        // The starting-value context, captured by Tick for one world: managed modded paths and the unlock subsystem's scannable list.
+        // The AUTO-value context, captured by Tick for one world: the unlock subsystem's scannable list (round 3: the managed set is
+        // no longer part of it).
         TWeakObjectPtr<UWorld> GStartWorld;
-        TSet<FString> GStartManaged;
         TSet<FString> GStartGameList;
         bool GStartGameListRead = false;
 
@@ -119,11 +120,9 @@ namespace NodeShuffleScanFilter
             FNodeShuffleModule::StampResourceRowLabel(R.Section, Path);
             return true;
         }
-        void CaptureStartContext(UWorld* World, const TArray<FString>& ManagedModdedPaths)
+        void CaptureStartContext(UWorld* World)
         {
             GStartWorld = World;
-            GStartManaged.Reset();
-            for (const FString& P : ManagedModdedPaths) { if (IsModdedPath(P)) { GStartManaged.Add(P); } }
             GStartGameList.Reset();
             GStartGameListRead = false;
             const AFGGameState* GS = World->GetGameState<AFGGameState>();
@@ -148,12 +147,11 @@ namespace NodeShuffleScanFilter
             GCarryWaitLogged = false;
             GDeferPasses.Reset();
             GStartWorld.Reset();
-            GStartManaged.Reset();
             GStartGameList.Reset();
             GStartGameListRead = false;
         }
         // ---- THE ONE-TIME CARRY-OVER. Runs while the hidden flag is false; sets it true in the same pass, so it never runs again. ----
-        bool RunCarryOverOnce(UWorld* World, UConfigPropertySection* Root, UConfigPropertyArray* Rows, const FRowProps& Tpl, bool bTplReadable,
+        bool RunCarryOverOnce(UConfigPropertySection* Root, UConfigPropertyArray* Rows, const FRowProps& Tpl, bool bTplReadable,
             int32& InOutWithdrawn, int32& InOutRefused)
         {
             UConfigPropertyBool* Flag = Cast<UConfigPropertyBool>(FindChild(Root, MergedFlagKey));
@@ -164,7 +162,7 @@ namespace NodeShuffleScanFilter
                 {
                     // Arity hand-counted: 3 format specifiers, 3 arguments.
                     UE_LOG(LogNodeShuffle, Display,
-                        TEXT("SCANFILTER-CARRY none flagReachable=%d flagAlreadySet=%d retiredRowsPresent=%d: no switch value copied or given a starting value by the carry-over this world"),
+                        TEXT("SCANFILTER-CARRY none flagReachable=%d flagAlreadySet=%d retiredRowsPresent=%d: no switch value copied by the carry-over this world"),
                         Flag ? 1 : 0, (Flag && Flag->Value) ? 1 : 0, Retired ? Retired->Values.Num() : -1);
                     GCarryLogged = true;
                 }
@@ -199,51 +197,35 @@ namespace NodeShuffleScanFilter
                 }
                 else if (Rows->Values.Num() >= MaxRows) { ++InOutRefused; }
                 else if (AppendRow(Rows, Tpl, bTplReadable, Path, OldShow->Value, InOutWithdrawn)) { ByPath.Add(Path).Add(Rows->Values.Num() - 1); ++Created; }
+                NoteCarriedRow(Path, OldShow->Value); // round 3: a carried-over row is PLAYER-SET with its old value
             }
-            int32 Started = 0, StartedOn = 0;
-            for (UConfigProperty* Element : Rows->Values) // every row the retired list did not name gets the starting value, once
-            {
-                FRowProps M;
-                if (!ReadRow(Element, M)) { continue; }
-                const FString Path = M.Resource->Value.TrimStartAndEnd();
-                if (Path.IsEmpty() || Carried.Contains(Path)) { continue; }
-                M.Show->Value = StartingShowValue(World, Path, nullptr);
-                ++Started;
-                if (M.Show->Value) { ++StartedOn; }
-            }
+            int32 LeftAuto = 0; // round 3: every row the retired list did not name is AUTO; its box is not written here
+            for (const TPair<FString, TArray<int32>>& Pair : ByPath) { if (!Carried.Contains(Pair.Key)) { LeftAuto += Pair.Value.Num(); } }
             const int32 Emptied = Retired ? Retired->Values.Num() : 0;
             if (Retired) { Retired->Values.Empty(); }
             Flag->Value = true;
-            // Arity hand-counted: 10 format specifiers, 10 arguments.
+            // Arity hand-counted: 9 format specifiers, 9 arguments. Round 3 replaced the starting-value counts with otherRowsLeftAuto.
             UE_LOG(LogNodeShuffle, Display,
-                TEXT("SCANFILTER-CARRY done retiredRowsRead=%d retiredRowsUnreadable=%d valuesCopied=%d rowsCreated=%d rowsNotCreatedOverCap=%d rowsWithdrawn=%d otherRowsGivenStartingValue=%d ofThemOn=%d retiredRowsEmptied=%d gameListRead=%d"),
-                Read, Unreadable, Copied, Created, InOutRefused - RefusedBefore, InOutWithdrawn - WithdrawnBefore, Started, StartedOn, Emptied,
+                TEXT("SCANFILTER-CARRY done retiredRowsRead=%d retiredRowsUnreadable=%d valuesCopied=%d rowsCreated=%d rowsNotCreatedOverCap=%d rowsWithdrawn=%d otherRowsLeftAuto=%d retiredRowsEmptied=%d gameListRead=%d"),
+                Read, Unreadable, Copied, Created, InOutRefused - RefusedBefore, InOutWithdrawn - WithdrawnBefore, LeftAuto, Emptied,
                 GStartGameListRead ? 1 : 0);
             GCarryLogged = true;
             return true;
         }
     }
-    bool StartingShowValue(const UObject* WorldContext, const FString& Path, const TCHAR** OutBasis)
+    bool AutoShowValue(const UObject* WorldContext, const FString& Path, const TCHAR** OutBasis, bool* bOutKnown)
     {
         const UWorld* World = WorldContext ? WorldContext->GetWorld() : nullptr;
-        const TCHAR* Basis = TEXT("neitherShuffledNorListed");
+        const TCHAR* Basis = TEXT("notInGameScannableList");
         bool bOn = false;
-        if (!IsModdedPath(Path)) { Basis = TEXT("baseGame"); }
-        else if (!DefaultShownForPath(Path)) { Basis = TEXT("allMinable"); }
-        else if (World == nullptr || !GStartWorld.IsValid() || GStartWorld.Get() != World) { Basis = TEXT("noContextForThisWorld"); }
-        else if (GStartManaged.Contains(Path)) { bOn = true; Basis = TEXT("shuffled"); }
+        bool bKnown = true;
+        if (IsModdedPath(Path) && !DefaultShownForPath(Path)) { Basis = TEXT("allMinable"); }
+        else if (World == nullptr || !GStartWorld.IsValid() || GStartWorld.Get() != World) { bKnown = false; Basis = TEXT("noContextForThisWorld"); }
+        else if (!GStartGameListRead) { bKnown = false; Basis = TEXT("gameListUnread"); }
         else if (GStartGameList.Contains(Path)) { bOn = true; Basis = TEXT("gameScannableList"); }
-        else if (GSeenNoRow.Contains(Path)) { bOn = true; Basis = TEXT("seenInScannerList"); }
-        else if (!GStartGameListRead) { Basis = TEXT("neitherShuffledNorListedListUnread"); }
         if (OutBasis) { *OutBasis = Basis; }
+        if (bOutKnown) { *bOutKnown = bKnown; }
         return bOn;
-    }
-    bool InGameNameIfLoaded(const FString& Path, FString& OutName)
-    {
-        UClass* Cls = Path.IsEmpty() ? nullptr : FSoftClassPath(Path).ResolveClass();
-        if (!Cls || !Cls->IsChildOf(UFGResourceDescriptor::StaticClass())) { return false; }
-        OutName = UFGItemDescriptor::GetItemName(TSubclassOf<UFGItemDescriptor>(Cls)).ToString();
-        return !OutName.IsEmpty();
     }
     // ---- THE PERIODIC PASS ----
     void Tick(UObject* WorldContext, const TArray<FString>& ManagedModdedPaths, bool bModEnabled)
@@ -280,18 +262,18 @@ namespace NodeShuffleScanFilter
             return;
         }
 
-        // An in-world Reset empties the array (DefaultValues is empty). Measured here as a count drop to zero; the add loop
-        // below re-creates the rows it knows about with their starting values.
+        // A count drop to zero (the list's Reset is refused since review F2; deleting every row still gets here). The add loop
+        // below re-creates the rows it knows about; a re-created row has no record, so it is AUTO.
         if (GLastRowCount > 0 && Rows->Values.Num() == 0)
         {
             UE_LOG(LogNodeShuffle, Warning,
-                TEXT("SCANFILTER-ROWS emptied: the list held %d row(s) at the previous pass and holds 0 now; rows are re-created below with their starting values from the managed set and the classes seen in the scanner list"),
+                TEXT("SCANFILTER-ROWS emptied: the list held %d row(s) at the previous pass and holds 0 now; rows are re-created below for the managed set and the classes seen in the scanner list"),
                 GLastRowCount);
         }
 
-        CaptureStartContext(World, ManagedModdedPaths);
-        // The carry-over gives every legacy row a permanent starting value, so it waits until the scannable list was read. Until
-        // it has run, no snapshot is published: rows it has not reached would read the template's OFF and the hook would act on it.
+        CaptureStartContext(World);
+        // The carry-over waits until the scannable list was read, and until it has run no snapshot is published (the first pass
+        // after it decides what a missing record file means, below).
         UConfigPropertyBool* CarryFlag = Cast<UConfigPropertyBool>(FindChild(Root, MergedFlagKey));
         if (CarryFlag && !CarryFlag->Value && !GStartGameListRead)
         {
@@ -306,7 +288,8 @@ namespace NodeShuffleScanFilter
         FRowProps Tpl;
         const bool bTplReadable = ReadRow(Rows->DefaultValue.Get(), Tpl);
         int32 RefusedOverCap = 0; int32 Withdrawn = 0;
-        const bool bCarried = RunCarryOverOnce(World, Root, Rows, Tpl, bTplReadable, Withdrawn, RefusedOverCap);
+        EnsureRowStateRecordLoaded(); // round 3: before the carry-over, so the carried rows' records are not overwritten by the file
+        const bool bCarried = RunCarryOverOnce(Root, Rows, Tpl, bTplReadable, Withdrawn, RefusedOverCap);
 
         // Existing rows (by path), and a first-pass label stamp (the in-game name may be known by now).
         const bool bFirstPassThisWorld = !GRowsLogged;
@@ -321,6 +304,8 @@ namespace NodeShuffleScanFilter
             Existing.Add(Path);
             if (bFirstPassThisWorld) { FNodeShuffleModule::StampResourceRowLabel(R.Section, Path); }
         }
+        // Round 3: a missing or unreadable record file is decided here, once, on the rows that exist BEFORE this pass's adds.
+        ResolveMissingRecordOnce(Existing, bCarried);
 
         // Source (a) first, then (b). Both through the same modded predicate the hook uses.
         TSet<FString> Managed;
@@ -347,7 +332,7 @@ namespace NodeShuffleScanFilter
             }
             if (Rows->Values.Num() >= MaxRows) { ++RefusedOverCap; continue; }
             const TCHAR* Basis = nullptr;
-            const bool bDefaultShown = StartingShowValue(World, Path, &Basis);
+            const bool bDefaultShown = AutoShowValue(World, Path, &Basis, nullptr);
             if (!AppendRow(Rows, Tpl, bTplReadable, Path, bDefaultShown, Withdrawn)) { continue; }
             FString Name;
             const bool bFromItemName = InGameNameIfLoaded(Path, Name);
@@ -363,14 +348,25 @@ namespace NodeShuffleScanFilter
                 (bA && bB) ? TEXT("managed+scannerList") : (bA ? TEXT("managed") : TEXT("scannerList")), Basis ? Basis : TEXT("<none>"));
         }
         if (Added > 0) { FNodeShuffleModule::SortResourceRows(Rows, TEXT("scanner-add")); } // T68 sort-last, after every append above
-        if (Added > 0 || bCarried)
+        // Round 3: every row's box, by path, for touch detection, the mirror and the record (NodeShuffleScanFilterState.cpp).
+        TArray<FShowRow> Shows;
+        for (UConfigProperty* Element : Rows->Values)
+        {
+            FRowProps R;
+            if (!ReadRow(Element, R)) { continue; }
+            FShowRow S; S.Path = R.Resource->Value.TrimStartAndEnd(); S.Show = R.Show;
+            if (!S.Path.IsEmpty()) { Shows.Add(MoveTemp(S)); }
+        }
+        const FRowStateCounts States = UpdateRowStates(World, Shows);
+        if (Added > 0 || bCarried || States.Mirrored > 0)
         {
             // The T60 three-call sequence (NodeShuffleForeignProtectConfig.cpp): live property -> save handler, cached
-            // structs re-initialised, file written now. Runs only on a pass that added a row or ran the carry-over.
+            // structs re-initialised, file written now. Runs only on a pass that added a row, ran the carry-over or mirrored a box.
             Rows->MarkDirty();
             Manager->MarkConfigurationDirty(FConfigId{"NodeShuffle", ""});
             Manager->FlushPendingSaves();
         }
+        FlushRowStateRecordIfDirty(); // after the config file, so the record never runs ahead of the boxes it describes
         if ((RefusedOverCap > 0 || Withdrawn > 0) && (RefusedOverCap != GLastRefused || Withdrawn != GLastWithdrawn))
         {
             UE_LOG(LogNodeShuffle, Warning,
@@ -381,6 +377,7 @@ namespace NodeShuffleScanFilter
 
         // Rebuild the snapshot from the LIVE tree: this is what delivers a switch flipped in the settings screen.
         GRowShown.Reset();
+        GAutoRow.Reset();
         GAddOrder.Reset();
         int32 OnNotFound = 0; int32 OnFoundNotAddable = 0; FString OnNotFoundNames; // ON rows: path found no class (ResolveClass never loads) / found a class that is not a concrete UFGResourceDescriptor child
         int32 Shown = 0; int32 Hidden = 0;
@@ -394,8 +391,9 @@ namespace NodeShuffleScanFilter
             const FString Path = R.Resource->Value.TrimStartAndEnd();
             if (!IsModdedPath(Path)) { continue; }
             const bool bShow = R.Show->Value;
-            GRowShown.Add(Path, bShow);
-            if (bShow)
+            const bool bPlayerSet = IsRowPlayerSet(Path); // round 3: only a PLAYER-SET row adds, removes or answers the pick
+            if (bPlayerSet) { GRowShown.Add(Path, bShow); } else { GAutoRow.Add(Path); }
+            if (bShow && bPlayerSet)
             {
                 UClass* RowCls = FSoftClassPath(Path).ResolveClass();
                 if (RowCls && RowCls->IsChildOf(UFGResourceDescriptor::StaticClass()) && !RowCls->HasAnyClassFlags(CLASS_Abstract | CLASS_Deprecated | CLASS_NewerVersionExists)) { GAddOrder.Add(RowCls); }
@@ -405,7 +403,7 @@ namespace NodeShuffleScanFilter
             FMountCount& M = PerMount.FindOrAdd(MountLabel(Path));
             ++M.Total;
             if (bShow) { ++Shown; ++M.Shown; } else { ++Hidden; ++M.Hidden; }
-            Signature = HashCombine(Signature, HashCombine(GetTypeHash(Path), bShow ? 1u : 2u));
+            Signature = HashCombine(Signature, HashCombine(GetTypeHash(Path), bPlayerSet ? (bShow ? 1u : 2u) : (bShow ? 3u : 4u)));
         }
         Signature = HashCombine(Signature, HashCombine(static_cast<uint32>(OnNotFound), static_cast<uint32>(OnFoundNotAddable)));
         GSnapWorld = World;
@@ -418,11 +416,13 @@ namespace NodeShuffleScanFilter
             {
                 PerMountText += FString::Printf(TEXT(" %s(total %d shown %d hidden %d)"), *M.Key, M.Value.Total, M.Value.Shown, M.Value.Hidden);
             }
-            // Arity hand-counted: 13 format specifiers, 13 arguments. ns-scanfilter-4 appended deferredToProtectionSync.
+            // Arity hand-counted: 18 format specifiers, 18 arguments. ns-scanfilter-4 appended deferredToProtectionSync; round 3
+            // appended the row-state counts (every non-blank row, base-game included) and counts GAutoRow in rowsInSnapshot.
             UE_LOG(LogNodeShuffle, Display,
-                TEXT("SCANFILTER-ROWS %s rowsTotal=%d rowsInSnapshot=%d shown=%d hidden=%d malformed=%d blankPath=%d addedThisPass=%d perMount:%s onRowsClassNotFound=%d onRowsFoundNotAddable=%d classNotFound=[%s] deferredToProtectionSync=%d"),
-                GRowsLogged ? TEXT("changed") : TEXT("loaded"), Rows->Values.Num(), GRowShown.Num(), Shown, Hidden, Malformed, Blank,
-                Added, *PerMountText, OnNotFound, OnFoundNotAddable, *OnNotFoundNames, Deferred);
+                TEXT("SCANFILTER-ROWS %s rowsTotal=%d rowsInSnapshot=%d shown=%d hidden=%d malformed=%d blankPath=%d addedThisPass=%d perMount:%s onRowsClassNotFound=%d onRowsFoundNotAddable=%d classNotFound=[%s] deferredToProtectionSync=%d autoRows=%d playerSetRows=%d becamePlayerSetThisPass=%d mirroredThisPass=%d mirrorValueUnknown=%d"),
+                GRowsLogged ? TEXT("changed") : TEXT("loaded"), Rows->Values.Num(), GRowShown.Num() + GAutoRow.Num(), Shown, Hidden, Malformed, Blank,
+                Added, *PerMountText, OnNotFound, OnFoundNotAddable, *OnNotFoundNames, Deferred, States.AutoRows, States.PlayerSetRows,
+                States.BecamePlayerSet, States.Mirrored, States.MirrorUnknown);
             GRowsLogged = true;
             GLastRowsSignature = Signature;
         }
@@ -432,11 +432,11 @@ namespace NodeShuffleScanFilter
     void AddShowFieldToRowTemplate(UConfigPropertySection* RowTemplate, UClass* BoolClass)
     {
         UConfigPropertyBool* Show = NewObject<UConfigPropertyBool>(RowTemplate, BoolClass, TEXT("ShowInScanner"));
-        Show->Value = false;        // a row read from a file without this key keeps false until the carry-over gives it a value
+        Show->Value = false;        // a row read from a file without this key reads false; an AUTO row's box is then set by the mirror
         Show->DefaultValue = false;
         Show->DisplayName = FText::FromString(TEXT("Show in scanner"));
         // Every factual assertion is graded in the ns-scanfilter-4 handoff.
-        Show->Tooltip = FText::FromString(TEXT("Takes effect in a running game: reopen the scanner. ON: NodeShuffle adds this resource to the list it hands the resource scanner, even if you have not researched it, once the game has loaded the resource. OFF: NodeShuffle takes it out of that list. Has no effect on a base-game resource. Nothing is written to your save."));
+        Show->Tooltip = FText::FromString(TEXT("Takes effect in a running game: reopen the scanner. Until you change this box, NodeShuffle leaves this resource's scanner entry to the game and only keeps the box matching the game's own list of scannable resources; a resource from All Minable is kept out of that list and its box OFF. Once you change the box, it stays as you set it. ON: NodeShuffle adds this resource to the list it hands the resource scanner, even if you have not researched it, once the game has loaded the resource. OFF: NodeShuffle takes it out of that list. Has no effect on a base-game resource. Nothing is written to your save."));
         Show->bRequiresWorldReload = false; // the one field of the row that is editable in a running world
         RowTemplate->SectionProperties.Add(TEXT("ShowInScanner"), Show);
     }

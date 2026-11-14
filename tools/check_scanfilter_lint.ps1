@@ -27,6 +27,10 @@
 #   S13 (ns-scanfilter-2) ADD: inside the snapshot branch, after the removal, ON rows the list lacks are appended in row order from
 #       GAddOrder (weak classes resolved by Tick, ON + modded only, the only GAddOrder.Add); no duplicates; existing rows never rewritten
 #   S12 the knowledge pass (UnlockModdedScannerKnowledge + ProvideKAPIMinerInfo) is byte-identical to the parent commit 187df97
+#   S16 (ns-scanfilter-4 round 3, "One box, follows game"; LOADS NodeShuffleScanFilterState.cpp) only a PLAYER-SET row adds, removes or
+#       answers the pick; an AUTO row is kept by the hook unless All Minable; touch detection runs before the mirror; the mirror writes
+#       only an AUTO row's box, only to AutoShowValue, only when known, never Protected; carried rows and (after a lost record file)
+#       existing rows are PLAYER-SET; a deleted row's record goes; the record is written by Tick after the config save, never by a hook
 # Forbidden needles are built by concatenation. Mutants run in-file. Exit 0 = all hold and every mutant is caught; 1 = failure; 2 = missing file.
 
 $ErrorActionPreference = 'Stop'
@@ -48,6 +52,7 @@ $files = [ordered]@{
     prot  = 'NodeShuffle\Private\NodeShuffleForeignProtectConfig.cpp' # ns-scanfilter-4: the protection rows' writer and latch
     nsh   = 'NodeShuffle\Public\NodeShuffle.h'                       # ns-scanfilter-4: the three entry points
     veto  = 'NodeShuffleVetoKBFL\Private\NodeShuffleDestroyerVetoRequirement.cpp' # ns-scanfilter-4: the consumption conjunct
+    sfs   = 'NodeShuffle\Private\NodeShuffleScanFilterState.cpp'     # ns-scanfilter-4 round 3: AUTO / PLAYER-SET row states, the record file
 }
 $lintFiles = [ordered]@{ lmcp = 'check_mcpcontract_lint.ps1' }
 $text = [ordered]@{}
@@ -91,10 +96,15 @@ $rowFind   = 'if (const bool* RowShown = GRowShown.Find(Info.Path))'
 $defRule   = 'return !ClassPath.StartsWith(AllMinableMountRoot);'
 $amConst   = 'const TCHAR* const AllMinableMountRoot = TEXT("/AllMinable/"); // user decision 2026-11-14'
 $noRowSeen = 'GSeenNoRow.Add(Info.Path); // source (b): the periodic pass gives it a row'
-$noRowRule = 'bShown = DefaultShownForPath(Info.Path); // the hook''s no-row rule; a new row''s value is StartingShowValue (ns-scanfilter-4)'
+$noRowRule = 'bShown = DefaultShownForPath(Info.Path); // the hook''s no-row rule; an AUTO row gets the same rule'
+$autoRule  = 'bShown = DefaultShownForPath(Info.Path); // AUTO row (round 3): the game''s entry stays, except All Minable'
+$autoFind  = 'else if (GAutoRow.Contains(Info.Path))'
+$snapMode  = 'if (bPlayerSet) { GRowShown.Add(Path, bShow); } else { GAutoRow.Add(Path); }'
+$touchMirror = "        C.BecamePlayerSet = DetectTouches(Shows);`n        C.Mirrored = MirrorAutoRows(WorldContext, Shows, C.MirrorUnknown);"
+$stateIo   = @(('FlushRowState' + 'RecordIfDirty'), ('SaveStringTo' + 'File'), ('UpdateRow' + 'States'), ('NoteCarried' + 'Row'), ('ResolveMissing' + 'RecordOnce'))
 $keepShown = 'if (bShown) { Kept.Add(Entry); continue; }'
 $commitOut = 'if (bRemovedAny || bAddedAny) { InOutList = MoveTemp(Kept); }'
-$newRowDef = 'const bool bDefaultShown = StartingShowValue(World, Path, &Basis);'
+$newRowDef = 'const bool bDefaultShown = AutoShowValue(World, Path, &Basis, nullptr);'
 $newRowSet = 'if (!AppendRow(Rows, Tpl, bTplReadable, Path, bDefaultShown, Withdrawn)) { continue; }'
 $wantA     = 'for (const FString& P : Managed) { Wanted.Add(P); }'
 $wantB     = 'for (const FString& P : GSeenNoRow) { if (IsModdedPath(P) && !Managed.Contains(P)) { Wanted.Add(P); } }'
@@ -107,10 +117,19 @@ $oldKnow   = 'Shuffled modded resources are registered with the resource ' + 'sc
 $fmts = @('TEXT("SCANFILTER-CALL full call=%d snapshotForThisWorld=%d sizeIn=%d sizeOut=%d hiddenByRow=%d hiddenByNoRowDefault=%d moddedSeen=%d vanillaSeen=%d rowsInSnapshot=%d removed=[%s] addedByRow=%d added=[%s]"),',
           'TEXT("SCANFILTER-CALL addedSetChanged call=%d addedByRow=%d added=[%s]"),',
           'TEXT("SCANFILTER-CALL census callsSinceLastLine=%d callsTotal=%d ',
-          'TEXT("SCANFILTER-ROWS %s rowsTotal=%d rowsInSnapshot=%d shown=%d hidden=%d malformed=%d blankPath=%d addedThisPass=%d perMount:%s onRowsClassNotFound=%d onRowsFoundNotAddable=%d classNotFound=[%s] deferredToProtectionSync=%d"),',
+          'TEXT("SCANFILTER-ROWS %s rowsTotal=%d rowsInSnapshot=%d shown=%d hidden=%d malformed=%d blankPath=%d addedThisPass=%d perMount:%s onRowsClassNotFound=%d onRowsFoundNotAddable=%d classNotFound=[%s] deferredToProtectionSync=%d autoRows=%d playerSetRows=%d becamePlayerSetThisPass=%d mirroredThisPass=%d mirrorValueUnknown=%d"),',
+          'TEXT("SCANFILTER-STATE playerSet resource=%s value=%d recordedBefore=%d: ',
+          'TEXT("SCANFILTER-STATE mirrored resource=%s old=%d new=%d basis=%s"),',
+          'TEXT("SCANFILTER-STATE fileMissing path=%s"),',
+          'TEXT("SCANFILTER-STATE fileUnreadable path=%s linesRead=%d: ',
+          'TEXT("SCANFILTER-STATE fileRead path=%s records=%d playerSet=%d malformedLines=%d"),',
+          'TEXT("SCANFILTER-STATE noRecordFile carriedThisPass=%d rowsBefore=%d rowsMadePlayerSet=%d rowsLeftAuto=%d"),',
+          'TEXT("SCANFILTER-STATE recordDropped resource=%s wasPlayerSet=%d: ',
+          'TEXT("SCANFILTER-STATE fileWritten path=%s records=%d playerSet=%d"),',
+          'TEXT("SCANFILTER-STATE fileWriteFailed path=%s"),',
           'TEXT("SCANFILTER-ROWS emptied: the list held %d row(s)',
           'TEXT("SCANFILTER-ROWADD resource=%s name=''%s'' nameFromItemName=%d mount=%s startsShown=%d source=%s startBasis=%s"),',
-          'TEXT("SCANFILTER-CARRY done retiredRowsRead=%d retiredRowsUnreadable=%d valuesCopied=%d rowsCreated=%d rowsNotCreatedOverCap=%d rowsWithdrawn=%d otherRowsGivenStartingValue=%d ofThemOn=%d retiredRowsEmptied=%d gameListRead=%d"),',
+          'TEXT("SCANFILTER-CARRY done retiredRowsRead=%d retiredRowsUnreadable=%d valuesCopied=%d rowsCreated=%d rowsNotCreatedOverCap=%d rowsWithdrawn=%d otherRowsLeftAuto=%d retiredRowsEmptied=%d gameListRead=%d"),',
           'TEXT("SCANFILTER-CARRY none flagReachable=%d flagAlreadySet=%d retiredRowsPresent=%d: ')
 $title = 'Show Modded Resources In ' + 'Scanner (Per Resource)' # retired title: must appear nowhere
 $mtitle = "Protect Other Mods' Nodes (Per Resource)" # the one list
@@ -118,17 +137,27 @@ $latchHash = '8AA17E58455F6A8C0BE67C9DFE3945560270DA8922096E6C7AE6C33FA555B207' 
 $consHash  = '71D42A42455D4EFD28B685B5822D76FDB792492D7B6149DF2873B4D74862CCB9' # IsForeignResourceProtectedByConfig, same
 $plain = @('resource to the list of resources it hands to the resource scanner, including a resource you ', 'have not researched. OFF: NodeShuffle takes it out of that list. When you scan for an ON ',
            'found. Nothing is written to your save: the switches change only what NodeShuffle tells the ',
-           'In multiplayer only the host''s game applies it. These switches apply to every world on ') # ns-scanfilter-4: the merged list's tooltip
+           'In multiplayer only the host''s game applies it. These switches apply to every world on ', # ns-scanfilter-4: the merged list's tooltip
+           'SHOW IN SCANNER takes effect in a running game: reopen the scanner. UNTIL YOU CHANGE A ROW''S ',
+           'BOX, NodeShuffle leaves that resource''s scanner entry to the game and only keeps the box ',
+           'are kept out of that list. ONCE YOU CHANGE A BOX, it stays as you set it. ON: NodeShuffle adds the ',
+           'ticked and following the game''s scanner list again, the next time NodeShuffle sees that ') # round 3: the two row states
 
 function Invoke-Checks($T) {
     $f = @()
     $hook = Span $T.sf $hookHead '// ---- ns-scanfilter-3: THE CLOSEST-PICK ANSWER.'
     $tick = Span $T.sfr $tickHead '// ---- THE FIELD AND THE RETIRED ROWS ----'
     $reg  = Span $T.sfr 'void RegisterConfigRows(UConfigPropertySection* Root,' '// Source (a): distinct modded'
-    $sfAll = $T.sf + $T.sfr
+    $sfAll = $T.sf + $T.sfr + $T.sfs
     $append = Span $T.sfr 'bool AppendRow(' 'void CaptureStartContext('
-    $carry = Span $T.sfr 'bool RunCarryOverOnce(' 'bool StartingShowValue(const UObject* WorldContext'
-    $start = Span $T.sfr 'bool StartingShowValue(const UObject* WorldContext' 'bool InGameNameIfLoaded('
+    $carry = Span $T.sfr 'bool RunCarryOverOnce(' 'bool AutoShowValue(const UObject* WorldContext'
+    $start = Span $T.sfr 'bool AutoShowValue(const UObject* WorldContext' '// ---- THE PERIODIC PASS ----'
+    $touch = Span $T.sfs 'int32 DetectTouches(' 'int32 MirrorAutoRows('
+    $mirror = Span $T.sfs 'int32 MirrorAutoRows(' 'void EnsureRowStateRecordLoaded()'
+    $load = Span $T.sfs 'void EnsureRowStateRecordLoaded()' 'void NoteCarriedRow('
+    $noted = Span $T.sfs 'void NoteCarriedRow(' 'void ResolveMissingRecordOnce('
+    $resolve = Span $T.sfs 'void ResolveMissingRecordOnce(' 'FRowStateCounts UpdateRowStates('
+    $update = Span $T.sfs 'FRowStateCounts UpdateRowStates(' 'bool InGameNameIfLoaded('
     $refresh = Span $T.sub 'void ANodeShuffleSubsystem::RefreshTick()' 'RwgObserveTick();'
     $nsHook = Span $T.nsmod $subscribe 'SCANFILTER-HOOK target='
     # S1
@@ -152,7 +181,7 @@ function Invoke-Checks($T) {
     foreach ($n in $cfgWrite) { if ($hook -ne '' -and (Count $hook $n) -ne 0) { $f += "(S6) the hook body must not walk or write config or touch disk ($n)" } }
     if ($hook -ne '' -and ([regex]::Matches($hook, 'UE_LOG\(')).Count -ne 0) { $f += '(S6) the hook logs only through EmitCallLine / EmitCallCensus' }
     # S7
-    foreach ($k in @('sf', 'sfh', 'sfi')) { foreach ($n in $unlockTok) { if ((Count $T[$k] $n) -ne 0) { $f += "(S7) no unlock or save access in the new files ($k $n)" } } }
+    foreach ($k in @('sf', 'sfh', 'sfi', 'sfs')) { foreach ($n in $unlockTok) { if ((Count $T[$k] $n) -ne 0) { $f += "(S7) no unlock or save access in the new files ($k $n)" } } }
     foreach ($n in @(('UnlockScannable' + 'Resource'), ('(Save' + 'Game'), ('SaveGame' + 'Subsystem'))) { if ((Count $T.sfr $n) -ne 0) { $f += "(S7) no unlock or save access in the rows file ($n)" } }
     if ((Count $T.sfr ('GetUnlock' + 'Subsystem()')) -ne 1 -or (Count $T.sfr 'Unlocks->') -ne 2 -or (Count $T.sfr 'Unlocks->GetScannableResources()') -ne 1 -or (Count $T.sfr 'Unlocks->GetScannableResourcePairs()') -ne 1) { $f += '(S7) the rows file only READS the scannable list, at one site' }
     foreach ($n in $unlockTok) { if ($nsHook -ne '' -and (Count $nsHook $n) -ne 0) { $f += "(S7) no unlock or save access in the hook ($n)" } }
@@ -169,7 +198,7 @@ function Invoke-Checks($T) {
     if ((Count $T.nsmod ('packet marker (' + $marker2 + ')=====')) -ne 1) { $f += '(S9) scanfilter-2 once on its own line in NodeShuffle.cpp' }
     if ($hdrTags -notcontains $prevMark) { $f += '(S9) quietchat-1 stays listed in the markers header' }
     if ((Count $T.nsmod ('packet marker (' + $marker + ')=====')) -ne 1 -or (Count $T.nsmod ('packet marker (' + $prevMark + ')=====')) -ne 1) { $f += '(S9) both markers once on their own lines in NodeShuffle.cpp' }
-    foreach ($k in @('sf', 'sfh', 'sfr', 'sfi')) { if ((Count $T[$k] $marker) -ne 0 -or (Count $T[$k] $marker2) -ne 0 -or (Count $T[$k] $marker3) -ne 0 -or (Count $T[$k] $marker4) -ne 0) { $f += "(S9) no marker inside the new file ($k)" } }
+    foreach ($k in @('sf', 'sfh', 'sfr', 'sfi', 'sfs')) { if ((Count $T[$k] $marker) -ne 0 -or (Count $T[$k] $marker2) -ne 0 -or (Count $T[$k] $marker3) -ne 0 -or (Count $T[$k] $marker4) -ne 0) { $f += "(S9) no marker inside the new file ($k)" } }
     if (-not $T.lmcp.Contains("`$own = '2026-11-14-' + 'scanfilter-4'")) { $f += '(S9) check_mcpcontract C4 must name scanfilter-4 as the newest' }
     # S10
     $cfgKnow = Span $T.cfgc '    AddBool(TEXT("UnlockModdedKnowledge"), true,' 'AddBool(TEXT("ProtectOtherModsNodes"), true,'
@@ -181,6 +210,7 @@ function Invoke-Checks($T) {
     if ((Count $T.desc '{ TEXT("ScannerResourceVisibility"), TEXT("tick"), false, TEXT("none"),') -ne 1 -or (Count $T.desc '{ TEXT("ScannerSwitchesMerged"), TEXT("tick"), false, TEXT("none"),') -ne 1 -or (Count $T.desc 'Array of rows {Protected, ShowInScanner, Resource}; the live, touchesSave and saveEffect columns describe Protected.') -ne 1) { $f += '(S10) MCP manifest rows' }
     if ((Count $T.cfgc ('Rows->DisplayName = FText::FromString(TEXT("' + $mtitle + '"));')) -ne 1 -or (Count $T.cfgc ("use 'Show in scanner' in '" + $mtitle + "'.")) -ne 1 -or (Count ($sfAll + $T.cfgc) $title) -ne 0) { $f += '(S10) the knowledge tooltip quotes the list title exactly' }
     foreach ($o in @(('and so does a ' + 'deleted row'), ('not while it ' + 'is paused'), ('Reset empties ' + 'the list'), ('on a dedicated ' + 'server none is'))) { if ((Count ($sfAll + $T.cfgc) $o) -ne 0) { $f += "(S10) unmeasured tooltip clause is gone ($o)" } }
+    foreach ($o in @(('A new row starts ON for a ' + 'modded resource'), ('with its starting ' + 'scanner value'), ('Starting' + 'ShowValue'))) { if ((Count ($sfAll + $T.cfgc + $T.prot + $T.desc) $o) -ne 0) { $f += "(S10) the retired starting-value rule is gone ($o)" } }
     $oldRes = 'A resource you have not ' + 'researched will not appear'; if ((Count ($sfAll + $T.cfgc) $oldRes) -ne 0) { $f += '(S10) the false research sentence is gone' }
     # S11
     if ($tick -eq '' -or (Count $tick 'Now - GLastCallLineTime >= CallCensusPeriodSeconds && (FNodeShuffleModule::AreDiagnosticsEnabled() || !SameFigures(GLatest, GLastCensus))) { EmitCallCensus(Now); }') -ne 1) { $f += '(S11) the tick-side census is gated like the hook-side one' }
@@ -200,9 +230,9 @@ function Invoke-Checks($T) {
     $addLoop = 'for (const TWeakObjectPtr<UClass>& Weak : GAddOrder)'
     if ($hook -eq '' -or -not (Ordered $hook @('if (F.bSnapshot)', 'Present.Add(Cls);', $vanKeep, $keepShown, 'Present.Remove(Cls);', $addLoop, 'UClass* AddCls = Weak.Get();', 'if (!AddCls || Present.Contains(AddCls)) { continue; }', 'Present.Add(AddCls);', 'Kept.Add(TSubclassOf<UFGResourceDescriptor>(AddCls));', '++F.AddedByRow;', $commitOut))) { $f += '(S13) the add step appends absent ON-row classes inside the snapshot branch, after the removal, without duplicates' }
     if ((Count $sfAll 'GAddOrder.Add(') -ne 1 -or (Count $T.sf 'TArray<TWeakObjectPtr<UClass>> GAddOrder;') -ne 1 -or (Count $sfAll 'GAddOrder.Reset();') -ne 2) { $f += '(S13) GAddOrder is weak, filled only by Tick, cleared per pass and per world' }
-    if ($tick -eq '' -or -not (Ordered $tick @('GAddOrder.Reset();', 'if (!IsModdedPath(Path)) { continue; }', 'const bool bShow = R.Show->Value;', 'if (bShow)', 'UClass* RowCls = FSoftClassPath(Path).ResolveClass();', '&& !RowCls->HasAnyClassFlags(CLASS_Abstract | CLASS_Deprecated | CLASS_NewerVersionExists)) { GAddOrder.Add(RowCls); }', 'else if (RowCls) { ++OnFoundNotAddable; }'))) { $f += '(S13) only ON, modded, resolved descriptor rows enter GAddOrder' }
+    if ($tick -eq '' -or -not (Ordered $tick @('GAddOrder.Reset();', 'if (!IsModdedPath(Path)) { continue; }', 'const bool bShow = R.Show->Value;', 'if (bShow && bPlayerSet)', 'UClass* RowCls = FSoftClassPath(Path).ResolveClass();', '&& !RowCls->HasAnyClassFlags(CLASS_Abstract | CLASS_Deprecated | CLASS_NewerVersionExists)) { GAddOrder.Add(RowCls); }', 'else if (RowCls) { ++OnFoundNotAddable; }'))) { $f += '(S13) only ON, modded, resolved descriptor rows enter GAddOrder' }
     $vw = '->Value' + ' ='
-    if ($tick -eq '' -or $append -eq '' -or $carry -eq '' -or (Count $tick $vw) -ne 0 -or (Count $append $vw) -ne 3 -or (Count $carry $vw) -ne 3 -or (Count $T.sfr.Substring(0, [Math]::Max(0, $T.sfr.IndexOf('// ---- THE FIELD AND THE RETIRED ROWS ----'))) $vw) -ne 6 -or (Count $T.sfr 'Rows->AddNewElement()') -ne 1) { $f += '(S13) the row pass writes values only into rows it has just created (and once, in the carry-over)' }
+    if ($tick -eq '' -or $append -eq '' -or $carry -eq '' -or (Count $tick $vw) -ne 0 -or (Count $append $vw) -ne 3 -or (Count $carry $vw) -ne 2 -or (Count $T.sfr.Substring(0, [Math]::Max(0, $T.sfr.IndexOf('// ---- THE FIELD AND THE RETIRED ROWS ----'))) $vw) -ne 5 -or (Count $T.sfr 'Rows->AddNewElement()') -ne 1) { $f += '(S13) the row pass writes values only into rows it has just created (and once, in the carry-over); round 3: its only other write is the mirror (S16)' }
     # S15 (ns-scanfilter-4) ONE LIST
     $latch = Span $T.prot 'void FNodeShuffleModule::LatchForeignResourceOptOutsFromConfig(UObject* WorldContext)' '// ---- T67 ITEM C'
     $cons  = Span $T.prot 'bool FNodeShuffleModule::IsForeignResourceProtectedByConfig(' 'void FNodeShuffleModule::GetSeenForeignResources('
@@ -214,14 +244,28 @@ function Invoke-Checks($T) {
     if ($t60 -eq '' -or (Count $t60 'Rows->bRequiresWorldReload = false;') -ne 1 -or (Count $t60 'RowTemplate->bRequiresWorldReload = false;') -ne 1 -or (Count $t60 'ProtectedProp->bRequiresWorldReload = true; // F10') -ne 1 -or (Count $t60 'ResourceProp->bRequiresWorldReload = true; // F10') -ne 1 -or -not (Ordered $t60 @('RowTemplate->SectionProperties.Add(TEXT("Protected"), ProtectedProp);', 'NodeShuffleScanFilter::AddShowFieldToRowTemplate(RowTemplate, BoolClass);', 'RowTemplate->SectionProperties.Add(TEXT("Resource"), ResourceProp);'))) { $f += '(S15) Protected and Resource locked in a running world, the array and row not, Show between them' }
     $showF = Span $T.sfr 'void AddShowFieldToRowTemplate(' 'void RegisterConfigRows('
     if ($showF -eq '' -or (Count $showF 'Show->bRequiresWorldReload = false;') -ne 1 -or (Count $showF 'bRequiresWorldReload = true') -ne 0) { $f += '(S15) Show in scanner is editable in a running world' }
-    if ($carry -eq '' -or -not (Ordered $carry @('if (!Flag || Flag->Value)', 'return false;', 'ByPath.Find(Path)', 'AppendRow(', 'StartingShowValue(World, Path, nullptr);', 'Retired->Values.Empty();', 'Flag->Value = true;', 'return true;')) -or (Count $carry 'Flag->Value = true;') -ne 1) { $f += '(S15) the carry-over runs only while the flag is false, copies onto existing rows first, empties the retired list and sets the flag' }
+    if ($carry -eq '' -or -not (Ordered $carry @('if (!Flag || Flag->Value)', 'return false;', 'ByPath.Find(Path)', 'AppendRow(', 'NoteCarriedRow(Path, OldShow->Value);', 'Retired->Values.Empty();', 'Flag->Value = true;', 'return true;')) -or (Count $carry 'Flag->Value = true;') -ne 1) { $f += '(S15) the carry-over runs only while the flag is false, copies onto existing rows first, empties the retired list and sets the flag' }
     if ($reg -eq '' -or (Count $reg 'Retired->bHidden = true;') -ne 1 -or (Count $reg 'Flag->bHidden = true;') -ne 1 -or (Count $reg 'Flag->bAllowUserReset = false;') -ne 1 -or (Count $reg 'Root->SectionProperties.Add(MergedFlagKey, Flag);') -ne 1) { $f += '(S15) the retired list and the flag are hidden; the flag cannot be reset' }
     if ($tick -eq '' -or -not (Ordered $tick @('const bool bCarried = RunCarryOverOnce(', 'if (Existing.Contains(Path)) { continue; }', 'if (FNodeShuffleModule::IsForeignRowPendingFromProtectionSync(Path))', 'if (++DeferPasses <= MaxDeferPasses) { ++Deferred; continue; }', 'if (Rows->Values.Num() >= MaxRows)', $newRowSet))) { $f += '(S15) no duplicate row; a sighted resource is left to the protection pass' }
-    if ($start -eq '' -or -not (Ordered $start @('bool bOn = false;', 'if (!IsModdedPath(Path)) { Basis = TEXT("baseGame"); }', 'else if (!DefaultShownForPath(Path)) { Basis = TEXT("allMinable"); }', 'GStartWorld.Get() != World) { Basis = TEXT("noContextForThisWorld"); }', 'GStartManaged.Contains(Path)) { bOn = true;', 'GStartGameList.Contains(Path)) { bOn = true;', 'GSeenNoRow.Contains(Path)) { bOn = true;', 'return bOn;')) -or (Count $start 'bOn = true') -ne 3) { $f += '(S15) the starting value: ON only for a modded, non-All-Minable resource that is shuffled or listed' }
-    if ((Count $T.prot 'const bool bShowWritten = ShowProp != nullptr && ShowProp != TemplateShow;') -ne 1 -or (Count $T.prot 'if (bShowWritten) { ShowProp->Value = NodeShuffleScanFilter::StartingShowValue(WorldContext, Pair.Key, &ShowBasis); }') -ne 1 -or (Count $T.prot 'if (ExistingByPath.Contains(Pair.Key)) { continue; }') -ne 1) { $f += '(S15) the protection pass gives a new row the same starting value and never writes through the template' }
+    if ($start -eq '' -or -not (Ordered $start @('bool bOn = false;', 'bool bKnown = true;', 'if (IsModdedPath(Path) && !DefaultShownForPath(Path)) { Basis = TEXT("allMinable"); }', 'GStartWorld.Get() != World) { bKnown = false; Basis = TEXT("noContextForThisWorld"); }', 'else if (!GStartGameListRead) { bKnown = false; Basis = TEXT("gameListUnread"); }', 'else if (GStartGameList.Contains(Path)) { bOn = true; Basis = TEXT("gameScannableList"); }', 'return bOn;')) -or (Count $start 'bOn = true') -ne 1) { $f += '(S15) the AUTO value: OFF for All Minable, else ON exactly when the read scannable list contains the path; unknown while unread' }
+    if ((Count $T.prot 'const bool bShowWritten = ShowProp != nullptr && ShowProp != TemplateShow;') -ne 1 -or (Count $T.prot 'if (bShowWritten) { ShowProp->Value = NodeShuffleScanFilter::AutoShowValue(WorldContext, Pair.Key, &ShowBasis, nullptr); }') -ne 1 -or (Count $T.prot 'if (ExistingByPath.Contains(Pair.Key)) { continue; }') -ne 1) { $f += '(S15) the protection pass gives a new row the same starting value and never writes through the template' }
     if ((Count $T.nsh 'static bool IsForeignRowPendingFromProtectionSync(const FString& ResourceClassPath);') -ne 1 -or (Count $T.prot 'return GNodeShuffleLastSyncedRevision != GNodeShuffleSeenForeignRevision && GNodeShuffleSeenForeignResources.Contains(ResourceClassPath);') -ne 1) { $f += '(S15) the scanner side defers only while a protection pass is pending for a sighted resource' }
-    if ($tick -eq '' -or -not (Ordered $tick @('CaptureStartContext(World, ManagedModdedPaths);', 'if (CarryFlag && !CarryFlag->Value && !GStartGameListRead)', 'GSnapWorld.Reset();', 'return;', 'const bool bCarried = RunCarryOverOnce('))) { $f += '(S15) the carry-over and the snapshot wait for the scannable list' }
+    if ($tick -eq '' -or -not (Ordered $tick @('CaptureStartContext(World);', 'if (CarryFlag && !CarryFlag->Value && !GStartGameListRead)', 'GSnapWorld.Reset();', 'return;', 'const bool bCarried = RunCarryOverOnce('))) { $f += '(S15) the carry-over and the snapshot wait for the scannable list' }
     if ($tick -eq '' -or -not (Ordered $tick @('if (!AppendRow(Rows, Tpl, bTplReadable, Path, bDefaultShown, Withdrawn)) { continue; }', '++Added;', 'if (Added > 0) { FNodeShuffleModule::SortResourceRows(Rows, TEXT("scanner-add")); }', 'Rows->MarkDirty();'))) { $f += '(S15) the scanner side sorts after every append, before the save' }
+    # S16 (round 3) AUTO / PLAYER-SET
+    if ($tick -eq '' -or -not (Ordered $tick @('const bool bShow = R.Show->Value;', 'const bool bPlayerSet = IsRowPlayerSet(Path);', $snapMode, 'if (bShow && bPlayerSet)', 'GAddOrder.Add(RowCls)')) -or (Count $sfAll 'GRowShown.Add(') -ne 1 -or (Count $sfAll 'GAutoRow.Add(') -ne 1) { $f += '(S16) only a PLAYER-SET row enters GRowShown and GAddOrder; an AUTO row enters GAutoRow only' }
+    if ($hook -eq '' -or -not (Ordered $hook @($rowFind, $autoFind, $autoRule, 'else', $noRowSeen, $noRowRule)) -or (Count $hook $autoRule) -ne 1 -or (Count $hook 'GSeenNoRow.Add(') -ne 1 -or (Count $hook 'GAutoRow') -ne 1) { $f += '(S16) the hook keeps an AUTO row''s entry unless All Minable, and adds nothing for it' }
+    $answer16 = Span $T.sf 'bool ShouldAnswerScannable(UClass* ResourceClass, bool bGameAnswer)' 'void EmitPickLine('
+    if ($answer16 -eq '' -or (Count $answer16 'GAutoRow') -ne 0) { $f += '(S16) the pick answer never reads the AUTO set' }
+    if ($touch -eq '' -or -not (Ordered $touch @('if (!Rec || Rec->bPlayerSet) { continue; }', 'if (Row.Show->Value == Rec->bLastValue) { continue; }', 'Rec->bPlayerSet = true;')) -or (Count $T.sfs $touchMirror) -ne 1) { $f += '(S16) touch detection runs before the mirror and makes a changed box PLAYER-SET' }
+    if ($mirror -eq '' -or -not (Ordered $mirror @('if (Rec && Rec->bPlayerSet) { continue; }', 'const bool bMirror = AutoShowValue(WorldContext, Row.Path, &Basis, &bKnown);', 'if (!bKnown) { ++OutUnknown; continue; }', 'if (Row.Show->Value == bMirror) { continue; }', 'Row.Show->Value = bMirror;')) -or (Count $T.sfs ('->Value' + ' = ')) -ne 1 -or (Count $mirror 'Row.Show->Value = bMirror;') -ne 1 -or (Count $T.sfs ('Protected' + '->')) -ne 0) { $f += '(S16) the mirror writes only an AUTO row''s box, only to the known AUTO value, and nothing else in the state file writes a value' }
+    if ($noted -eq '' -or (Count $noted 'Rec.bPlayerSet = true;') -ne 1) { $f += '(S16) a carried-over row is recorded PLAYER-SET' }
+    if ($resolve -eq '' -or -not (Ordered $resolve @('if (GMissingResolved || !GRecordsLoaded) { return; }', 'GRecordsDirty = true;', 'if (bCarriedThisPass) { ++LeftAuto; continue; }', 'NewRec.bPlayerSet = true;')) -or $load -eq '' -or (Count $load 'GMissingResolved = true;') -ne 1 -or -not (Ordered $load @('Lines[0].TrimStartAndEnd() != RecordHeader', 'return;', 'GMissingResolved = true;'))) { $f += '(S16) a missing or unreadable record makes every existing row PLAYER-SET (except on the carry-over pass) and a fresh file is written' }
+    if ($tick -eq '' -or -not (Ordered $tick @('EnsureRowStateRecordLoaded();', 'const bool bCarried = RunCarryOverOnce(', 'ResolveMissingRecordOnce(Existing, bCarried);', 'if (Existing.Contains(Path)) { continue; }', 'const FRowStateCounts States = UpdateRowStates(World, Shows);', 'if (Added > 0 || bCarried || States.Mirrored > 0)', 'Manager->FlushPendingSaves();', 'FlushRowStateRecordIfDirty();', 'GRowShown.Reset();'))) { $f += '(S16) Tick order: load, carry-over, missing-file decision before the adds, states, config save (also for a mirror write), record write, snapshot' }
+    if ($update -eq '' -or -not (Ordered $update @('if (Present.Contains(It.Key())) { continue; }', 'It.RemoveCurrent();')) -or (Count $T.sfs 'TEXT("NodeShuffle_ScannerRows.txt")') -ne 1) { $f += '(S16) a record whose path has no row is dropped; the record file name' }
+    foreach ($n in $stateIo) { foreach ($s in @($hook, $answer16, $nsHook)) { if ($s -ne '' -and (Count $s $n) -ne 0) { $f += "(S16) no record-file call from a hook ($n)" } }; if ((Count ($T.sf + $T.sdiag + $T.nsmod) $n) -ne 0) { $f += "(S16) no record-file call in the hook files ($n)" } }
+    if ((Count $T.sfr ('FlushRowState' + 'RecordIfDirty();')) -ne 1) { $f += '(S16) the record is written from Tick only' }
+    if ((Count $T.sfr 'Once you change the box, it stays as you set it.') -ne 1) { $f += '(S10) row switch text: the two states' }
     # S14
     $diagHook = Span $T.sdiag 'SUBSCRIBE_UOBJECT_METHOD(AFGResourceScanner, GetClosetClusters,' 'void ANodeShuffleSubsystem::EmitScanPing('
     if ($diagHook -eq '' -or -not (Ordered $diagHook @('NodeShuffleScanFilter::BeginClosestPick(Self);', 'ON_SCOPE_EXIT { NodeShuffleScanFilter::EndClosestPick(); };', 'Scope(Self, Closest);', '}', 'NodeShuffleScanFilter::EmitPickLine(Self, Closest.Num());', 'if (!FNodeShuffleModule::AreDiagnosticsEnabled() || !IsValid(Self) || !Self->GetWorld()) { return; }', 'It->EmitScanPing(Self, Closest); return; }')) -or (Count $diagHook 'BeginClosestPick(') -ne 1 -or (Count $diagHook 'Scope(Self, Closest);') -ne 1) { $f += '(S14) the pick flag brackets exactly the original call; SCANPING kept' }
@@ -275,7 +319,7 @@ $mutants = @(
     @{ Name = 'M39 add allowed with no own-path row'; Key = 'sf'; Expect = 'S13'; Find = 'if (!AddInfo.bModded || AddRow == nullptr || !*AddRow) { continue; }'; Repl = 'if (!AddInfo.bModded || (AddRow && !*AddRow)) { continue; }' }
     @{ Name = 'M38 added set never named late'; Key = 'sf'; Expect = 'S11'; Find = 'if (F.bSnapshot && AddedNames != GLastAddedNames)'; Repl = 'if (false && AddedNames != GLastAddedNames)' }
     @{ Name = 'M27 add path removed';                 Key = 'sf';    Expect = 'S13'; Find = 'Kept.Add(TSubclassOf<UFGResourceDescriptor>(AddCls));'; Repl = '' }
-    @{ Name = 'M28 OFF rows added';                   Key = 'sfr';    Expect = 'S13'; Find = "            if (bShow)`n            {`n                UClass* RowCls"; Repl = "            if (true)`n            {`n                UClass* RowCls" }
+    @{ Name = 'M28 OFF rows added';                   Key = 'sfr';    Expect = 'S13'; Find = "            if (bShow && bPlayerSet)`n            {`n                UClass* RowCls"; Repl = "            if (true)`n            {`n                UClass* RowCls" }
     @{ Name = 'M29 no-row resource added';            Key = 'sf';    Expect = 'S13'; Find = 'GSeenNoRow.Add(Info.Path); // source (b)'; Repl = 'GSeenNoRow.Add(Info.Path); GAddOrder.Add(Cls); // source (b)' }
     @{ Name = 'M30 duplicates possible';              Key = 'sf';    Expect = 'S13'; Find = 'if (!AddCls || Present.Contains(AddCls)) { continue; }'; Repl = 'if (!AddCls) { continue; }' }
     @{ Name = 'M31 add with no snapshot';             Key = 'sf';    Expect = 'S13'; Find = "        if (F.bSnapshot)`n        {"; Repl = "        if (true)`n        {" }
@@ -305,8 +349,25 @@ $mutants = @(
     @{ Name = 'M57 retired list not emptied';          Key = 'sfr';   Expect = 'S15'; Find = '            if (Retired) { Retired->Values.Empty(); }'; Repl = '' }
     @{ Name = 'M58 duplicate row from the row pass';   Key = 'sfr';   Expect = 'S15'; Find = '            if (Existing.Contains(Path)) { continue; }'; Repl = '' }
     @{ Name = 'M59 duplicate row from the carry-over'; Key = 'sfr';   Expect = 'S15'; Find = 'if (TArray<int32>* Indices = ByPath.Find(Path))'; Repl = 'if (TArray<int32>* Indices = nullptr)' }
-    @{ Name = 'M60 All Minable row starts ON';         Key = 'sfr';   Expect = 'S15'; Find = '        else if (!DefaultShownForPath(Path)) { Basis = TEXT("allMinable"); }'; Repl = '' }
-    @{ Name = 'M61 unlisted unshuffled row starts ON'; Key = 'sfr';   Expect = 'S15'; Find = '        bool bOn = false;'; Repl = '        bool bOn = true;' }
+    @{ Name = 'M60 All Minable AUTO box kept ON';       Key = 'sfr';   Expect = 'S15'; Find = '        if (IsModdedPath(Path) && !DefaultShownForPath(Path)) { Basis = TEXT("allMinable"); }' + "`n" + '        else if'; Repl = '        if' }
+    @{ Name = 'M61 unlisted AUTO box kept ON';         Key = 'sfr';   Expect = 'S15'; Find = '        bool bOn = false;'; Repl = '        bool bOn = true;' }
+    @{ Name = 'M74 AUTO row added by the hook';        Key = 'sfr';   Expect = 'S16'; Find = 'if (bShow && bPlayerSet)'; Repl = 'if (bShow)' }
+    @{ Name = 'M75 AUTO non-All-Minable row removed';  Key = 'sf';    Expect = 'S16'; Find = $autoRule; Repl = 'bShown = false;' }
+    @{ Name = 'M76 AUTO All Minable row not removed';  Key = 'sf';    Expect = 'S16'; Find = $autoRule; Repl = 'bShown = true;' }
+    @{ Name = 'M77 pick override for an AUTO row';     Key = 'sf';    Expect = 'S16'; Find = 'if (!PickInfo.bModded || PickRow == nullptr || !*PickRow) { return false; }'; Repl = 'if (!PickInfo.bModded || ((PickRow == nullptr || !*PickRow) && !GAutoRow.Contains(PickInfo.Path))) { return false; }' }
+    @{ Name = 'M78 AUTO rows in the player map';       Key = 'sfr';   Expect = 'S16'; Find = $snapMode; Repl = 'GRowShown.Add(Path, bShow); if (!bPlayerSet) { GAutoRow.Add(Path); }' }
+    @{ Name = 'M79 mirror writes a PLAYER-SET row';    Key = 'sfs';   Expect = 'S16'; Find = 'if (Rec && Rec->bPlayerSet) { continue; } // a PLAYER-SET row is never written'; Repl = '' }
+    @{ Name = 'M80 mirror writes Protected';           Key = 'sfs';   Expect = 'S16'; Find = '                Row.Show->Value = bMirror;'; Repl = ('                Row.Show->Value = bMirror; Row.' + 'Protected->Value = bMirror;') }
+    @{ Name = 'M81 touch detection skipped';           Key = 'sfs';   Expect = 'S16'; Find = "                Rec->bPlayerSet = true;`n"; Repl = '' }
+    @{ Name = 'M82 mirror before touch detection';     Key = 'sfs';   Expect = 'S16'; Find = $touchMirror; Repl = "        C.Mirrored = MirrorAutoRows(WorldContext, Shows, C.MirrorUnknown);`n        C.BecamePlayerSet = DetectTouches(Shows);" }
+    @{ Name = 'M83 carried-over rows left AUTO';       Key = 'sfr';   Expect = 'S15'; Find = '                NoteCarriedRow(Path, OldShow->Value);'; Repl = '' }
+    @{ Name = 'M84 carried-over record not player-set'; Key = 'sfs';  Expect = 'S16'; Find = '        Rec.bPlayerSet = true;'; Repl = '' }
+    @{ Name = 'M85 missing file treated as all-AUTO';  Key = 'sfs';   Expect = 'S16'; Find = '            NewRec.bPlayerSet = true;'; Repl = '' }
+    @{ Name = 'M86 missing file decided after the adds'; Key = 'sfr'; Expect = 'S16'; Find = "        ResolveMissingRecordOnce(Existing, bCarried);`n"; Repl = '' }
+    @{ Name = 'M87 record written from a hook';        Key = 'sf';    Expect = 'S16'; Find = "        GLatest = F;`n"; Repl = ("        GLatest = F; " + 'FlushRowState' + "RecordIfDirty();`n") }
+    @{ Name = 'M88 deleted row''s record kept';        Key = 'sfs';   Expect = 'S16'; Find = "            It.RemoveCurrent();`n"; Repl = '' }
+    @{ Name = 'M89 mirror write never saved';          Key = 'sfr';   Expect = 'S16'; Find = 'if (Added > 0 || bCarried || States.Mirrored > 0)'; Repl = 'if (Added > 0 || bCarried)' }
+    @{ Name = 'M90 mirror while the list is unread';   Key = 'sfs';   Expect = 'S16'; Find = 'if (!bKnown) { ++OutUnknown; continue; }'; Repl = '' }
     @{ Name = 'M62 retired list shown';                Key = 'sfr';   Expect = 'S15'; Find = '        Retired->bHidden = true;'; Repl = '' }
     @{ Name = 'M63 carry-over flag resettable';        Key = 'sfr';   Expect = 'S15'; Find = '        Flag->bAllowUserReset = false;'; Repl = '' }
     @{ Name = 'M64 scanner side pre-empts a sighted row'; Key = 'sfr'; Expect = 'S15'; Find = '                if (++DeferPasses <= MaxDeferPasses) { ++Deferred; continue; }'; Repl = '' }
@@ -331,6 +392,6 @@ foreach ($m in $mutants) {
     else { Write-Host "FAIL(mutant) $($m.Name) survived (expected $($m.Expect))"; $fails += 'mutant-survived' }
 }
 
-if ($fails.Count -eq 0) { Write-Host "PASS check_scanfilter_lint: S1-S15 hold; $caught/$($mutants.Count) mutants caught"; exit 0 }
+if ($fails.Count -eq 0) { Write-Host "PASS check_scanfilter_lint: S1-S16 hold; $caught/$($mutants.Count) mutants caught"; exit 0 }
 Write-Host "check_scanfilter_lint: $($fails.Count) failure(s); $caught/$($mutants.Count) mutants caught"
 exit 1

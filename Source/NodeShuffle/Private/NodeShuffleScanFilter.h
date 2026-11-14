@@ -48,8 +48,8 @@ namespace NodeShuffleScanFilter
     // Modded = filterable. Predicate: the path is non-empty, does NOT start with BaseGameContentRoot, and does NOT start
     // with BaseGameScriptRoot. Everything else (vanilla, base-game native, empty) is never hidden and never gets a row.
     bool IsModdedPath(const FString& ClassPath);
-    // The hook's rule for a modded resource with no row (ns-scanfilter-4: a NEW row's value is StartingShowValue, below): hidden under
-    // AllMinableMountRoot, shown otherwise.
+    // The hook's rule for a modded resource with no row, and (round 3) for an AUTO row: hidden under AllMinableMountRoot, kept
+    // otherwise. A NEW row's box value is AutoShowValue, below.
     bool DefaultShownForPath(const FString& ClassPath);
 
     // The hook body. InOutList holds the original's result on entry. Returns true when it removed or added anything.
@@ -79,11 +79,11 @@ namespace NodeShuffleScanFilter
     // ---- ns-scanfilter-4 (2026-11-14, user: "Merge anyway"): ONE list. The 'Show in scanner' switch is a field of the
     // ProtectedForeignResources rows (NodeShuffleConfig.cpp adds it to that row template through this function).
     void AddShowFieldToRowTemplate(UConfigPropertySection* RowTemplate, UClass* BoolClass);
-    // The starting value of a NEW row's switch, the same whichever side creates the row: ON only when the path is modded, not
-    // under AllMinableMountRoot, and (NodeShuffle shuffles it in this world, OR it is on the unlock subsystem's scannable list
-    // as last read by Tick, OR the hook saw it in the scanner's list). False when Tick has not read this world yet.
-    // OutBasis names the branch that decided (a literal, for the log).
-    bool StartingShowValue(const UObject* WorldContext, const FString& Path, const TCHAR** OutBasis);
+    // ns-scanfilter-4 round 3 (user decision "One box, follows game"): the value an AUTO row's box is kept at, and the value a NEW
+    // row starts with, whichever side creates it. OFF for a modded path under AllMinableMountRoot; otherwise ON exactly when the
+    // unlock subsystem's scannable list (both views, as last read by Tick for this world) contains the path. *bOutKnown is false
+    // (and the result OFF) when Tick has no read list for this world; the mirror then writes nothing. OutBasis names the branch.
+    bool AutoShowValue(const UObject* WorldContext, const FString& Path, const TCHAR** OutBasis, bool* bOutKnown);
     // The in-game item name when the class is already in memory (ResolveClass never loads) and is a resource descriptor.
     bool InGameNameIfLoaded(const FString& Path, FString& OutName);
 }

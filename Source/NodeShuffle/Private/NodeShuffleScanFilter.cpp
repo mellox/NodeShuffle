@@ -21,6 +21,7 @@ namespace NodeShuffleScanFilter
     // ---- shared state (declared in NodeShuffleScanFilterInternal.h). Game thread only (the hook is reached from the scanner's Blueprint on the game thread). ----
     TWeakObjectPtr<UWorld> GSnapWorld;
     TMap<FString, bool> GRowShown;
+    TSet<FString> GAutoRow;
     TSet<FString> GSeenNoRow;
     TArray<TWeakObjectPtr<UClass>> GAddOrder;
     int32 GCallsTotal = 0;
@@ -59,7 +60,7 @@ namespace NodeShuffleScanFilter
             // Arity hand-counted: 12 format specifiers, 12 arguments. ns-scanfilter-2 appended addedByRow and added (new names).
             UE_LOG(LogNodeShuffle, Display,
                 TEXT("SCANFILTER-CALL full call=%d snapshotForThisWorld=%d sizeIn=%d sizeOut=%d hiddenByRow=%d hiddenByNoRowDefault=%d moddedSeen=%d vanillaSeen=%d rowsInSnapshot=%d removed=[%s] addedByRow=%d added=[%s]"),
-                GCallsTotal, F.bSnapshot ? 1 : 0, F.In, F.Out, F.HidByRow, F.HidByDefault, F.Modded, F.Vanilla, GRowShown.Num(), *RemovedNames,
+                GCallsTotal, F.bSnapshot ? 1 : 0, F.In, F.Out, F.HidByRow, F.HidByDefault, F.Modded, F.Vanilla, GRowShown.Num() + GAutoRow.Num(), *RemovedNames,
                 F.AddedByRow, *AddedNames);
         }
 
@@ -87,6 +88,7 @@ namespace NodeShuffleScanFilter
     void ResetHookSideForWorld()
     {
         GRowShown.Reset();
+        GAutoRow.Reset();
         GAddOrder.Reset();
         GLastAddedNames.Reset();
         GSeenNoRow.Reset();
@@ -142,10 +144,15 @@ namespace NodeShuffleScanFilter
                     bShown = *RowShown;
                     if (!bShown) { ++F.HidByRow; }
                 }
+                else if (GAutoRow.Contains(Info.Path))
+                {
+                    bShown = DefaultShownForPath(Info.Path); // AUTO row (round 3): the game's entry stays, except All Minable
+                    if (!bShown) { ++F.HidByRow; }
+                }
                 else
                 {
                     GSeenNoRow.Add(Info.Path); // source (b): the periodic pass gives it a row
-                    bShown = DefaultShownForPath(Info.Path); // the hook's no-row rule; a new row's value is StartingShowValue (ns-scanfilter-4)
+                    bShown = DefaultShownForPath(Info.Path); // the hook's no-row rule; an AUTO row gets the same rule
                     if (!bShown) { ++F.HidByDefault; }
                 }
                 if (bShown) { Kept.Add(Entry); continue; }
