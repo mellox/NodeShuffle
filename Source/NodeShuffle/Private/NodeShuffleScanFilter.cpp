@@ -30,13 +30,16 @@ namespace NodeShuffleScanFilter
     {
         // ---- module-static state. Game thread only (the hook is reached from the scanner's Blueprint on the game thread). ----
         struct FClassInfo { FString Path; FString Short; bool bModded = false; };
-        struct FCallFigures { int32 In = 0; int32 Out = 0; int32 HidByRow = 0; int32 HidByDefault = 0; int32 Modded = 0; int32 Vanilla = 0; bool bSnapshot = false; };
+        struct FCallFigures { int32 In = 0; int32 Out = 0; int32 HidByRow = 0; int32 HidByDefault = 0; int32 Modded = 0; int32 Vanilla = 0; bool bSnapshot = false; int32 AddedByRow = 0; };
 
         TWeakObjectPtr<UWorld> GSnapWorld;      // the world whose rows GRowShown holds; the hook filters only for this world
         TWeakObjectPtr<UWorld> GTickWorld;      // the world the periodic pass last ran for (per-world reset; never read by the hook)
         TMap<FString, bool> GRowShown;          // row path -> switch value, rebuilt from the live tree by every Tick
         TMap<FObjectKey, FClassInfo> GClassInfo; // hook-side cache: one GetPathName per class per process
         TSet<FString> GSeenNoRow;               // source (b): modded classes the hook met with no row; kept for the world session
+        // ns-scanfilter-2: ON rows whose class the periodic pass resolved (in memory, never loaded), in row order. Weak, so a
+        // class that goes away between Ticks is skipped by the hook rather than dereferenced.
+        TArray<TWeakObjectPtr<UClass>> GAddOrder;
         int32 GCallsTotal = 0;
         int32 GCallsSinceLine = 0;
         double GLastCallLineTime = 0.0;
@@ -122,24 +125,25 @@ namespace NodeShuffleScanFilter
             return Out.Show && Out.Name && Out.Mod && Out.Resource;
         }
 
-        void EmitCallLine(const FCallFigures& F, const FString& RemovedNames)
+        void EmitCallLine(const FCallFigures& F, const FString& RemovedNames, const FString& AddedNames)
         {
-            // Arity hand-counted: 10 format specifiers, 10 arguments.
+            // Arity hand-counted: 12 format specifiers, 12 arguments. ns-scanfilter-2 appended addedByRow and added (new names).
             UE_LOG(LogNodeShuffle, Display,
-                TEXT("SCANFILTER-CALL full call=%d snapshotForThisWorld=%d sizeIn=%d sizeOut=%d hiddenByRow=%d hiddenByNoRowDefault=%d moddedSeen=%d vanillaSeen=%d rowsInSnapshot=%d removed=[%s]"),
-                GCallsTotal, F.bSnapshot ? 1 : 0, F.In, F.Out, F.HidByRow, F.HidByDefault, F.Modded, F.Vanilla, GRowShown.Num(), *RemovedNames);
+                TEXT("SCANFILTER-CALL full call=%d snapshotForThisWorld=%d sizeIn=%d sizeOut=%d hiddenByRow=%d hiddenByNoRowDefault=%d moddedSeen=%d vanillaSeen=%d rowsInSnapshot=%d removed=[%s] addedByRow=%d added=[%s]"),
+                GCallsTotal, F.bSnapshot ? 1 : 0, F.In, F.Out, F.HidByRow, F.HidByDefault, F.Modded, F.Vanilla, GRowShown.Num(), *RemovedNames,
+                F.AddedByRow, *AddedNames);
         }
 
         FCallFigures GLastCensus;
-        bool SameFigures(const FCallFigures& A, const FCallFigures& B) { return A.In == B.In && A.Out == B.Out && A.HidByRow == B.HidByRow && A.HidByDefault == B.HidByDefault && A.Modded == B.Modded && A.Vanilla == B.Vanilla && A.bSnapshot == B.bSnapshot; }
+        bool SameFigures(const FCallFigures& A, const FCallFigures& B) { return A.In == B.In && A.Out == B.Out && A.HidByRow == B.HidByRow && A.HidByDefault == B.HidByDefault && A.Modded == B.Modded && A.Vanilla == B.Vanilla && A.bSnapshot == B.bSnapshot && A.AddedByRow == B.AddedByRow; }
 
         void EmitCallCensus(double Now)
         {
-            // Arity hand-counted: 10 format specifiers, 10 arguments.
+            // Arity hand-counted: 11 format specifiers, 11 arguments. ns-scanfilter-2 appended latestAddedByRow.
             UE_LOG(LogNodeShuffle, Display,
-                TEXT("SCANFILTER-CALL census callsSinceLastLine=%d callsTotal=%d latestSnapshotForThisWorld=%d latestSizeIn=%d latestSizeOut=%d latestHiddenByRow=%d latestHiddenByNoRowDefault=%d latestModdedSeen=%d latestVanillaSeen=%d secondsSinceLastLine=%.1f"),
+                TEXT("SCANFILTER-CALL census callsSinceLastLine=%d callsTotal=%d latestSnapshotForThisWorld=%d latestSizeIn=%d latestSizeOut=%d latestHiddenByRow=%d latestHiddenByNoRowDefault=%d latestModdedSeen=%d latestVanillaSeen=%d secondsSinceLastLine=%.1f latestAddedByRow=%d"),
                 GCallsSinceLine, GCallsTotal, GLatest.bSnapshot ? 1 : 0, GLatest.In, GLatest.Out, GLatest.HidByRow, GLatest.HidByDefault,
-                GLatest.Modded, GLatest.Vanilla, Now - GLastCallLineTime);
+                GLatest.Modded, GLatest.Vanilla, Now - GLastCallLineTime, GLatest.AddedByRow);
             GCallsSinceLine = 0;
             GLastCallLineTime = Now;
             GLastCensus = GLatest;
@@ -148,6 +152,7 @@ namespace NodeShuffleScanFilter
         void ResetForWorld()
         {
             GRowShown.Reset();
+            GAddOrder.Reset();
             GSeenNoRow.Reset();
             GCallsTotal = 0;
             GCallsSinceLine = 0;
@@ -174,7 +179,9 @@ namespace NodeShuffleScanFilter
         return !ClassPath.StartsWith(AllMinableMountRoot);
     }
 
-    // ---- THE HOOK BODY. No config walk, no disk, no config write; logging = SCANFILTER-CALL only. ----
+    // ---- THE HOOK BODY. No config walk, no class resolve, no disk, no config write; logging = SCANFILTER-CALL only. ----
+    // ns-scanfilter-2 (user decision 2026-11-14, "Yes, ON always shows"): after the removal, ON rows whose class the
+    // periodic pass resolved are APPENDED when absent. The game's own entries keep their order; added ones follow in row order.
     bool FilterScannableResources(const AFGResourceScanner* Scanner, TArray<TSubclassOf<UFGResourceDescriptor>>& InOutList)
     {
         ++GCallsTotal;
@@ -185,15 +192,19 @@ namespace NodeShuffleScanFilter
         F.bSnapshot = World != nullptr && GSnapWorld.IsValid() && GSnapWorld.Get() == World;
         const bool bFullLine = GCallsTotal <= FullCallLines;
         FString RemovedNames;
+        FString AddedNames;
         bool bRemovedAny = false;
+        bool bAddedAny = false;
         if (F.bSnapshot)
         {
             TArray<TSubclassOf<UFGResourceDescriptor>> Kept;
-            Kept.Reserve(InOutList.Num());
+            Kept.Reserve(InOutList.Num() + GAddOrder.Num());
+            TSet<const UClass*> Present; // every class in Kept: the add step never duplicates one
             for (const TSubclassOf<UFGResourceDescriptor>& Entry : InOutList) // original order; Kept only appends
             {
                 UClass* Cls = Entry.Get();
                 if (!Cls) { Kept.Add(Entry); continue; }
+                Present.Add(Cls);
                 const FClassInfo& Info = ClassInfoFor(Cls);
                 if (!Info.bModded) { ++F.Vanilla; Kept.Add(Entry); continue; } // vanilla: never hidden, row or no row
                 ++F.Modded;
@@ -210,17 +221,30 @@ namespace NodeShuffleScanFilter
                     if (!bShown) { ++F.HidByDefault; }
                 }
                 if (bShown) { Kept.Add(Entry); continue; }
+                Present.Remove(Cls);
                 bRemovedAny = true;
                 if (bFullLine) { RemovedNames += (RemovedNames.IsEmpty() ? TEXT("") : TEXT(" ")) + Info.Short; }
             }
-            if (bRemovedAny) { InOutList = MoveTemp(Kept); }
+            // THE ADD STEP. GAddOrder holds only ON rows with a modded path (built in Tick), so an OFF row, a no-row class
+            // and a base-game class can never be added here.
+            for (const TWeakObjectPtr<UClass>& Weak : GAddOrder)
+            {
+                UClass* AddCls = Weak.Get(); // null when the class went away since the last Tick
+                if (!AddCls || Present.Contains(AddCls)) { continue; }
+                Present.Add(AddCls);
+                Kept.Add(TSubclassOf<UFGResourceDescriptor>(AddCls));
+                ++F.AddedByRow;
+                bAddedAny = true;
+                if (bFullLine) { AddedNames += (AddedNames.IsEmpty() ? TEXT("") : TEXT(" ")) + AddCls->GetName(); }
+            }
+            if (bRemovedAny || bAddedAny) { InOutList = MoveTemp(Kept); }
         }
         F.Out = InOutList.Num();
         GLatest = F;
         const double Now = FPlatformTime::Seconds();
         if (bFullLine)
         {
-            EmitCallLine(F, RemovedNames);
+            EmitCallLine(F, RemovedNames, AddedNames);
             GCallsSinceLine = 0;
             GLastCallLineTime = Now;
         }
@@ -228,7 +252,7 @@ namespace NodeShuffleScanFilter
         {
             EmitCallCensus(Now);
         }
-        return bRemovedAny;
+        return bRemovedAny || bAddedAny;
     }
 
     // ---- THE PERIODIC PASS ----
@@ -349,6 +373,8 @@ namespace NodeShuffleScanFilter
 
         // Rebuild the snapshot from the LIVE tree: this is what delivers a switch flipped in the settings screen.
         GRowShown.Reset();
+        GAddOrder.Reset();
+        int32 OnUnresolved = 0; // ON rows whose class is not in memory (ResolveClass never loads) or is not a resource descriptor
         int32 Shown = 0;
         int32 Hidden = 0;
         uint32 Signature = 0x5CA9u;
@@ -362,11 +388,18 @@ namespace NodeShuffleScanFilter
             if (!IsModdedPath(Path)) { continue; }
             const bool bShow = R.Show->Value;
             GRowShown.Add(Path, bShow);
+            if (bShow)
+            {
+                UClass* RowCls = FSoftClassPath(Path).ResolveClass();
+                if (RowCls && RowCls->IsChildOf(UFGResourceDescriptor::StaticClass())) { GAddOrder.Add(RowCls); }
+                else { ++OnUnresolved; }
+            }
             FMountCount& M = PerMount.FindOrAdd(MountLabel(Path));
             ++M.Total;
             if (bShow) { ++Shown; ++M.Shown; } else { ++Hidden; ++M.Hidden; }
             Signature = HashCombine(Signature, HashCombine(GetTypeHash(Path), bShow ? 1u : 2u));
         }
+        Signature = HashCombine(Signature, static_cast<uint32>(OnUnresolved));
         GSnapWorld = World;
         GLastRowCount = Rows->Values.Num();
 
@@ -377,11 +410,11 @@ namespace NodeShuffleScanFilter
             {
                 PerMountText += FString::Printf(TEXT(" %s(total %d shown %d hidden %d)"), *M.Key, M.Value.Total, M.Value.Shown, M.Value.Hidden);
             }
-            // Arity hand-counted: 9 format specifiers, 9 arguments.
+            // Arity hand-counted: 10 format specifiers, 10 arguments. ns-scanfilter-2 appended onRowsUnresolved.
             UE_LOG(LogNodeShuffle, Display,
-                TEXT("SCANFILTER-ROWS %s rowsTotal=%d rowsInSnapshot=%d shown=%d hidden=%d malformed=%d blankPath=%d addedThisPass=%d perMount:%s"),
+                TEXT("SCANFILTER-ROWS %s rowsTotal=%d rowsInSnapshot=%d shown=%d hidden=%d malformed=%d blankPath=%d addedThisPass=%d perMount:%s onRowsUnresolved=%d"),
                 GRowsLogged ? TEXT("changed") : TEXT("loaded"), Rows->Values.Num(), GRowShown.Num(), Shown, Hidden, Malformed, Blank,
-                Added, *PerMountText);
+                Added, *PerMountText, OnUnresolved);
             GRowsLogged = true;
             GLastRowsSignature = Signature;
         }
@@ -398,15 +431,17 @@ namespace NodeShuffleScanFilter
         Rows->DisplayName = FText::FromString(TEXT("Show Modded Resources In Scanner (Per Resource)"));
         // Every factual assertion is graded in the ns-scanfilter-1 handoff.
         Rows->Tooltip = FText::FromString(
-            TEXT("One row per resource added by another mod. ON: the resource stays in the list the resource scanner offers. ")
-            TEXT("OFF: NodeShuffle removes it from that list. A switch only hides or shows; it never makes a resource ")
-            TEXT("scannable. A switch can only remove a resource from the scanner's list, never add one: a resource that is not on the list stays absent even when its switch is ON.\n\n")
+            TEXT("One row per resource added by another mod. ON: NodeShuffle puts the resource in the list the resource scanner ")
+            TEXT("offers, including a resource you have not researched. OFF: NodeShuffle takes it out of that list. ")
+            TEXT("Nothing is written to your save: the switches change only the list NodeShuffle hands to the scanner, and no ")
+            TEXT("research or scanner unlock is added or removed. An ON resource is put in the list only once the game has ")
+            TEXT("loaded it.\n\n")
             TEXT("THIS LIST FILLS ITSELF IN in a world you host while NodeShuffle's 'Enabled' is on: a row is added for each modded resource NodeShuffle ")
             TEXT("shuffles in that world, and for each modded resource that appears in the scanner's list, up to 256 rows. A new row starts OFF ")
             TEXT("for resources from All Minable and ON for every other mod. Resources from the base game are never listed and ")
             TEXT("never hidden. A missing row is added again the same way, with its starting value.\n\n")
             TEXT("These switches apply to every world on this install, not to one save. After changing a switch, reopen the scanner. While NodeShuffle's 'Enabled' is off, nothing ")
-            TEXT("is hidden. In multiplayer only the host's game applies these switches. The text fields name the resource; only the switch is a setting."));
+            TEXT("is hidden or added. In multiplayer only the host's game applies these switches. The text fields name the resource; only the switch is a setting."));
 
         UConfigPropertySection* RowTemplate = NewObject<UConfigPropertySection>(Rows, SectionClass, TEXT("ScannerResourceRow"));
         RowTemplate->bRequiresWorldReload = false;
@@ -418,7 +453,7 @@ namespace NodeShuffleScanFilter
         Show->Value = true;
         Show->DefaultValue = true;
         Show->DisplayName = FText::FromString(TEXT("Show in scanner"));
-        Show->Tooltip = FText::FromString(TEXT("ON: this resource stays in the scanner's list. OFF: NodeShuffle removes it from that list. It never makes the resource scannable."));
+        Show->Tooltip = FText::FromString(TEXT("ON: NodeShuffle puts this resource in the scanner's list, even if you have not researched it. OFF: NodeShuffle takes it out of that list. Nothing is written to your save."));
         Show->bRequiresWorldReload = false;
         RowTemplate->SectionProperties.Add(TEXT("ShowInScanner"), Show);
 

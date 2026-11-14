@@ -3,14 +3,16 @@
 // ns-scanfilter-1 (2026-11-14): per-resource SHOW/HIDE switches for MODDED resources in the resource scanner wheel.
 // Handoff: _team/test-logs/2026-11-14-nodeshuffle-scanfilter-1-handoff.md. Route: ...-nodeshuffle-scanfilter-route.md.
 //
-// User decisions 2026-11-14 ("Scanner 1a, 2a and on means to show, 3a"): one switch per resource; a switch only shows or
-// hides a resource in the scanner list (on = shown) and never makes anything scannable; a new row starts HIDDEN for a
-// resource under All Minable's mount and SHOWN for every other mod; a change applies in a running game without a restart.
+// User decisions 2026-11-14 ("Scanner 1a, 2a and on means to show, 3a"): one switch per resource (on = shown); a new row
+// starts HIDDEN for a resource under All Minable's mount and SHOWN for every other mod; a change applies in a running game.
+// ns-scanfilter-2 (user decision 2026-11-14, "Yes, ON always shows"): an ON row also PUTS its resource in the scanner's
+// list when the game's list lacks it. Still nothing is written to the save and no scanner unlock is made.
 //
 // THREE PARTS:
 //   HOOK   FilterScannableResources -- the body of the SML hook on AFGResourceScanner::GetScannableResources (installed
 //          in NodeShuffle.cpp). The original runs first; hidden MODDED classes are removed, everything else keeps its
-//          original order. Reads only the module-static snapshot below: no config walk, no disk, no config write.
+//          original order, then ON rows the list lacks are appended in row order (classes resolved by Tick, held weakly).
+//          Reads only the module-static snapshot below: no config walk, no class resolve, no disk, no config write.
 //          No snapshot for the caller's world -> the list is returned untouched.
 //   TICK   ANodeShuffleSubsystem::ScanFilterTick -> Tick: from RefreshTick (authority, every TickIntervalSeconds = 5 s),
 //          adds rows for the union of (a) managed modded resources of the layout and (b) modded classes the hook saw
@@ -49,7 +51,7 @@ namespace NodeShuffleScanFilter
     // AllMinableMountRoot, shown otherwise.
     bool DefaultShownForPath(const FString& ClassPath);
 
-    // The hook body. InOutList holds the original's result on entry. Returns true when it removed anything.
+    // The hook body. InOutList holds the original's result on entry. Returns true when it removed or added anything.
     bool FilterScannableResources(const AFGResourceScanner* Scanner, TArray<TSubclassOf<UFGResourceDescriptor>>& InOutList);
 
     // The periodic pass (game thread, authority). ManagedModdedPaths = source (a). bModEnabled = the config's master

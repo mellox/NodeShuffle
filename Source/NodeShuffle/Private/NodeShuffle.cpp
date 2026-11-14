@@ -621,6 +621,7 @@ void FNodeShuffleModule::StartupModule()
     UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle packet marker (2026-11-14-rocks-1)=====")); // own line, same reason as the lines above; also listed in NodeShuffleBuildMarkers.h
     UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle packet marker (2026-11-14-quietchat-1)=====")); // own line, same reason as the lines above; also listed in NodeShuffleBuildMarkers.h
     UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle packet marker (2026-11-14-scanfilter-1)=====")); // own line, same reason as the lines above; also listed in NodeShuffleBuildMarkers.h
+    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle packet marker (2026-11-14-scanfilter-2)=====")); // own line, same reason as the lines above; also listed in NodeShuffleBuildMarkers.h
     FNodeShuffleModule::LogAutoAllowExtractorsState(); // Packet G: log the CVar state once at startup
 
 #if !WITH_EDITOR
@@ -1013,7 +1014,7 @@ void FNodeShuffleModule::StartupModule()
     });
 
     // ns-scanfilter-1 (2026-11-14): SCANNER-WHEEL SHOW/HIDE. The original runs first (the unlock subsystem's list, route file
-    // section 2); the body removes hidden MODDED classes and keeps the rest in order. Override only when something was removed.
+    // section 2); the body removes hidden MODDED classes, keeps the rest in order, then appends ON rows the list lacks (ns-scanfilter-2). Override only when the list changed.
     // One-line forward on purpose: the macro splitter tracks only round parens. Body: NodeShuffleScanFilter.cpp.
     const FDelegateHandle ScanFilterHook = SUBSCRIBE_UOBJECT_METHOD(AFGResourceScanner, GetScannableResources,
         [](auto& Scope, const AFGResourceScanner* Self)

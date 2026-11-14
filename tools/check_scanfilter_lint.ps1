@@ -16,6 +16,8 @@
 #   S10 config: registration right after UnlockModdedKnowledge, editable in a running world (false x4, no true), struct mirror,
 #       required plain-words sentences, the old false knowledge sentence gone, the MCP manifest row
 #   S11 diagnostics: SCANFILTER-CALL full (first 20) + census (5 s), SCANFILTER-ROWS loaded/changed + emptied, SCANFILTER-ROWADD
+#   S13 (ns-scanfilter-2) ADD: inside the snapshot branch, after the removal, ON rows the list lacks are appended in row order from
+#       GAddOrder (weak classes resolved by Tick, ON + modded only, the only GAddOrder.Add); no duplicates; existing rows never rewritten
 #   S12 the knowledge pass (UnlockModdedScannerKnowledge + ProvideKAPIMinerInfo) is byte-identical to the parent commit 187df97
 # Forbidden needles are built by concatenation. Mutants run in-file. Exit 0 = all hold and every mutant is caught; 1 = failure; 2 = missing file.
 
@@ -60,6 +62,7 @@ function Span([string]$t, [string]$a, [string]$b) {
 function Sha([string]$s) { return [Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($s))) }
 
 $marker    = '2026-11-14-' + 'scanfilter-1'
+$marker2   = '2026-11-14-' + 'scanfilter-2'
 $prevMark  = '2026-11-14-' + 'quietchat-1'
 $hookHead  = 'bool FilterScannableResources(const AFGResourceScanner* Scanner, TArray<TSubclassOf<UFGResourceDescriptor>>& InOutList)' + "`n    {"
 $tickHead  = 'void Tick(UObject* WorldContext, const TArray<FString>& ManagedModdedPaths, bool bModEnabled)' + "`n    {"
@@ -74,7 +77,7 @@ $amConst   = 'const TCHAR* const AllMinableMountRoot = TEXT("/AllMinable/"); // 
 $noRowSeen = 'GSeenNoRow.Add(Info.Path); // source (b): the periodic pass gives it a row'
 $noRowRule = 'bShown = DefaultShownForPath(Info.Path); // the same rule a new row is created with'
 $keepShown = 'if (bShown) { Kept.Add(Entry); continue; }'
-$commitOut = 'if (bRemovedAny) { InOutList = MoveTemp(Kept); }'
+$commitOut = 'if (bRemovedAny || bAddedAny) { InOutList = MoveTemp(Kept); }'
 $newRowDef = 'const bool bDefaultShown = DefaultShownForPath(Path);'
 $newRowSet = 'R.Show->Value = bDefaultShown;'
 $wantA     = 'for (const FString& P : Managed) { Wanted.Add(P); }'
@@ -85,14 +88,14 @@ $unlockTok = @(('UnlockScannable' + 'Resource'), ('FScannable' + 'ResourcePair')
 $orderBad  = @(('.Insert' + '('), ('RemoveAt' + 'Swap'), ('RemoveAll' + 'Swap'), ('.Sort' + '('), ('Algo::' + 'Sort'))
 $knowHash  = '4E858636E0CDF8AAD25DF652BEEEAACAFF22BD2F54F7C51D4FA82C983AEC1CC1' # measured at 187df97 and at this packet (identical)
 $oldKnow   = 'Shuffled modded resources are registered with the resource ' + 'scanner so scanners recognize them'
-$fmts = @('TEXT("SCANFILTER-CALL full call=%d snapshotForThisWorld=%d sizeIn=%d sizeOut=%d hiddenByRow=%d hiddenByNoRowDefault=%d moddedSeen=%d vanillaSeen=%d rowsInSnapshot=%d removed=[%s]"),',
+$fmts = @('TEXT("SCANFILTER-CALL full call=%d snapshotForThisWorld=%d sizeIn=%d sizeOut=%d hiddenByRow=%d hiddenByNoRowDefault=%d moddedSeen=%d vanillaSeen=%d rowsInSnapshot=%d removed=[%s] addedByRow=%d added=[%s]"),',
           'TEXT("SCANFILTER-CALL census callsSinceLastLine=%d callsTotal=%d ',
-          'TEXT("SCANFILTER-ROWS %s rowsTotal=%d rowsInSnapshot=%d shown=%d hidden=%d malformed=%d blankPath=%d addedThisPass=%d perMount:%s"),',
+          'TEXT("SCANFILTER-ROWS %s rowsTotal=%d rowsInSnapshot=%d shown=%d hidden=%d malformed=%d blankPath=%d addedThisPass=%d perMount:%s onRowsUnresolved=%d"),',
           'TEXT("SCANFILTER-ROWS emptied: the list held %d row(s)',
           'TEXT("SCANFILTER-ROWADD resource=%s name=''%s'' nameFromItemName=%d mount=%s startsShown=%d source=%s"),')
 $title = 'Show Modded Resources In ' + 'Scanner (Per Resource)'
-$plain = @('A switch only hides or shows; it never makes a resource ',
-           'A switch can only remove a resource from the scanner''s list, never add one: a resource that is not on the list stays absent even when its switch is ON.',
+$plain = @('ON: NodeShuffle puts the resource in the list the resource scanner ', 'offers, including a resource you have not researched. OFF: NodeShuffle takes it out of that list. ',
+           'Nothing is written to your save: the switches change only the list NodeShuffle hands to the scanner, and no ',
            'These switches apply to every world on this install, not to one save.')
 
 function Invoke-Checks($T) {
@@ -105,7 +108,7 @@ function Invoke-Checks($T) {
     # S1
     if ($nsHook -eq '' -or -not (Ordered $nsHook @('[](auto& Scope, const AFGResourceScanner* Self)', $runOrig, $override))) { $f += '(S1) the hook runs the original first and overrides only with the filtered list' }
     if ((Count $T.nsmod 'TEXT("SCANFILTER-HOOK target=AFGResourceScanner::GetScannableResources handlerRegistered=%d"),') -ne 1 -or (Count $T.nsmod 'ScanFilterHook.IsValid() ? 1 : 0);') -ne 1) { $f += '(S1) SCANFILTER-HOOK logs whether the hook was installed' }
-    if ($hook -eq '' -or (Count $hook $commitOut) -ne 1 -or (Count $hook 'bRemovedAny = true;') -ne 1 -or (Count $hook 'return bRemovedAny;') -ne 1) { $f += '(S1) the body returns the filtered list and says whether it removed anything' }
+    if ($hook -eq '' -or (Count $hook $commitOut) -ne 1 -or (Count $hook 'bRemovedAny = true;') -ne 1 -or (Count $hook 'return bRemovedAny || bAddedAny;') -ne 1) { $f += '(S1) the body returns the filtered list and says whether it removed anything' }
     if ($hook -eq '' -or (Count $hook 'F.bSnapshot = World != nullptr && GSnapWorld.IsValid() && GSnapWorld.Get() == World;') -ne 1 -or -not (Ordered $hook @('if (F.bSnapshot)', $commitOut))) { $f += '(S1) no snapshot for the caller''s world leaves the list untouched' }
     # S2
     if ((Count $T.sf $predicate) -ne 1 -or (Count $T.sf 'const TCHAR* const BaseGameContentRoot = TEXT("/Game/");') -ne 1 -or (Count $T.sf 'const TCHAR* const BaseGameScriptRoot = TEXT("/Script/FactoryGame.");') -ne 1) { $f += '(S2) the modded predicate and the base-game roots' }
@@ -132,11 +135,12 @@ function Invoke-Checks($T) {
     if ((Count $T.subh '    void ScanFilterTick(bool bModEnabled);') -ne 1 -or (Count $T.sf 'if (!E.bActive || !NodeShuffleScanFilter::IsModdedPath(E.AssignedResourceClassPath)) { continue; }') -ne 1) { $f += '(S8) the managed set is active modded layout entries through the same predicate' }
     # S9
     $hdrTags = @([regex]::Matches($T.mark, 'TEXT\("(20\d\d-\d\d-\d\d-[\w-]+)"\),') | ForEach-Object { $_.Groups[1].Value })
-    if ($hdrTags.Count -eq 0 -or $hdrTags[-1] -ne $marker) { $f += '(S9) marker must be the newest entry in the markers header' }
+    if ($hdrTags.Count -eq 0 -or $hdrTags[-1] -ne $marker2 -or $hdrTags -notcontains $marker) { $f += '(S9) scanfilter-2 is the newest entry and scanfilter-1 stays listed' }
+    if ((Count $T.nsmod ('packet marker (' + $marker2 + ')=====')) -ne 1) { $f += '(S9) scanfilter-2 once on its own line in NodeShuffle.cpp' }
     if ($hdrTags -notcontains $prevMark) { $f += '(S9) quietchat-1 stays listed in the markers header' }
     if ((Count $T.nsmod ('packet marker (' + $marker + ')=====')) -ne 1 -or (Count $T.nsmod ('packet marker (' + $prevMark + ')=====')) -ne 1) { $f += '(S9) both markers once on their own lines in NodeShuffle.cpp' }
-    foreach ($k in @('sf', 'sfh')) { if ((Count $T[$k] $marker) -ne 0) { $f += "(S9) no marker inside the new file ($k)" } }
-    if (-not $T.lmcp.Contains("`$own = '2026-11-14-' + 'scanfilter-1'")) { $f += '(S9) check_mcpcontract C4 must name this marker as the newest' }
+    foreach ($k in @('sf', 'sfh')) { if ((Count $T[$k] $marker) -ne 0 -or (Count $T[$k] $marker2) -ne 0) { $f += "(S9) no marker inside the new file ($k)" } }
+    if (-not $T.lmcp.Contains("`$own = '2026-11-14-' + 'scanfilter-2'")) { $f += '(S9) check_mcpcontract C4 must name scanfilter-2 as the newest' }
     # S10
     $cfgKnow = Span $T.cfgc '    AddBool(TEXT("UnlockModdedKnowledge"), true,' 'AddBool(TEXT("ProtectOtherModsNodes"), true,'
     if ($cfgKnow -eq '' -or (Count $cfgKnow 'NodeShuffleScanFilter::RegisterConfigRows(Root, ArrayClass, SectionClass, StringClass, BoolClass);') -ne 1) { $f += '(S10) the rows are registered right after the knowledge option' }
@@ -153,8 +157,19 @@ function Invoke-Checks($T) {
     if ((Count $T.sf 'if ((RefusedOverCap > 0 || Withdrawn > 0) && (RefusedOverCap != GLastRefused || Withdrawn != GLastWithdrawn))') -ne 1 -or (Count $T.sf 'GLastRefused = RefusedOverCap; GLastWithdrawn = Withdrawn;') -ne 1) { $f += '(S11) the notAdded warning is latched on its figures' } # round 2, F5 pin: coder-written
     foreach ($x in $fmts) { if ((Count $T.sf $x) -ne 1) { $f += "(S11) diagnostic format: $x" } }
     if ((Count $T.sfh 'constexpr int32 FullCallLines = 20;') -ne 1 -or (Count $T.sfh 'constexpr double CallCensusPeriodSeconds = 5.0;') -ne 1) { $f += '(S11) 20 full lines, then a census at most every 5 s' }
-    if ($hook -eq '' -or -not (Ordered $hook @('const bool bFullLine = GCallsTotal <= FullCallLines;', 'EmitCallLine(F, RemovedNames);', 'else if (Now - GLastCallLineTime >= CallCensusPeriodSeconds && (FNodeShuffleModule::AreDiagnosticsEnabled() || !SameFigures(GLatest, GLastCensus)))', 'EmitCallCensus(Now);'))) { $f += '(S11) the call lines are emitted from the hook' }
+    if ($hook -eq '' -or -not (Ordered $hook @('const bool bFullLine = GCallsTotal <= FullCallLines;', 'EmitCallLine(F, RemovedNames, AddedNames);', 'else if (Now - GLastCallLineTime >= CallCensusPeriodSeconds && (FNodeShuffleModule::AreDiagnosticsEnabled() || !SameFigures(GLatest, GLastCensus)))', 'EmitCallCensus(Now);'))) { $f += '(S11) the call lines are emitted from the hook' }
     if ($tick -eq '' -or (Count $tick 'if (GLastRowCount > 0 && Rows->Values.Num() == 0)') -ne 1) { $f += '(S11) an emptied list is measured and logged' }
+    foreach ($o in @(('A switch only hides' + ' or shows'), ('never add' + ' one: a resource'), ('never makes the resource ' + 'scannable'), ('To hide modded resources from the ' + 'scanner instead'), ('stays in the list the resource ' + 'scanner offers'))) { if ((Count $T.sf $o) + (Count $T.cfgc $o) -ne 0) { $f += "(S10) remove-only wording is gone ($o)" } }
+    if ((Count $T.sf 'latestAddedByRow=%d"),') -ne 1) { $f += '(S11) census carries latestAddedByRow' }
+    # S13
+    $addLoop = 'for (const TWeakObjectPtr<UClass>& Weak : GAddOrder)'
+    if ($hook -eq '' -or -not (Ordered $hook @('if (F.bSnapshot)', 'Present.Add(Cls);', $vanKeep, $keepShown, 'Present.Remove(Cls);', $addLoop, 'UClass* AddCls = Weak.Get();', 'if (!AddCls || Present.Contains(AddCls)) { continue; }', 'Present.Add(AddCls);', 'Kept.Add(TSubclassOf<UFGResourceDescriptor>(AddCls));', '++F.AddedByRow;', $commitOut))) { $f += '(S13) the add step appends absent ON-row classes inside the snapshot branch, after the removal, without duplicates' }
+    if ((Count $T.sf 'GAddOrder.Add(') -ne 1 -or (Count $T.sf 'TArray<TWeakObjectPtr<UClass>> GAddOrder;') -ne 1 -or (Count $T.sf 'GAddOrder.Reset();') -ne 2) { $f += '(S13) GAddOrder is weak, filled only by Tick, cleared per pass and per world' }
+    if ($tick -eq '' -or -not (Ordered $tick @('GAddOrder.Reset();', 'if (!IsModdedPath(Path)) { continue; }', 'const bool bShow = R.Show->Value;', 'if (bShow)', 'UClass* RowCls = FSoftClassPath(Path).ResolveClass();', 'if (RowCls && RowCls->IsChildOf(UFGResourceDescriptor::StaticClass())) { GAddOrder.Add(RowCls); }', 'else { ++OnUnresolved; }'))) { $f += '(S13) only ON, modded, resolved descriptor rows enter GAddOrder' }
+    $ai = if ($tick -ne '') { $tick.IndexOf('Rows->AddNewElement()') } else { -1 }
+    $mi = if ($tick -ne '') { $tick.IndexOf('Rows->MarkDirty();') } else { -1 }
+    $vw = '->Value' + ' ='
+    if ($ai -lt 0 -or $mi -lt $ai -or (Count $tick.Substring(0, $ai) $vw) -ne 0 -or (Count $tick.Substring($mi) $vw) -ne 0 -or (Count $tick $vw) -ne 4) { $f += '(S13) the row pass writes values only into rows it has just created' }
     # S12
     $know = Span $T.sub 'bool ANodeShuffleSubsystem::UnlockModdedScannerKnowledge()' 'bool ANodeShuffleSubsystem::IsEligibleVanillaNode('
     if ($know -eq '' -or (Sha $know) -ne $knowHash) { $f += '(S12) the knowledge pass must stay byte-identical' }
@@ -188,7 +203,17 @@ $mutants = @(
     @{ Name = 'M22 list title drifts from the quote';  Key = 'sf';    Expect = 'S10'; Find = ('TEXT("' + $title + '")'); Repl = 'TEXT("Scanner Visibility")' }
     @{ Name = 'M23 census made unconditional';         Key = 'sf';    Expect = 'S11'; Find = 'else if (Now - GLastCallLineTime >= CallCensusPeriodSeconds && (FNodeShuffleModule::AreDiagnosticsEnabled() || !SameFigures(GLatest, GLastCensus)))'; Repl = 'else if (Now - GLastCallLineTime >= CallCensusPeriodSeconds)' } # round 2, coder-written
     @{ Name = 'M24 notAdded latch removed';           Key = 'sf';    Expect = 'S11'; Find = 'if ((RefusedOverCap > 0 || Withdrawn > 0) && (RefusedOverCap != GLastRefused || Withdrawn != GLastWithdrawn))'; Repl = 'if (RefusedOverCap > 0 || Withdrawn > 0)' } # round 2, coder-written
-    @{ Name = 'M25 old research sentence back';       Key = 'sf';    Expect = 'S10'; Find = 'TEXT("scannable. A switch can only remove'; Repl = ('TEXT("scannable. A resource you have not ' + 'researched will not appear. A switch can only remove') } # round 2, coder-written
+    @{ Name = 'M25 remove-only wording back';         Key = 'sf';    Expect = 'S10'; Find = 'offers, including a resource you have not researched.'; Repl = ('offers. A switch only hides' + ' or shows.') } # scanfilter-2 (was round 2's old-sentence mutant)
+    @{ Name = 'M27 add path removed';                 Key = 'sf';    Expect = 'S13'; Find = 'Kept.Add(TSubclassOf<UFGResourceDescriptor>(AddCls));'; Repl = '' }
+    @{ Name = 'M28 OFF rows added';                   Key = 'sf';    Expect = 'S13'; Find = "            if (bShow)`n            {`n                UClass* RowCls"; Repl = "            if (true)`n            {`n                UClass* RowCls" }
+    @{ Name = 'M29 no-row resource added';            Key = 'sf';    Expect = 'S13'; Find = 'GSeenNoRow.Add(Info.Path); // source (b)'; Repl = 'GSeenNoRow.Add(Info.Path); GAddOrder.Add(Cls); // source (b)' }
+    @{ Name = 'M30 duplicates possible';              Key = 'sf';    Expect = 'S13'; Find = 'if (!AddCls || Present.Contains(AddCls)) { continue; }'; Repl = 'if (!AddCls) { continue; }' }
+    @{ Name = 'M31 add with no snapshot';             Key = 'sf';    Expect = 'S13'; Find = "        if (F.bSnapshot)`n        {"; Repl = "        if (true)`n        {" }
+    @{ Name = 'M32 class resolved in the hook';       Key = 'sf';    Expect = 'S6';  Find = '                UClass* AddCls = Weak.Get();'; Repl = ('                UClass* AddCls = Weak.Get(); if (!AddCls) { AddCls = FSoftClassPath(Info.Path).' + 'ResolveC' + 'lass(); }') }
+    @{ Name = 'M33 base-game resource addable';       Key = 'sf';    Expect = 'S13'; Find = 'if (!IsModdedPath(Path)) { continue; }'; Repl = '' }
+    @{ Name = 'M34 unlock call in the add step';      Key = 'sf';    Expect = 'S7';  Find = '                ++F.AddedByRow;'; Repl = ('                ++F.AddedByRow; // Unlocks->' + 'UnlockScannable' + 'Resource(Pair);') }
+    @{ Name = 'M35 existing rows rewritten';          Key = 'sf';    Expect = 'S13'; Find = '            Existing.Add(Path);' + "`n" + '            if (bFirstPassThisWorld)'; Repl = '            Existing.Add(Path); R.Show->Value = true;' + "`n" + '            if (bFirstPassThisWorld)' }
+    @{ Name = 'M36 marker not newest (scanfilter-2)'; Key = 'mark';  Expect = 'S9';  Find = ('        TEXT("' + $marker2 + '"),'); Repl = '' }
     @{ Name = 'M26 tick census made unconditional'; Key = 'sf'; Expect = 'S11'; Find = 'CallCensusPeriodSeconds && (FNodeShuffleModule::AreDiagnosticsEnabled() || !SameFigures(GLatest, GLastCensus))) { EmitCallCensus(Now); }'; Repl = 'CallCensusPeriodSeconds) { EmitCallCensus(Now); }' }
     @{ Name = 'M21 census period widened';            Key = 'sfh';   Expect = 'S11'; Find = 'constexpr double CallCensusPeriodSeconds = 5.0;'; Repl = 'constexpr double CallCensusPeriodSeconds = 60.0;' }
 )
@@ -202,6 +227,6 @@ foreach ($m in $mutants) {
     else { Write-Host "FAIL(mutant) $($m.Name) survived (expected $($m.Expect))"; $fails += 'mutant-survived' }
 }
 
-if ($fails.Count -eq 0) { Write-Host "PASS check_scanfilter_lint: S1-S12 hold; $caught/$($mutants.Count) mutants caught"; exit 0 }
+if ($fails.Count -eq 0) { Write-Host "PASS check_scanfilter_lint: S1-S13 hold; $caught/$($mutants.Count) mutants caught"; exit 0 }
 Write-Host "check_scanfilter_lint: $($fails.Count) failure(s); $caught/$($mutants.Count) mutants caught"
 exit 1
