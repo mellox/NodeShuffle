@@ -90,6 +90,7 @@ $fmts = @('TEXT("SCANFILTER-CALL full call=%d snapshotForThisWorld=%d sizeIn=%d 
           'TEXT("SCANFILTER-ROWS %s rowsTotal=%d rowsInSnapshot=%d shown=%d hidden=%d malformed=%d blankPath=%d addedThisPass=%d perMount:%s"),',
           'TEXT("SCANFILTER-ROWS emptied: the list held %d row(s)',
           'TEXT("SCANFILTER-ROWADD resource=%s name=''%s'' nameFromItemName=%d mount=%s startsShown=%d source=%s"),')
+$title = 'Show Modded Resources In ' + 'Scanner (Per Resource)'
 $plain = @('A switch only hides or shows; it never makes a resource ',
            'A resource you have not researched will not appear in the scanner even when its switch is ON.',
            'These switches apply to every world on this install, not to one save.')
@@ -103,7 +104,7 @@ function Invoke-Checks($T) {
     $nsHook = Span $T.nsmod $subscribe 'SCANFILTER-HOOK target='
     # S1
     if ($nsHook -eq '' -or -not (Ordered $nsHook @('[](auto& Scope, const AFGResourceScanner* Self)', $runOrig, $override))) { $f += '(S1) the hook runs the original first and overrides only with the filtered list' }
-    if ((Count $T.nsmod 'TEXT("SCANFILTER-HOOK target=AFGResourceScanner::GetScannableResources installed=%d"),') -ne 1 -or (Count $T.nsmod 'ScanFilterHook.IsValid() ? 1 : 0);') -ne 1) { $f += '(S1) SCANFILTER-HOOK logs whether the hook was installed' }
+    if ((Count $T.nsmod 'TEXT("SCANFILTER-HOOK target=AFGResourceScanner::GetScannableResources handlerRegistered=%d"),') -ne 1 -or (Count $T.nsmod 'ScanFilterHook.IsValid() ? 1 : 0);') -ne 1) { $f += '(S1) SCANFILTER-HOOK logs whether the hook was installed' }
     if ($hook -eq '' -or (Count $hook $commitOut) -ne 1 -or (Count $hook 'bRemovedAny = true;') -ne 1 -or (Count $hook 'return bRemovedAny;') -ne 1) { $f += '(S1) the body returns the filtered list and says whether it removed anything' }
     if ($hook -eq '' -or (Count $hook 'F.bSnapshot = World != nullptr && GSnapWorld.IsValid() && GSnapWorld.Get() == World;') -ne 1 -or -not (Ordered $hook @('if (F.bSnapshot)', $commitOut))) { $f += '(S1) no snapshot for the caller''s world leaves the list untouched' }
     # S2
@@ -144,6 +145,7 @@ function Invoke-Checks($T) {
     foreach ($s in $plain) { if ($reg -eq '' -or (Count $reg $s) -ne 1) { $f += "(S10) the list text must say: $s" } }
     if ((Count $T.cfgc $oldKnow) -ne 0) { $f += '(S10) the knowledge tooltip''s old first sentence is gone' }
     if ((Count $T.desc '{ TEXT("ScannerResourceVisibility"), TEXT("tick"), false, TEXT("none"),') -ne 1) { $f += '(S10) MCP manifest row' }
+    if ((Count $T.sf ('Rows->DisplayName = FText::FromString(TEXT("' + $title + '"));')) -ne 1 -or (Count $T.cfgc ("use '" + $title + "'.")) -ne 1) { $f += '(S10) the knowledge tooltip quotes the list title exactly' }
     # S11
     foreach ($x in $fmts) { if ((Count $T.sf $x) -ne 1) { $f += "(S11) diagnostic format: $x" } }
     if ((Count $T.sfh 'constexpr int32 FullCallLines = 20;') -ne 1 -or (Count $T.sfh 'constexpr double CallCensusPeriodSeconds = 5.0;') -ne 1) { $f += '(S11) 20 full lines, then a census at most every 5 s' }
@@ -179,6 +181,7 @@ $mutants = @(
     @{ Name = 'M18 hook logs directly';               Key = 'sf';    Expect = 'S6';  Find = "        GLatest = F;`n"; Repl = "        GLatest = F; UE_LOG(LogNodeShuffle, Display, TEXT(`"x`"));`n" }
     @{ Name = 'M19 knowledge pass edited';            Key = 'sub';   Expect = 'S12'; Find = 'if (!Config.UnlockModdedKnowledge) { return true; }'; Repl = 'if (!Config.UnlockModdedKnowledge) { return false; }' }
     @{ Name = 'M20 hook installed log dropped';       Key = 'nsmod'; Expect = 'S1';  Find = 'ScanFilterHook.IsValid() ? 1 : 0);'; Repl = '1);' }
+    @{ Name = 'M22 list title drifts from the quote';  Key = 'sf';    Expect = 'S10'; Find = ('TEXT("' + $title + '")'); Repl = 'TEXT("Scanner Visibility")' }
     @{ Name = 'M21 census period widened';            Key = 'sfh';   Expect = 'S11'; Find = 'constexpr double CallCensusPeriodSeconds = 5.0;'; Repl = 'constexpr double CallCensusPeriodSeconds = 60.0;' }
 )
 $caught = 0
