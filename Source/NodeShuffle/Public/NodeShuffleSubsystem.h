@@ -1150,6 +1150,14 @@ private:
     mutable int32 RwgRkStartRaised = 0;            // spiral/near probes whose start was raised to the API Z at the probe XY
     int32 RwgRkSettleDzBins[2][6] = {};            // completed settles, settled Z minus API Z at the SETTLED XY: [0] terrain, [1] solid top
     mutable int32 RwgRkSamples = 0, RwgRkSamplePass = -1;
+    // ns-rocks-1 round 2: per-candidate outcomes ([0] near, [1] spiral) and the winning top's rule-B terrain trace (ROCKSETTLE).
+    // Outcome index: 0 tried, 1 terrain, 2 rockTop, 3 noHit, 4 ruleBNoTerrainUnder, 5 water, 6 steepTerrain, 7 rockRefused, 8 ruleBRefused.
+    mutable int32 RwgRkCand[2][9] = {};
+    mutable bool bRwgRocksLastProbeDeferred = false, bRwgRocksLastProbeSunkenRefused = false;
+    mutable int32 RwgRocksProbeTerrainState = 0;   // last rule B terrain trace: 1 terrain found, 2 none found
+    mutable double RwgRocksProbeTerrainZ = 0.0;
+    void RwgRocksCountCandidate(bool bNear, bool bHit, bool bWater, bool bSteep) const;
+    void RwgRocksEmitSettleLine(const FNodeShuffleEntry& E, double ApiZAtSettledXY) const;
     void RwgRocksNoteFirstHit(const struct FHitResult& H) const;
     void RwgRocksRecordSettle(bool bDecided, bool bCompleted, float SettledDzCm = 0.0f, bool bOnSolidTop = false);
     int32 RwgRocksSunkenVerdict(const struct FHitResult& Hit, double TraceStartZ, const struct FCollisionQueryParams& Params, float RingCm) const; // 0 keep, 1 refuse, 2 defer

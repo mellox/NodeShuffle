@@ -15,6 +15,8 @@
 #   K10 spiral/near probe start raised to the API Z at the probe XY
 #   K11 the new members are plain (no UPROPERTY, never saved)
 #   K12 new files under 500 lines
+#   K13 (round 2) ROCKSETTLE per completed settle (XY, API Z at the settled XY and the difference, route, first hit, terrain under the top
+#       with named tokens); ROCKCAND per-candidate outcomes counted right after the shared loop's RaycastGroundAt, before its decision
 # Forbidden needles are built by concatenation. Mutants run in-file. Exit 0 = all hold and every mutant is caught; 1 = failure; 2 = missing file.
 
 $ErrorActionPreference = 'Stop'
@@ -71,7 +73,7 @@ $apiAtTop = 'const double ApiZ = Q.IsUsable() ? Q.SurfaceZ(P.X, P.Y) : NodeShuff
 $testLine = 'const bool bTest = bApiKnown && DepthCm > NodeShuffleRocks::SunkenMarginCm;'
 $verdict  = 'const int32 SunkenVerdict = bAccepted ? RwgRocksSunkenVerdict(Hit, TraceStartZ, Params, RingCm) : 0;'
 $refuse   = '    if (bSunkenRefused) { return false; }'
-$deferLn  = 'if (bRwgRocksTopDeferred) { bRwgRocksTopDeferred = false; if (OutGroundHit) { *OutGroundHit = FHitResult(); } return false; }'
+$deferLn  = 'if (bRwgRocksTopDeferred) { bRwgRocksTopDeferred = false; bRwgRocksLastProbeDeferred = true; if (OutGroundHit) { *OutGroundHit = FHitResult(); } return false; }'
 $pinWins  = '    if (RwgProvisionalPinWins(E)) { return; }'
 $censusCall = "        RwgRocksEmitCensus();"
 $raise    = 'RaycastGroundAt(Probe, ProbeBaseZ, IgnoreNode, IgnoreMesh, TryLoc, TryRot, bTryWater, false, &bTrySteep,'
@@ -128,6 +130,14 @@ function Invoke-Checks($T) {
     if ($blk -eq '' -or (Count $blk ('UPROP' + 'ERTY')) -ne 0) { $f += '(K11) the ns-rocks-1 members are plain, never saved' }
     # K12
     foreach ($k in @('rocks', 'probe')) { if (($T[$k] -split "`n").Count -ge 500) { $f += "(K12) $k must stay under 500 lines" } }
+    # K13
+    $setFmt = 'TEXT("ROCKSETTLE: entry=%s res=%s settledX=%.0f settledY=%.0f settledZ=%.0f apiZAtSettledXY=%.0f settledMinusApiCm=%.0f route=%s sidewaysM=%.1f firstHitClass=%s firstHitName=%s onSolidTop=%d terrainUnderTop=%s"),'
+    if ((Count $T.rocks $setFmt) -ne 1 -or (Count $T.rocks 'FString(TEXT("noTerrainFound"))') -ne 1 -or (Count $T.rocks 'TerrainUnder = TEXT("notRockTop");') -ne 1) { $f += '(K13) ROCKSETTLE format and its named tokens' }
+    if (-not (Ordered $T.place @('RwgRocksRecordSettle(true, /*bCompleted=*/true,', 'RwgRocksEmitSettleLine(Entry, ApiZ1);', '    return true;'))) { $f += '(K13) ROCKSETTLE emitted at the completed settle with the API Z at the settled XY' }
+    if ((Count $T.rocks 'TEXT("ROCKCAND: search=%s tried=%d terrain=%d rockTop=%d noHit=%d ruleBNoTerrainUnder=%d water=%d steepTerrain=%d rockRefused=%d ruleBRefused=%d (') -ne 1) { $f += '(K13) ROCKCAND census format' }
+    if ($settle -eq '' -or -not (Ordered $settle @(('const bool bTryHit = RaycastGround' + 'At(Probe'), 'RwgRocksCountCandidate(bNear, bTryHit, bTryWater, bTrySteep);', 'if (bTryHit && !bTryWater && !bTrySteep)'))) { $f += '(K13) each candidate is counted between its trace and its decision' }
+    if ($ground -eq '' -or (Count $ground 'bRwgRocksLastProbeDeferred = false; bRwgRocksLastProbeSunkenRefused = false;') -ne 1 -or (Count $ground 'bRwgRocksLastProbeDeferred = true;') -ne 1) { $f += '(K13) the per-call rule B outcome flags are reset by every RaycastGroundAt and the defer sets its flag' }
+    if ((Count $T.cliff 'bRwgRocksLastProbeSunkenRefused = true;') -ne 1) { $f += '(K13) a rule B refusal sets its flag' }
     return ,$f
 }
 
@@ -153,6 +163,12 @@ $mutants = @(
     @{ Name = 'M16 start not raised';            Key = 'sub';   Expect = 'K10'; Find = $raise; Repl = $raise.Replace('ProbeBaseZ', 'OriginXY.Z') }
     @{ Name = 'M17 member saved';                Key = 'subh';  Expect = 'K11'; Find = '    int32 RwgRkFirstKind[9] = {};'; Repl = ('    UPROP' + 'ERTY(SaveGame) int32 RwgRkFirstKind[9] = {};') }
     @{ Name = 'M18 marker not newest';           Key = 'mark';  Expect = 'K1';  Find = ('        TEXT("' + $marker + '"),'); Repl = '' }
+    @{ Name = 'M20 settle line not emitted';      Key = 'place'; Expect = 'K13'; Find = 'RwgRocksEmitSettleLine(Entry, ApiZ1);'; Repl = '' }
+    @{ Name = 'M21 settle line loses XY';         Key = 'rocks'; Expect = 'K13'; Find = 'settledX=%.0f settledY=%.0f '; Repl = '' }
+    @{ Name = 'M22 no-terrain token as a number'; Key = 'rocks'; Expect = 'K13'; Find = 'FString(TEXT("noTerrainFound"))'; Repl = 'FString(TEXT("0"))' }
+    @{ Name = 'M23 candidates not counted';       Key = 'sub';   Expect = 'K13'; Find = 'RwgRocksCountCandidate(bNear, bTryHit, bTryWater, bTrySteep);'; Repl = '' }
+    @{ Name = 'M24 rule B flag never reset';      Key = 'sub';   Expect = 'K13'; Find = 'bRwgRocksLastProbeDeferred = false; bRwgRocksLastProbeSunkenRefused = false;'; Repl = '' }
+    @{ Name = 'M25 ROCKCAND removed';             Key = 'rocks'; Expect = 'K13'; Find = 'TEXT("ROCKCAND: '; Repl = 'TEXT("ROCKCANDX: ' }
     @{ Name = 'M19 near pattern changed';        Key = 'rockh'; Expect = 'K2';  Find = 'constexpr float NearRing1Cm = 1000.0f;'; Repl = 'constexpr float NearRing1Cm = 4000.0f;' }
 )
 $caught = 0
@@ -165,6 +181,6 @@ foreach ($m in $mutants) {
     else { Write-Host "FAIL(mutant) $($m.Name) survived (expected $($m.Expect))"; $fails += 'mutant-survived' }
 }
 
-if ($fails.Count -eq 0) { Write-Host "PASS check_rocks_lint: K1-K12 hold; $caught/$($mutants.Count) mutants caught"; exit 0 }
+if ($fails.Count -eq 0) { Write-Host "PASS check_rocks_lint: K1-K13 hold; $caught/$($mutants.Count) mutants caught"; exit 0 }
 Write-Host "check_rocks_lint: $($fails.Count) failure(s); $caught/$($mutants.Count) mutants caught"
 exit 1

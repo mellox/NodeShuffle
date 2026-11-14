@@ -370,6 +370,7 @@ bool ANodeShuffleSubsystem::RwgResolveAtSpawn(FNodeShuffleEntry& Entry, bool& bO
     if (Entry.bRwgOnSolidTop) { RwgRecordSolidTopDz(Entry.RwgApiToTerrainDzCm); } else { RwgRecordDz(Entry.Location, Entry.RwgApiToTerrainDzCm); } // rwg-clifftop-1: PLACEDZ split by the marker
     RwgNoteSettledInsideCave(Q, Entry); // RWG P5: settledInsideCave census (surface entries; cave entries count in RwgResolveCaveAtSpawn)
     RwgRocksRecordSettle(true, /*bCompleted=*/true, Entry.RwgApiToTerrainDzCm, Entry.bRwgOnSolidTop); // ns-rocks-1 C2/C3: kept sideways move; settled Z minus API Z at the SETTLED XY (X1, Y1)
+    RwgRocksEmitSettleLine(Entry, ApiZ1); // ns-rocks-1 round 2: ROCKSETTLE, one line for EVERY completed settle
     return true;
 }
 

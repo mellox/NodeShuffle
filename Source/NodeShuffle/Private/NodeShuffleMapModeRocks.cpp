@@ -46,7 +46,12 @@ void ANodeShuffleSubsystem::RwgRocksNoteFirstHit(const FHitResult& H) const
     const TCHAR* Rule = TEXT("");
     const int32 Cls = RwgHitClassOf(H, &Rule);
     RwgRocksLastKind = Cls == 0 ? 0 : Cls == 1 ? 1 : Cls == 2 ? 2 : Cls == 4 ? 8 : 3;
-    if (Cls != 4) { return; }
+    if (Cls != 4)
+    {
+        // Round 2: non-solid first hits carry the component name (ROCKSETTLE); solids carry the mesh name below.
+        RwgRocksLastMesh = H.GetComponent() ? H.GetComponent()->GetName() : FString(TEXT("<none>"));
+        return;
+    }
     const UStaticMeshComponent* Smc = Cast<UStaticMeshComponent>(H.GetComponent());
     const UStaticMesh* Mesh = Smc ? Smc->GetStaticMesh() : nullptr;
     const FString Path = Mesh ? Mesh->GetPathName() : FString();
@@ -136,7 +141,7 @@ int32 ANodeShuffleSubsystem::RwgRocksSunkenVerdict(const FHitResult& Hit, double
     const double DepthCm = bApiKnown ? ApiZ - P.Z : NodeShuffleMapMode::RwgNaN();
     const bool bTest = bApiKnown && DepthCm > NodeShuffleRocks::SunkenMarginCm;
     const bool bSample = RwgRocksSampleSlot();
-    if (!bTest && !bSample) { return 0; }
+    // Round 2: the terrain trace below runs for EVERY top reaching here (tested or not), so ROCKSETTLE can print it for every rock-top settle.
 
     double TerrainZ = NodeShuffleMapMode::RwgNaN();
     int32 TerrainSkips = 0;
@@ -151,6 +156,8 @@ int32 ANodeShuffleSubsystem::RwgRocksSunkenVerdict(const FHitResult& Hit, double
             DownParams.AddIgnoredComponent(D.GetComponent());
         }
     }
+    RwgRocksProbeTerrainState = FMath::IsFinite(TerrainZ) ? 1 : 2;
+    RwgRocksProbeTerrainZ = FMath::IsFinite(TerrainZ) ? TerrainZ : 0.0;
 
     const UPrimitiveComponent* HitComp = Hit.GetComponent();
     int32 Verdict = 0, Blocked = 0, StartInside = 0, NoStop = 0, Skipped = 0, TopClass = -1;
@@ -251,6 +258,13 @@ void ANodeShuffleSubsystem::RwgRocksEmitCensus() const
         RwgRkSunkTested - RwgRkSunkRefused - RwgRkSunkDeferred, RwgRkSunkApiUnknown,
         RwgRkSunkBins[0], RwgRkSunkBins[1], RwgRkSunkBins[2], RwgRkSunkBins[3], RwgRkSunkBins[4],
         RwgRkSunkRefusedBins[0], RwgRkSunkRefusedBins[1], RwgRkSunkRefusedBins[2], RwgRkSunkRefusedBins[3], RwgRkSunkRefusedBins[4]);
+    for (int32 Sx = 0; Sx < 2; ++Sx)
+    {
+        const int32* C = RwgRkCand[Sx];
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("ROCKCAND: search=%s tried=%d terrain=%d rockTop=%d noHit=%d ruleBNoTerrainUnder=%d water=%d steepTerrain=%d rockRefused=%d ruleBRefused=%d (session candidates of the shared near/spiral loop; the eight outcomes sum to tried)"),
+            Sx == 0 ? TEXT("near") : TEXT("spiral"), C[0], C[1], C[2], C[3], C[4], C[5], C[6], C[7], C[8]);
+    }
     for (int32 T = 0; T < 2; ++T)
     {
         const int32* Z = RwgRkSettleDzBins[T];
@@ -258,4 +272,39 @@ void ANodeShuffleSubsystem::RwgRocksEmitCensus() const
             TEXT("ROCKSETTLEDZ: session completed settles on %s, settled Z minus the API Z at the SETTLED XY; n=%d belowMinus3m=%d minus3toMinus1m=%d minus1toMinus0p5m=%d within0p5m=%d plus0p5to3m=%d abovePlus3m=%d"),
             T == 0 ? TEXT("terrain") : TEXT("a solid top"), Z[0] + Z[1] + Z[2] + Z[3] + Z[4] + Z[5], Z[0], Z[1], Z[2], Z[3], Z[4], Z[5]);
     }
+}
+
+void ANodeShuffleSubsystem::RwgRocksCountCandidate(bool bNear, bool bHit, bool bWater, bool bSteep) const
+{
+    // Round 2: the outcome of ONE near or spiral candidate, from the same booleans the shared loop decides on, in its order:
+    // no hit (a rule B terrain-absent top reads as no hit), water, steep (a refused rock: rule B or an earlier gate; else steep terrain),
+    // else accepted (rock top when the top was accepted, else terrain). The loop body tests nothing else (no spacing, no world edge).
+    int32* C = RwgRkCand[bNear ? 0 : 1];
+    ++C[0];
+    int32 O = 1;
+    if (!bHit) { O = bRwgRocksLastProbeDeferred ? 4 : 3; }
+    else if (bWater) { O = 5; }
+    else if (bSteep) { O = bRwgLastProbeSolid ? (bRwgRocksLastProbeSunkenRefused ? 8 : 7) : 6; }
+    else { O = bRwgLastProbeTopAccepted ? 2 : 1; }
+    ++C[O];
+}
+
+void ANodeShuffleSubsystem::RwgRocksEmitSettleLine(const FNodeShuffleEntry& E, double ApiZAtSettledXY) const
+{
+    // Round 2: one line for EVERY settle RwgResolveAtSpawn completes (spawn path and provisional settle), not a sample.
+    // terrainUnderTop: the rule B terrain trace's Z for the winning rock top; tokens when there is no number to print.
+    FString TerrainUnder = TEXT("notRockTop");
+    if (E.bRwgOnSolidTop)
+    {
+        TerrainUnder = RwgRocksProbeTerrainState == 1 ? FString::Printf(TEXT("%.0f"), RwgRocksProbeTerrainZ)
+                     : RwgRocksProbeTerrainState == 2 ? FString(TEXT("noTerrainFound")) : FString(TEXT("notTraced"));
+    }
+    int32 Dot = INDEX_NONE;
+    const FString Res = E.AssignedResourceClassPath.FindLastChar(TEXT('.'), Dot) ? E.AssignedResourceClassPath.Mid(Dot + 1) : E.AssignedResourceClassPath;
+    const TCHAR* Route = RwgRocksLastMove == 1 ? TEXT("near") : RwgRocksLastMove == 2 ? TEXT("spiral") : TEXT("primary");
+    const TCHAR* Kind = RwgRocksLastKind >= 0 && RwgRocksLastKind < 9 ? RockKindNames[RwgRocksLastKind] : TEXT("none");
+    UE_LOG(LogNodeShuffle, Display,
+        TEXT("ROCKSETTLE: entry=%s res=%s settledX=%.0f settledY=%.0f settledZ=%.0f apiZAtSettledXY=%.0f settledMinusApiCm=%.0f route=%s sidewaysM=%.1f firstHitClass=%s firstHitName=%s onSolidTop=%d terrainUnderTop=%s"),
+        *E.EntryGuid.ToString(), *Res, E.Location.X, E.Location.Y, E.Location.Z, ApiZAtSettledXY, E.Location.Z - ApiZAtSettledXY,
+        Route, RwgRocksLastMoveCm / 100.0f, Kind, RwgRocksLastMesh.IsEmpty() ? TEXT("-") : *RwgRocksLastMesh, E.bRwgOnSolidTop ? 1 : 0, *TerrainUnder);
 }

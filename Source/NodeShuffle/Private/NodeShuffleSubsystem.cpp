@@ -7677,6 +7677,7 @@ bool ANodeShuffleSubsystem::RaycastGroundAt(const FVector& ProbeXY, float StartZ
     // RWG P2d (2026-10-18): a SOLID mesh (class 4: rock/cliff by mesh path) stops the PRIMARY trace of a PLACEMENT caller (one that
     // passes bOutTooSteep) as a surface the node may not take; ring traces and normal-only callers keep P2c's skip-and-retrace.
     bRwgLastProbeSolid = false; bRwgLastProbeTopAccepted = false; // rwg-clifftop-1: the accepted-top signal is reset by every call too
+    bRwgRocksLastProbeDeferred = false; bRwgRocksLastProbeSunkenRefused = false; // ns-rocks-1 round 2: this call's rule B outcome (ROCKCAND)
     bool bPrimarySolid = false;
     const bool bSolidBlocks = bTerrainOnly && bOutTooSteep != nullptr;
     const auto TraceDown = [this, bTerrainOnly, &bSkippedWaterSheet, &bPrimarySolid](FHitResult& H, const FVector& S, const FVector& En, FCollisionQueryParams& P, bool bSolidStops) -> bool
@@ -7722,7 +7723,7 @@ bool ANodeShuffleSubsystem::RaycastGroundAt(const FVector& ProbeXY, float StartZ
     if (bPrimarySolid)
     {
         // ns-rocks-1 rule B: a sunken top with NO terrain collision under it reads as no hit (the caller defers, as for unstreamed terrain).
-        if (bRwgRocksTopDeferred) { bRwgRocksTopDeferred = false; if (OutGroundHit) { *OutGroundHit = FHitResult(); } return false; }
+        if (bRwgRocksTopDeferred) { bRwgRocksTopDeferred = false; bRwgRocksLastProbeDeferred = true; if (OutGroundHit) { *OutGroundHit = FHitResult(); } return false; }
         // RWG P2d: the primary trace stopped on a SOLID mesh above any terrain hit -> reported UNPLACEABLE through the steep
         // channel (bSolidBlocks guarantees bOutTooSteep is non-null), so RaycastSettle's spiral -> water-no-land -> API redeal
         // chain and the well probe's cliff reject run unchanged. No normal smoothing, no water-grid sample (not terrain).
@@ -7901,9 +7902,10 @@ bool ANodeShuffleSubsystem::RaycastSettle(FNodeShuffleEntry& Entry, const AActor
                 const double ApiAtProbe = RockQ->SurfaceZ(Probe.X, Probe.Y);
                 if (FMath::IsFinite(ApiAtProbe) && ApiAtProbe > ProbeBaseZ) { ProbeBaseZ = ApiAtProbe; ++RwgRkStartRaised; }
             }
-            if (RaycastGroundAt(Probe, ProbeBaseZ, IgnoreNode, IgnoreMesh, TryLoc, TryRot, bTryWater, false, &bTrySteep,
-                                nullptr, nullptr, bTerrainOnly) // RWG P2c: bTerrainOnly forwarded (false on every vanilla call)
-                && !bTryWater && !bTrySteep)
+            const bool bTryHit = RaycastGroundAt(Probe, ProbeBaseZ, IgnoreNode, IgnoreMesh, TryLoc, TryRot, bTryWater, false, &bTrySteep,
+                                nullptr, nullptr, bTerrainOnly); // RWG P2c: bTerrainOnly forwarded (false on every vanilla call)
+            RwgRocksCountCandidate(bNear, bTryHit, bTryWater, bTrySteep); // ns-rocks-1 round 2: ROCKCAND outcome of this candidate (counts only)
+            if (bTryHit && !bTryWater && !bTrySteep)
             {
                 UE_LOG(LogNodeShuffle, Verbose, TEXT("Land-check: relocated %s off %s to %s"),
                     *Entry.EntryGuid.ToString(), bWater ? TEXT("water") : TEXT("a cliff face"),
