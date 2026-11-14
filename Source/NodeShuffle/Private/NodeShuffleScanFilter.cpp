@@ -46,6 +46,8 @@ namespace NodeShuffleScanFilter
         int32 GLastRowCount = -1;
         bool GWarnedUnreachable = false;
         bool GLoggedDisabled = false;
+        int32 GLastRefused = 0;
+        int32 GLastWithdrawn = 0;
 
         const FClassInfo& ClassInfoFor(UClass* Cls)
         {
@@ -128,6 +130,9 @@ namespace NodeShuffleScanFilter
                 GCallsTotal, F.bSnapshot ? 1 : 0, F.In, F.Out, F.HidByRow, F.HidByDefault, F.Modded, F.Vanilla, GRowShown.Num(), *RemovedNames);
         }
 
+        FCallFigures GLastCensus;
+        bool SameFigures(const FCallFigures& A, const FCallFigures& B) { return A.In == B.In && A.Out == B.Out && A.HidByRow == B.HidByRow && A.HidByDefault == B.HidByDefault && A.Modded == B.Modded && A.Vanilla == B.Vanilla && A.bSnapshot == B.bSnapshot; }
+
         void EmitCallCensus(double Now)
         {
             // Arity hand-counted: 10 format specifiers, 10 arguments.
@@ -137,6 +142,7 @@ namespace NodeShuffleScanFilter
                 GLatest.Modded, GLatest.Vanilla, Now - GLastCallLineTime);
             GCallsSinceLine = 0;
             GLastCallLineTime = Now;
+            GLastCensus = GLatest;
         }
 
         void ResetForWorld()
@@ -151,6 +157,10 @@ namespace NodeShuffleScanFilter
             GRowsLogged = false;
             GLastRowCount = -1;
             GWarnedUnreachable = false;
+            GLastCensus = FCallFigures();
+            GLastRefused = 0;
+            GLastWithdrawn = 0;
+            GLoggedDisabled = false;
         }
     }
 
@@ -214,7 +224,7 @@ namespace NodeShuffleScanFilter
             GCallsSinceLine = 0;
             GLastCallLineTime = Now;
         }
-        else if (Now - GLastCallLineTime >= CallCensusPeriodSeconds)
+        else if (Now - GLastCallLineTime >= CallCensusPeriodSeconds && (FNodeShuffleModule::AreDiagnosticsEnabled() || !SameFigures(GLatest, GLastCensus)))
         {
             EmitCallCensus(Now);
         }
@@ -228,7 +238,7 @@ namespace NodeShuffleScanFilter
         if (!World) { return; }
         if (GTickWorld.Get() != World) { ResetForWorld(); GSnapWorld.Reset(); GTickWorld = World; }
         const double Now = FPlatformTime::Seconds();
-        if (GCallsSinceLine > 0 && GCallsTotal > FullCallLines && Now - GLastCallLineTime >= CallCensusPeriodSeconds) { EmitCallCensus(Now); }
+        if (GCallsSinceLine > 0 && GCallsTotal > FullCallLines && Now - GLastCallLineTime >= CallCensusPeriodSeconds && (FNodeShuffleModule::AreDiagnosticsEnabled() || !SameFigures(GLatest, GLastCensus))) { EmitCallCensus(Now); }
 
         if (!bModEnabled)
         {
@@ -329,12 +339,13 @@ namespace NodeShuffleScanFilter
             Manager->MarkConfigurationDirty(FConfigId{"NodeShuffle", ""});
             Manager->FlushPendingSaves();
         }
-        if (RefusedOverCap > 0 || Withdrawn > 0)
+        if ((RefusedOverCap > 0 || Withdrawn > 0) && (RefusedOverCap != GLastRefused || Withdrawn != GLastWithdrawn))
         {
             UE_LOG(LogNodeShuffle, Warning,
                 TEXT("SCANFILTER-ROWS notAdded: refusedOverCap=%d cap=%d withdrawnSharedWithTemplate=%d; those resources keep the starting-value rule in the hook"),
                 RefusedOverCap, MaxRows, Withdrawn);
         }
+        GLastRefused = RefusedOverCap; GLastWithdrawn = Withdrawn;
 
         // Rebuild the snapshot from the LIVE tree: this is what delivers a switch flipped in the settings screen.
         GRowShown.Reset();
@@ -389,15 +400,14 @@ namespace NodeShuffleScanFilter
         Rows->Tooltip = FText::FromString(
             TEXT("One row per resource added by another mod. ON: the resource stays in the list the resource scanner offers. ")
             TEXT("OFF: NodeShuffle removes it from that list. A switch only hides or shows; it never makes a resource ")
-            TEXT("scannable. A resource you have not researched will not appear in the scanner even when its switch is ON.\n\n")
+            TEXT("scannable. A switch can only remove a resource from the scanner's list, never add one: a resource that is not on the list stays absent even when its switch is ON.\n\n")
             TEXT("THIS LIST FILLS ITSELF IN while a world is running: a row is added for each modded resource NodeShuffle ")
             TEXT("shuffles in that world, and for each modded resource that appears in the scanner's list. A new row starts OFF ")
             TEXT("for resources from All Minable and ON for every other mod. Resources from the base game are never listed and ")
             TEXT("never hidden.\n\n")
-            TEXT("These switches apply to every world on this install, not to one save. A change made while you play is read ")
-            TEXT("within about 5 seconds; reopen the scanner after changing one. While NodeShuffle's 'Enabled' is off, nothing ")
-            TEXT("is hidden. In multiplayer only the host's scanner is filtered. Reset empties the list; the rows come back with ")
-            TEXT("their starting values while a world is running. The text fields name the resource; only the switch is a setting."));
+            TEXT("These switches apply to every world on this install, not to one save. NodeShuffle reads them about every 5 seconds while the game is running (not while it is paused); reopen the scanner after changing one. While NodeShuffle's 'Enabled' is off, nothing ")
+            TEXT("is hidden. In multiplayer only the hosting player's own scanner is filtered; on a dedicated server none is. Reset empties the list; the rows come back with ")
+            TEXT("their starting values while a world is running, and so does a deleted row. The text fields name the resource; only the switch is a setting."));
 
         UConfigPropertySection* RowTemplate = NewObject<UConfigPropertySection>(Rows, SectionClass, TEXT("ScannerResourceRow"));
         RowTemplate->bRequiresWorldReload = false;

@@ -92,7 +92,7 @@ $fmts = @('TEXT("SCANFILTER-CALL full call=%d snapshotForThisWorld=%d sizeIn=%d 
           'TEXT("SCANFILTER-ROWADD resource=%s name=''%s'' nameFromItemName=%d mount=%s startsShown=%d source=%s"),')
 $title = 'Show Modded Resources In ' + 'Scanner (Per Resource)'
 $plain = @('A switch only hides or shows; it never makes a resource ',
-           'A resource you have not researched will not appear in the scanner even when its switch is ON.',
+           'A switch can only remove a resource from the scanner''s list, never add one: a resource that is not on the list stays absent even when its switch is ON.',
            'These switches apply to every world on this install, not to one save.')
 
 function Invoke-Checks($T) {
@@ -146,10 +146,12 @@ function Invoke-Checks($T) {
     if ((Count $T.cfgc $oldKnow) -ne 0) { $f += '(S10) the knowledge tooltip''s old first sentence is gone' }
     if ((Count $T.desc '{ TEXT("ScannerResourceVisibility"), TEXT("tick"), false, TEXT("none"),') -ne 1) { $f += '(S10) MCP manifest row' }
     if ((Count $T.sf ('Rows->DisplayName = FText::FromString(TEXT("' + $title + '"));')) -ne 1 -or (Count $T.cfgc ("use '" + $title + "'.")) -ne 1) { $f += '(S10) the knowledge tooltip quotes the list title exactly' }
+    $oldRes = 'A resource you have not ' + 'researched will not appear'; if ((Count $T.sf $oldRes) -ne 0) { $f += '(S10) the false research sentence is gone' }
     # S11
+    if ((Count $T.sf 'if ((RefusedOverCap > 0 || Withdrawn > 0) && (RefusedOverCap != GLastRefused || Withdrawn != GLastWithdrawn))') -ne 1 -or (Count $T.sf 'GLastRefused = RefusedOverCap; GLastWithdrawn = Withdrawn;') -ne 1) { $f += '(S11) the notAdded warning is latched on its figures' } # round 2, F5 pin: coder-written
     foreach ($x in $fmts) { if ((Count $T.sf $x) -ne 1) { $f += "(S11) diagnostic format: $x" } }
     if ((Count $T.sfh 'constexpr int32 FullCallLines = 20;') -ne 1 -or (Count $T.sfh 'constexpr double CallCensusPeriodSeconds = 5.0;') -ne 1) { $f += '(S11) 20 full lines, then a census at most every 5 s' }
-    if ($hook -eq '' -or -not (Ordered $hook @('const bool bFullLine = GCallsTotal <= FullCallLines;', 'EmitCallLine(F, RemovedNames);', 'else if (Now - GLastCallLineTime >= CallCensusPeriodSeconds)', 'EmitCallCensus(Now);'))) { $f += '(S11) the call lines are emitted from the hook' }
+    if ($hook -eq '' -or -not (Ordered $hook @('const bool bFullLine = GCallsTotal <= FullCallLines;', 'EmitCallLine(F, RemovedNames);', 'else if (Now - GLastCallLineTime >= CallCensusPeriodSeconds && (FNodeShuffleModule::AreDiagnosticsEnabled() || !SameFigures(GLatest, GLastCensus)))', 'EmitCallCensus(Now);'))) { $f += '(S11) the call lines are emitted from the hook' }
     if ($tick -eq '' -or (Count $tick 'if (GLastRowCount > 0 && Rows->Values.Num() == 0)') -ne 1) { $f += '(S11) an emptied list is measured and logged' }
     # S12
     $know = Span $T.sub 'bool ANodeShuffleSubsystem::UnlockModdedScannerKnowledge()' 'bool ANodeShuffleSubsystem::IsEligibleVanillaNode('
@@ -182,6 +184,9 @@ $mutants = @(
     @{ Name = 'M19 knowledge pass edited';            Key = 'sub';   Expect = 'S12'; Find = 'if (!Config.UnlockModdedKnowledge) { return true; }'; Repl = 'if (!Config.UnlockModdedKnowledge) { return false; }' }
     @{ Name = 'M20 hook installed log dropped';       Key = 'nsmod'; Expect = 'S1';  Find = 'ScanFilterHook.IsValid() ? 1 : 0);'; Repl = '1);' }
     @{ Name = 'M22 list title drifts from the quote';  Key = 'sf';    Expect = 'S10'; Find = ('TEXT("' + $title + '")'); Repl = 'TEXT("Scanner Visibility")' }
+    @{ Name = 'M23 census made unconditional';         Key = 'sf';    Expect = 'S11'; Find = 'else if (Now - GLastCallLineTime >= CallCensusPeriodSeconds && (FNodeShuffleModule::AreDiagnosticsEnabled() || !SameFigures(GLatest, GLastCensus)))'; Repl = 'else if (Now - GLastCallLineTime >= CallCensusPeriodSeconds)' } # round 2, coder-written
+    @{ Name = 'M24 notAdded latch removed';           Key = 'sf';    Expect = 'S11'; Find = 'if ((RefusedOverCap > 0 || Withdrawn > 0) && (RefusedOverCap != GLastRefused || Withdrawn != GLastWithdrawn))'; Repl = 'if (RefusedOverCap > 0 || Withdrawn > 0)' } # round 2, coder-written
+    @{ Name = 'M25 old research sentence back';       Key = 'sf';    Expect = 'S10'; Find = 'TEXT("scannable. A switch can only remove'; Repl = ('TEXT("scannable. A resource you have not ' + 'researched will not appear. A switch can only remove') } # round 2, coder-written
     @{ Name = 'M21 census period widened';            Key = 'sfh';   Expect = 'S11'; Find = 'constexpr double CallCensusPeriodSeconds = 5.0;'; Repl = 'constexpr double CallCensusPeriodSeconds = 60.0;' }
 )
 $caught = 0
