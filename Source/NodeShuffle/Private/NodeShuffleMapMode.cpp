@@ -414,11 +414,12 @@ void ANodeShuffleSubsystem::RwgObserveTick()
             if ((RwgObserveTicks % NodeShuffleMapMode::RwgWaitEveryTicks) == 1)
             {
                 UE_LOG(LogNodeShuffle, Display,
-                    TEXT("RWGWAIT: t=%.0fs realT=%.0fs nodes=%d strict=%d fracking=%d deposits=%d delta=%d stageReady=%d firstReadyT=%.0f stableSinceReady=%d/%d genState='%s' progressStage='%s' contentSpawned=%d fillPct=%d floorBy=%s gatedBy=%s savedLayout=%d stableAnyStage=%d/%d"),
+                    TEXT("RWGWAIT: t=%.0fs realT=%.0fs nodes=%d strict=%d fracking=%d deposits=%d delta=%d stageReady=%d firstReadyT=%.0f stableSinceReady=%d/%d genState='%s' progressStage='%s' contentSpawned=%d fillPct=%d floorBy=%s gatedBy=%s savedLayout=%d stableAnyStage=%d/%d%s"),
                     T, RealT, Nodes, Strict, Fracking, Deposits, Delta, bStageReady ? 1 : 0, RwgFirstReadyT,
                     RwgStableSinceReady, NodeShuffleMapMode::RwgStableTicksRequired, *GenShown, *StageShown,
                     ContentSpawned, FillPct, bLayoutGenerated ? TEXT("anyNode") : TEXT("strict"), GatedBy,
-                    bLayoutGenerated ? 1 : 0, RwgStableAnyStage, NodeShuffleMapMode::RwgApplyStableTicks);
+                    bLayoutGenerated ? 1 : 0, RwgStableAnyStage, NodeShuffleMapMode::RwgApplyStableTicks,
+                    *NodeShuffleMapMode::RwgReadinessFields(GetWorld())); // rwg-0-2-0-2 item 4: log-only getter fields
             }
             if (!bRwgWaitWarned && T >= NodeShuffleMapMode::RwgWaitWarnSeconds)
             {
@@ -476,11 +477,11 @@ void ANodeShuffleSubsystem::RwgObserveTick()
         const float MovedM = (Pawn && bRwgPawnFirstSet)
             ? static_cast<float>(FVector::Dist(Pawn->GetActorLocation(), RwgPawnFirst) / 100.0) : -1.f;
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("RWGREADY: by=%s t=%.1fs realT=%.1fs firstReadyT=%.1fs nodes=%d strict=%d fracking=%d deposits=%d stableSinceReady=%d genState='%s' progressStage='%s' contentSpawned=%d fillPct=%d floorBy=%s zMin=%.0f zMax=%.0f meanZ=%.0f strictInExtent=%d boxKmStrict=%.1fx%.1f boxKmAll=%.1fx%.1f allInBox=%d pawnMovedSinceFirstTickM=%.0f rollOffVanillaEnabled=%d"),
+            TEXT("RWGREADY: by=%s t=%.1fs realT=%.1fs firstReadyT=%.1fs nodes=%d strict=%d fracking=%d deposits=%d stableSinceReady=%d genState='%s' progressStage='%s' contentSpawned=%d fillPct=%d floorBy=%s zMin=%.0f zMax=%.0f meanZ=%.0f strictInExtent=%d boxKmStrict=%.1fx%.1f boxKmAll=%.1fx%.1f allInBox=%d pawnMovedSinceFirstTickM=%.0f rollOffVanillaEnabled=%d%s"),
             *RwgReadyBy, T, RealT, RwgFirstReadyT, Nodes, Strict, Fracking, Deposits, RwgStableSinceReady, *GenShown, *StageShown,
             ContentSpawned, FillPct, bLayoutGenerated ? TEXT("anyNode") : TEXT("strict"),
             RwgZMin, RwgZMax, RwgMeanZ, Xs.Num(), BoxKm(Xs), BoxKm(Ys), BoxKm(AXs), BoxKm(AYs), AXs.Num(), MovedM,
-            NodeShuffleMapMode::bRwgRollEnabled ? 1 : 0);
+            NodeShuffleMapMode::bRwgRollEnabled ? 1 : 0, *NodeShuffleMapMode::RwgReadinessFields(GetWorld())); // rwg-0-2-0-2 item 4: log-only
         RwgLogReadyDiagnostics();
         return;
     }

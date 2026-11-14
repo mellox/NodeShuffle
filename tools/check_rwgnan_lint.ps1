@@ -22,6 +22,7 @@ $files = [ordered]@{
     cjson = 'Source\NodeShuffle\Private\NodeShuffleMapModeCaveJson.cpp'
     cave  = 'Source\NodeShuffle\Private\NodeShuffleMapModeCave.cpp'
     mmh   = 'Source\NodeShuffle\Public\NodeShuffleMapMode.h'
+    mmc   = 'Source\NodeShuffle\Private\NodeShuffleMapMode.cpp'
     rset  = 'Source\NodeShuffle\Private\NodeShuffleMapModeResettle.cpp'
 }
 $T = [ordered]@{}
@@ -91,6 +92,11 @@ function Invoke-NChecks($T) {
     if (-not (Ordered $vx @('if (Q.Outside(X, Y)) { return false; }', 'for (const FRwgCaveCandidateGen& Ex : RwgCaveExcludedShapes) { if (RwgInsideCaveShape(Ex, X, Y)) { ++RwgRcCaveRejExcluded; return false; } }', 'const double SurfZ = Q.SurfaceZ(X, Y);'))) { $f += '(N5) the cave verify must refuse an excluded footprint first' }
     if (-not (Ordered $T.cave @('const bool bExcluded = RwgCaveIsThroughTunnel(O);', 'StandExcluded.Add(bExcluded);', 'if (bExcluded)', 'ExcludedShapeLog +=', 'continue;', 'RwgCaveGensFromJson(O, Gens);', 'if (StandExcluded[I])', 'const bool bStandOk = StandsTested == 0 || StandInside == StandsTested;', 'RwgCaveExcludedShapes = ExcludedShapes;'))) { $f += '(N5) RWGCAVECHECK must skip excluded stands and generators and latch the footprints' }
     if (-not $T.cave.Contains('usable=%d excludedCaves=%d excludedCaveIds=%s excludedShapesPerCave=%s standsTested=%d"),') -or -not $T.place.Contains('caveRejExcluded=%d excludedCaves=%d excludedCaveIds=%s"),')) { $f += '(N5) RWGCAVECHECK and ROLLCENSUS must print the exclusion' }
+    # N6 (item 4) readiness getters are LOG-ONLY: called only as the trailing %s argument of RWGWAIT / RWGREADY; the bind never writes the
+    #    height-API state; a missing module retries and returns.
+    $rb = Span $T.hapi '    void TryBindReadyGetters(FRwgReadyGetters& R)' 'FString NodeShuffleMapMode::RwgReadinessFields('
+    if ($rb -eq '' -or $rb.Contains('Usable') -or $rb.Contains('A.Status') -or -not $rb.Contains('if (!Hmod) { R.Status = TEXT("heightApiNotBound"); return; }')) { $f += '(N6) the readiness bind must never touch the height-API state' }
+    if ((Count $T.mmc '*NodeShuffleMapMode::RwgReadinessFields(GetWorld())') -ne 2 -or ([regex]::Matches($T.mmc, 'RwgReadinessFields\(')).Count -ne 2 -or -not $T.mmc.Contains('stableAnyStage=%d/%d%s"),') -or -not $T.mmc.Contains('rollOffVanillaEnabled=%d%s"),')) { $f += '(N6) the getters print only on RWGWAIT and RWGREADY' }
     return $f
 }
 
@@ -115,6 +121,8 @@ $mut += @(
     @{ Name = 'M14 verify ignores the footprints'; Key = 'cjson'; Expect = 'N5'; Find = '{ if (RwgInsideCaveShape(Ex, X, Y)) { ++RwgRcCaveRejExcluded; return false; } }'; Repl = '{ }' }
     @{ Name = 'M15 excluded cave still yields generators'; Key = 'cave'; Expect = 'N5'; Find = ('CaveIdx, Shapes);' + "`n" + '                    continue;'); Repl = 'CaveIdx, Shapes);' }
     @{ Name = 'M17 resettle dz unguarded'; Key = 'rset'; Expect = 'N3'; Find = '(Q.IsUsable() && FMath::IsFinite(ResettleApiZ)) ?'; Repl = 'Q.IsUsable() ?' }
+    @{ Name = 'M18 readiness bind refuses the API'; Key = 'hapi'; Expect = 'N6'; Find = 'if (!Hmod) { R.Status = TEXT("heightApiNotBound"); return; }'; Repl = ('if (!Hmod) { R.Status = TEXT("heightApiNotBound"); Api().b' + 'Usable = false; return; }') }
+    @{ Name = 'M19 getter read feeds a decision'; Key = 'mmc'; Expect = 'N6'; Find = '        RwgLogReadyDiagnostics();'; Repl = ('            if (NodeShuffleMapMode::RwgReadiness' + 'Fields(GetWorld()).Contains(TEXT("x"))) { return; } RwgLogReadyDiagnostics();') }
     @{ Name = 'M16 stand denominator counts excluded stands'; Key = 'cave'; Expect = 'N5'; Find = 'StandInside == StandsTested;'; Repl = ('StandInside == Stands.' + 'Num();') }
 )
 $caught = 0

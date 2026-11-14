@@ -68,6 +68,11 @@ BINDS = [
     ('Cave', 'AnyNear', 'cave', 'cave', 'SymAnyNear', 'cave', 'SigAnyNear', 'SigAnyNear1063'),
     ('Cave', 'FloorCmAt', 'cave', 'cave', 'SymFloor', 'cave', 'SigFloor', 'SigFloor1063'),
     ('Cave', 'IsInsideAt', 'cave', 'cave', 'SymInside', 'cave', 'SigInside', None),
+    # rwg-0-2-0-2 item 4: readiness getters, LOG-ONLY group 'ready' -- never part of the verdict (RwgReadinessFields prints -1 when unbound).
+    ('Ready', 'GetState', 'ready', 'hapi', 'SymGetState', 'hapi', None, 'SigGetState1063'),
+    ('Ready', 'IsWorldComplete', 'ready', 'hapi', 'SymWorldComplete', 'hapi', None, 'SigWorldComplete1063'),
+    ('Ready', 'IsStartReady', 'ready', 'hapi', 'SymStartReady', 'hapi', None, 'SigStartReady1063'),
+    ('Ready', 'IsContentSpawned', 'ready', 'hapi', 'SymContentSpawned', 'hapi', None, 'SigContentSpawned1063'),
 ]
 GATE_COPY = {'SigCaves': 'SigCaves', 'SigNum': 'SigNum', 'SigAnyNear': 'SigAnyNear', 'SigFloor': 'SigFloor', 'SigInside': 'SigInside',
              'SigCaves1063': 'GateSigCaves1063', 'SigAnyNear1063': 'GateSigAnyNear1063', 'SigFloor1063': 'GateSigFloor1063'}
@@ -237,6 +242,8 @@ def main():
         r = rows[nm]
         print('  %-9s %-19s %-4s resolved=%d generation=%-7s firstDiffA=%-4s firstDiffB=%-4s wild[%s]' % (lane, nm, grp, int(r['resolved']), r['gen'], r['dA'], r['dB'], r['wild']))
     print('PREDICTED (listed=%d): %s' % (int(listed), verdict))
+    rd = [n for lane, n, g, *_ in BINDS if g == 'ready']
+    print('READINESS getters (log-only): %s' % ' '.join('%s=%s' % (n, 'bound' if rows[n]['gen'] == 'B-only' else rows[n]['gen']) for n in rd))
     print('PREDICTED (as unlisted): %s' % evaluate(data, exps, src, False)[1])
     # CONTROL (a): one pinned byte flipped per export, in memory; the export must leave its matched generation.
     print('CONTROL(a) one pinned byte flipped per export (in-memory copy):')

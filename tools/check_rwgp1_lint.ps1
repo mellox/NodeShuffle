@@ -225,7 +225,7 @@ foreach ($k in @('mapcpp','r1cpp','subsysh','maph')) {
 if ($text.mapcpp -match ('by=quies' + 'cence|TEXT\("quies' + 'cence"\)')) { $fails += 'R9: a quiescence readiness branch is back in NodeShuffleMapMode.cpp' }
 
 # R10
-if ($text.mapcpp -notmatch ('TEXT\("RWGWAIT: t=%\.0fs [^"]* gated' + 'By=%s savedLayout=%d stableAnyStage=%d/%d"\)')) { $fails += 'R10: the RWGWAIT census format must carry gatedBy then the clause-B fields' }
+if ($text.mapcpp -notmatch ('TEXT\("RWGWAIT: t=%\.0fs [^"]* gated' + 'By=%s savedLayout=%d stableAnyStage=%d/%d%s"\)')) { $fails += 'R10: the RWGWAIT census format must carry gatedBy then the clause-B fields' }
 
 # R11
 # RWG 0.1.9 (2026-10-18): the single accepted build became an accept LIST of {SemVer, build} pairs; check_rwg019_lint.ps1 V1 pins its content.

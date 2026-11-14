@@ -843,6 +843,67 @@ double NodeShuffleMapMode::FRwgGroundQuery::WaterLevelZ(double X, double Y) cons
     return (F && S) ? Api().Water(S, X, Y, 0) : TNumericLimits<double>::Lowest();
 }
 
+namespace
+{
+    // rwg-0-2-0-2 item 4 (design Q2): RWG's four readiness getters, LOG-ONLY. Each 8-byte body was measured on build 1063
+    // (`movzx eax, byte [rcx+disp32]; ret`); the displacement is PINNED (only 0.2.0 is supported). A getter whose export is missing or whose
+    // bytes differ is left unbound and prints -1; nothing here refuses the height API or feeds a decision.
+    const char* const SymGetState = "?GetState@APWWorldGenerator@@QEBA?AW4EPWGeneratorState@@XZ";
+    const char* const SymWorldComplete = "?IsWorldComplete@APWWorldGenerator@@QEBA_NXZ";
+    const char* const SymStartReady = "?IsStartReady@APWWorldGenerator@@QEBA_NXZ";
+    const char* const SymContentSpawned = "?IsContentSpawned@APWWorldGenerator@@QEBA_NXZ";
+    const int16 SigGetState1063[] = { 0x0F,0xB6,0x81,0xC0,0x17,0x00,0x00,0xC3 };
+    const int16 SigWorldComplete1063[] = { 0x0F,0xB6,0x81,0x09,0x05,0x00,0x00,0xC3 };
+    const int16 SigStartReady1063[] = { 0x0F,0xB6,0x81,0x08,0x05,0x00,0x00,0xC3 };
+    const int16 SigContentSpawned1063[] = { 0x0F,0xB6,0x81,0x70,0x0F,0x00,0x00,0xC3 };
+    using FnReadyU8 = uint8 (*)(const void* This);
+    struct FRwgReadyGetters { bool bTried = false; FString Status = TEXT("notTried"); FnReadyU8 Fn[4] = { nullptr, nullptr, nullptr, nullptr }; };
+    FRwgReadyGetters& ReadyGetters() { static FRwgReadyGetters R; return R; }
+
+    void TryBindReadyGetters(FRwgReadyGetters& R)
+    {
+        void* Hmod = NodeShuffleMapMode::RwgHeightApiBoundModule(); // non-null only when the height API bound; the module is then loaded
+        if (!Hmod) { R.Status = TEXT("heightApiNotBound"); return; } // retried on the next call (bTried stays false)
+        R.bTried = true;
+#if PLATFORM_WINDOWS
+        const char* const Syms[4] = { SymGetState, SymWorldComplete, SymStartReady, SymContentSpawned };
+        const int16* const Sigs[4] = { SigGetState1063, SigWorldComplete1063, SigStartReady1063, SigContentSpawned1063 };
+        const TCHAR* const Names[4] = { TEXT("GetState"), TEXT("IsWorldComplete"), TEXT("IsStartReady"), TEXT("IsContentSpawned") };
+        FString Detail;
+        int32 Bound = 0;
+        for (int32 I = 0; I < 4; ++I)
+        {
+            void* P = reinterpret_cast<void*>(::GetProcAddress(static_cast<HMODULE>(Hmod), Syms[I]));
+            int32 Diff = -1;
+            if (P)
+            {
+                const uint8* B = static_cast<const uint8*>(P);
+                for (int32 K = 0; K < 8; ++K) { if (B[K] != static_cast<uint8>(Sigs[I][K])) { Diff = K; break; } }
+            }
+            const TCHAR* St = !P ? TEXT("exportMissing") : (Diff >= 0 ? TEXT("signatureMismatch") : TEXT("bound"));
+            if (P && Diff < 0) { R.Fn[I] = reinterpret_cast<FnReadyU8>(P); ++Bound; }
+            Detail += FString::Printf(TEXT("%s%s:%s@%d"), Detail.IsEmpty() ? TEXT("") : TEXT(" "), Names[I], St, Diff);
+        }
+        R.Status = Bound == 4 ? TEXT("bound") : (Bound == 0 ? TEXT("none") : TEXT("partial"));
+        UE_LOG(LogNodeShuffle, Display, TEXT("RWGGETTERS: bind status=%s boundOf4=%d detail='%s'; log-only, an unbound getter prints -1 and gates nothing"),
+            *R.Status, Bound, *Detail);
+#else
+        R.Status = TEXT("notWindows");
+#endif
+    }
+}
+
+FString NodeShuffleMapMode::RwgReadinessFields(UWorld* World)
+{
+    FRwgReadyGetters& R = ReadyGetters();
+    if (!R.bTried) { TryBindReadyGetters(R); }
+    int32 V[4] = { -1, -1, -1, -1 };
+    FRwgHeightApi& A = Api();
+    void* Gen = (World && A.bUsable && A.Get) ? A.Get(World) : nullptr; // the same `this` GetKillboxTop uses
+    if (Gen) { for (int32 I = 0; I < 4; ++I) { if (R.Fn[I]) { V[I] = static_cast<int32>(R.Fn[I](Gen)); } } }
+    return FString::Printf(TEXT(" worldComplete=%d startReady=%d contentSpawnedApi=%d genStateRaw=%d readinessGetters=%s"), V[1], V[2], V[3], V[0], *R.Status);
+}
+
 void NodeShuffleMapMode::RwgNoteNonFinite(const TCHAR* Site, double X, double Y, double Value)
 {
     // rwg-0-2-0-2 (NaN audit): a decision site refused a non-finite value read from an RWG export. Counted per site for the process;
