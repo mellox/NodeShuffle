@@ -26,7 +26,8 @@
 #   RC14 (r3, review F2) interleave gate: while RollChatIsDraining() the pending and T61 emitters are NOT called (deferred, not
 #        dropped); the helper reads our own armed flag, not a timer query
 #   RC16 (ns-quietchat-1) the shared emitter (NodeShuffleObserveNotice.cpp, LOADED) passes the first player controller as the
-#        broadcast instigator ONLY under bPassFirstPlayerAsInstigator (default false in NodeShuffle.h, LOADED); otherwise nullptr;
+#        broadcast instigator ONLY under bPassFirstPlayerAsInstigator and never on a dedicated server; the take-to-broadcast block is
+#        pinned CONTIGUOUS (review F6); PENDING (NodeShufflePendingNotice.cpp, LOADED) and T61 pass no fourth argument (review F4) (default false in NodeShuffle.h, LOADED); otherwise nullptr;
 #        the EMITTED line prints instigatorRequested and instigatorPassed; ROLLCHAT is the caller that sets the flag (RC6)
 #   RC15 (r3, review F4) duplicate display names get the short class name appended inside RollChatTableRows, before the rows are composed
 #   r3 also: no repeat-character helper and no timer-active query anywhere in the packet files (zero-new-import rule, needles by
@@ -46,6 +47,7 @@ $files = [ordered]@{
     place = 'NodeShuffle\Private\NodeShuffleMapModePlace.cpp'
     emit  = 'NodeShuffle\Private\NodeShuffleObserveNotice.cpp'   # ns-quietchat-1
     modh  = 'NodeShuffle\Public\NodeShuffle.h'                   # ns-quietchat-1
+    pend  = 'NodeShuffle\Private\NodeShufflePendingNotice.cpp'   # ns-quietchat-1 review F4
 }
 $lintFiles = [ordered]@{
     lwipe = 'check_rerollwipe_lint.ps1'
@@ -103,12 +105,16 @@ $armNext    = 'World->GetTimerManager().SetTimer(RollChatDrainTimer, this, &ANod
 $supersede  = '    RollChatClear(TEXT("superseded by a new roll"));'
 $teardown   = '    RollChatClear(TEXT("world teardown"));'
 $bcast      = 'Chat->' + 'BroadcastChat' + 'Message(Msg, '
-$instSeq    = @('    APlayerController* Instigator = nullptr;', '    if (bPassFirstPlayerAsInstigator)', '    {',
-                '        FConstPlayerControllerIterator PcIt = World->GetPlayerControllerIterator();', '        if (PcIt) { Instigator = PcIt->Get(); }',
-                '    }', ($bcast + 'Instigator);'))
+$instBlock  = '    APlayerController* Instigator = nullptr;' + "`n" +
+              '    if (bPassFirstPlayerAsInstigator && World->GetNetMode() != NM_DedicatedServer)' + "`n" +
+              '    {' + "`n" +
+              '        FConstPlayerControllerIterator PcIt = World->GetPlayerControllerIterator();' + "`n" +
+              '        if (PcIt) { Instigator = PcIt->Get(); }' + "`n" +
+              '    }' + "`n" +
+              '    ' + $bcast + 'Instigator);'
 $emitSig    = 'bool FNodeShuffleModule::PostChatNotice(UWorld* World, const FString& Body, const TCHAR* SourceTag,' + "`n" + '    bool bPassFirstPlayerAsInstigator)'
 $emitDecl   = '    static bool PostChatNotice(class UWorld* World, const FString& Body, const TCHAR* SourceTag,' + "`n" + '        bool bPassFirstPlayerAsInstigator = false);'
-$emitLog    = 'bodyChars=%d instigatorRequested=%d instigatorPassed=%d)"),' + "`n" + '        SourceTag, (int32)EFGChatMessageType::CMT_CustomMessage, Body.Len(),' + "`n" + '        bPassFirstPlayerAsInstigator ? 1 : 0, Instigator ? 1 : 0);'
+$emitLog    = 'bodyChars=%d instigatorRequested=%d instigatorPassed=%d netMode=%d)"),' + "`n" + '        SourceTag, (int32)EFGChatMessageType::CMT_CustomMessage, Body.Len(),' + "`n" + '        bPassFirstPlayerAsInstigator ? 1 : 0, Instigator ? 1 : 0, (int32)World->GetNetMode());'
 $guard      = '    if (bRollChatTimerArmed) { return; }'
 $isDraining = 'return RollChatNext < RollChatRows.Num() && bRollChatTimerArmed;'
 $giveUp     = '        { const FString Why = FString::Printf(TEXT("emitter refused %d time(s)"), RollChatAttempts); RollChatClear(*Why); return; }'
@@ -210,9 +216,10 @@ function Invoke-Checks($T) {
     if ($clear -eq '' -or -not (Ordered $clear @('ClearTimer(RollChatDrainTimer);', 'table dropped part-way', 'RollChatRows.Reset();', 'RollChatNext = 0;'))) { $f += '(RC13) the clear stops the timer, logs the drop, resets the rows and index' }
     # RC16 (ns-quietchat-1)
     $emitFn = Span $T.emit $emitSig 'void FNodeShuffleModule::ResetForeignNoticeState()'
-    if ($emitFn -eq '' -or -not (Ordered $emitFn ($instSeq + @($emitLog))) -or (Count $emitFn $bcast) -ne 1 -or (Count $emitFn ($bcast + 'nullptr')) -ne 0) { $f += '(RC16) the emitter passes the first player controller only under the flag (nullptr otherwise) and logs requested/passed' }
+    if ($emitFn -eq '' -or -not (Ordered $emitFn @($instBlock, $emitLog)) -or (Count $emitFn $bcast) -ne 1 -or (Count $emitFn ($bcast + 'nullptr')) -ne 0) { $f += '(RC16) the emitter passes the first player controller only under the flag (nullptr otherwise) and logs requested/passed' }
     if ((Count $T.modh $emitDecl) -ne 1) { $f += '(RC16) the flag defaults to false in the declaration (the other four callers keep nullptr)' }
     if ((Count $T.chat '/*bPassFirstPlayerAsInstigator=*/true') -ne 1) { $f += '(RC16) only the ROLLCHAT call in RollChat.cpp sets the flag' }
+    if ((Count $T.pend 'FNodeShuffleModule::PostChatNotice(World, Body, TEXT("PENDING"));') -ne 1 -or (Count $T.emit 'if (PostChatNotice(World, BuildForeignNoticeBody(Unannounced), TEXT("T61")))') -ne 1) { $f += '(RC16) the PENDING and T61 calls pass no fourth argument (they keep nullptr)' }
     # RC14
     if ((Count $T.sub $gateSeq[0]) -ne 1 -or -not (Ordered $T.sub $gateSeq) -or (Count $T.sub $gateSeq[2]) -ne 1 -or (Count $T.sub $gateSeq[3]) -ne 1) { $f += '(RC14) the pending and T61 emitters are called only when no table is draining' }
     if ($helper -eq '' -or (Count $helper $isDraining) -ne 1 -or (Count $T.subh 'bool RollChatIsDraining() const;') -ne 1) { $f += '(RC14) RollChatIsDraining reads rows-unsent AND the armed flag' }
@@ -264,8 +271,12 @@ $mutants = @(
     @{ Name = 'M33 duplicate suffix removed';          Key = 'chat';  Expect = 'RC15'; Find = $dupAppend; Repl = '' }
     @{ Name = 'M34 totals member back';                Key = 'subh';  Expect = 'RC4';  Find = '    bool bRollChatTimerArmed = false;'; Repl = ('    bool ' + $totalsMember + ' = true;' + "`n" + '    bool bRollChatTimerArmed = false;') }
     @{ Name = 'M39 ROLLCHAT call drops the flag';      Key = 'chat';  Expect = 'RC6';  Find = ', /*bPassFirstPlayerAsInstigator=*/true)'; Repl = ')' }
-    @{ Name = 'M40 controller passed unconditionally'; Key = 'emit';  Expect = 'RC16'; Find = "    if (bPassFirstPlayerAsInstigator)`n    {`n        FConstPlayerControllerIterator"; Repl = "    {`n        FConstPlayerControllerIterator" }
+    @{ Name = 'M40 controller passed unconditionally'; Key = 'emit';  Expect = 'RC16'; Find = "    if (bPassFirstPlayerAsInstigator && World->GetNetMode() != NM_DedicatedServer)`n    {`n        FConstPlayerControllerIterator"; Repl = "    {`n        FConstPlayerControllerIterator" }
     @{ Name = 'M41 flag ignored, nullptr passed';      Key = 'emit';  Expect = 'RC16'; Find = ($bcast + 'Instigator);'); Repl = ($bcast + 'nullptr);') }
+    @{ Name = 'M43 T61 sets the flag'; Key = 'emit'; Expect = 'RC16'; Find = 'TEXT("T61")))'; Repl = 'TEXT("T61"), true))' }
+    @{ Name = 'M44 dedicated-server test removed';     Key = 'emit';  Expect = 'RC16'; Find = 'if (bPassFirstPlayerAsInstigator && World->GetNetMode() != NM_DedicatedServer)'; Repl = 'if (bPassFirstPlayerAsInstigator)' }
+    @{ Name = 'M45 pointer cleared before broadcast';  Key = 'emit';  Expect = 'RC16'; Find = ("        if (PcIt) { Instigator = PcIt->Get(); }`n    }`n"); Repl = ("        if (PcIt) { Instigator = PcIt->Get(); }`n    }`n    Instigator = nullptr;`n") }
+    @{ Name = 'M46 netMode field dropped';             Key = 'emit';  Expect = 'RC16'; Find = ' netMode=%d)"),'; Repl = ')"),' }
     @{ Name = 'M42 flag defaults to true';             Key = 'modh';  Expect = 'RC16'; Find = 'bool bPassFirstPlayerAsInstigator = false);'; Repl = 'bool bPassFirstPlayerAsInstigator = true);' }
     @{ Name = 'M25 index advances before acceptance';  Key = 'chat';  Expect = 'RC12'; Find = ('    if (!' + $postCall + ')'); Repl = ('    ++RollChatNext;' + "`n    if (!" + $postCall + ')') }
 )
