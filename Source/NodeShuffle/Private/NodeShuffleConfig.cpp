@@ -306,9 +306,10 @@ void UNodeShuffleConfig::PostInitProperties()
             TEXT("ProtectedForeignResources"));
         // ns-scanfilter-4 (user: "Merge anyway") REVERSES F10 FOR THE ARRAY AND THE ROW: both are false so the row's
         // 'Show in scanner' field can be edited in a running world (measured for a false array, ns-scanfilter-2). 'Protected'
-        // and 'Resource' keep true. What a player can now do in a running world (add / delete a row, Reset the list) and
+        // and 'Resource' keep true. What a player can now do in a running world (add / delete a row; Reset is refused below) and
         // what each does to protection is in the ns-scanfilter-4 handoff; protection still latches at world load.
         Rows->bRequiresWorldReload = false;
+        Rows->bAllowUserReset = false; // ns-scanfilter-4 review F2: the list's Reset is refused, so protection choices cannot be wiped from a running world
         // T65 RETITLED. The old title was "Protect Other Mods' RESOURCES", which asserts the resource
         // itself belongs to another mod -- FALSE for the population that motivated T61's copy fix:
         // vanilla NitrogenGas / LiquidOil carried by another mod's well actors. What every row in this

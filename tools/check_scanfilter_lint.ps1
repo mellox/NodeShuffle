@@ -210,6 +210,7 @@ function Invoke-Checks($T) {
     if ((Count $T.veto "bResourceProtectedByConfig = bNodeClassIsVanilla`n                    || FNodeShuffleModule::IsForeignResourceProtectedByConfig(ForeignResourcePath);") -ne 1 -or (Count $T.veto 'ShowInScanner') -ne 0) { $f += '(S15) the veto conjunct is unchanged and never reads the switch' }
     if ($append -eq '' -or (Count $append 'R.Protected->Value = true;') -ne 1 -or (Count $T.sfr 'Protected->Value') -ne 1) { $f += '(S15) a row the scanner side creates is ticked, and nothing else in the rows file writes Protected' }
     $t60 = Span $T.cfgc 'TEXT("ProtectedForeignResources"));' 'Root->SectionProperties.Add(TEXT("ProtectedForeignResources"), Rows);'
+    if ($t60 -eq '' -or (Count $t60 'Rows->bAllowUserReset = false;') -ne 1) { $f += '(S15) the per-resource list cannot be Reset by the player' }
     if ($t60 -eq '' -or (Count $t60 'Rows->bRequiresWorldReload = false;') -ne 1 -or (Count $t60 'RowTemplate->bRequiresWorldReload = false;') -ne 1 -or (Count $t60 'ProtectedProp->bRequiresWorldReload = true; // F10') -ne 1 -or (Count $t60 'ResourceProp->bRequiresWorldReload = true; // F10') -ne 1 -or -not (Ordered $t60 @('RowTemplate->SectionProperties.Add(TEXT("Protected"), ProtectedProp);', 'NodeShuffleScanFilter::AddShowFieldToRowTemplate(RowTemplate, BoolClass);', 'RowTemplate->SectionProperties.Add(TEXT("Resource"), ResourceProp);'))) { $f += '(S15) Protected and Resource locked in a running world, the array and row not, Show between them' }
     $showF = Span $T.sfr 'void AddShowFieldToRowTemplate(' 'void RegisterConfigRows('
     if ($showF -eq '' -or (Count $showF 'Show->bRequiresWorldReload = false;') -ne 1 -or (Count $showF 'bRequiresWorldReload = true') -ne 0) { $f += '(S15) Show in scanner is editable in a running world' }
@@ -316,6 +317,7 @@ $mutants = @(
     @{ Name = 'M67 marker not newest (scanfilter-4)'; Key = 'mark';  Expect = 'S9';  Find = ('        TEXT("' + $marker4 + '"),'); Repl = '' }
     @{ Name = 'M68 unlock write in the rows file';     Key = 'sfr';   Expect = 'S7';  Find = '            GStartGameListRead = true;'; Repl = ('            GStartGameListRead = true; // Unlocks->' + 'UnlockScannable' + 'Resource(Pair);') }
     @{ Name = 'M69 existing switch rewritten by the protection pass'; Key = 'sfr'; Expect = 'S13'; Find = '            const bool bShow = R.Show->Value;'; Repl = '            const bool bShow = R.Show->Value; R.Show->Value = bShow;' }
+    @{ Name = 'M72 list resettable'; Key = 'cfgc'; Expect = 'S15'; Find = '        Rows->bAllowUserReset = false;'; Repl = '' }
     @{ Name = 'M73 scanner side never sorts'; Key = 'sfr'; Expect = 'S15'; Find = 'if (Added > 0) { FNodeShuffleModule::SortResourceRows(Rows, TEXT("scanner-add")); }'; Repl = '' }
     @{ Name = 'M21 census period widened';            Key = 'sfh';   Expect = 'S11'; Find = 'constexpr double CallCensusPeriodSeconds = 5.0;'; Repl = 'constexpr double CallCensusPeriodSeconds = 60.0;' }
 )
