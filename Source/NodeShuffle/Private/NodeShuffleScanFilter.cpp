@@ -401,13 +401,12 @@ namespace NodeShuffleScanFilter
             TEXT("One row per resource added by another mod. ON: the resource stays in the list the resource scanner offers. ")
             TEXT("OFF: NodeShuffle removes it from that list. A switch only hides or shows; it never makes a resource ")
             TEXT("scannable. A switch can only remove a resource from the scanner's list, never add one: a resource that is not on the list stays absent even when its switch is ON.\n\n")
-            TEXT("THIS LIST FILLS ITSELF IN while a world is running: a row is added for each modded resource NodeShuffle ")
-            TEXT("shuffles in that world, and for each modded resource that appears in the scanner's list. A new row starts OFF ")
+            TEXT("THIS LIST FILLS ITSELF IN in a world you host while NodeShuffle's 'Enabled' is on: a row is added for each modded resource NodeShuffle ")
+            TEXT("shuffles in that world, and for each modded resource that appears in the scanner's list, up to 256 rows. A new row starts OFF ")
             TEXT("for resources from All Minable and ON for every other mod. Resources from the base game are never listed and ")
-            TEXT("never hidden.\n\n")
-            TEXT("These switches apply to every world on this install, not to one save. NodeShuffle reads them about every 5 seconds while the game is running (not while it is paused); reopen the scanner after changing one. While NodeShuffle's 'Enabled' is off, nothing ")
-            TEXT("is hidden. In multiplayer only the hosting player's own scanner is filtered; on a dedicated server none is. Reset empties the list; the rows come back with ")
-            TEXT("their starting values while a world is running, and so does a deleted row. The text fields name the resource; only the switch is a setting."));
+            TEXT("never hidden. A missing row is added again the same way, with its starting value.\n\n")
+            TEXT("These switches apply to every world on this install, not to one save. After changing a switch, reopen the scanner. While NodeShuffle's 'Enabled' is off, nothing ")
+            TEXT("is hidden. In multiplayer only the host's game applies these switches. The text fields name the resource; only the switch is a setting."));
 
         UConfigPropertySection* RowTemplate = NewObject<UConfigPropertySection>(Rows, SectionClass, TEXT("ScannerResourceRow"));
         RowTemplate->bRequiresWorldReload = false;

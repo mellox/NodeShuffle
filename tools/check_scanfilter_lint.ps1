@@ -146,8 +146,10 @@ function Invoke-Checks($T) {
     if ((Count $T.cfgc $oldKnow) -ne 0) { $f += '(S10) the knowledge tooltip''s old first sentence is gone' }
     if ((Count $T.desc '{ TEXT("ScannerResourceVisibility"), TEXT("tick"), false, TEXT("none"),') -ne 1) { $f += '(S10) MCP manifest row' }
     if ((Count $T.sf ('Rows->DisplayName = FText::FromString(TEXT("' + $title + '"));')) -ne 1 -or (Count $T.cfgc ("use '" + $title + "'.")) -ne 1) { $f += '(S10) the knowledge tooltip quotes the list title exactly' }
+    foreach ($o in @(('and so does a ' + 'deleted row'), ('not while it ' + 'is paused'), ('Reset empties ' + 'the list'), ('on a dedicated ' + 'server none is'))) { if ((Count $T.sf $o) -ne 0) { $f += "(S10) unmeasured tooltip clause is gone ($o)" } }
     $oldRes = 'A resource you have not ' + 'researched will not appear'; if ((Count $T.sf $oldRes) -ne 0) { $f += '(S10) the false research sentence is gone' }
     # S11
+    if ($tick -eq '' -or (Count $tick 'Now - GLastCallLineTime >= CallCensusPeriodSeconds && (FNodeShuffleModule::AreDiagnosticsEnabled() || !SameFigures(GLatest, GLastCensus))) { EmitCallCensus(Now); }') -ne 1) { $f += '(S11) the tick-side census is gated like the hook-side one' }
     if ((Count $T.sf 'if ((RefusedOverCap > 0 || Withdrawn > 0) && (RefusedOverCap != GLastRefused || Withdrawn != GLastWithdrawn))') -ne 1 -or (Count $T.sf 'GLastRefused = RefusedOverCap; GLastWithdrawn = Withdrawn;') -ne 1) { $f += '(S11) the notAdded warning is latched on its figures' } # round 2, F5 pin: coder-written
     foreach ($x in $fmts) { if ((Count $T.sf $x) -ne 1) { $f += "(S11) diagnostic format: $x" } }
     if ((Count $T.sfh 'constexpr int32 FullCallLines = 20;') -ne 1 -or (Count $T.sfh 'constexpr double CallCensusPeriodSeconds = 5.0;') -ne 1) { $f += '(S11) 20 full lines, then a census at most every 5 s' }
@@ -187,6 +189,7 @@ $mutants = @(
     @{ Name = 'M23 census made unconditional';         Key = 'sf';    Expect = 'S11'; Find = 'else if (Now - GLastCallLineTime >= CallCensusPeriodSeconds && (FNodeShuffleModule::AreDiagnosticsEnabled() || !SameFigures(GLatest, GLastCensus)))'; Repl = 'else if (Now - GLastCallLineTime >= CallCensusPeriodSeconds)' } # round 2, coder-written
     @{ Name = 'M24 notAdded latch removed';           Key = 'sf';    Expect = 'S11'; Find = 'if ((RefusedOverCap > 0 || Withdrawn > 0) && (RefusedOverCap != GLastRefused || Withdrawn != GLastWithdrawn))'; Repl = 'if (RefusedOverCap > 0 || Withdrawn > 0)' } # round 2, coder-written
     @{ Name = 'M25 old research sentence back';       Key = 'sf';    Expect = 'S10'; Find = 'TEXT("scannable. A switch can only remove'; Repl = ('TEXT("scannable. A resource you have not ' + 'researched will not appear. A switch can only remove') } # round 2, coder-written
+    @{ Name = 'M26 tick census made unconditional'; Key = 'sf'; Expect = 'S11'; Find = 'CallCensusPeriodSeconds && (FNodeShuffleModule::AreDiagnosticsEnabled() || !SameFigures(GLatest, GLastCensus))) { EmitCallCensus(Now); }'; Repl = 'CallCensusPeriodSeconds) { EmitCallCensus(Now); }' }
     @{ Name = 'M21 census period widened';            Key = 'sfh';   Expect = 'S11'; Find = 'constexpr double CallCensusPeriodSeconds = 5.0;'; Repl = 'constexpr double CallCensusPeriodSeconds = 60.0;' }
 )
 $caught = 0
