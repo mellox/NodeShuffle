@@ -1479,13 +1479,13 @@ private:
     mutable int32 RollChatCensusActiveEntries = -1;
     void RollChatQueueBreakdown(bool bIsReroll, int32 RolledLineActive);  // the last statement of RollLayout: after every deal pass
     void TickRollChatEmitter();                   // every RefreshTick, beside the other two notice emitters: Waiting/Stalled -> Draining
-    void RollChatDrainStep();                     // the drain timer's callback: posts ONE row, re-arms itself
-    void RollChatClear(const TCHAR* Why);         // stops the drain and drops unsent rows (new roll, give-up, EndPlay)
+    void RollChatDrainStep();                     // the drain timer's callback: posts ONE message, re-arms itself
+    void RollChatClear(const TCHAR* Why);         // stops the drain and drops unsent messages (new roll, give-up, EndPlay)
     void RollChatNoteFirstApply() const;          // first apply after each load or roll; Verbose only
     TArray<FString> RollChatLines;                // ns-quietchat-1: the table lines (opening, header, resources, Total), for packing and the per-line log
     TArray<FString> RollChatMessages;             // the lines packed RollChatLinesPerMessage to a chat message -- one emitter call each
     int32 RollChatNext = 0;                       // index of the next MESSAGE to post; advances only on acceptance
-    FTimerHandle RollChatDrainTimer;              // one-shot, re-armed per accepted row (RollChatRowGapSeconds)
+    FTimerHandle RollChatDrainTimer;              // one-shot, re-armed per accepted message (RollChatRowGapSeconds)
     double RollChatStartSeconds = 0.0;            // drain start, for ROLLCHAT-DONE's elapsed time
     FString RollChatSummary;                      // the measured counts, carried into the ROLLCHAT outcome lines
     bool bRollChatTimerArmed = false;             // the drain's one-shot is pending: set on every arm, cleared when it fires and on every clear

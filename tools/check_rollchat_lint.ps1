@@ -229,7 +229,7 @@ function Invoke-Checks($T) {
     if ($tick -eq '' -or (Count $tick $armOnce) -ne 1 -or (Count $tick ('PostChat' + 'Notice')) -ne 0) { $f += '(RC12) the tick only arms the one-shot drain timer; it never posts' }
     if ($step -eq '' -or (Count $step $armNext) -ne 1 -or -not (Ordered $step @(('if (!' + $postCall + ')'), 'return;', 'ROLLCHAT-LINE', '++RollChatNext;', $armNext))) { $f += '(RC12) the step posts one row, advances only after acceptance, then re-arms one gap later' }
     if ($step -ne '' -and (Count $step '++RollChatNext;') -ne 1) { $f += '(RC12) the step posts one row, advances only after acceptance, then re-arms one gap later' }
-    if ($step -ne '' -and ((Count $step 'while (') -ne 0 -or (Count $step 'for (') -ne 1 -or (Count $lineLog 'for (') -ne 1)) { $f += '(RC12) one post per timer fire: the only loop in the drain step is the per-line log loop (RC17)' }
+    if ($step -ne '' -and ([regex]::Matches($step, '\b(for|while)\s*\(').Count -ne 1 -or [regex]::Matches($step, '\bdo\s*\{').Count -ne 0 -or (Count $lineLog 'for (') -ne 1)) { $f += '(RC12) one post per timer fire: the only loop in the drain step is the per-line log loop (RC17)' }
     if ((Count $T.chat ('RollChatRowGapSeconds, ' + 'true')) -ne 0) { $f += '(RC12) the drain timer must never loop' }
     if ((Count $T.subh '    FTimerHandle RollChatDrainTimer;') -ne 1) { $f += '(RC12) the drain timer handle' }
     if ($step -eq '' -or -not (Ordered $step @('++RollChatAttempts;', 'if (RollChatAttempts >= RollChatMaxEmitAttempts)', 'RollChatClear('))) { $f += '(RC12) a refusal is counted and the budget drops the table' }
@@ -240,6 +240,7 @@ function Invoke-Checks($T) {
     # RC13
     if ($qb -eq '' -or -not (Ordered $qb @($supersede, 'RollChatLines.Add('))) { $f += '(RC13) a new roll first drops any table still draining' }
     if ($clear -eq '' -or -not (Ordered $clear @('ClearTimer(RollChatDrainTimer);', 'table dropped part-way', 'RollChatMessages.Reset();', 'RollChatLines.Reset();', 'RollChatNext = 0;'))) { $f += '(RC13) the clear stops the timer, logs the drop, resets the rows and index' }
+    if ($step -eq '' -or -not (Ordered $step @('RollChatMessages.Reset();', 'RollChatLines.Reset();', '        RollChatNext = 0;'))) { $f += '(RC13) the DONE path resets both arrays' }
     # RC16 (ns-quietchat-1)
     $emitFn = Span $T.emit $emitSig 'void FNodeShuffleModule::ResetForeignNoticeState()'
     if ($emitFn -eq '' -or -not (Ordered $emitFn @($instBlock, $emitLog)) -or (Count $emitFn $bcast) -ne 1 -or (Count $emitFn ($bcast + 'nullptr')) -ne 0) { $f += '(RC16) the emitter passes the first player controller only under the flag (nullptr otherwise) and logs requested/passed' }
@@ -317,6 +318,8 @@ $mutants = @(
     @{ Name = 'M51 drain posts a single line';         Key = 'chat';  Expect = 'RC6';  Find = 'PostChatNotice(World, RollChatMessages[RollChatNext]'; Repl = 'PostChatNotice(World, RollChatLines[RollChatNext]' }
     @{ Name = 'M52 per-line log removed';              Key = 'chat';  Expect = 'RC17'; Find = $lineLog; Repl = '' }
     @{ Name = 'M53 lines member saved';                Key = 'subh';  Expect = 'RC3';  Find = $linesDecl; Repl = ('    UPROPERTY(Save' + 'Game)' + "`n" + $linesDecl) }
+    @{ Name = 'M54 unspaced loop wraps the post'; Key = 'chat'; Expect = 'RC12'; Find = ('    if (!' + $postCall + ')'); Repl = ('    for(int32 k = 0; k < 2; ++k) if (!' + $postCall + ')') }
+    @{ Name = 'M55 done path keeps the lines';         Key = 'chat';  Expect = 'RC13'; Find = "        RollChatMessages.Reset();`n        RollChatLines.Reset();`n        RollChatNext = 0;`n        RollChatGateTicks = -1;"; Repl = "        RollChatMessages.Reset();`n        RollChatNext = 0;`n        RollChatGateTicks = -1;" }
     @{ Name = 'M25 index advances before acceptance';  Key = 'chat';  Expect = 'RC12'; Find = ('    if (!' + $postCall + ')'); Repl = ('    ++RollChatNext;' + "`n    if (!" + $postCall + ')') }
 )
 $caught = 0
