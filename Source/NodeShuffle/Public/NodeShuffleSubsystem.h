@@ -1482,13 +1482,14 @@ private:
     void RollChatDrainStep();                     // the drain timer's callback: posts ONE row, re-arms itself
     void RollChatClear(const TCHAR* Why);         // stops the drain and drops unsent rows (new roll, give-up, EndPlay)
     void RollChatNoteFirstApply() const;          // first apply after each load or roll; Verbose only
-    TArray<FString> RollChatRows;                 // the opening line, header, resource rows, Total -- one chat message each
-    int32 RollChatNext = 0;                       // index of the next row to post; advances only on acceptance
+    TArray<FString> RollChatLines;                // ns-quietchat-1: the table lines (opening, header, resources, Total), for packing and the per-line log
+    TArray<FString> RollChatMessages;             // the lines packed RollChatLinesPerMessage to a chat message -- one emitter call each
+    int32 RollChatNext = 0;                       // index of the next MESSAGE to post; advances only on acceptance
     FTimerHandle RollChatDrainTimer;              // one-shot, re-armed per accepted row (RollChatRowGapSeconds)
     double RollChatStartSeconds = 0.0;            // drain start, for ROLLCHAT-DONE's elapsed time
     FString RollChatSummary;                      // the measured counts, carried into the ROLLCHAT outcome lines
     bool bRollChatTimerArmed = false;             // the drain's one-shot is pending: set on every arm, cleared when it fires and on every clear
-    bool RollChatIsDraining() const;              // rows unsent AND the drain timer pending (a Stalled table is not draining)
+    bool RollChatIsDraining() const;              // messages unsent AND the drain timer pending (a Stalled table is not draining)
     int32 RollChatGateTicks = -1;                 // -1 nothing armed; 0 player seen, hold one tick; then drain
     int32 RollChatAttempts = 0;                   // refusals by the emitter for this table
     // redesign-1: before a re-roll, UN-HIDE every previously-suppressed original node (and its

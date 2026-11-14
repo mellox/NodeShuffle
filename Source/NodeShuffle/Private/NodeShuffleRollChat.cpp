@@ -18,17 +18,20 @@
 // and the re-roll in RefreshTick and the legacy-layout re-deal in RwgPipelineMayRun; ApplyLayout never
 // calls it.
 //
+// ns-quietchat-1 round 2 (user, 2026-11-14: "Yes, pack rows"): the table LINES are still composed one per entry
+// (RollChatLines), then packed in order RollChatLinesPerMessage at a time into chat MESSAGES joined by "\n"
+// (RollChatMessages). The drain below posts one MESSAGE per timer fire.
 // DRAIN STATE MACHINE (all state is plain members of this actor; nothing is UPROPERTY, nothing is saved):
-//   Idle      RollChatNext >= RollChatRows.Num().
-//   Waiting   rows queued, drain timer not active. TickRollChatEmitter (every RefreshTick, ~5 s) holds
+//   Idle      RollChatNext >= RollChatMessages.Num().
+//   Waiting   messages queued, drain timer not active. TickRollChatEmitter (every RefreshTick, ~5 s) holds
 //             until a local pawn exists, holds one more tick before the FIRST row, then starts Draining.
 //   Draining  RollChatDrainTimer (one-shot, re-armed after each accepted row) fires RollChatRowGapSeconds
-//             apart; each fire posts row RollChatNext and advances it only when PostChatNotice accepted it.
+//             apart; each fire posts message RollChatNext and advances it only when PostChatNotice accepted it.
 //             Last row accepted -> ROLLCHAT-DONE, Idle.
 //   Stalled   a post was refused: the timer stops, RollChatAttempts++, and the next RefreshTick restarts
-//             Draining at the SAME row. RollChatMaxEmitAttempts refusals -> the rest is dropped (Warning).
+//             Draining at the SAME message. RollChatMaxEmitAttempts refusals -> the rest is dropped (Warning).
 //   A new roll (RollChatQueueBreakdown) or world teardown (RollChatClear from EndPlay) stops the timer and
-//   drops any unsent rows, logging how many.
+//   drops any unsent messages, logging how many (and how many lines they carried).
 
 #include "NodeShuffleSubsystem.h"
 #include "NodeShuffle.h"
@@ -50,6 +53,16 @@ namespace
     constexpr float RollChatRowGapSeconds = 0.3f;
     // Same budget as the other notices' retry (each refusal waits for the next ~5 s RefreshTick).
     constexpr int32 RollChatMaxEmitAttempts = 12;
+    // Table lines per chat message. A DESIGN INPUT chosen 2026-11-14 (the user's chat keeps 50 messages and their
+    // table is 51 lines), revisable. Not measured: how a 10-line message aligns or pops up in game.
+    constexpr int32 RollChatLinesPerMessage = 10;
+
+    // Lines carried by the first MessagesSent messages: every message holds RollChatLinesPerMessage lines except
+    // possibly the last, which holds the remainder.
+    int32 RollChatLinesInFirstMessages(int32 MessagesSent, int32 LineCount)
+    {
+        return FMath::Min(MessagesSent * RollChatLinesPerMessage, LineCount);
+    }
 
     struct FRollChatRow
     {
@@ -141,14 +154,16 @@ void ANodeShuffleSubsystem::RollChatClear(const TCHAR* Why)
 {
     if (UWorld* World = GetWorld()) { World->GetTimerManager().ClearTimer(RollChatDrainTimer); }
     bRollChatTimerArmed = false;
-    const int32 Unsent = RollChatRows.Num() - RollChatNext;
+    const int32 Unsent = RollChatMessages.Num() - RollChatNext;
     if (Unsent > 0)
     {
         UE_LOG(LogNodeShuffle, Warning,
-            TEXT("ROLLCHAT-DONE: table dropped part-way (%s) -- %d of %d row(s) sent, %d dropped | %s"),
-            Why, RollChatNext, RollChatRows.Num(), Unsent, *RollChatSummary);
+            TEXT("ROLLCHAT-DONE: table dropped part-way (%s) -- %d of %d message(s) sent, %d of %d line(s) sent, %d message(s) dropped | %s"),
+            Why, RollChatNext, RollChatMessages.Num(), RollChatLinesInFirstMessages(RollChatNext, RollChatLines.Num()),
+            RollChatLines.Num(), Unsent, *RollChatSummary);
     }
-    RollChatRows.Reset();
+    RollChatMessages.Reset();
+    RollChatLines.Reset();
     RollChatNext = 0;
     RollChatGateTicks = -1;
     RollChatAttempts = 0;
@@ -186,28 +201,43 @@ void ANodeShuffleSubsystem::RollChatQueueBreakdown(bool bIsReroll, int32 RolledL
     const int32 CountDigitsM = FMath::Max(3, FString::FromInt(NodeTotal).Len());
 
     // F1 (review, adapted to the table): the opening line carries the scope, the Total row carries the number.
-    RollChatRows.Add(FString::Printf(TEXT("New layout (%s), counted at the shuffle:"), Trigger));
-    RollChatRows.Add(RollChatCountRow(TEXT("Count"), TEXT("Resource"), CountDigitsM, true));
+    RollChatLines.Add(FString::Printf(TEXT("New layout (%s), counted at the shuffle:"), Trigger));
+    RollChatLines.Add(RollChatCountRow(TEXT("Count"), TEXT("Resource"), CountDigitsM, true));
     for (const FRollChatRow& R : Table)
     {
-        RollChatRows.Add(RollChatCountRow(FString::FromInt(R.Nodes), R.Name, CountDigitsM, false));
+        RollChatLines.Add(RollChatCountRow(FString::FromInt(R.Nodes), R.Name, CountDigitsM, false));
     }
     if (NodesNoResource > 0) // F5 (adapted): the no-resource entries get their own row, without "yet"
     {
-        RollChatRows.Add(RollChatCountRow(FString::FromInt(NodesNoResource), NoResourceLabel, CountDigitsM, false));
+        RollChatLines.Add(RollChatCountRow(FString::FromInt(NodesNoResource), NoResourceLabel, CountDigitsM, false));
     }
-    RollChatRows.Add(RollChatCountRow(FString::FromInt(NodeTotal), TEXT("Total"), CountDigitsM, false));
+    RollChatLines.Add(RollChatCountRow(FString::FromInt(NodeTotal), TEXT("Total"), CountDigitsM, false));
+
+    // PACK, in order: message k carries lines [k*L, min((k+1)*L, N)), joined by a line break. Every line lands in
+    // exactly one message; the last message carries the remainder (which always includes Total).
+    for (int32 First = 0; First < RollChatLines.Num(); First += RollChatLinesPerMessage)
+    {
+        const int32 End = FMath::Min(First + RollChatLinesPerMessage, RollChatLines.Num());
+        FString Message;
+        for (int32 i = First; i < End; ++i)
+        {
+            if (i > First) { Message += TEXT("\n"); }
+            Message += RollChatLines[i];
+        }
+        RollChatMessages.Add(Message);
+    }
     RollChatNext = 0;
 
-    // Field legend (prose): nodeTotal counts active layout entries (no-resource ones included, as the
+    // Field legend (prose): lines is the number of table lines composed; messages is how many chat messages they
+    // were packed into; linesPerMessage is the packing constant; nodeTotal counts active layout entries (no-resource ones included, as the
     // "(no resource)" row shows them); censusActive is the ROLLCENSUS active figure of this roll (-1 = no
     // census ran), a same-population recount; rolledLineActive is the active figure of the "Rolled layout:"
     // line, kept before the relocation pass and NOT required to be equal; wellLayoutEntries is the WellLayout
     // length (log only: wells are not in the chat table); countColumnDigits is M, the digit figure the
     // count-first rows are spaced by (max of 3 and the Total's digit count).
     RollChatSummary = FString::Printf(
-        TEXT("trigger %s | rows %d resources %d | nodeTotal %d nodesNoResource %d censusActive %d nodesReconciled %d rolledLineActive %d | wellLayoutEntries %d | countColumnDigits %d | nameFallbacks %d"),
-        Trigger, RollChatRows.Num(), Table.Num(), NodeTotal, NodesNoResource, CensusActive, bNodesMatch ? 1 : 0,
+        TEXT("trigger %s | lines %d messages %d linesPerMessage %d resources %d | nodeTotal %d nodesNoResource %d censusActive %d nodesReconciled %d rolledLineActive %d | wellLayoutEntries %d | countColumnDigits %d | nameFallbacks %d"),
+        Trigger, RollChatLines.Num(), RollChatMessages.Num(), RollChatLinesPerMessage, Table.Num(), NodeTotal, NodesNoResource, CensusActive, bNodesMatch ? 1 : 0,
         RolledLineActive, WellLayout.Num(), CountDigitsM, NameFallbacks);
     UE_LOG(LogNodeShuffle, Display, TEXT("ROLLCHAT-QUEUED: %s"), *RollChatSummary);
     if (!bNodesMatch)
@@ -219,7 +249,7 @@ void ANodeShuffleSubsystem::RollChatQueueBreakdown(bool bIsReroll, int32 RolledL
 
 void ANodeShuffleSubsystem::TickRollChatEmitter()
 {
-    if (RollChatNext >= RollChatRows.Num()) { return; } // Idle: the common case
+    if (RollChatNext >= RollChatMessages.Num()) { return; } // Idle: the common case
     UWorld* World = GetWorld();
     if (!World) { return; }
     if (bRollChatTimerArmed) { return; } // Draining: our own flag for the pending one-shot (set on arm, cleared when it fires or is cleared)
@@ -228,39 +258,39 @@ void ANodeShuffleSubsystem::TickRollChatEmitter()
     const APawn* Pawn = PC ? PC->GetPawn() : nullptr;
     if (!PC || !Pawn)
     {
-        UE_LOG(LogNodeShuffle, Verbose, TEXT("ROLLCHAT: holding %d row(s); pc valid %d, pawn valid %d"),
-            RollChatRows.Num() - RollChatNext, PC ? 1 : 0, Pawn ? 1 : 0);
+        UE_LOG(LogNodeShuffle, Verbose, TEXT("ROLLCHAT: holding %d message(s); pc valid %d, pawn valid %d"),
+            RollChatMessages.Num() - RollChatNext, PC ? 1 : 0, Pawn ? 1 : 0);
         return;
     }
     if (RollChatNext == 0 && RollChatGateTicks < 0)
     {
         RollChatGateTicks = 0;
-        UE_LOG(LogNodeShuffle, Display, TEXT("ROLLCHAT: player pawn present; holding %d row(s) one more tick"),
-            RollChatRows.Num());
+        UE_LOG(LogNodeShuffle, Display, TEXT("ROLLCHAT: player pawn present; holding %d message(s) one more tick"),
+            RollChatMessages.Num());
         return;
     }
     if (RollChatNext == 0) { RollChatStartSeconds = FPlatformTime::Seconds(); }
-    // Waiting/Stalled -> Draining. ONE-SHOT timer, re-armed by each accepted row: a looping timer can fire
-    // several times inside one long frame (the timer manager catches up), which would put two rows in one
+    // Waiting/Stalled -> Draining. ONE-SHOT timer, re-armed by each accepted message: a looping timer can fire
+    // several times inside one long frame (the timer manager catches up), which would put two messages in one
     // tick. A one-shot re-armed from its own callback fires at most once per frame and at least a gap apart.
     World->GetTimerManager().SetTimer(RollChatDrainTimer, this, &ANodeShuffleSubsystem::RollChatDrainStep,
         RollChatRowGapSeconds, false);
     bRollChatTimerArmed = true;
-    UE_LOG(LogNodeShuffle, Verbose, TEXT("ROLLCHAT: drain started at row %d of %d (gap %.2f s, refusals so far %d)"),
-        RollChatNext + 1, RollChatRows.Num(), RollChatRowGapSeconds, RollChatAttempts);
+    UE_LOG(LogNodeShuffle, Verbose, TEXT("ROLLCHAT: drain started at message %d of %d (gap %.2f s, refusals so far %d)"),
+        RollChatNext + 1, RollChatMessages.Num(), RollChatRowGapSeconds, RollChatAttempts);
 }
 
 void ANodeShuffleSubsystem::RollChatDrainStep()
 {
     bRollChatTimerArmed = false; // the one-shot has fired; every re-arm below sets it again
     UWorld* World = GetWorld();
-    if (!World || RollChatNext >= RollChatRows.Num())
+    if (!World || RollChatNext >= RollChatMessages.Num())
     {
         if (World) { World->GetTimerManager().ClearTimer(RollChatDrainTimer); }
         return;
     }
-    // ONE ROW PER EMITTER CALL. The index advances only on acceptance, so a refusal resumes at this row.
-    if (!FNodeShuffleModule::PostChatNotice(World, RollChatRows[RollChatNext], TEXT("ROLLCHAT"), /*bPassFirstPlayerAsInstigator=*/true))
+    // ONE MESSAGE PER EMITTER CALL. The index advances only on acceptance, so a refusal resumes at this message.
+    if (!FNodeShuffleModule::PostChatNotice(World, RollChatMessages[RollChatNext], TEXT("ROLLCHAT"), /*bPassFirstPlayerAsInstigator=*/true))
     {
         World->GetTimerManager().ClearTimer(RollChatDrainTimer); // Draining -> Stalled
         ++RollChatAttempts;
@@ -268,15 +298,25 @@ void ANodeShuffleSubsystem::RollChatDrainStep()
         // which always logs here because a refusal leaves RollChatNext < Num.
         if (RollChatAttempts >= RollChatMaxEmitAttempts)
         { const FString Why = FString::Printf(TEXT("emitter refused %d time(s)"), RollChatAttempts); RollChatClear(*Why); return; }
-        UE_LOG(LogNodeShuffle, Verbose, TEXT("ROLLCHAT: row %d refused (refusal %d of %d); retrying on a later tick"),
+        UE_LOG(LogNodeShuffle, Verbose, TEXT("ROLLCHAT: message %d refused (refusal %d of %d); retrying on a later tick"),
             RollChatNext + 1, RollChatAttempts, RollChatMaxEmitAttempts);
         return;
     }
-    UE_LOG(LogNodeShuffle, Display, TEXT("ROLLCHAT-BODY %d/%d: |%s|"), RollChatNext + 1, RollChatRows.Num(), *RollChatRows[RollChatNext]);
-    ++RollChatNext;
-    if (RollChatNext < RollChatRows.Num())
+    // The log carries the table LINE BY LINE (never the joined body, which holds raw line breaks): each line once,
+    // with its line index and the message it went out in.
     {
-        // Still Draining: the next row one gap from now.
+        const int32 FirstLine = RollChatNext * RollChatLinesPerMessage;
+        const int32 EndLine = RollChatLinesInFirstMessages(RollChatNext + 1, RollChatLines.Num());
+        for (int32 i = FirstLine; i < EndLine; ++i)
+        {
+            UE_LOG(LogNodeShuffle, Display, TEXT("ROLLCHAT-LINE %d/%d in message %d/%d: |%s|"),
+                i + 1, RollChatLines.Num(), RollChatNext + 1, RollChatMessages.Num(), *RollChatLines[i]);
+        }
+    }
+    ++RollChatNext;
+    if (RollChatNext < RollChatMessages.Num())
+    {
+        // Still Draining: the next message one gap from now.
         World->GetTimerManager().SetTimer(RollChatDrainTimer, this, &ANodeShuffleSubsystem::RollChatDrainStep,
             RollChatRowGapSeconds, false);
         bRollChatTimerArmed = true;
@@ -284,9 +324,11 @@ void ANodeShuffleSubsystem::RollChatDrainStep()
     else
     {
         World->GetTimerManager().ClearTimer(RollChatDrainTimer); // Draining -> Idle
-        UE_LOG(LogNodeShuffle, Display, TEXT("ROLLCHAT-DONE: %d of %d row(s) sent in %.1f s, %d refusal(s) | %s"),
-            RollChatNext, RollChatRows.Num(), FPlatformTime::Seconds() - RollChatStartSeconds, RollChatAttempts, *RollChatSummary);
-        RollChatRows.Reset();
+        UE_LOG(LogNodeShuffle, Display, TEXT("ROLLCHAT-DONE: %d of %d message(s) sent, %d of %d line(s) sent, in %.1f s, %d refusal(s) | %s"),
+            RollChatNext, RollChatMessages.Num(), RollChatLinesInFirstMessages(RollChatNext, RollChatLines.Num()), RollChatLines.Num(),
+            FPlatformTime::Seconds() - RollChatStartSeconds, RollChatAttempts, *RollChatSummary);
+        RollChatMessages.Reset();
+        RollChatLines.Reset();
         RollChatNext = 0;
         RollChatGateTicks = -1;
         RollChatAttempts = 0;
@@ -296,15 +338,15 @@ void ANodeShuffleSubsystem::RollChatDrainStep()
 void ANodeShuffleSubsystem::RollChatNoteFirstApply() const
 {
     // Reached on the first apply after every load and after every roll (RollLayout re-arms bDidInitialApply).
-    UE_LOG(LogNodeShuffle, Verbose, TEXT("ROLLCHAT: first layout apply since load or roll; %d row(s) queued"),
-        RollChatRows.Num() - RollChatNext);
+    UE_LOG(LogNodeShuffle, Verbose, TEXT("ROLLCHAT: first layout apply since load or roll; %d message(s) queued"),
+        RollChatMessages.Num() - RollChatNext);
 }
 
 // r2 review F2, ADAPTED: the reviewer's body asked the world timer manager whether RollChatDrainTimer is active; this
 // reads bRollChatTimerArmed instead (same predicate, kept by every arm/fire/clear site) so no timer query is added.
-// True = rows unsent AND the drain's one-shot pending. A Stalled table (timer cleared after a refusal) is NOT
+// True = messages unsent AND the drain's one-shot pending. A Stalled table (timer cleared after a refusal) is NOT
 // draining, so a dead chat manager cannot hold the other two notices back.
 bool ANodeShuffleSubsystem::RollChatIsDraining() const
 {
-    return RollChatNext < RollChatRows.Num() && bRollChatTimerArmed;
+    return RollChatNext < RollChatMessages.Num() && bRollChatTimerArmed;
 }
