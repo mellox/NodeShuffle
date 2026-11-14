@@ -110,6 +110,8 @@ bool ANodeShuffleSubsystem::RwgVerifyCaveCandidate(const NodeShuffleMapMode::FRw
     double Floor = 0.0;
     if (!Q.CaveFloorAt(X, Y, Hint, Floor)) { return false; }
     ++RwgRcCaveFloorHits;
+    // rwg-0-2-0-2 (NaN audit, /fp:fast): both RWG reads tested before the `!(a < b)` compare below, whose NaN answer is not IEEE-safe there.
+    if (!FMath::IsFinite(Floor) || !FMath::IsFinite(SurfZ)) { NodeShuffleMapMode::RwgNoteNonFinite(TEXT("caveVerifyFloorOrSurface"), X, Y, FMath::IsFinite(Floor) ? SurfZ : Floor); ++RwgRcCaveRejSurface; return false; }
     if (!(Floor < SurfZ - RwgCaveInsideProbeCm)) { ++RwgRcCaveRejSurface; return false; } // P5-2 re-review: the floor must lie under the API surface
     if (!Q.CaveInsideAt(FVector(X, Y, Floor + RwgCaveInsideProbeCm))) { ++RwgRcCaveRejInside; return false; }
     if (!Q.CaveInsideAt(FVector(X, Y, Floor + RwgCaveHeadroomCmMirror))) { ++RwgRcCaveRejHeadroom; return false; }

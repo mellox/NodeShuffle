@@ -35,6 +35,9 @@ bool ANodeShuffleSubsystem::RwgApiSlopeTooSteep(const NodeShuffleMapMode::FRwgGr
     const double Gx = (Q.SurfaceZ(X + S, Y) - Q.SurfaceZ(X - S, Y)) / (2.0 * S);
     const double Gy = (Q.SurfaceZ(X, Y + S) - Q.SurfaceZ(X, Y - S)) / (2.0 * S);
     OutRiseRun = FMath::Sqrt(Gx * Gx + Gy * Gy);
+    // rwg-0-2-0-2 (NaN audit, /fp:fast): a non-finite gradient (any of the four API reads non-finite) answers TOO STEEP; before, the
+    // compare below read false on NaN and the spot passed the slope test.
+    if (!FMath::IsFinite(OutRiseRun)) { NodeShuffleMapMode::RwgNoteNonFinite(TEXT("apiSlopeRiseRun"), X, Y, OutRiseRun); return true; }
     return OutRiseRun > FMath::Tan(FMath::DegreesToRadians(RwgCliffSlopeDegMirror));
 }
 

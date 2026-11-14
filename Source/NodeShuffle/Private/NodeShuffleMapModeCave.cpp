@@ -240,7 +240,7 @@ bool ANodeShuffleSubsystem::RwgEnsureCaveCheck(const NodeShuffleMapMode::FRwgGro
         {
             ++FloorN;
             bFound = Q.CaveFloorAt(S.X, S.Y, S.Z, Fz);
-            bWithin = bFound && FMath::Abs(Fz - S.Z) <= RwgCaveFloorMatchCm;
+            bWithin = bFound && FMath::IsFinite(Fz) && FMath::Abs(Fz - S.Z) <= RwgCaveFloorMatchCm; // rwg-0-2-0-2: tested before the compare (/fp:fast)
             FloorFound += bFound ? 1 : 0;
             FloorWithin += bWithin ? 1 : 0;
         }

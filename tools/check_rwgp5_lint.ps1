@@ -96,7 +96,7 @@ function Invoke-P5Checks($T) {
         foreach ($bad in @(('num=' + '0 '), ('originalsInsideCave=' + '0 '), ('caveCapacity=' + '0 '), ('caveCandidateSource=' + 'json '))) { if ($ck.Contains('TEXT("RWGCAVECHECK: ' + $bad)) { $f += "(P3) a prose line carries the census token $bad" } }
         if (-not $ck.Contains(': !(Cfg.IncludeModdedNodes && It->GetResourceClass() && It->GetResourceNodeType() == EResourceNodeType::Node)) { ++ExcludedNotPool; continue; }') -or -not $ck.Contains('if (AsNode ? !IsEligibleVanillaNode(AsNode, Cfg.IncludeModdedNodes, /*bIncludeLiquid=*/true)')) { $f += '(P3) F1: the seed scan must use the pool admission predicate' }
         if (-not $ck.Contains('seedsExcludedOurs=%d seedsExcludedNotPool=%d')) { $f += '(P3) F1: RWGCAVECHECK must print seedsExcludedNotPool' }
-        if (-not $ck.Contains('bWithin = bFound && FMath::Abs(Fz - S.Z) <= RwgCaveFloorMatchCm;') -or -not $ck.Contains('floorWithin300=%d') -or (Count $T.mmh 'constexpr double RwgCaveFloorMatchCm = 300.0;') -ne 1) { $f += '(P3) F5: the stand floor tolerance must be RwgCaveFloorMatchCm (= 300, the field name floorWithin300)' }
+        if (-not $ck.Contains('bWithin = bFound && FMath::IsFinite(Fz) && FMath::Abs(Fz - S.Z) <= RwgCaveFloorMatchCm;') -or -not $ck.Contains('floorWithin300=%d') -or (Count $T.mmh 'constexpr double RwgCaveFloorMatchCm = 300.0;') -ne 1) { $f += '(P3) F5: the stand floor tolerance must be RwgCaveFloorMatchCm (= 300, the field name floorWithin300)' }
     }
     $f8 = '|| A->Num() < 3 || !(*A)[0].IsValid() || !(*A)[1].IsValid() || !(*A)[2].IsValid()) { return false; }'
     if ((Count $c $f8) -ne 1 -or (Count $T.cavejson $f8) -ne 1) { $f += '(P3) F8: both JSON vector readers must reject null elements' }

@@ -38,7 +38,11 @@ int32 ANodeShuffleSubsystem::RwgRejectV3(const NodeShuffleMapMode::FRwgGroundQue
     int32 Bits = RwgWetV2(Q, P);
     RwgEnsureKillboxTop(&Q);
     if (RwgEnsureVoidCheck(Q) && RwgVoidCross(Q, P.X, P.Y)) { Bits |= 8; }
-    const bool bBelowKillbox = bRwgKillboxKnown && FMath::IsFinite(P.Z) && P.Z < RwgKillboxTopZ + NodeShuffleMapMode::RwgKillboxMarginCm;
+    // rwg-0-2-0-2 (NaN audit, /fp:fast): a non-finite API surface is UNPLACEABLE and takes bit 16 (counted as rejectedKillbox by every
+    // caller); before this packet it took no bit, so a NaN surface was dealable. Tested with FMath::IsFinite before any compare.
+    const bool bSurfaceFinite = FMath::IsFinite(P.Z);
+    if (!bSurfaceFinite) { NodeShuffleMapMode::RwgNoteNonFinite(TEXT("rejectV3SurfaceZ"), P.X, P.Y, P.Z); }
+    const bool bBelowKillbox = !bSurfaceFinite || (bRwgKillboxKnown && P.Z < RwgKillboxTopZ + NodeShuffleMapMode::RwgKillboxMarginCm);
     if (bBelowKillbox) { Bits |= 16; }
     return Bits;
 }

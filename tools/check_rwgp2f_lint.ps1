@@ -87,7 +87,7 @@ if (-not $text.hapi.Contains('return F != nullptr && S != nullptr && Api().VoidA
 $v3 = Get-Body $text.void ('int32 ' + $cls + 'RwgRejectV3(const NodeShuffleMapMode::FRwgGroundQuery& Q, const FVector& P)')
 if (-not $v3) { $fails += 'F2: RwgRejectV3 body not found' } else {
     $iW = $v3.IndexOf('int32 Bits = RwgWetV2(Q, ' + 'P);'); $iVd = $v3.IndexOf('if (RwgEnsureVoidCheck(Q) && RwgVoidCross(Q, P.X, P.Y)) { Bits |= ' + '8; }')
-    $iKb = $v3.IndexOf('const bool bBelowKillbox = bRwgKillboxKnown && FMath::IsFinite(P.Z) && P.Z < RwgKillboxTopZ + NodeShuffleMapMode::RwgKillbox' + 'MarginCm;')
+    $iKb = $v3.IndexOf('const bool bBelowKillbox = !bSurfaceFinite || (bRwgKillboxKnown && P.Z < RwgKillboxTopZ + NodeShuffleMapMode::RwgKillbox' + 'MarginCm);')
     $iKs = $v3.IndexOf('if (bBelowKillbox) { Bits |= ' + '16; }')
     if ($iW -lt 0 -or $iVd -lt $iW -or $iKb -lt $iVd -or $iKs -lt $iKb) { $fails += 'F2: v3 must be v2, then the graded VoidAt term (8), then bBelowKillbox (16) on the killbox top + margin' }
     $vc = Get-Body $text.void 'bool RwgVoidCross(const NodeShuffleMapMode::FRwgGroundQuery& Q, double X, double Y)'

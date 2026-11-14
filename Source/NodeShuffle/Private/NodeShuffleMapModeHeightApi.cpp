@@ -127,8 +127,11 @@ namespace
         FString GenDetail = TEXT("<none>");
         FnScalar HalfWorld = nullptr;
         FnScalar GridCm = nullptr;
-        double EdgeLoggedH = std::numeric_limits<double>::quiet_NaN(); // the value pair RWGEDGESTRIP last printed
-        double EdgeLoggedG = std::numeric_limits<double>::quiet_NaN();
+        // rwg-0-2-0-2 (design Q4): the module builds with /fp:fast, where a compare against a NaN sentinel is not IEEE (the deployed DLL's
+        // `!=` had no parity branch, so the line never printed). bEdgeLogged says whether a pair was printed; the pair itself starts at 0.
+        bool bEdgeLogged = false;
+        double EdgeLoggedH = 0.0; // the value pair RWGEDGESTRIP last printed (read only while bEdgeLogged)
+        double EdgeLoggedG = 0.0;
         int64 EdgeQueries = 0, EdgeOutsideCallsTotal = 0, EdgeRejApiTotal = 0, EdgeRejStripTotal = 0; // summed from finished ground queries
         int32 EdgeQueryLines = 0;
     };
@@ -465,8 +468,9 @@ namespace
             }
             return false;
         }
-        if (OutH != A.EdgeLoggedH || OutG != A.EdgeLoggedG)
+        if (!A.bEdgeLogged || OutH != A.EdgeLoggedH || OutG != A.EdgeLoggedG) // both finite here (bOk above); a changed pair re-prints
         {
+            A.bEdgeLogged = true;
             A.EdgeLoggedH = OutH;
             A.EdgeLoggedG = OutG;
             double Lo = 0.0, Hi = 1.0e8;
@@ -594,7 +598,7 @@ void ANodeShuffleSubsystem::RwgLogHeightApi(bool bFull)
             const double TraceZ = Hit.ImpactPoint.Z;
             const double Dz = ApiZ - TraceZ;
             const bool bIn = IsPointInWater(Hit.ImpactPoint);
-            const bool bWaterAbove = WaterZ > TraceZ;
+            const bool bWaterAbove = FMath::IsFinite(WaterZ) && WaterZ > TraceZ; // rwg-0-2-0-2: NaN = no inland level; tested before the compare (/fp:fast)
             WaterAboveIn += (bWaterAbove && bIn) ? 1 : 0;
             WaterAboveOut += (bWaterAbove && !bIn) ? 1 : 0;
             WaterBelowIn += (!bWaterAbove && bIn) ? 1 : 0;
@@ -837,4 +841,18 @@ double NodeShuffleMapMode::FRwgGroundQuery::WaterLevelZ(double X, double Y) cons
 {
     // The int argument's meaning is UNVERIFIED (P2a); 0 is passed as in the census. Out-of-range XY exits early.
     return (F && S) ? Api().Water(S, X, Y, 0) : TNumericLimits<double>::Lowest();
+}
+
+void NodeShuffleMapMode::RwgNoteNonFinite(const TCHAR* Site, double X, double Y, double Value)
+{
+    // rwg-0-2-0-2 (NaN audit): a decision site refused a non-finite value read from an RWG export. Counted per site for the process;
+    // the first 4 per site print. Game thread only (every caller runs inside a deal / pass / census on the game thread).
+    static TMap<FName, int32> Counts;
+    int32& N = Counts.FindOrAdd(FName(Site));
+    ++N;
+    if (N <= 4)
+    {
+        UE_LOG(LogNodeShuffle, Warning, TEXT("RWGNANGUARD: site=%s x=%.0f y=%.0f value=%f countThisSite=%d; the value failed FMath::IsFinite and this site took its refusing branch (first 4 per site print)"),
+            Site, X, Y, Value, N);
+    }
 }

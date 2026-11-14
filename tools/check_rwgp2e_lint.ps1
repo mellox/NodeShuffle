@@ -78,7 +78,7 @@ $v2 = Get-Body $text.sea ('int32 ' + $cls + 'RwgWetV2(const NodeShuffleMapMode::
 if (-not $v2) { $fails += 'E2: RwgWetV2 body not found' } else {
     if (-not $v2.Contains('if (RwgEnsureSeaCheck(Q) && FMath::IsFinite(P.Z) && Q.InSea(P.X, P.Y, P.Z)) { Wet |= ' + '1; }')) { $fails += 'E2: v2 must OR in the graded InSeaVolume term at the surface Z' }
     if (-not $v2.Contains('if (RwgIsPointInWaterCached(P)) { Wet |= ' + '2; }')) { $fails += 'E2: v2 must OR in the lake/river volume test' }
-    if (-not $v2.Contains('if (FMath::IsFinite(Wl) && Wl > P.Z + NodeShuffleMapMode::RwgWaterApiMarginCm) { Wet |= ' + '4; }')) { $fails += 'E2: v2 must OR in the finite inland level above the surface' }
+    if (-not $v2.Contains('if (FMath::IsFinite(Wl) && FMath::IsFinite(P.Z) && Wl > P.Z + NodeShuffleMapMode::RwgWaterApiMarginCm) { Wet |= ' + '4; }')) { $fails += 'E2: v2 must OR in the finite inland level above the surface' }
     $zeroCmp = '(<|<=|>|>=)\s*-?' + '0(\.0*)?\b(?!x)|\b0(\.0*)?\s*(<|<=|>|>=)'
     $code = ($v2 -split "`n" | ForEach-Object { ($_ -replace '//.*$', '') }) -join "`n"
     if ($code -match $zeroCmp) { $fails += 'E2: v2 compares something against zero -- a point is water only where a water surface exists above it, never by a Z sign' }

@@ -27,7 +27,7 @@ int32 ANodeShuffleSubsystem::RwgWetV2(const NodeShuffleMapMode::FRwgGroundQuery&
     if (RwgEnsureSeaCheck(Q) && FMath::IsFinite(P.Z) && Q.InSea(P.X, P.Y, P.Z)) { Wet |= 1; }
     if (RwgIsPointInWaterCached(P)) { Wet |= 2; }
     const double Wl = Q.WaterLevelZ(P.X, P.Y);
-    if (FMath::IsFinite(Wl) && Wl > P.Z + NodeShuffleMapMode::RwgWaterApiMarginCm) { Wet |= 4; }
+    if (FMath::IsFinite(Wl) && FMath::IsFinite(P.Z) && Wl > P.Z + NodeShuffleMapMode::RwgWaterApiMarginCm) { Wet |= 4; } // rwg-0-2-0-2: both sides tested (a NaN P.Z takes v3 bit 16)
     return Wet;
 }
 
