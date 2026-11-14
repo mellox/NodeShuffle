@@ -173,10 +173,10 @@ function Invoke-Checks($T) {
     # RC11
     if ((Count $T.chat $rowBody) -ne 1 -or (Count $T.chat $rowSig) -ne 1) { $f += '(RC11) the one count-first row builder: count, then 2*M-2 (header) or 8+2*(M-digits) spaces, then the label' }
     foreach ($old in $oldComposer) { if ((Count $T.chat $old) -ne 0) { $f += '(RC11) the old name-first fixed-width composer or its width fields are back' } }
-    if ($rowFn -eq '' -or (Count $T.chat 'AppendChar(') -ne (Count $rowFn 'AppendChar(') -or (Count $T.chat 'RollChatCountRow(') -ne 5) { $f += '(RC11) the row layout lives in RollChatFixedRow only (one definition, four callers)' }
+    if ($rowFn -eq '' -or (Count $T.chat 'AppendChar(') -ne (Count $rowFn 'AppendChar(') -or (Count $T.chat 'RollChatCountRow(') -ne 5) { $f += '(RC11) the row layout lives in RollChatCountRow only (one definition, four callers)' }
     foreach ($k in @('chat', 'sub', 'subh')) { if ((Count $T[$k] $noChrN) -ne 0 -or (Count $T[$k] $noTimerQ) -ne 0) { $f += "(RC11) zero-new-import rule: no repeat-character helper and no timer-active query ($k)" } }
-    if ($qb -eq '' -or -not (Ordered $qb @($mLine, $opening, $hdrRow, $resRow, $noResRow, $totalRow))) { $f += '(RC11) widths computed from this table before the rows; opening, header, resource, (no resource), Total in order' }
-    if ($qb -ne '' -and ((Count $qb 'RollChatRows.Add(') -ne 5 -or (Count $qb 'RollChatRows.Add(RollChatCountRow(') -ne 4)) { $f += '(RC11) every table row goes through the fixed-width builder (only the opening line does not)' }
+    if ($qb -eq '' -or -not (Ordered $qb @($mLine, $opening, $hdrRow, $resRow, $noResRow, $totalRow))) { $f += '(RC11) M computed from the Total before the rows; opening, header, resource, (no resource), Total in order' }
+    if ($qb -ne '' -and ((Count $qb 'RollChatRows.Add(') -ne 5 -or (Count $qb 'RollChatRows.Add(RollChatCountRow(') -ne 4)) { $f += '(RC11) every table row goes through the count-first builder (only the opening line does not)' }
     foreach ($old in @(('" ' + '| "'), ('%s ' + '| %d'), ('Resource ' + '| Nodes'), ('RollChatNamesPer' + 'Message'), ('RollChatAppend' + 'Groups'), ('%d' + '/%d: "), Label'), ('TEXT("' + 'Wells'), ('Well' + 'Counts'), "`t")) {
         if ((Count $T.chat $old) -ne 0) { $f += "(RC11) an old shape is back (pipe/three-column, grouped/numbered, wells column, or a tab)" }
     }
@@ -201,7 +201,7 @@ function Invoke-Checks($T) {
     if ($helper -eq '' -or (Count $helper $isDraining) -ne 1 -or (Count $T.subh 'bool RollChatIsDraining() const;') -ne 1) { $f += '(RC14) RollChatIsDraining reads rows-unsent AND the armed flag' }
     # RC15
     $rows15 = Span $T.chat 'TArray<FRollChatRow> RollChatTableRows(' 'FString RollChatCountRow('
-    if ($rows15 -eq '' -or -not (Ordered $rows15 @('Rows.StableSort(', 'TArray<bool> Dup; Dup.Init(false, Rows.Num());', $dupAppend, 'return Rows;'))) { $f += '(RC15) duplicate names get the class suffix after the sort, before the rows are returned (widths use the final names)' }
+    if ($rows15 -eq '' -or -not (Ordered $rows15 @('Rows.StableSort(', 'TArray<bool> Dup; Dup.Init(false, Rows.Num());', $dupAppend, 'return Rows;'))) { $f += '(RC15) duplicate names get the class suffix after the sort, before the rows are returned' }
     return ,$f
 }
 

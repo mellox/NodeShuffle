@@ -117,12 +117,12 @@ namespace
     // label. M is the count-column digit figure: max(3, digits of the Total row's number). Gap after the count:
     //   header row ("Count" then "Resource"): 2*M - 2 spaces;
     //   every other row:                       8 + 2*(M - digits(count)) spaces.
-    // WHAT WAS MEASURED, AND ITS SCOPE (2026-11-14, ONE machine, ONE UI scale, English): the chat font is
-    // proportional (ten 'i' far narrower than ten 'W'), so name-first padding cannot make columns. A digit is
-    // about as wide as two spaces there (about 13.9 px against 7.2 px), and runs of plain spaces survive into
-    // chat. Five pasted lines in exactly this layout for a Total of 1032 put the labels' left ink edges at 244,
-    // 243, 244, 244 and 241 px. Other UI scales, fonts and languages are UNMEASURED; this does not claim the
-    // labels line up anywhere else.
+    // WHAT WAS MEASURED, AND ITS SCOPE (2026-11-14, ONE machine, ONE UI scale, English, PLAYER-TYPED chat lines):
+    // the chat font is proportional, so name-first padding cannot make columns. A digit is about as wide as two
+    // spaces there (about 13.9 px against 7.2 px), and runs of plain spaces survived into chat. Five typed lines in
+    // exactly this layout for a Total of 1032 put the labels' left ink edges at 244, 243, 244, 244 and 241 px.
+    // UNMEASURED: whether this mod's CMT_CustomMessage rows render in the same font and size, whether digits are all
+    // one width ('1' may be narrower), and other UI scales, fonts and languages. No alignment is claimed beyond that.
     // THIS IS THE ONLY PLACE THE ROW LAYOUT LIVES: count text, label, M and the header flag in; one row out.
     // Padding is a plain loop of single-space AppendChar calls (AppendChar is already used in
     // NodeShuffleAutoAllowExtractors.cpp), not a repeat-character helper, so the row adds no engine import.
