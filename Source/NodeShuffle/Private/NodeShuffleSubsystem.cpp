@@ -432,11 +432,18 @@ void ANodeShuffleSubsystem::RefreshTick()
         // patches land; the resource notice only when a row is genuinely added), so a steady-state
         // profile sees neither and the switch could not stop a nag that structurally cannot happen.
         // A player who had deliberately silenced them IS un-silenced by the version bump.
-        EmitPendingNoticeIfReady(/*bNoticesEnabled=*/true);
-        // T61 (ns-t61-observe-always): the second notice source, gated by the SAME player setting and
-        // running the same four gates. It costs one array-length compare on every pass that has nothing
-        // to say, which is every pass after the first sighting wave.
-        FNodeShuffleModule::TickForeignNoticeEmitter(GetWorld(), /*bNoticesEnabled=*/true);
+        // ns-rollchat-1 r3: while a breakdown table is mid-drain the other two notices wait; their emitters are not
+        // called, so their queues, gates and retry counters are untouched and they post on a later tick.
+        const bool bRollChatDraining = RollChatIsDraining();
+        if (!bRollChatDraining)
+        {
+            EmitPendingNoticeIfReady(/*bNoticesEnabled=*/true);
+            // T61 (ns-t61-observe-always): the second notice source, gated by the SAME player setting and
+            // running the same four gates. It costs one array-length compare on every pass that has nothing
+            // to say, which is every pass after the first sighting wave.
+            FNodeShuffleModule::TickForeignNoticeEmitter(GetWorld(), /*bNoticesEnabled=*/true);
+        }
+        else { UE_LOG(LogNodeShuffle, Verbose, TEXT("ROLLCHAT: a table is draining; the other two chat notices were not called this tick")); }
         TickRollChatEmitter(); // ns-rollchat-1: posts a queued post-shuffle breakdown; one array-length compare when nothing is queued
         // scanregen-1 consume point (P2 §4 touch-point 3, §9 AMENDMENT — binding): do NOT clear
         // bScannerClusterRefreshPending on the SKIPPED branch. The flag clears ONLY when

@@ -43,10 +43,10 @@
 namespace
 {
     // THE ROW GAP. FGChatManager.h: ServerTimeStamp is "Used for message sorting. Automatically set by the
-    // Chat Manager" -- a float in seconds whose source is closed code (ASSUMED: a world/server clock).
-    // Rows posted in one tick would share a stamp and could tie, so rows are one timer fire apart. 0.3 s is
-    // above a float's step for any clock value under 2^21 s (~24 days; step there 0.25 s) and well above a
-    // frame, and 27 rows finish in 27 x 0.3 = 8.1 s (the first row waits one gap too).
+    // Chat Manager" -- a float in seconds whose clock is closed code (ASSUMED: a world/server clock).
+    // Rows posted in one tick could share a stamp, so rows are one timer fire apart (game time; timers stop
+    // while paused). Two values 0.3 s apart cannot round to the same float while the clock is below 2^22 s
+    // (~48 days; the float step there is 0.25 s). Above that the step is 0.5 s and they can.
     constexpr float RollChatRowGapSeconds = 0.3f;
     // Same budget as the other notices' retry (each refusal waits for the next ~5 s RefreshTick).
     constexpr int32 RollChatMaxEmitAttempts = 12;
@@ -100,6 +100,17 @@ namespace
             if (ByName != 0) { return ByName < 0; }
             return A.ClassPath.Compare(B.ClassPath, ESearchCase::CaseSensitive) < 0;
         });
+        // r2 review F4 (verbatim): two class paths sharing a display name get the short class name appended, so
+        // the rows are distinguishable. Duplicates are adjacent because the sort key is the case-insensitive name.
+        // The widths are computed later from these FINAL names.
+        TArray<bool> Dup; Dup.Init(false, Rows.Num());
+        for (int32 i = 1; i < Rows.Num(); ++i) { if (Rows[i - 1].Name.Equals(Rows[i].Name, ESearchCase::IgnoreCase)) { Dup[i - 1] = true; Dup[i] = true; } }
+        for (int32 i = 0; i < Rows.Num(); ++i)
+        {
+            if (!Dup[i]) { continue; }
+            int32 Dot = INDEX_NONE;
+            Rows[i].Name += FString::Printf(TEXT(" (%s)"), *(Rows[i].ClassPath.FindLastChar(TEXT('.'), Dot) ? Rows[i].ClassPath.Mid(Dot + 1) : Rows[i].ClassPath));
+        }
         return Rows;
     }
 
@@ -107,16 +118,26 @@ namespace
     // right-aligned and padded with ASCII spaces to CountWidth. Every row is NameWidth + 2 + CountWidth
     // characters and no row ends in a space. Nothing on the way to chat trims it: PostChatNotice does
     // FText::FromString(Body) and nothing else.
+    // THIS IS THE ONLY PLACE THE ROW LAYOUT LIVES: name, count and the two widths in, one row out. If the chat
+    // font turns out to be proportional, the padding scheme changes here and nowhere else.
+    // Padding is a plain loop of single-space AppendChar calls (AppendChar is already used in
+    // NodeShuffleAutoAllowExtractors.cpp), not a repeat-character helper, so the row adds no engine import.
     FString RollChatFixedRow(const FString& Name, const FString& Count, int32 NameWidth, int32 CountWidth)
     {
-        return Name + FString::ChrN(NameWidth - Name.Len(), TEXT(' ')) + TEXT("  ")
-             + FString::ChrN(CountWidth - Count.Len(), TEXT(' ')) + Count;
+        FString Row = Name;
+        for (int32 i = Name.Len(); i < NameWidth; ++i) { Row.AppendChar(TEXT(' ')); }
+        Row.AppendChar(TEXT(' '));
+        Row.AppendChar(TEXT(' '));
+        for (int32 i = Count.Len(); i < CountWidth; ++i) { Row.AppendChar(TEXT(' ')); }
+        Row += Count;
+        return Row;
     }
 }
 
 void ANodeShuffleSubsystem::RollChatClear(const TCHAR* Why)
 {
     if (UWorld* World = GetWorld()) { World->GetTimerManager().ClearTimer(RollChatDrainTimer); }
+    bRollChatTimerArmed = false;
     const int32 Unsent = RollChatRows.Num() - RollChatNext;
     if (Unsent > 0)
     {
@@ -187,7 +208,6 @@ void ANodeShuffleSubsystem::RollChatQueueBreakdown(bool bIsReroll, int32 RolledL
     }
     RollChatRows.Add(RollChatFixedRow(TEXT("Total"), FString::FromInt(NodeTotal), NameWidth, CountWidth));
     RollChatNext = 0;
-    bRollChatTotalsMatch = bNodesMatch; // F2: the wells term compared a list with itself and is gone
 
     // Field legend (prose): nodeTotal counts active layout entries (no-resource ones included, as the
     // "(no resource)" row shows them); censusActive is the ROLLCENSUS active figure of this roll (-1 = no
@@ -212,7 +232,7 @@ void ANodeShuffleSubsystem::TickRollChatEmitter()
     if (RollChatNext >= RollChatRows.Num()) { return; } // Idle: the common case
     UWorld* World = GetWorld();
     if (!World) { return; }
-    if (World->GetTimerManager().IsTimerActive(RollChatDrainTimer)) { return; } // Draining
+    if (bRollChatTimerArmed) { return; } // Draining: our own flag for the pending one-shot (set on arm, cleared when it fires or is cleared)
 
     const APlayerController* PC = World->GetFirstPlayerController();
     const APawn* Pawn = PC ? PC->GetPawn() : nullptr;
@@ -235,12 +255,14 @@ void ANodeShuffleSubsystem::TickRollChatEmitter()
     // tick. A one-shot re-armed from its own callback fires at most once per frame and at least a gap apart.
     World->GetTimerManager().SetTimer(RollChatDrainTimer, this, &ANodeShuffleSubsystem::RollChatDrainStep,
         RollChatRowGapSeconds, false);
+    bRollChatTimerArmed = true;
     UE_LOG(LogNodeShuffle, Verbose, TEXT("ROLLCHAT: drain started at row %d of %d (gap %.2f s, refusals so far %d)"),
         RollChatNext + 1, RollChatRows.Num(), RollChatRowGapSeconds, RollChatAttempts);
 }
 
 void ANodeShuffleSubsystem::RollChatDrainStep()
 {
+    bRollChatTimerArmed = false; // the one-shot has fired; every re-arm below sets it again
     UWorld* World = GetWorld();
     if (!World || RollChatNext >= RollChatRows.Num())
     {
@@ -252,12 +274,10 @@ void ANodeShuffleSubsystem::RollChatDrainStep()
     {
         World->GetTimerManager().ClearTimer(RollChatDrainTimer); // Draining -> Stalled
         ++RollChatAttempts;
+        // r2 review F5 (verbatim): ONE ROLLCHAT-DONE-family line on a give-up -- RollChatClear's "dropped part-way",
+        // which always logs here because a refusal leaves RollChatNext < Num.
         if (RollChatAttempts >= RollChatMaxEmitAttempts)
-        {
-            UE_LOG(LogNodeShuffle, Warning, TEXT("ROLLCHAT-DONE: emitter refused %d time(s); giving up"), RollChatAttempts);
-            RollChatClear(TEXT("emitter kept refusing"));
-            return;
-        }
+        { const FString Why = FString::Printf(TEXT("emitter refused %d time(s)"), RollChatAttempts); RollChatClear(*Why); return; }
         UE_LOG(LogNodeShuffle, Verbose, TEXT("ROLLCHAT: row %d refused (refusal %d of %d); retrying on a later tick"),
             RollChatNext + 1, RollChatAttempts, RollChatMaxEmitAttempts);
         return;
@@ -269,6 +289,7 @@ void ANodeShuffleSubsystem::RollChatDrainStep()
         // Still Draining: the next row one gap from now.
         World->GetTimerManager().SetTimer(RollChatDrainTimer, this, &ANodeShuffleSubsystem::RollChatDrainStep,
             RollChatRowGapSeconds, false);
+        bRollChatTimerArmed = true;
     }
     else
     {
@@ -287,4 +308,13 @@ void ANodeShuffleSubsystem::RollChatNoteFirstApply() const
     // Reached on the first apply after every load and after every roll (RollLayout re-arms bDidInitialApply).
     UE_LOG(LogNodeShuffle, Verbose, TEXT("ROLLCHAT: first layout apply since load or roll; %d row(s) queued"),
         RollChatRows.Num() - RollChatNext);
+}
+
+// r2 review F2, ADAPTED: the reviewer's body asked the world timer manager whether RollChatDrainTimer is active; this
+// reads bRollChatTimerArmed instead (same predicate, kept by every arm/fire/clear site) so no timer query is added.
+// True = rows unsent AND the drain's one-shot pending. A Stalled table (timer cleared after a refusal) is NOT
+// draining, so a dead chat manager cannot hold the other two notices back.
+bool ANodeShuffleSubsystem::RollChatIsDraining() const
+{
+    return RollChatNext < RollChatRows.Num() && bRollChatTimerArmed;
 }
