@@ -30,10 +30,16 @@ namespace NodeShuffleRocks
         return FVector(Origin.X + R * FMath::Cos(Rad), Origin.Y + R * FMath::Sin(Rad), Origin.Z);
     }
 
-    // B. A solid top that passed every existing gate but lies MORE than this far below RWG's API surface at its XY gets the column
-    // test (NodeShuffleMapModeRocks.cpp). 3 m: the census bin the measurements were reported in (31 of 166 below it); the 22 settles
-    // 0-3 m below stay untested. Design input, not measured.
-    constexpr double SunkenMarginCm = 300.0;
+    // B. A solid top that passed every existing gate but lies MORE than this far below RWG's API surface AT THE TOP'S OWN XY (the
+    // settled XY, never the dealt XY) gets rule B (NodeShuffleMapModeRocks.cpp): a terrain-presence trace, then the column test.
+    // 0.5 m: wider than the measured API-vs-terrain spread of terrain settles (54 of 54 within -28..+50 cm, 2026-11-14 sunk-in-terrain
+    // report), and below the 0.5-1 m burial measured for entry 22863CAF. Design input from one night's numbers.
+    constexpr double SunkenMarginCm = 50.0;
+    // Terrain-presence trace: from the trace start down, stepping through EVERY non-terrain stop (rock meshes included), at most this many.
+    constexpr int32 TerrainProbeSkipCap = 16;
+    // Terrain found higher than the top by more than this refuses the top (terrain over it at its own XY).
+    constexpr double TerrainAboveTolCm = 50.0;
+    // A/C spiral and near probes trace from max(dealt-spot Z, API Z at the probe XY) + the primary trace height (RwgPrimaryTraceUpCm).
     // Column test window: a footprint column passes only when its first stop from the trace start is the SAME component and instance
     // AND no higher than this above the hit (the existing footprint probe's own start height, CliffTop.cpp P.Z + 400).
     constexpr double SunkenColumnTolCm = 400.0;

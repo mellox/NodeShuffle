@@ -1143,13 +1143,16 @@ private:
     TMap<FString, FIntPoint> RwgRkMeshCounts;      // mesh name -> (settles, largest width in cm)
     int32 RwgRkMoveNear = 0, RwgRkMoveSpiralRock = 0, RwgRkMoveSpiralOther = 0;
     int32 RwgRkMoveBins[7] = {};
-    mutable int32 RwgRkSunkTested = 0, RwgRkSunkRefused = 0, RwgRkSunkApiUnknown = 0;
-    mutable int32 RwgRkSunkBins[4] = {};
-    mutable int32 RwgRkSunkRefusedBins[4] = {};
+    mutable int32 RwgRkSunkTested = 0, RwgRkSunkRefused = 0, RwgRkSunkDeferred = 0, RwgRkSunkTerrainAbove = 0, RwgRkSunkApiUnknown = 0;
+    mutable int32 RwgRkSunkBins[5] = {};
+    mutable int32 RwgRkSunkRefusedBins[5] = {};
+    mutable bool bRwgRocksTopDeferred = false;     // set by RwgSolidTopTryAccept on a rule B terrain-absent verdict; RaycastGroundAt reads it once (no hit -> defer)
+    mutable int32 RwgRkStartRaised = 0;            // spiral/near probes whose start was raised to the API Z at the probe XY
+    int32 RwgRkSettleDzBins[2][6] = {};            // completed settles, settled Z minus API Z at the SETTLED XY: [0] terrain, [1] solid top
     mutable int32 RwgRkSamples = 0, RwgRkSamplePass = -1;
     void RwgRocksNoteFirstHit(const struct FHitResult& H) const;
-    void RwgRocksRecordSettle(bool bDecided, bool bSettled);
-    bool RwgRocksSunkenRefuses(const struct FHitResult& Hit, double TraceStartZ, const struct FCollisionQueryParams& Params, float RingCm) const;
+    void RwgRocksRecordSettle(bool bDecided, bool bCompleted, float SettledDzCm = 0.0f, bool bOnSolidTop = false);
+    int32 RwgRocksSunkenVerdict(const struct FHitResult& Hit, double TraceStartZ, const struct FCollisionQueryParams& Params, float RingCm) const; // 0 keep, 1 refuse, 2 defer
     void RwgRocksEmitCensus() const;
     FString RwgRocksLastFirstHitText() const;
     const TCHAR* RwgRocksLastMoveName() const;

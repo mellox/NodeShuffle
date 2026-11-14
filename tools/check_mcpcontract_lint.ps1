@@ -130,13 +130,13 @@ $golden = @{
     'NodeShuffle.SeedHere' = 'true/structural'; 'NodeShuffle.Here' = 'true/structural'; 'NodeShuffle.PointAtHere' = 'true/structural'
     'NodeShuffle.WellProbe' = 'true/structural'; 'NodeShuffle.AuditPlacements' = 'true/structural'; 'NodeShuffle.DumpLayout' = 'false/none'
     'NodeShuffle.ProbeNearestNode' = 'false/none'; 'NodeShuffle.NearestCave' = 'false/none'; 'NodeShuffle.DumpExtractors' = 'false/none'
-    'NodeShuffle.DumpWells' = 'false/none'; 'NodeShuffle.WhereCaveNodes' = 'true/structural'
+    'NodeShuffle.DumpWells' = 'false/none'; 'NodeShuffle.WhereCaveNodes' = 'true/structural'; 'NodeShuffle.ChatProbe' = 'false/none' # ns-rocks-1
 }
 # E (mcp-regrade-1): GOLDEN effect per console command, from the audit in the regrade handoff. read = the tool may run it on a real save.
 $effectGolden = @{
     'NodeShuffle.Here' = 'write'; 'NodeShuffle.NearestCave' = 'write'; 'NodeShuffle.SeedHere' = 'write'; 'NodeShuffle.AuditPlacements' = 'write'
     'NodeShuffle.DumpExtractors' = 'write'; 'NodeShuffle.DumpLayout' = 'write'; 'NodeShuffle.ProbeNearestNode' = 'write'
-    'NodeShuffle.PointAtHere' = 'write'; 'NodeShuffle.DumpWells' = 'read'; 'NodeShuffle.WellProbe' = 'write'; 'NodeShuffle.WhereCaveNodes' = 'write'
+    'NodeShuffle.PointAtHere' = 'write'; 'NodeShuffle.DumpWells' = 'read'; 'NodeShuffle.WellProbe' = 'write'; 'NodeShuffle.WhereCaveNodes' = 'write'; 'NodeShuffle.ChatProbe' = 'write' # ns-rocks-1
 }
 $constPhrase = 'const ' + 'handler'
 # E (cold review regrade-1): every golden READ row is pinned at its SOURCE too -- each file its handler reaches in this module.

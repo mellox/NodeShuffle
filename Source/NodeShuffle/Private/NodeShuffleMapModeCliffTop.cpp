@@ -91,9 +91,13 @@ bool ANodeShuffleSubsystem::RwgSolidTopTryAccept(const FHitResult& Hit, double T
     else if (!bGentle) { ++RwgPcSolidTopRejNormal; Reject = TEXT("normal"); }
     const bool bAccepted = bGuard && bClearAbove && bFootprint && bGentle;
     // ns-rocks-1 rule B (NodeShuffleMapModeRocks.cpp): a top that passed every gate above but lies more than NodeShuffleRocks::SunkenMarginCm
-    // below RWG's API surface must also have its 4 footprint columns clear from the TRACE START down (not only from 4 m above the hit).
-    const bool bSunkenRefused = bAccepted && RwgRocksSunkenRefuses(Hit, TraceStartZ, Params, RingCm);
-    if (bSunkenRefused) { Reject = TEXT("sunkenColumn"); }
+    // below RWG's API surface AT ITS OWN XY needs terrain collision under it (none -> defer, as a trace with no terrain hit defers), no
+    // terrain over it, and its 4 footprint columns clear from the TRACE START down (not only from 4 m above the hit).
+    bRwgRocksTopDeferred = false;
+    const int32 SunkenVerdict = bAccepted ? RwgRocksSunkenVerdict(Hit, TraceStartZ, Params, RingCm) : 0;
+    const bool bSunkenRefused = SunkenVerdict != 0;
+    if (SunkenVerdict == 2) { bRwgRocksTopDeferred = true; Reject = TEXT("sunkenNoTerrainDefer"); }
+    else if (bSunkenRefused) { Reject = TEXT("sunkenRefused"); }
     if (RwgCliffTopSamples < RwgCliffTopSampleCap && FNodeShuffleModule::AreDiagnosticsEnabled())
     {
         ++RwgCliffTopSamples;

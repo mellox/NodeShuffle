@@ -7721,6 +7721,8 @@ bool ANodeShuffleSubsystem::RaycastGroundAt(const FVector& ProbeXY, float StartZ
     }
     if (bPrimarySolid)
     {
+        // ns-rocks-1 rule B: a sunken top with NO terrain collision under it reads as no hit (the caller defers, as for unstreamed terrain).
+        if (bRwgRocksTopDeferred) { bRwgRocksTopDeferred = false; if (OutGroundHit) { *OutGroundHit = FHitResult(); } return false; }
         // RWG P2d: the primary trace stopped on a SOLID mesh above any terrain hit -> reported UNPLACEABLE through the steep
         // channel (bSolidBlocks guarantees bOutTooSteep is non-null), so RaycastSettle's spiral -> water-no-land -> API redeal
         // chain and the well probe's cliff reject run unchanged. No normal smoothing, no water-grid sample (not terrain).
@@ -7872,6 +7874,11 @@ bool ANodeShuffleSubsystem::RaycastSettle(FNodeShuffleEntry& Entry, const AActor
         // call, the same water/steep acceptance and the same commit block, so a near spot passes exactly what a spiral spot passes.
         const int32 NearTries = bPrimaryRockRefused ? NodeShuffleRocks::NearProbeCount : 0;
         if (NearTries > 0) { ++RwgRkNearRun; }
+        // ns-rocks-1 (coordinator item 3): on RWG each spiral/near probe traces from max(dealt-spot Z, API Z at THAT probe's XY) + the
+        // primary trace height, so ground rising more than the trace height within 300 m cannot put the start underground. Built only on
+        // terrain-only (RWG) settles: the query's binding attempt never runs on vanilla.
+        TOptional<NodeShuffleMapMode::FRwgGroundQuery> RockQ;
+        if (bTerrainOnly) { RockQ.Emplace(GetWorld(), RwgGenerator.Get()); }
         for (int32 Step = 0; Step < NearTries + LandRelocationTries; Step++)
         {
             const bool bNear = Step < NearTries;
@@ -7888,7 +7895,13 @@ bool ANodeShuffleSubsystem::RaycastSettle(FNodeShuffleEntry& Entry, const AActor
             FVector TryLoc;
             bool bTryWater = false;
             bool bTrySteep = false;
-            if (RaycastGroundAt(Probe, OriginXY.Z, IgnoreNode, IgnoreMesh, TryLoc, TryRot, bTryWater, false, &bTrySteep,
+            double ProbeBaseZ = OriginXY.Z;
+            if (RockQ.IsSet() && RockQ->IsUsable())
+            {
+                const double ApiAtProbe = RockQ->SurfaceZ(Probe.X, Probe.Y);
+                if (FMath::IsFinite(ApiAtProbe) && ApiAtProbe > ProbeBaseZ) { ProbeBaseZ = ApiAtProbe; ++RwgRkStartRaised; }
+            }
+            if (RaycastGroundAt(Probe, ProbeBaseZ, IgnoreNode, IgnoreMesh, TryLoc, TryRot, bTryWater, false, &bTrySteep,
                                 nullptr, nullptr, bTerrainOnly) // RWG P2c: bTerrainOnly forwarded (false on every vanilla call)
                 && !bTryWater && !bTrySteep)
             {

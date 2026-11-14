@@ -45,6 +45,22 @@ static FAutoConsoleCommandWithWorldAndArgs GNodeShuffleHereCmd(
         UE_LOG(LogNodeShuffle, Display, TEXT("HERE: NodeShuffle subsystem not found in this world (main menu / no session loaded?)"));
     }));
 
+// ns-rocks-1 D (2026-11-14): `NodeShuffle.ChatProbe` posts six labelled chat lines 4 s apart (message types, instigator, a line break) so
+// one listen picks the quiet variant. Body: NodeShuffleChatProbe.cpp. Posts chat only; touches no layout field and no store file.
+static FAutoConsoleCommandWithWorldAndArgs GNodeShuffleChatProbeCmd(
+    TEXT("NodeShuffle.ChatProbe"),
+    TEXT("Post six labelled chat lines 4 s apart (custom/system/ADA/player types, instigator, line break) to compare the chat sound."),
+    FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+    {
+        if (!World) { return; }
+        for (TActorIterator<ANodeShuffleSubsystem> It(World); It; ++It)
+        {
+            It->RunChatProbe();
+            return;
+        }
+        UE_LOG(LogNodeShuffle, Display, TEXT("CHATPROBE: NodeShuffle subsystem not found in this world"));
+    }));
+
 // RWG cave navigation (2026-10-18; user decision: a SEPARATE command, not part of Here): `NodeShuffle.NearestCave` logs the nearest
 // carved-cave mouth (RWG cave file) and the nearest dealt cave node with distance / dZ / turn bearing. Log-only, same precedent as
 // NodeShuffle.Here (not gated behind EnableDiagnostics); off RWG it prints one line and returns. Body: NodeShuffleNearestCave.cpp.
