@@ -16,7 +16,7 @@
 #       OutLocations.Add(C), EndCall before the deal-bounds comment; the loop head is unchanged.
 #   B5  The budget files consume no random stream and trace nothing (forbidden tokens built by concatenation).
 #   B6  Fallback + constants: MaybeOpen's reserve test, Admit's bypass on !bEnabled || bOpen; CellSizeCm 100000, LandSamplesPerCellSide 4,
-#       FallbackReserveDrawsPerSpot 20, CellLinesMax 120.
+#       FallbackReserveDrawsPerSpot 20, CellLinesMax 1024 (was 120 until ns-scanfilter-2 round 2: 163 land cells measured, 43 cut off).
 #   B7  Apportion is exact: floors, remainders sorted descending with ties to the lower index, slack to the heaviest cell.
 #   B8  Config: mirror field default true, panel AddBool default true, display name once.
 #   B9  Marker (2026-11-01-rwg-density-1) once on its own line in NodeShuffle.cpp, absent from the packet sources; header declarations present.
@@ -153,7 +153,7 @@ function Invoke-DensityBudgetChecks($T) {
     }
     # B6
     if ((Count $T.bud $reserveTest) -ne 1 -or (Count $T.bud $openSet) -ne 1 -or (Count $T.bud $admitBypass) -ne 1 -or (Count $T.bud $admitFull) -ne 1) { $f += '(B6) fallback reserve test, open set, Admit bypass and full test' }
-    if ((Count $T.budh 'constexpr double CellSizeCm = 100000.0;') -ne 1 -or (Count $T.budh 'constexpr int32 LandSamplesPerCellSide = 4;') -ne 1 -or (Count $T.budh 'constexpr int32 FallbackReserveDrawsPerSpot = 20;') -ne 1 -or (Count $T.budh 'constexpr int32 CellLinesMax = 120;') -ne 1 -or (Count $T.budh 'constexpr int32 RoomSlackPerLandCell = 1;') -ne 1) { $f += '(B6) constants pinned by value' }
+    if ((Count $T.budh 'constexpr double CellSizeCm = 100000.0;') -ne 1 -or (Count $T.budh 'constexpr int32 LandSamplesPerCellSide = 4;') -ne 1 -or (Count $T.budh 'constexpr int32 FallbackReserveDrawsPerSpot = 20;') -ne 1 -or (Count $T.budh 'constexpr int32 CellLinesMax = 1024;') -ne 1 -or (Count $T.budh 'constexpr int32 RoomSlackPerLandCell = 1;') -ne 1) { $f += '(B6) constants pinned by value' }
     # B7
     if ((Count $T.bud $floorLine) -ne 1 -or (Count $T.bud $sortPred) -ne 1 -or (Count $T.bud $slackLine) -ne 1) { $f += '(B7) Apportion: floors, descending remainders with ties to the lower index, slack to the heaviest' }
     # B8
@@ -171,6 +171,7 @@ $baseline = Invoke-DensityBudgetChecks $text
 if ($baseline.Count -gt 0) { foreach ($x in $baseline) { Write-Host "FAIL: $x" }; Write-Host "DENSITYBUDGET LINT: FAIL -- $($baseline.Count) problem(s)."; exit 1 }
 
 $mutants = @(
+    @{ Name = 'Y-CL cell line cap back to 120'; Key = 'budh'; Expect = 'B6'; Find = 'constexpr int32 CellLinesMax = 1024;'; Repl = 'constexpr int32 CellLinesMax = 120;' } # ns-scanfilter-2 round 2
     @{ Name = 'Y1 pinned originals not pre-filled'; Key = 'sub'; Expect = 'B2'; Find = $subPinned; Repl = '        for (const FNodeShuffleEntry& E : NewLayout) { (void)E; }' }
     @{ Name = 'Y2 carried entries not pre-filled'; Key = 'sub'; Expect = 'B2'; Find = ($subCarried + "`n"); Repl = '' }
     @{ Name = 'Y3 Begin not behind the Rwg test'; Key = 'sub'; Expect = 'B2'; Find = $subBeginIf; Repl = ('    if (true)' + "`n" + '    {' + "`n" + '        TArray<FVector> DensityPrefill;') }
