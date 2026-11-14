@@ -3,7 +3,7 @@
 # LOADS every file the packet touched: Subsystem.cpp/.h, MapModeCliffTop.cpp, MapModePlace.cpp, MapModeSpawnPass.cpp,
 # MapModeProvisional.cpp, MapModeRocks.cpp, NodeShuffleRocks.h, NodeShuffleChatProbe.cpp, NodeShuffle.cpp, NodeShuffleBuildMarkers.h,
 # NodeShuffleMcpDescribe.cpp, and the lints it edited (farspawn, rollchat, mcpcontract, rwgtrace).
-#   K1  marker 2026-11-14-rocks-1: newest in the markers header, once on its own line in NodeShuffle.cpp, absent from the new files
+#   K1  marker 2026-11-14-rocks-1: listed in the markers header (newest until ns-quietchat-1), once on its own line in NodeShuffle.cpp, absent from the new files
 #   K2  near search runs BEFORE the spiral, only after a rock-refused primary: NearTries gated on bPrimaryRockRefused, near steps first
 #   K3  ONE acceptance: RaycastSettle holds exactly three RaycastGroundAt calls (cave short trace, primary, shared loop) and one relocation commit block
 #   K4  rule B: margin 50 cm vs the API Z at the TOP's own XY; terrain-absent defers through RaycastGroundAt; refusal returns false
@@ -94,10 +94,10 @@ function Invoke-Checks($T) {
     $ground = Span $T.sub 'bool ANodeShuffleSubsystem::RaycastGroundAt(' 'bool ANodeShuffleSubsystem::RaycastSettle('
     # K1
     $hdrTags = @([regex]::Matches($T.mark, 'TEXT\("(20\d\d-\d\d-\d\d-[\w-]+)"\),') | ForEach-Object { $_.Groups[1].Value })
-    if ($hdrTags.Count -eq 0 -or $hdrTags[-1] -ne $marker) { $f += '(K1) marker must be the newest entry in the markers header' }
+    if ($hdrTags -notcontains $marker) { $f += '(K1) marker must stay listed in the markers header (ns-quietchat-1 is newer)' }
     if ((Count $T.nsmod ('packet marker (' + $marker + ')=====')) -ne 1) { $f += '(K1) marker once on its own line in NodeShuffle.cpp' }
     foreach ($k in @('rocks', 'rockh', 'probe')) { if ((Count $T[$k] $marker) -ne 0) { $f += "(K1) no marker inside the new file ($k)" } }
-    if (-not $T.lmcp.Contains("`$own = '2026-11-14-' + 'rocks-1'")) { $f += '(K1) check_mcpcontract C4 must name this marker as the newest' }
+    if (-not $T.lmcp.Contains('# ns-rocks-1: no longer the newest; pinned present (check_rocks_lint K1)')) { $f += '(K1) check_mcpcontract C4 must carry the no-longer-newest note for this marker' }
     # K2
     if ($settle -eq '' -or -not (Ordered $settle @($rockGate, $nearGate, $loopHead, $nearPick, $probeSel))) { $f += '(K2) the near search is gated on a rock-refused primary and its steps run first in the shared loop' }
     if ((Count $T.rockh 'constexpr int32 NearProbeCount = 12;') -ne 1 -or (Count $T.rockh 'constexpr float NearRing1Cm = 1000.0f;') -ne 1 -or (Count $T.rockh 'constexpr float NearRing2Cm = 2000.0f;') -ne 1) { $f += '(K2) near pattern constants (12 points, 10 m and 20 m)' }
@@ -184,7 +184,8 @@ $mutants = @(
     @{ Name = 'M15 capture never cleared';       Key = 'sub';   Expect = 'K9';  Find = "    bRwgRocksCaptureFirst = false;`n"; Repl = "`n" }
     @{ Name = 'M16 start not raised';            Key = 'sub';   Expect = 'K10'; Find = $raise; Repl = $raise.Replace('ProbeBaseZ', 'OriginXY.Z') }
     @{ Name = 'M17 member saved';                Key = 'subh';  Expect = 'K11'; Find = '    int32 RwgRkFirstKind[9] = {};'; Repl = ('    UPROP' + 'ERTY(SaveGame) int32 RwgRkFirstKind[9] = {};') }
-    @{ Name = 'M18 marker not newest';           Key = 'mark';  Expect = 'K1';  Find = ('        TEXT("' + $marker + '"),'); Repl = '' }
+    @{ Name = 'M18 marker dropped from header';  Key = 'mark';  Expect = 'K1';  Find = ('        TEXT("' + $marker + '"),'); Repl = '' }
+    @{ Name = 'M41 mcpcontract note dropped';    Key = 'lmcp';  Expect = 'K1';  Find = '# ns-rocks-1: no longer the newest; pinned present'; Repl = '' } # ns-quietchat-1 (2026-11-14): newest moved on
     @{ Name = 'M20 settle line not emitted';      Key = 'place'; Expect = 'K13'; Find = 'RwgRocksEmitSettleLine(Entry, ApiZ1);'; Repl = '' }
     @{ Name = 'M21 settle line loses XY';         Key = 'rocks'; Expect = 'K13'; Find = 'settledX=%.0f settledY=%.0f '; Repl = '' }
     @{ Name = 'M22 no-terrain token as a number'; Key = 'rocks'; Expect = 'K13'; Find = 'FString(TEXT("noTerrainFound"))'; Repl = 'FString(TEXT("0"))' }
