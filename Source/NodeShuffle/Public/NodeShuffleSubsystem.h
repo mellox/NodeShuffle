@@ -1147,6 +1147,12 @@ private:
     mutable int32 RwgRkSunkBins[5] = {};
     mutable int32 RwgRkSunkRefusedBins[5] = {};
     mutable bool bRwgRocksTopDeferred = false;     // set by RwgSolidTopTryAccept on a rule B terrain-absent verdict; RaycastGroundAt reads it once (no hit -> defer)
+    mutable bool bRwgRocksSidewaysProbe = false; // set by RaycastSettle around near/spiral candidates only (review F2)
+    mutable int32 RwgRkSunkSideways = 0, RwgRkSunkColumnRefused = 0, RwgRkSunkNoLandRefused = 0; // round 3 (F2/F3/F8): rule B outcomes per PROBE
+    mutable const NodeShuffleMapMode::FRwgGroundQuery* RwgRocksActiveQ = nullptr; // round 3 (F6): RaycastSettle's own query, reused by rule B during that settle
+    mutable TMap<FGuid, int32> RwgRkPrimaryDefers;  // round 3 (F3): consecutive rule-B primary defers per entry (removed when a primary decides)
+    mutable TSet<FGuid> RwgRkEverDeferred;          // entries with at least one rule-B primary defer this session
+    mutable int32 RwgRkEverDeferredN = 0, RwgRkDeferSettledTerrain = 0, RwgRkDeferSettledTopAbove = 0, RwgRkDeferSettledSideways = 0, RwgRkDeferSettledOther = 0;
     mutable int32 RwgRkStartRaised = 0;            // spiral/near probes whose start was raised to the API Z at the probe XY
     int32 RwgRkSettleDzBins[2][6] = {};            // completed settles, settled Z minus API Z at the SETTLED XY: [0] terrain, [1] solid top
     mutable int32 RwgRkSamples = 0, RwgRkSamplePass = -1;
@@ -1170,7 +1176,9 @@ private:
     int32 ChatProbeNext = 0;
     bool bChatProbeRunning = false;
     bool bChatProbeLimitsLogged = false;
+public: // ns-rocks-1 D: called from the console lambda in NodeShuffle.cpp (same reason as LogNearestCave's public tail); the rest of this block stays private
     void RunChatProbe();
+private:
     void ChatProbeStep();
     void RwgRecordSolidTopDz(double DzCm);
     int32 RwgRockOcclusionProbe(const FVector& At, const AActor* IgnoreActor, FString& OutMeshPath, double* OutHitZ = nullptr) const; // 0 clear, 1 solid above, 2 terrain/buildable above

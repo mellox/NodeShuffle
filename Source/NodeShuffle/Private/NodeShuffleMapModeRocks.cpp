@@ -131,20 +131,28 @@ int32 ANodeShuffleSubsystem::RwgRocksSunkenVerdict(const FHitResult& Hit, double
     //     through skip-class hits as the footprint does; a column passes only when its first stop is the SAME component and instance
     //     item, no higher than SunkenColumnTolCm above the top. Any other stop, a start inside geometry or no stop -> 1 (refuse).
     // Returns 0 = keep. A ROCKTOP sample line (diagnostics on, capped per pass) is printed for any top reaching here, tested or not.
+    // Round 3: a NEAR/SPIRAL candidate (bRwgRocksSidewaysProbe) below the margin is refused by API depth alone (review F2), before any
+    // trace. A PRIMARY with no terrain under it defers only where the deal's own land predicate (RwgRejectV3 == 0) holds at the top's XY;
+    // otherwise it is refused (coordinator F3 variant: no cap, the defer is unbounded on land like the existing no-hit defer).
     UWorld* World = GetWorld();
-    if (!World) { return 0; }
+    if (!World) { RwgRocksProbeTerrainState = 0; return 0; }
     const FVector P = Hit.ImpactPoint;
-    const NodeShuffleMapMode::FRwgGroundQuery Q(World, RwgGenerator.Get());
-    const double ApiZ = Q.IsUsable() ? Q.SurfaceZ(P.X, P.Y) : NodeShuffleMapMode::RwgNaN();
+    TOptional<NodeShuffleMapMode::FRwgGroundQuery> OwnQ; // round 3 (F6): reuse RaycastSettle's query when one is active
+    const NodeShuffleMapMode::FRwgGroundQuery* Qp = RwgRocksActiveQ;
+    if (!Qp) { OwnQ.Emplace(World, RwgGenerator.Get()); Qp = &OwnQ.GetValue(); }
+    const NodeShuffleMapMode::FRwgGroundQuery& Q = *Qp;
+    const double ApiZ = (Q.IsUsable() && !Q.Outside(P.X, P.Y)) ? Q.SurfaceZ(P.X, P.Y) : NodeShuffleMapMode::RwgNaN();
     const bool bApiKnown = FMath::IsFinite(ApiZ);
     if (!bApiKnown) { ++RwgRkSunkApiUnknown; }
     const double DepthCm = bApiKnown ? ApiZ - P.Z : NodeShuffleMapMode::RwgNaN();
     const bool bTest = bApiKnown && DepthCm > NodeShuffleRocks::SunkenMarginCm;
     const bool bSample = RwgRocksSampleSlot();
-    // Round 2: the terrain trace below runs for EVERY top reaching here (tested or not), so ROCKSETTLE can print it for every rock-top settle.
-
+    // Round 2: the terrain trace below runs for every top reaching here (tested or not), so ROCKSETTLE can print it for every rock-top
+    // settle. Round 3: skipped for a sideways candidate that rule B refuses by depth alone (that top cannot win).
+    const bool bSidewaysDepthRefuse = bTest && bRwgRocksSidewaysProbe;
     double TerrainZ = NodeShuffleMapMode::RwgNaN();
     int32 TerrainSkips = 0;
+    if (!bSidewaysDepthRefuse)
     {
         FCollisionQueryParams DownParams = Params;
         FHitResult D;
@@ -156,7 +164,7 @@ int32 ANodeShuffleSubsystem::RwgRocksSunkenVerdict(const FHitResult& Hit, double
             DownParams.AddIgnoredComponent(D.GetComponent());
         }
     }
-    RwgRocksProbeTerrainState = FMath::IsFinite(TerrainZ) ? 1 : 2;
+    RwgRocksProbeTerrainState = bSidewaysDepthRefuse ? 0 : FMath::IsFinite(TerrainZ) ? 1 : 2;
     RwgRocksProbeTerrainZ = FMath::IsFinite(TerrainZ) ? TerrainZ : 0.0;
 
     const UPrimitiveComponent* HitComp = Hit.GetComponent();
@@ -167,7 +175,14 @@ int32 ANodeShuffleSubsystem::RwgRocksSunkenVerdict(const FHitResult& Hit, double
     {
         const int32 Bin = DepthBin(DepthCm);
         ++RwgRkSunkTested; ++RwgRkSunkBins[Bin];
-        if (!FMath::IsFinite(TerrainZ)) { Verdict = 2; ++RwgRkSunkDeferred; Why = TEXT("noTerrainUnder"); }
+        if (bRwgRocksSidewaysProbe) { Verdict = 1; ++RwgRkSunkSideways; Why = TEXT("sidewaysBelowApi"); } // near/spiral candidate: refused by API depth alone, no trace needed
+        else if (!FMath::IsFinite(TerrainZ))
+        {
+            // The deal's own land predicate at the top's XY (wet v2 | void | below killbox; inside is guaranteed by the Outside guard above).
+            const bool bLand = const_cast<ANodeShuffleSubsystem*>(this)->RwgRejectV3(Q, FVector(P.X, P.Y, ApiZ)) == 0;
+            if (bLand) { Verdict = 2; ++RwgRkSunkDeferred; Why = TEXT("noTerrainUnderOnLandDefer"); }
+            else { Verdict = 1; ++RwgRkSunkNoLandRefused; Why = TEXT("noTerrainUnderNotLandRefused"); }
+        }
         else if (FMath::IsFinite(TerrainZ) && TerrainZ > P.Z + NodeShuffleRocks::TerrainAboveTolCm) { Verdict = 1; ++RwgRkSunkTerrainAbove; Why = TEXT("terrainAboveTop"); }
         else
         {
@@ -201,6 +216,7 @@ int32 ANodeShuffleSubsystem::RwgRocksSunkenVerdict(const FHitResult& Hit, double
                 if (!bSame) { ++Blocked; }
             }
             Verdict = Blocked > 0 ? 1 : 0;
+            RwgRkSunkColumnRefused += Blocked > 0 ? 1 : 0;
             Why = Blocked > 0 ? TEXT("columnBlocked") : TEXT("columnsClear");
         }
         if (Verdict == 1) { ++RwgRkSunkRefused; ++RwgRkSunkRefusedBins[Bin]; }
@@ -210,7 +226,7 @@ int32 ANodeShuffleSubsystem::RwgRocksSunkenVerdict(const FHitResult& Hit, double
         const UStaticMeshComponent* Smc = Cast<UStaticMeshComponent>(HitComp);
         const UStaticMesh* Mesh = Smc ? Smc->GetStaticMesh() : nullptr;
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("ROCKTOP: entry=%s via=%s at=%.0f/%.0f hitComponent=%s hitMesh=%s topZ=%.0f apiZAtTopXY=%.0f topMinusApiAtTopXYCm=%.0f terrainZAtTopXY=%.0f terrainTraceSkips=%d tested=%d verdict=%s columnsBlocked=%d/4 columnsStartInside=%d columnsNoStop=%d highestColumnStopAboveTopM=%.1f highestColumnStopClass=%s columnSkippedHits=%d"),
+            TEXT("ROCKTOP: entry=%s via=%s at=%.0f/%.0f hitComponent=%s hitMesh=%s topZ=%.0f apiZAtTopXY=%.0f topMinusApiAtTopXYCm=%.0f firstTerrainZAtTopXY=%.0f terrainTraceSkips=%d tested=%d verdict=%s columnsBlocked=%d/4 columnsStartInside=%d columnsNoStop=%d highestColumnStopAboveTopM=%.1f highestColumnStopClass=%s columnSkippedHits=%d"),
             *RwgSolidTopGuid.ToString().Left(8), RwgSolidTopVia, P.X, P.Y, HitComp ? *HitComp->GetName() : TEXT("<none>"), Mesh ? *Mesh->GetName() : TEXT("<none>"),
             P.Z, ApiZ, P.Z - ApiZ, TerrainZ, TerrainSkips, bTest ? 1 : 0, Why, Blocked, StartInside, NoStop, TopAboveCm / 100.0, RockClassName(TopClass), Skipped);
     }
@@ -253,11 +269,21 @@ void ANodeShuffleSubsystem::RwgRocksEmitCensus() const
         RwgRkMoveNear + RwgRkMoveSpiralRock + RwgRkMoveSpiralOther, RwgRkMoveNear, RwgRkMoveSpiralRock, RwgRkMoveSpiralOther,
         M[0], M[1], M[2], M[3], M[4], M[5], M[6], RwgRkNearRun, RwgRkNearFound, RwgRkNearToSpiral, RwgRkSpiralAfterNear, RwgRkNoSpotAfterNear, RwgRkStartRaised);
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("ROCKSUNKEN-CENSUS: session solid-top probes that passed every earlier gate and lie more than %.1f m below the API Z at their own XY; tested=%d refused=%d terrainAboveTop=%d deferredNoTerrainUnder=%d kept=%d apiUnknown=%d below0p5to3m=%d below3to10m=%d below10to30m=%d below30to60m=%d belowGe60m=%d refused0p5to3m=%d refused3to10m=%d refused10to30m=%d refused30to60m=%d refusedGe60m=%d"),
-        NodeShuffleRocks::SunkenMarginCm / 100.0, RwgRkSunkTested, RwgRkSunkRefused, RwgRkSunkTerrainAbove, RwgRkSunkDeferred,
-        RwgRkSunkTested - RwgRkSunkRefused - RwgRkSunkDeferred, RwgRkSunkApiUnknown,
+        TEXT("ROCKSUNKEN-CENSUS: session solid-top PROBES that passed every earlier gate and lie more than %.1f m below the API Z at their own XY inside the world; testedProbes=%d refusedTotalProbes=%d refusedSidewaysByDepthProbes=%d refusedTerrainAboveTopProbes=%d refusedColumnBlockedProbes=%d refusedNoTerrainNotLandProbes=%d deferredNoTerrainOnLandProbes=%d keptProbes=%d apiUnknownOrOutsideProbes=%d below0p5to3m=%d below3to10m=%d below10to30m=%d below30to60m=%d belowGe60m=%d refused0p5to3m=%d refused3to10m=%d refused10to30m=%d refused30to60m=%d refusedGe60m=%d (the refused total is the sum of the four refused fields; these refusals and deferrals are in no PLACECENSUS solidTop bin)"),
+        NodeShuffleRocks::SunkenMarginCm / 100.0, RwgRkSunkTested, RwgRkSunkRefused, RwgRkSunkSideways, RwgRkSunkTerrainAbove, RwgRkSunkColumnRefused,
+        RwgRkSunkNoLandRefused, RwgRkSunkDeferred, RwgRkSunkTested - RwgRkSunkRefused - RwgRkSunkDeferred, RwgRkSunkApiUnknown,
         RwgRkSunkBins[0], RwgRkSunkBins[1], RwgRkSunkBins[2], RwgRkSunkBins[3], RwgRkSunkBins[4],
         RwgRkSunkRefusedBins[0], RwgRkSunkRefusedBins[1], RwgRkSunkRefusedBins[2], RwgRkSunkRefusedBins[3], RwgRkSunkRefusedBins[4]);
+    {
+        // Round 3 (coordinator F3): the confirm/refute census for "terrain collision not there yet". Per ENTRY.
+        TArray<int32> Runs;
+        for (const TPair<FGuid, int32>& KV : RwgRkPrimaryDefers) { Runs.Add(KV.Value); }
+        Runs.Sort();
+        UE_LOG(LogNodeShuffle, Display,
+            TEXT("ROCKDEFER: session rule-B primary defers per ENTRY; entriesLastPrimaryWasDefer=%d maxConsecutiveDefers=%d medianConsecutiveDefers=%d entriesEverDeferred=%d settledSinceOnTerrainNearApi=%d settledSinceOnTopAboveApi=%d settledSinceSideways=%d settledSinceOther=%d"),
+            Runs.Num(), Runs.Num() > 0 ? Runs.Last() : 0, Runs.Num() > 0 ? Runs[Runs.Num() / 2] : 0, RwgRkEverDeferredN,
+            RwgRkDeferSettledTerrain, RwgRkDeferSettledTopAbove, RwgRkDeferSettledSideways, RwgRkDeferSettledOther);
+    }
     for (int32 Sx = 0; Sx < 2; ++Sx)
     {
         const int32* C = RwgRkCand[Sx];
@@ -292,7 +318,18 @@ void ANodeShuffleSubsystem::RwgRocksCountCandidate(bool bNear, bool bHit, bool b
 void ANodeShuffleSubsystem::RwgRocksEmitSettleLine(const FNodeShuffleEntry& E, double ApiZAtSettledXY) const
 {
     // Round 2: one line for EVERY settle RwgResolveAtSpawn completes (spawn path and provisional settle), not a sample.
-    // terrainUnderTop: the rule B terrain trace's Z for the winning rock top; tokens when there is no number to print.
+    // Round 3 (coordinator F3): an entry that rule-B deferred at least once is classified once, here, whatever the diagnostics flag.
+    if (RwgRkEverDeferred.Remove(E.EntryGuid) > 0)
+    {
+        const double DzCm = E.Location.Z - ApiZAtSettledXY;
+        if (RwgRocksLastMove != 0) { ++RwgRkDeferSettledSideways; }
+        else if (E.bRwgOnSolidTop && FMath::IsFinite(DzCm) && DzCm > NodeShuffleRocks::SunkenMarginCm) { ++RwgRkDeferSettledTopAbove; }
+        else if (!E.bRwgOnSolidTop && FMath::IsFinite(DzCm) && FMath::Abs(DzCm) <= NodeShuffleRocks::SunkenMarginCm) { ++RwgRkDeferSettledTerrain; }
+        else { ++RwgRkDeferSettledOther; }
+    }
+    if (!FNodeShuffleModule::AreDiagnosticsEnabled()) { return; } // review F7: the per-settle line is a diagnostics line
+    // firstTerrainZAtTopXY: the Z of the first terrain stop from the trace start at the top's XY (may be above the top); tokens when
+    // there is no number to print.
     FString TerrainUnder = TEXT("notRockTop");
     if (E.bRwgOnSolidTop)
     {
@@ -301,10 +338,12 @@ void ANodeShuffleSubsystem::RwgRocksEmitSettleLine(const FNodeShuffleEntry& E, d
     }
     int32 Dot = INDEX_NONE;
     const FString Res = E.AssignedResourceClassPath.FindLastChar(TEXT('.'), Dot) ? E.AssignedResourceClassPath.Mid(Dot + 1) : E.AssignedResourceClassPath;
+    const double PawnDistCm = RwgNearestPawnDist2D(E.Location);
+    const double PlayerDistM = PawnDistCm < 1.0e15 ? PawnDistCm / 100.0 : -1.0; // -1 = no player pawn
     const TCHAR* Route = RwgRocksLastMove == 1 ? TEXT("near") : RwgRocksLastMove == 2 ? TEXT("spiral") : TEXT("primary");
     const TCHAR* Kind = RwgRocksLastKind >= 0 && RwgRocksLastKind < 9 ? RockKindNames[RwgRocksLastKind] : TEXT("none");
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("ROCKSETTLE: entry=%s res=%s settledX=%.0f settledY=%.0f settledZ=%.0f apiZAtSettledXY=%.0f settledMinusApiCm=%.0f route=%s sidewaysM=%.1f firstHitClass=%s firstHitName=%s onSolidTop=%d terrainUnderTop=%s"),
+        TEXT("ROCKSETTLE: entry=%s res=%s settledX=%.0f settledY=%.0f settledZ=%.0f apiZAtSettledXY=%.0f settledMinusApiCm=%.0f nearestPlayerDist2DM=%.0f route=%s sidewaysM=%.1f firstHitClass=%s firstHitName=%s onSolidTop=%d firstTerrainZAtTopXY=%s"),
         *E.EntryGuid.ToString(), *Res, E.Location.X, E.Location.Y, E.Location.Z, ApiZAtSettledXY, E.Location.Z - ApiZAtSettledXY,
-        Route, RwgRocksLastMoveCm / 100.0f, Kind, RwgRocksLastMesh.IsEmpty() ? TEXT("-") : *RwgRocksLastMesh, E.bRwgOnSolidTop ? 1 : 0, *TerrainUnder);
+        PlayerDistM, Route, RwgRocksLastMoveCm / 100.0f, Kind, RwgRocksLastMesh.IsEmpty() ? TEXT("-") : *RwgRocksLastMesh, E.bRwgOnSolidTop ? 1 : 0, *TerrainUnder);
 }

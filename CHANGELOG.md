@@ -12,7 +12,7 @@
   Counts**, gives each listed modded resource its vanilla map node count, scaled by how many vanilla ore nodes the
   world has compared with the vanilla map, so it follows your Random World Generator amount settings the way the
   vanilla ores do. The shuffle then deals that many instead; your density and minimum-per-resource settings still
-  apply. Pre-filled: Lead 6, Lithium 23, Thorium 20 (thorium is set below the 45 counted on a vanilla map). On a world with lead, lead nodes become far fewer.
+  apply. Pre-filled: Lead 6, Lithium 23, Thorium 20 (thorium is set lower than the 45 counted on one vanilla-map save); the row's count field is now labelled "Node count to scale". On a world with lead, lead nodes become far fewer.
 - **A listed gas resource with no node on the world** (Lithium is the known case) gets new nodes of its own node
   class. If no usable node class is found, nothing is added for that resource.
 - Both act only when a layout is rolled: a new Random World Generator world at its first roll, an existing one at

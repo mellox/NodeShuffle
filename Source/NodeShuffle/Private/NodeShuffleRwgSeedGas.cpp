@@ -106,8 +106,8 @@ namespace NodeShuffleRwgSeedGas
         AddString(TEXT("NodeClassPath"), TEXT("Node class path"), TEXT("Full path of a node class for a gas resource with no node on this world. Used only when NodeShuffle finds no node class of that resource's own mod. May be empty."));
         UConfigPropertyInteger* CountProp = NewObject<UConfigPropertyInteger>(RowTemplate, IntegerClass, TEXT("VanillaCount"));
         CountProp->Value = 0; CountProp->DefaultValue = 0;
-        CountProp->DisplayName = FText::FromString(TEXT("Vanilla map node count"));
-        CountProp->Tooltip = FText::FromString(TEXT("How many nodes of this resource the vanilla map has."));
+        CountProp->DisplayName = FText::FromString(TEXT("Node count to scale"));
+        CountProp->Tooltip = FText::FromString(TEXT("Node count for this resource before it is scaled to this world. Pre-filled with the vanilla map's count, except thorium (set lower)."));
         CountProp->bRequiresWorldReload = true;
         if (UCP_Integer* IW = Cast<UCP_Integer>(CountProp)) { IW->WidgetType = ECP_IntegerWidgetType::CPI_Spinbox; IW->MinValue = 0; IW->MaxValue = MaxRowCount; }
         RowTemplate->SectionProperties.Add(TEXT("VanillaCount"), CountProp);

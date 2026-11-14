@@ -7839,12 +7839,27 @@ bool ANodeShuffleSubsystem::RaycastSettle(FNodeShuffleEntry& Entry, const AActor
     RwgRocksLastMove = 0; RwgRocksLastMoveCm = 0.0f; bRwgRocksLastSpiralAfterRock = false; RwgRocksLastKind = -1; RwgRocksLastMesh.Reset();
     RwgRocksLastWidthM = RwgRocksLastHeightM = 0.0f;
     bRwgRocksCaptureFirst = bTerrainOnly;
+    // ns-rocks-1 (coordinator item 3; round 3 F6): ONE ground query per terrain-only (RWG) settle, used for the spiral/near start raise and
+    // reused by rule B through RwgRocksActiveQ while this settle runs. Built only when bTerrainOnly: the binding attempt never runs on vanilla.
+    TOptional<NodeShuffleMapMode::FRwgGroundQuery> RockQ;
+    if (bTerrainOnly) { RockQ.Emplace(GetWorld(), RwgGenerator.Get()); }
+    struct FRocksActiveQClear { const NodeShuffleMapMode::FRwgGroundQuery*& Ref; ~FRocksActiveQClear() { Ref = nullptr; } } RocksActiveQClear{ RwgRocksActiveQ };
+    RwgRocksActiveQ = RockQ.IsSet() ? &RockQ.GetValue() : nullptr;
 
     // 1. Primary probe at the entry's own XY. steepfix-1: a placeable spot is a hit that is neither
     //    water NOR steeper than the Miner hologram tolerates.
     const bool bPrimaryHit = RaycastGroundAt(Entry.Location, Entry.Location.Z, IgnoreNode, IgnoreMesh, Loc, Rot, bWater, false, &bSteep,
                         nullptr, nullptr, bTerrainOnly); // RWG P2c: bTerrainOnly forwarded (false on every vanilla call)
     bRwgRocksCaptureFirst = false;
+    // ns-rocks-1 round 3 (coordinator F3): consecutive rule-B primary defers per entry; a primary that hits something ends the run.
+    if (!bPrimaryHit && bRwgRocksLastProbeDeferred)
+    {
+        ++RwgRkPrimaryDefers.FindOrAdd(Entry.EntryGuid);
+        bool bAlreadyDeferred = false;
+        RwgRkEverDeferred.Add(Entry.EntryGuid, &bAlreadyDeferred);
+        if (!bAlreadyDeferred) { ++RwgRkEverDeferredN; }
+    }
+    else if (bPrimaryHit) { RwgRkPrimaryDefers.Remove(Entry.EntryGuid); } // a plain no-hit (unstreamed) keeps the run open
     // ns-rocks-1 A: read NOW -- every later RaycastGroundAt resets bRwgLastProbeSolid. True only when the primary's terrain-only trace
     // stopped on a solid (rock-family) mesh that was not accepted as a top (never on vanilla: bSolidBlocks needs bTerrainOnly).
     const bool bPrimaryRockRefused = bPrimaryHit && bSteep && !bWater && bRwgLastProbeSolid;
@@ -7876,10 +7891,7 @@ bool ANodeShuffleSubsystem::RaycastSettle(FNodeShuffleEntry& Entry, const AActor
         const int32 NearTries = bPrimaryRockRefused ? NodeShuffleRocks::NearProbeCount : 0;
         if (NearTries > 0) { ++RwgRkNearRun; }
         // ns-rocks-1 (coordinator item 3): on RWG each spiral/near probe traces from max(dealt-spot Z, API Z at THAT probe's XY) + the
-        // primary trace height, so ground rising more than the trace height within 300 m cannot put the start underground. Built only on
-        // terrain-only (RWG) settles: the query's binding attempt never runs on vanilla.
-        TOptional<NodeShuffleMapMode::FRwgGroundQuery> RockQ;
-        if (bTerrainOnly) { RockQ.Emplace(GetWorld(), RwgGenerator.Get()); }
+        // primary trace height, so ground rising more than the trace height within 300 m cannot put the start underground (RockQ above).
         for (int32 Step = 0; Step < NearTries + LandRelocationTries; Step++)
         {
             const bool bNear = Step < NearTries;
@@ -7902,8 +7914,10 @@ bool ANodeShuffleSubsystem::RaycastSettle(FNodeShuffleEntry& Entry, const AActor
                 const double ApiAtProbe = RockQ->SurfaceZ(Probe.X, Probe.Y);
                 if (FMath::IsFinite(ApiAtProbe) && ApiAtProbe > ProbeBaseZ) { ProbeBaseZ = ApiAtProbe; ++RwgRkStartRaised; }
             }
+            bRwgRocksSidewaysProbe = bTerrainOnly; // review F2: rule B refuses a sunken top on a near/spiral candidate by API depth alone
             const bool bTryHit = RaycastGroundAt(Probe, ProbeBaseZ, IgnoreNode, IgnoreMesh, TryLoc, TryRot, bTryWater, false, &bTrySteep,
                                 nullptr, nullptr, bTerrainOnly); // RWG P2c: bTerrainOnly forwarded (false on every vanilla call)
+            bRwgRocksSidewaysProbe = false;
             RwgRocksCountCandidate(bNear, bTryHit, bTryWater, bTrySteep); // ns-rocks-1 round 2: ROCKCAND outcome of this candidate (counts only)
             if (bTryHit && !bTryWater && !bTrySteep)
             {
