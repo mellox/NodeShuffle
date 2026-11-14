@@ -14,17 +14,18 @@
 #   RC5  order: alphabetical by display name, case-insensitive, class-path tie-break; the count is not a sort key
 #   RC6  one emitter: posts only through PostChatNotice (tag ROLLCHAT), one row per call; no chat struct, no broadcast
 #   RC7  tick site beside the other notice emitters; the first-apply note after LogLayoutSummary; EndPlay clears the drain (teardown)
-#   RC8  diagnostics: ROLLCHAT-QUEUED (with widths), ROLLCHAT-BODY delimited, ROLLCHAT-DONE and its Warning variant; no field=value legend
+#   RC8  diagnostics: ROLLCHAT-QUEUED (with the count-column digit figure), ROLLCHAT-BODY delimited, ROLLCHAT-DONE and its Warning variant; no field=value legend
 #   RC9  RollChat.cpp under 500 lines; display name through UFGItemDescriptor::GetItemName
 #   RC10 the edited lints: rerollwipe R11 pins the queue call after the audit; mcpcontract C4 names this marker; rwg020 G8 its note
-#   RC11 the two-column fixed-width composer: one row builder (name padded right, two spaces, count padded left); both widths computed
+#   RC11 (r4) the COUNT-FIRST composer: one row builder; gap 2*M-2 after the header word, 8+2*(M-digits) after every count; M floored
+#        at 3 from the Total's digits; the old name-first fixed-width composer and its width variables are forbidden; computed
 #        from this table; header, (no resource) and Total rows go through it; the old pipe/three-column, grouped/numbered and wells
 #        shapes are absent
 #   RC12 paced drain: one one-shot timer per row (never looping), one post per timer fire, no loop in the step; index advances after acceptance
 #   RC13 drop-on-new-roll: the queue function first clears any table still draining; the clear stops the timer, logs the drop, resets
 #   RC14 (r3, review F2) interleave gate: while RollChatIsDraining() the pending and T61 emitters are NOT called (deferred, not
 #        dropped); the helper reads our own armed flag, not a timer query
-#   RC15 (r3, review F4) duplicate display names get the short class name appended inside RollChatTableRows, before the widths
+#   RC15 (r3, review F4) duplicate display names get the short class name appended inside RollChatTableRows, before the rows are composed
 #   r3 also: no repeat-character helper and no timer-active query anywhere in the packet files (zero-new-import rule, needles by
 #        concatenation, in RC11); the armed flag is set on every arm and cleared on fire and on clear (RC12); one DONE-family line
 #        on a give-up (RC8, review F5); the written-never-read totals member is gone (RC4, review F8)
@@ -80,21 +81,17 @@ $nodeTotal  = '    const int32 NodeTotal = NodesNamed + NodesNoResource;'
 $readOnce   = '    RollChatCensusActiveEntries = -1;'
 $sortName   = 'const int32 ByName = A.Name.Compare(B.Name, ESearchCase::IgnoreCase);'
 $sortTie    = 'return A.ClassPath.Compare(B.ClassPath, ESearchCase::CaseSensitive) < 0;'
-$summaryFmt = 'TEXT("trigger %s | rows %d resources %d | nodeTotal %d nodesNoResource %d censusActive %d nodesReconciled %d rolledLineActive %d | wellLayoutEntries %d | nameWidth %d countWidth %d lineLength %d | nameFallbacks %d"),'
+$summaryFmt = 'TEXT("trigger %s | rows %d resources %d | nodeTotal %d nodesNoResource %d censusActive %d nodesReconciled %d rolledLineActive %d | wellLayoutEntries %d | countColumnDigits %d | nameFallbacks %d"),'
 $rowsDecl   = '    TArray<FString> RollChatRows;'
-$rowBody    = "        FString Row = Name;`n        for (int32 i = Name.Len(); i < NameWidth; ++i) { Row.AppendChar(TEXT(' ')); }`n        Row.AppendChar(TEXT(' '));`n        Row.AppendChar(TEXT(' '));`n        for (int32 i = Count.Len(); i < CountWidth; ++i) { Row.AppendChar(TEXT(' ')); }`n        Row += Count;`n        return Row;"
-$hdrRow     = 'RollChatRows.Add(RollChatFixedRow(TEXT("Resource"), TEXT("Count"), NameWidth, CountWidth));'
-$totalRow   = 'RollChatRows.Add(RollChatFixedRow(TEXT("Total"), FString::FromInt(NodeTotal), NameWidth, CountWidth));'
-$noResRow   = 'RollChatRows.Add(RollChatFixedRow(NoResourceLabel, FString::FromInt(NodesNoResource), NameWidth, CountWidth));'
-$resRow     = 'RollChatRows.Add(RollChatFixedRow(R.Name, FString::FromInt(R.Nodes), NameWidth, CountWidth));'
+$rowBody    = "        const int32 Gap = bHeader ? (2 * M - 2) : (8 + 2 * (M - Count.Len()));`n        FString Row = Count;`n        for (int32 i = 0; i < Gap; ++i) { Row.AppendChar(TEXT(' ')); }`n        Row += Label;`n        return Row;"
+$hdrRow     = 'RollChatRows.Add(RollChatCountRow(TEXT("Count"), TEXT("Resource"), CountDigitsM, true));'
+$totalRow   = 'RollChatRows.Add(RollChatCountRow(FString::FromInt(NodeTotal), TEXT("Total"), CountDigitsM, false));'
+$noResRow   = 'RollChatRows.Add(RollChatCountRow(FString::FromInt(NodesNoResource), NoResourceLabel, CountDigitsM, false));'
+$resRow     = 'RollChatRows.Add(RollChatCountRow(FString::FromInt(R.Nodes), R.Name, CountDigitsM, false));'
+$mLine      = 'const int32 CountDigitsM = FMath::Max(3, FString::FromInt(NodeTotal).Len());'
+$rowSig     = 'FString RollChatCountRow(const FString& Count, const FString& Label, int32 M, bool bHeader)'
+$oldComposer = @(('RollChat' + 'FixedRow'), ('Name' + 'Width'), ('Count' + 'Width'), ('line' + 'Length'))
 $opening    = 'RollChatRows.Add(FString::Printf(TEXT("New layout (%s), counted at the shuffle:"), Trigger));'
-$widths     = @('int32 NameWidth = FMath::Max(FCString::Strlen(TEXT("Resource")), FCString::Strlen(TEXT("Total")));',
-                'int32 CountWidth = FCString::Strlen(TEXT("Count"));',
-                'NameWidth = FMath::Max(NameWidth, R.Name.Len());',
-                'CountWidth = FMath::Max(CountWidth, FString::FromInt(R.Nodes).Len());',
-                'NameWidth = FMath::Max(NameWidth, NoResourceLabel.Len());',
-                'CountWidth = FMath::Max(CountWidth, FString::FromInt(NodesNoResource).Len());',
-                'CountWidth = FMath::Max(CountWidth, FString::FromInt(NodeTotal).Len());')
 $postCall   = 'FNodeShuffleModule::PostChatNotice(World, RollChatRows[RollChatNext], TEXT("ROLLCHAT"))'
 $armOnce    = 'World->GetTimerManager().SetTimer(RollChatDrainTimer, this, &ANodeShuffleSubsystem::RollChatDrainStep,' + "`n" + '        RollChatRowGapSeconds, false);'
 $armNext    = 'World->GetTimerManager().SetTimer(RollChatDrainTimer, this, &ANodeShuffleSubsystem::RollChatDrainStep,' + "`n" + '            RollChatRowGapSeconds, false);'
@@ -118,7 +115,7 @@ function Invoke-Checks($T) {
     $clear = Span $T.chat 'void ANodeShuffleSubsystem::RollChatClear(const TCHAR* Why)' 'void ANodeShuffleSubsystem::RollChatQueueBreakdown('
     $note  = Span $T.chat 'void ANodeShuffleSubsystem::RollChatNoteFirstApply() const' "`n}`n"
     $helper = Span $T.chat 'bool ANodeShuffleSubsystem::RollChatIsDraining() const' "`n}`n"
-    $rowFn = Span $T.chat 'FString RollChatFixedRow(' "`n    }`n"
+    $rowFn = Span $T.chat $rowSig "`n    }`n"
     # RC1
     $hdrTags = @([regex]::Matches($T.mark, 'TEXT\("(20\d\d-\d\d-\d\d-[\w-]+)"\),') | ForEach-Object { $_.Groups[1].Value })
     if ($hdrTags.Count -eq 0 -or $hdrTags[-1] -ne $marker) { $f += '(RC1) marker must be the newest entry in the markers header' }
@@ -145,7 +142,7 @@ function Invoke-Checks($T) {
     if ((Count $T.chat $totalsMember) -ne 0 -or (Count $T.subh $totalsMember) -ne 0) { $f += '(RC4) the written-never-read totals member stays gone (review F8)' }
     if ((Count $T.chat ('wells' + 'Reconciled')) -ne 0 -or (Count $T.chat ('bWells' + 'Match')) -ne 0) { $f += '(RC4) the wells self-comparison must stay gone (review F2)' }
     # RC5
-    $rows = Span $T.chat 'TArray<FRollChatRow> RollChatTableRows(' 'FString RollChatFixedRow('
+    $rows = Span $T.chat 'TArray<FRollChatRow> RollChatTableRows(' 'FString RollChatCountRow('
     if ($rows -eq '' -or -not (Ordered $rows @('Rows.StableSort(', $sortName, 'if (ByName != 0) { return ByName < 0; }', $sortTie))) { $f += '(RC5) alphabetical stable sort on the display name, class-path tie-break' }
     if ($rows -ne '' -and ((Count $rows ('A.' + 'Nodes')) -ne 0 -or (Count $rows ('B.' + 'Nodes')) -ne 0)) { $f += '(RC5) the count must not be a sort key' }
     # RC6
@@ -174,11 +171,12 @@ function Invoke-Checks($T) {
     if (-not $T.lmcp.Contains("`$own = '2026-11-14-' + 'rollchat-1'")) { $f += '(RC10) check_mcpcontract C4 must name this packet marker as the newest' }
     if (-not $T.l020.Contains("-not `$T.lmcp.Contains('# rwg-0-2-0-2: no longer the newest; pinned present')")) { $f += '(RC10) check_rwg020 G8 must anchor on the no-longer-newest note' }
     # RC11
-    if ((Count $T.chat $rowBody) -ne 1) { $f += '(RC11) the one fixed-width row builder: name padded right, two spaces, count padded left' }
-    if ($rowFn -eq '' -or (Count $T.chat 'AppendChar(') -ne (Count $rowFn 'AppendChar(') -or (Count $T.chat 'RollChatFixedRow(') -ne 5) { $f += '(RC11) the row layout lives in RollChatFixedRow only (one definition, four callers)' }
+    if ((Count $T.chat $rowBody) -ne 1 -or (Count $T.chat $rowSig) -ne 1) { $f += '(RC11) the one count-first row builder: count, then 2*M-2 (header) or 8+2*(M-digits) spaces, then the label' }
+    foreach ($old in $oldComposer) { if ((Count $T.chat $old) -ne 0) { $f += '(RC11) the old name-first fixed-width composer or its width fields are back' } }
+    if ($rowFn -eq '' -or (Count $T.chat 'AppendChar(') -ne (Count $rowFn 'AppendChar(') -or (Count $T.chat 'RollChatCountRow(') -ne 5) { $f += '(RC11) the row layout lives in RollChatFixedRow only (one definition, four callers)' }
     foreach ($k in @('chat', 'sub', 'subh')) { if ((Count $T[$k] $noChrN) -ne 0 -or (Count $T[$k] $noTimerQ) -ne 0) { $f += "(RC11) zero-new-import rule: no repeat-character helper and no timer-active query ($k)" } }
-    if ($qb -eq '' -or -not (Ordered $qb ($widths + @($opening, $hdrRow, $resRow, $noResRow, $totalRow)))) { $f += '(RC11) widths computed from this table before the rows; opening, header, resource, (no resource), Total in order' }
-    if ($qb -ne '' -and ((Count $qb 'RollChatRows.Add(') -ne 5 -or (Count $qb 'RollChatRows.Add(RollChatFixedRow(') -ne 4)) { $f += '(RC11) every table row goes through the fixed-width builder (only the opening line does not)' }
+    if ($qb -eq '' -or -not (Ordered $qb @($mLine, $opening, $hdrRow, $resRow, $noResRow, $totalRow))) { $f += '(RC11) widths computed from this table before the rows; opening, header, resource, (no resource), Total in order' }
+    if ($qb -ne '' -and ((Count $qb 'RollChatRows.Add(') -ne 5 -or (Count $qb 'RollChatRows.Add(RollChatCountRow(') -ne 4)) { $f += '(RC11) every table row goes through the fixed-width builder (only the opening line does not)' }
     foreach ($old in @(('" ' + '| "'), ('%s ' + '| %d'), ('Resource ' + '| Nodes'), ('RollChatNamesPer' + 'Message'), ('RollChatAppend' + 'Groups'), ('%d' + '/%d: "), Label'), ('TEXT("' + 'Wells'), ('Well' + 'Counts'), "`t")) {
         if ((Count $T.chat $old) -ne 0) { $f += "(RC11) an old shape is back (pipe/three-column, grouped/numbered, wells column, or a tab)" }
     }
@@ -202,7 +200,7 @@ function Invoke-Checks($T) {
     if ((Count $T.sub $gateSeq[0]) -ne 1 -or -not (Ordered $T.sub $gateSeq) -or (Count $T.sub $gateSeq[2]) -ne 1 -or (Count $T.sub $gateSeq[3]) -ne 1) { $f += '(RC14) the pending and T61 emitters are called only when no table is draining' }
     if ($helper -eq '' -or (Count $helper $isDraining) -ne 1 -or (Count $T.subh 'bool RollChatIsDraining() const;') -ne 1) { $f += '(RC14) RollChatIsDraining reads rows-unsent AND the armed flag' }
     # RC15
-    $rows15 = Span $T.chat 'TArray<FRollChatRow> RollChatTableRows(' 'FString RollChatFixedRow('
+    $rows15 = Span $T.chat 'TArray<FRollChatRow> RollChatTableRows(' 'FString RollChatCountRow('
     if ($rows15 -eq '' -or -not (Ordered $rows15 @('Rows.StableSort(', 'TArray<bool> Dup; Dup.Init(false, Rows.Num());', $dupAppend, 'return Rows;'))) { $f += '(RC15) duplicate names get the class suffix after the sort, before the rows are returned (widths use the final names)' }
     return ,$f
 }
@@ -229,15 +227,19 @@ $mutants = @(
     @{ Name = 'M16 several rows per fire';             Key = 'chat';  Expect = 'RC12'; Find = ('    if (!' + $postCall + ')'); Repl = ('    for (int32 k = 0; k < 1; ++k) {}' + "`n    if (!" + $postCall + ')') }
     @{ Name = 'M17 looping timer';                     Key = 'chat';  Expect = 'RC12'; Find = $armOnce; Repl = $armOnce.Replace('false);', ('tr' + 'ue);')) }
     @{ Name = 'M18 no supersede on a new roll';        Key = 'chat';  Expect = 'RC13'; Find = $supersede; Repl = '   ' }
-    @{ Name = 'M19 header row not padded';             Key = 'chat';  Expect = 'RC11'; Find = $hdrRow; Repl = 'RollChatRows.Add(FString(TEXT("Resource  Count")));' }
+    @{ Name = 'M19 header row not composed';           Key = 'chat';  Expect = 'RC11'; Find = $hdrRow; Repl = 'RollChatRows.Add(FString(TEXT("Count      Resource")));' }
     @{ Name = 'M20 pipe row format back';              Key = 'chat';  Expect = 'RC11'; Find = '    // THE ONE ROW FORMAT'; Repl = ('    // TEXT("%s ' + '| %d | %d")' + "`n    // THE ONE ROW FORMAT") }
-    @{ Name = 'M21 count width ignores the Total';     Key = 'chat';  Expect = 'RC11'; Find = $widths[6]; Repl = '' }
-    @{ Name = 'M22 name width ignores the names';      Key = 'chat';  Expect = 'RC11'; Find = $widths[2]; Repl = '' }
+    @{ Name = 'M21 M not floored at 3';                Key = 'chat';  Expect = 'RC11'; Find = 'FMath::Max(3, FString::FromInt(NodeTotal).Len())'; Repl = 'FString::FromInt(NodeTotal).Len()' }
+    @{ Name = 'M22 label before count';                Key = 'chat';  Expect = 'RC11'; Find = '        FString Row = Count;'; Repl = '        FString Row = Label;' }
+    @{ Name = 'M35 header gap changed';                Key = 'chat';  Expect = 'RC11'; Find = '(2 * M - 2)'; Repl = '(2 * M)' }
+    @{ Name = 'M36 row gap not doubled per digit';     Key = 'chat';  Expect = 'RC11'; Find = '(8 + 2 * (M - Count.Len()))'; Repl = '(8 + (M - Count.Len()))' }
+    @{ Name = 'M37 old fixed-width composer back';     Key = 'chat';  Expect = 'RC11'; Find = '        Row += Label;'; Repl = ('        Row += Label; // RollChat' + 'FixedRow') }
+    @{ Name = 'M38 tab in a composed row';             Key = 'chat';  Expect = 'RC11'; Find = '        Row += Label;'; Repl = "        Row += Label; Row.AppendChar(TEXT('`t'));" }
     @{ Name = 'M23 wells column back';                 Key = 'chat';  Expect = 'RC11'; Find = $hdrRow; Repl = ($hdrRow + ' // TEXT("' + 'Wells")') }
     @{ Name = 'M24 BODY not delimited';                Key = 'chat';  Expect = 'RC8';  Find = 'ROLLCHAT-BODY %d/%d: |%s|'; Repl = 'ROLLCHAT-BODY %d/%d: %s' }
     @{ Name = 'M26 refusal budget removed';            Key = 'chat';  Expect = 'RC12'; Find = 'if (RollChatAttempts >= RollChatMaxEmitAttempts)'; Repl = 'if (false)' }
     @{ Name = 'M27 running-drain guard removed';       Key = 'chat';  Expect = 'RC12'; Find = $guard; Repl = '   ' }
-    @{ Name = 'M28 repeat-character helper back';      Key = 'chat';  Expect = 'RC11'; Find = '        FString Row = Name;'; Repl = ('        FString Row = Name; // FString::' + $noChrN + '1, TEXT(' + "' '" + '))') }
+    @{ Name = 'M28 repeat-character helper back';      Key = 'chat';  Expect = 'RC11'; Find = '        FString Row = Count;'; Repl = ('        FString Row = Count; // FString::' + $noChrN + '1, TEXT(' + "' '" + '))') }
     @{ Name = 'M29 helper queries the timer';          Key = 'chat';  Expect = 'RC14'; Find = $isDraining; Repl = ('return RollChatNext < RollChatRows.Num() && GetWorld()->GetTimerManager().' + $noTimerQ + 'RollChatDrainTimer);') }
     @{ Name = 'M30 interleave gate bypassed';          Key = 'sub';   Expect = 'RC14'; Find = 'if (!bRollChatDraining)'; Repl = 'if (true)' }
     @{ Name = 'M31 flag not cleared on fire';          Key = 'chat';  Expect = 'RC12'; Find = '    bRollChatTimerArmed = false; // the one-shot has fired'; Repl = '    // the one-shot has fired' }

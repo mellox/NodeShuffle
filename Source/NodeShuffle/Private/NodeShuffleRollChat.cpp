@@ -3,8 +3,8 @@
 // the breakdown of nodes and count." Round 2 (user): "it should be in a table format so it is consistent
 // and easy to read", sent row by row by a paced loop so the rows arrive in order; then (user, verbatim):
 // "Just do the resource and the count. you may need to have fixed length lines so the show up in actual
-// columns visually under the header". So: two columns, NODES only (wells are not in chat), every row the
-// same length -- name left-aligned and space-padded, count right-aligned, two spaces between.
+// columns visually under the header". So: two columns, NODES only (wells are not in chat). Round 4: the chat
+// font was measured PROPORTIONAL, so the layout is COUNT FIRST, then the name (see RollChatCountRow).
 //
 // POPULATION: the LAYOUT the roll produced, not spawned actors. On RWG most dealt spots have no actor
 // yet when the roll returns, so an actor count would under-report the deal. Counted: every Layout entry
@@ -102,7 +102,6 @@ namespace
         });
         // r2 review F4 (verbatim): two class paths sharing a display name get the short class name appended, so
         // the rows are distinguishable. Duplicates are adjacent because the sort key is the case-insensitive name.
-        // The widths are computed later from these FINAL names.
         TArray<bool> Dup; Dup.Init(false, Rows.Num());
         for (int32 i = 1; i < Rows.Num(); ++i) { if (Rows[i - 1].Name.Equals(Rows[i].Name, ESearchCase::IgnoreCase)) { Dup[i - 1] = true; Dup[i] = true; } }
         for (int32 i = 0; i < Rows.Num(); ++i)
@@ -114,22 +113,26 @@ namespace
         return Rows;
     }
 
-    // THE ONE ROW FORMAT: name left-aligned and padded with ASCII spaces to NameWidth, two spaces, count
-    // right-aligned and padded with ASCII spaces to CountWidth. Every row is NameWidth + 2 + CountWidth
-    // characters and no row ends in a space. Nothing on the way to chat trims it: PostChatNotice does
-    // FText::FromString(Body) and nothing else.
-    // THIS IS THE ONLY PLACE THE ROW LAYOUT LIVES: name, count and the two widths in, one row out. If the chat
-    // font turns out to be proportional, the padding scheme changes here and nowhere else.
+    // THE ONE ROW FORMAT (round 4): COUNT FIRST, no leading spaces, then a run of plain ASCII spaces, then the
+    // label. M is the count-column digit figure: max(3, digits of the Total row's number). Gap after the count:
+    //   header row ("Count" then "Resource"): 2*M - 2 spaces;
+    //   every other row:                       8 + 2*(M - digits(count)) spaces.
+    // WHAT WAS MEASURED, AND ITS SCOPE (2026-11-14, ONE machine, ONE UI scale, English): the chat font is
+    // proportional (ten 'i' far narrower than ten 'W'), so name-first padding cannot make columns. A digit is
+    // about as wide as two spaces there (about 13.9 px against 7.2 px), and runs of plain spaces survive into
+    // chat. Five pasted lines in exactly this layout for a Total of 1032 put the labels' left ink edges at 244,
+    // 243, 244, 244 and 241 px. Other UI scales, fonts and languages are UNMEASURED; this does not claim the
+    // labels line up anywhere else.
+    // THIS IS THE ONLY PLACE THE ROW LAYOUT LIVES: count text, label, M and the header flag in; one row out.
     // Padding is a plain loop of single-space AppendChar calls (AppendChar is already used in
     // NodeShuffleAutoAllowExtractors.cpp), not a repeat-character helper, so the row adds no engine import.
-    FString RollChatFixedRow(const FString& Name, const FString& Count, int32 NameWidth, int32 CountWidth)
+    // Nothing on the way to chat trims it: PostChatNotice does FText::FromString(Body) and nothing else.
+    FString RollChatCountRow(const FString& Count, const FString& Label, int32 M, bool bHeader)
     {
-        FString Row = Name;
-        for (int32 i = Name.Len(); i < NameWidth; ++i) { Row.AppendChar(TEXT(' ')); }
-        Row.AppendChar(TEXT(' '));
-        Row.AppendChar(TEXT(' '));
-        for (int32 i = Count.Len(); i < CountWidth; ++i) { Row.AppendChar(TEXT(' ')); }
-        Row += Count;
+        const int32 Gap = bHeader ? (2 * M - 2) : (8 + 2 * (M - Count.Len()));
+        FString Row = Count;
+        for (int32 i = 0; i < Gap; ++i) { Row.AppendChar(TEXT(' ')); }
+        Row += Label;
         return Row;
     }
 }
@@ -177,48 +180,35 @@ void ANodeShuffleSubsystem::RollChatQueueBreakdown(bool bIsReroll, int32 RolledL
     int32 NameFallbacks = 0;
     const TArray<FRollChatRow> Table = RollChatTableRows(NodeCounts, NameFallbacks);
 
-    // WIDTHS, computed from THIS table so nothing is truncated. Name: the longest of the header word, "Total",
-    // "(no resource)" when that row is present, and every display name. Count: the longest of the header word
-    // and every number printed.
+    // M: the count-column digit figure, floored at 3. The Total is the largest number in the table (every row
+    // count is non-negative and the Total is their sum), so its digit count bounds every row's.
     const FString NoResourceLabel = TEXT("(no resource)");
-    int32 NameWidth = FMath::Max(FCString::Strlen(TEXT("Resource")), FCString::Strlen(TEXT("Total")));
-    int32 CountWidth = FCString::Strlen(TEXT("Count"));
-    for (const FRollChatRow& R : Table)
-    {
-        NameWidth = FMath::Max(NameWidth, R.Name.Len());
-        CountWidth = FMath::Max(CountWidth, FString::FromInt(R.Nodes).Len());
-    }
-    if (NodesNoResource > 0)
-    {
-        NameWidth = FMath::Max(NameWidth, NoResourceLabel.Len());
-        CountWidth = FMath::Max(CountWidth, FString::FromInt(NodesNoResource).Len());
-    }
-    CountWidth = FMath::Max(CountWidth, FString::FromInt(NodeTotal).Len());
+    const int32 CountDigitsM = FMath::Max(3, FString::FromInt(NodeTotal).Len());
 
     // F1 (review, adapted to the table): the opening line carries the scope, the Total row carries the number.
     RollChatRows.Add(FString::Printf(TEXT("New layout (%s), counted at the shuffle:"), Trigger));
-    RollChatRows.Add(RollChatFixedRow(TEXT("Resource"), TEXT("Count"), NameWidth, CountWidth));
+    RollChatRows.Add(RollChatCountRow(TEXT("Count"), TEXT("Resource"), CountDigitsM, true));
     for (const FRollChatRow& R : Table)
     {
-        RollChatRows.Add(RollChatFixedRow(R.Name, FString::FromInt(R.Nodes), NameWidth, CountWidth));
+        RollChatRows.Add(RollChatCountRow(FString::FromInt(R.Nodes), R.Name, CountDigitsM, false));
     }
     if (NodesNoResource > 0) // F5 (adapted): the no-resource entries get their own row, without "yet"
     {
-        RollChatRows.Add(RollChatFixedRow(NoResourceLabel, FString::FromInt(NodesNoResource), NameWidth, CountWidth));
+        RollChatRows.Add(RollChatCountRow(FString::FromInt(NodesNoResource), NoResourceLabel, CountDigitsM, false));
     }
-    RollChatRows.Add(RollChatFixedRow(TEXT("Total"), FString::FromInt(NodeTotal), NameWidth, CountWidth));
+    RollChatRows.Add(RollChatCountRow(FString::FromInt(NodeTotal), TEXT("Total"), CountDigitsM, false));
     RollChatNext = 0;
 
     // Field legend (prose): nodeTotal counts active layout entries (no-resource ones included, as the
     // "(no resource)" row shows them); censusActive is the ROLLCENSUS active figure of this roll (-1 = no
     // census ran), a same-population recount; rolledLineActive is the active figure of the "Rolled layout:"
     // line, kept before the relocation pass and NOT required to be equal; wellLayoutEntries is the WellLayout
-    // length (log only: wells are not in the chat table); nameWidth, countWidth and lineLength are the
-    // fixed-width layout chosen for this table (every table row is lineLength characters).
+    // length (log only: wells are not in the chat table); countColumnDigits is M, the digit figure the
+    // count-first rows are spaced by (max of 3 and the Total's digit count).
     RollChatSummary = FString::Printf(
-        TEXT("trigger %s | rows %d resources %d | nodeTotal %d nodesNoResource %d censusActive %d nodesReconciled %d rolledLineActive %d | wellLayoutEntries %d | nameWidth %d countWidth %d lineLength %d | nameFallbacks %d"),
+        TEXT("trigger %s | rows %d resources %d | nodeTotal %d nodesNoResource %d censusActive %d nodesReconciled %d rolledLineActive %d | wellLayoutEntries %d | countColumnDigits %d | nameFallbacks %d"),
         Trigger, RollChatRows.Num(), Table.Num(), NodeTotal, NodesNoResource, CensusActive, bNodesMatch ? 1 : 0,
-        RolledLineActive, WellLayout.Num(), NameWidth, CountWidth, NameWidth + 2 + CountWidth, NameFallbacks);
+        RolledLineActive, WellLayout.Num(), CountDigitsM, NameFallbacks);
     UE_LOG(LogNodeShuffle, Display, TEXT("ROLLCHAT-QUEUED: %s"), *RollChatSummary);
     if (!bNodesMatch)
     {
