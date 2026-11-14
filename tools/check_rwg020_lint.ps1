@@ -132,7 +132,7 @@ function Invoke-020Checks($T, $others) {
     }
     # G8
     if (-not $T.tool.Contains("SIG_RX = re.compile(") -or $T.tool.Contains('0x48,' + '0x8B,0xC4') -or $T.tool.Contains('0x48, ' + '0x8B, 0xC4') -or -not $T.tool.Contains("'git', '-C', ROOT, 'show'")) { $f += '(G8) the mask tool must parse masks from source, carry no mask bytes of its own, and compare against the base commit' }
-    if (-not $T.l019.Contains('{ TEXT("0.2.0"), 1063 } };') -or -not $T.l019.Contains('CheckCaveSignatures(H, A.Gen, CaveMissing, CaveBad);') -or -not $T.lmcp.Contains("'2026-11-13-' + 'rwg-0-2-0-2'") -or -not $T.lthh.Contains('# rwg-0-2-0-1: no longer the newest; pinned present')) { $f += '(G8) the edited lints must carry their 0.2.0 anchors' }
+    if (-not $T.l019.Contains('{ TEXT("0.2.0"), 1063 } };') -or -not $T.l019.Contains('CheckCaveSignatures(H, A.Gen, CaveMissing, CaveBad);') -or -not $T.lmcp.Contains('# rwg-0-2-0-2: no longer the newest; pinned present') -or -not $T.lthh.Contains('# rwg-0-2-0-1: no longer the newest; pinned present')) { $f += '(G8) the edited lints must carry their 0.2.0 anchors' }
     return $f
 }
 
@@ -171,7 +171,7 @@ $mutants = @(
     @{ Name = 'M31 StripInnerCm defaults active'; Key = 'mmh'; Expect = 'G3'; Find = 'double StripInnerCm = -1.0;'; Repl = 'double StripInnerCm = 0.0;' }
     @{ Name = 'M32 gate header drops the generation'; Key = 'gateh'; Expect = 'G4'; Find = 'CheckCaveSignatures(void* Hmod, int32 Gen, FString&'; Repl = 'CheckCaveSignatures(void* Hmod, FString&' }
     @{ Name = 'M33 marker line dropped from NodeShuffle.cpp'; Key = 'nsmod'; Expect = 'G6'; Find = ('packet marker (' + $marker + ')====='); Repl = 'packet marker (x)=====' }
-    @{ Name = 'M34 mcpcontract lint keeps the old newest marker'; Key = 'lmcp'; Expect = 'G8'; Find = "'2026-11-13-' + 'rwg-0-2-0-2'"; Repl = "'2026-11-11-' + 'thorium-half-1'" }
+    @{ Name = 'M34 mcpcontract lint drops the rwg-0-2-0-2 note'; Key = 'lmcp'; Expect = 'G8'; Find = '# rwg-0-2-0-2: no longer the newest; pinned present'; Repl = '' } # ns-rollchat-1 (2026-11-14): the newest marker moved on; the note replaces the old literal anchor
     @{ Name = 'M35 thoriumhalf lint pins newest again'; Key = 'lthh'; Expect = 'G8'; Find = '# rwg-0-2-0-1: no longer the newest; pinned present'; Repl = '' }
     @{ Name = 'M26 unlisted cave half checks generation A always'; Key = 'hapi'; Expect = 'G1'; Find = 'CheckCaveSignatures(H, A.Gen, CaveMissing, CaveBad);'; Repl = 'CheckCaveSignatures(H, 1, CaveMissing, CaveBad);' }
 )

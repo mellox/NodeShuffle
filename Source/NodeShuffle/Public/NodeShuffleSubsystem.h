@@ -1416,6 +1416,22 @@ private:
     void EmitRollCensus(int32 Seed, bool bIsReroll, int32 PoolSize, int32 TargetActive,
                         int32 OriginalsCaptured, int32 NewLocationCount,
                         const TMap<FString, int32>& PoolCountsByResource) const;
+    // ns-rollchat-1 (2026-11-14): the post-shuffle chat breakdown (NodeShuffleRollChat.cpp).
+    // RollChatCensusActiveEntries is the ROLLCENSUS `active` figure, stashed by EmitRollCensus (hence
+    // mutable) so the breakdown reconciles against the number that line printed; -1 = no census since the
+    // last read. The queue members below are deliberately NOT UPROPERTY: they are never saved and die with
+    // this actor, so a later load cannot post numbers from an earlier roll.
+    mutable int32 RollChatCensusActiveEntries = -1;
+    void RollChatQueueBreakdown(bool bIsReroll, int32 RolledLineActive);  // the last statement of RollLayout: after every deal pass
+    void TickRollChatEmitter();                   // every RefreshTick, beside the other two notice emitters
+    void RollChatNoteFirstApply() const;          // once per session (first apply); Verbose only
+    TArray<FString> RollChatPendingBodies;        // composed messages not yet accepted by PostChatNotice
+    FString RollChatSummary;                      // the measured counts, carried into the ROLLCHAT outcome line
+    bool bRollChatTotalsMatch = true;
+    int32 RollChatComposed = 0;
+    int32 RollChatAccepted = 0;
+    int32 RollChatGateTicks = -1;                 // -1 nothing armed; 0 player seen, hold one tick; then post
+    int32 RollChatAttempts = 0;
     // redesign-1: before a re-roll, UN-HIDE every previously-suppressed original node (and its
     // mesh actor) that is streamed in, so the world returns to its pristine state before the new
     // layout re-hides per the new roll. Nothing was ever destroyed (whole-actor hide is reversible),

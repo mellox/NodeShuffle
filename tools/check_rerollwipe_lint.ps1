@@ -12,7 +12,7 @@
 #   R6 marker rwg-rerollwipe-1 once on its own line in NodeShuffle.cpp, farspawn-1f LOADED line still once; no marker in the new files
 #   R7 new .cpp under 500 lines; RemoveSingleSwap stays a single (DeregisterNodeFromManager) site in Subsystem.cpp
 #   R8 header declarations + the include
-#   R11 (review F3) REROLLAUDIT: one ungated call after RollLayout's EmitRollCensus statement, as the function's last statement (every roll; after the density trigger, which check_density_lint D5 pins adjacent to EmitRollCensus); whole-list pointer compare
+#   R11 (review F3) REROLLAUDIT: one ungated call after RollLayout's EmitRollCensus statement, as the function's last statement before ns-rollchat-1's queue call (every roll; after the density trigger, which check_density_lint D5 pins adjacent to EmitRollCensus); whole-list pointer compare
 #      against TActorIterator, no dereference, no gate; exact format/args
 #   R12 (re-review A1) before-wipe snapshot RerollWipeCollectNotYielded: one call ahead of the wipe block and the audit call; same predicate, no
 #      dereference, no gate; REROLLAUDIT's notYieldedNewSinceWipe excludes it (the per-roll control, same frame)
@@ -73,7 +73,7 @@ $teardownLine = '            if (IsValid(It->Value)) { RerollWipeTeardownRegistr
 $staleLoop = "        StaleAfter = 0;`n        for (AFGResourceNode* Ptr : T.DestroyedPtrs) { if (Mgr->mResourceNodes.Contains(Ptr)) { ++StaleAfter; } }"
 $invalidLoop = "        InvalidStillIn = 0;`n        for (AFGResourceNode* Ptr : T.InvalidPtrs) { if (Mgr->mResourceNodes.Contains(Ptr)) { ++InvalidStillIn; } }"
 $marker = '2026-10-31-rwg-' + 'rerollwipe-1'
-$auditCall = "{ RwgDensityOnRoll(); } // rwg-density-1: RWGDENSITY trigger=roll (diagnostics only)`n    RerollWipeEmitListAudit(bIsReroll, AuditNotYieldedBeforeWipe); // rwg-rerollwipe-1 review F3 / re-review A1: every roll; notYieldedNewSinceWipe is the per-roll control`n}`n"
+$auditCall = "{ RwgDensityOnRoll(); } // rwg-density-1: RWGDENSITY trigger=roll (diagnostics only)`n    RerollWipeEmitListAudit(bIsReroll, AuditNotYieldedBeforeWipe); // rwg-rerollwipe-1 review F3 / re-review A1: every roll; notYieldedNewSinceWipe is the per-roll control`n    RollChatQueueBreakdown(bIsReroll, ActiveCount); // ns-rollchat-1: post-shuffle chat breakdown; after every deal pass and the census, once per roll`n}`n" # ns-rollchat-1 (2026-11-14): the audit is now the second-to-last statement; the chat queue call follows it and closes RollLayout (pinned again by check_rollchat_lint RC2)
 $auditFmt = 'TEXT("REROLLAUDIT: reroll=%d managerEntries=%d entriesNotYieldedByActorIterator=%d notYieldedBeforeWipe=%d notYieldedNewSinceWipe=%d actorsIterated=%d"),'
 $auditArgs = '        bIsReroll ? 1 : 0, Mgr->mResourceNodes.Num(), NotIterated, NotYieldedBeforeWipe.Num(), NewSinceWipe, Iterated.Num());'
 # re-review A1: the before-wipe snapshot call (R12), ordered before the wipe block and the audit call

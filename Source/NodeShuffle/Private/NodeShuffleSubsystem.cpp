@@ -367,6 +367,7 @@ void ANodeShuffleSubsystem::RefreshTick()
         {
             bDidInitialApply = true;
             LogLayoutSummary();
+            RollChatNoteFirstApply(); // ns-rollchat-1: one Verbose line per session; posts nothing
         }
         // knowledge-1 item 1: once per load (and once more after a re-roll — RollLayout re-arms the
         // flag), after the layout is applied and resource classes resolve: register managed MODDED
@@ -435,6 +436,7 @@ void ANodeShuffleSubsystem::RefreshTick()
         // running the same four gates. It costs one array-length compare on every pass that has nothing
         // to say, which is every pass after the first sighting wave.
         FNodeShuffleModule::TickForeignNoticeEmitter(GetWorld(), /*bNoticesEnabled=*/true);
+        TickRollChatEmitter(); // ns-rollchat-1: posts a queued post-shuffle breakdown; one array-length compare when nothing is queued
         // scanregen-1 consume point (P2 §4 touch-point 3, §9 AMENDMENT — binding): do NOT clear
         // bScannerClusterRefreshPending on the SKIPPED branch. The flag clears ONLY when
         // RefreshScannersAndRadarTowers() actually runs from HERE (it sets bScannerRefreshedThisPass
@@ -2322,6 +2324,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
                    VanillaResourceCounts);
     if (GetMapMode() == ENodeShuffleMapMode::Rwg) { RwgDensityOnRoll(); } // rwg-density-1: RWGDENSITY trigger=roll (diagnostics only)
     RerollWipeEmitListAudit(bIsReroll, AuditNotYieldedBeforeWipe); // rwg-rerollwipe-1 review F3 / re-review A1: every roll; notYieldedNewSinceWipe is the per-roll control
+    RollChatQueueBreakdown(bIsReroll, ActiveCount); // ns-rollchat-1: post-shuffle chat breakdown; after every deal pass and the census, once per roll
 }
 
 // ns-truth-diagnostics B. ONE line per roll carrying the numbers that two separate log-archaeology
@@ -2383,6 +2386,7 @@ void ANodeShuffleSubsystem::EmitRollCensus(int32 Seed, bool bIsReroll, int32 Poo
         if (E.AssignedResourceClassPath.IsEmpty()) { ++ActiveWithNoResource; continue; }
         ActiveByResource.FindOrAdd(E.AssignedResourceClassPath)++;
     }
+    RollChatCensusActiveEntries = ActiveEntries; // ns-rollchat-1: the `active` figure printed below; RollChatQueueBreakdown reconciles against it
 
     // Short display name: the trailing object name of a class path, e.g.
     // "/Game/.../Desc_OreIron.Desc_OreIron_C" -> "Desc_OreIron_C". Full paths go in the ZERO-ACTIVE
