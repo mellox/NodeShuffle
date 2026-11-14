@@ -17,7 +17,8 @@
 //   TICK   ANodeShuffleSubsystem::ScanFilterTick -> Tick: from RefreshTick (authority, every TickIntervalSeconds = 5 s),
 //          adds rows for the union of (a) managed modded resources of the layout and (b) modded classes the hook saw
 //          without a row, then rebuilds the snapshot from the LIVE config tree.
-//   ROWS   RegisterConfigRows -- the config array (key ScannerResourceVisibility), editable in a running world.
+//   ROWS   ns-scanfilter-4: the switch is the 'Show in scanner' field of the protection rows (key ProtectedForeignResources);
+//          the old ScannerResourceVisibility array is registered hidden, read once by the carry-over, then emptied.
 
 #include "CoreMinimal.h"
 #include "Templates/SubclassOf.h"
@@ -70,7 +71,19 @@ namespace NodeShuffleScanFilter
     // 'Enabled': false withdraws the snapshot, so the hook returns every list untouched while the mod is switched off.
     void Tick(UObject* WorldContext, const TArray<FString>& ManagedModdedPaths, bool bModEnabled);
 
-    // Called from UNodeShuffleConfig::PostInitProperties (OTHER MODS group).
+    // Called from UNodeShuffleConfig::PostInitProperties (OTHER MODS group). ns-scanfilter-4: registers the RETIRED list (hidden,
+    // emptied by the one-time carry-over) and the hidden carry-over flag; the live switches are a field of the protection rows.
     void RegisterConfigRows(UConfigPropertySection* Root, UClass* ArrayClass, UClass* SectionClass, UClass* StringClass,
         UClass* BoolClass);
+
+    // ---- ns-scanfilter-4 (2026-11-14, user: "Merge anyway"): ONE list. The 'Show in scanner' switch is a field of the
+    // ProtectedForeignResources rows (NodeShuffleConfig.cpp adds it to that row template through this function).
+    void AddShowFieldToRowTemplate(UConfigPropertySection* RowTemplate, UClass* BoolClass);
+    // The starting value of a NEW row's switch, the same whichever side creates the row: ON only when the path is modded, not
+    // under AllMinableMountRoot, and (NodeShuffle shuffles it in this world, OR it is on the unlock subsystem's scannable list
+    // as last read by Tick, OR the hook saw it in the scanner's list). False when Tick has not read this world yet.
+    // OutBasis names the branch that decided (a literal, for the log).
+    bool StartingShowValue(const UObject* WorldContext, const FString& Path, const TCHAR** OutBasis);
+    // The in-game item name when the class is already in memory (ResolveClass never loads) and is a resource descriptor.
+    bool InGameNameIfLoaded(const FString& Path, FString& OutName);
 }

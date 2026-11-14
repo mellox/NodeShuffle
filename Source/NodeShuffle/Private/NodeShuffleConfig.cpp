@@ -212,9 +212,10 @@ void UNodeShuffleConfig::PostInitProperties()
         // ns-scanfilter-1 (2026-11-14): tooltip corrected, behaviour unchanged. The old first sentence ("are registered ... so
         // scanners recognize them") was false whenever the KAPI guard withholds (measured: 37 of 37 withheld in the user's world).
         // Every assertion is graded in the ns-scanfilter-1 handoff.
-        TEXT("ON: after a world loads, and again after a re-roll or when NodeShuffle finds new nodes, NodeShuffle adds the modded resources it shuffles in that world to the game's list of researched scanner resources, unless a resource is already on it. When the KAPI library is loaded, a resource is added only if KAPI has miner data for it or NodeShuffle can supply that data; the rest are skipped. Added resources are stored in the save, and NodeShuffle never removes them: turning this OFF later does not take them back. NOTE: some overhaul mods also gate MINER PLACEMENT on this list, so this can let you place miners on modded ores before that overhaul's own research would have allowed it (crafting/recipes stay gated as normal). Base-game resources are never added. To add modded resources to, or remove them from, the list NodeShuffle hands the scanner without writing anything to the save, use 'Show Modded Resources In Scanner (Per Resource)'."));
+        TEXT("ON: after a world loads, and again after a re-roll or when NodeShuffle finds new nodes, NodeShuffle adds the modded resources it shuffles in that world to the game's list of researched scanner resources, unless a resource is already on it. When the KAPI library is loaded, a resource is added only if KAPI has miner data for it or NodeShuffle can supply that data; the rest are skipped. Added resources are stored in the save, and NodeShuffle never removes them: turning this OFF later does not take them back. NOTE: some overhaul mods also gate MINER PLACEMENT on this list, so this can let you place miners on modded ores before that overhaul's own research would have allowed it (crafting/recipes stay gated as normal). Base-game resources are never added. To add modded resources to, or remove them from, the list NodeShuffle hands the scanner without writing anything to the save, use 'Show in scanner' in 'Protect Other Mods' Nodes (Per Resource)'."));
     // ns-scanfilter-1 (2026-11-14): the per-resource scanner-wheel SHOW/HIDE rows, right under the option above (OTHER MODS group).
-    // Rows + logic in NodeShuffleScanFilter.cpp (this file is over the 500-line rule: call sites only).
+    // ns-scanfilter-4: the switches moved into the protection rows below ('Show in scanner'); this call now registers only the
+    // HIDDEN retired list and the hidden carry-over flag. Logic in NodeShuffleScanFilterRows.cpp (this file is over the 500-line rule).
     NodeShuffleScanFilter::RegisterConfigRows(Root, ArrayClass, SectionClass, StringClass, BoolClass);
 
     // ---- T68 (audit §5.12, option (b)): THE PROTECTION MASTER SWITCH, PROMOTED TO THE PANEL. ----------
@@ -303,7 +304,11 @@ void UNodeShuffleConfig::PostInitProperties()
     {
         UConfigPropertyArray* Rows = NewObject<UConfigPropertyArray>(Root, ArrayClass,
             TEXT("ProtectedForeignResources"));
-        Rows->bRequiresWorldReload = true; // F10
+        // ns-scanfilter-4 (user: "Merge anyway") REVERSES F10 FOR THE ARRAY AND THE ROW: both are false so the row's
+        // 'Show in scanner' field can be edited in a running world (measured for a false array, ns-scanfilter-2). 'Protected'
+        // and 'Resource' keep true. What a player can now do in a running world (add / delete a row, Reset the list) and
+        // what each does to protection is in the ns-scanfilter-4 handoff; protection still latches at world load.
+        Rows->bRequiresWorldReload = false;
         // T65 RETITLED. The old title was "Protect Other Mods' RESOURCES", which asserts the resource
         // itself belongs to another mod -- FALSE for the population that motivated T61's copy fix:
         // vanilla NitrogenGas / LiquidOil carried by another mod's well actors. What every row in this
@@ -336,45 +341,47 @@ void UNodeShuffleConfig::PostInitProperties()
         // All three sentences on this page plus the chat notice's equivalent are fixed in ONE pass on
         // purpose (docs/TECH-DEBT.md T67; the T65 review's L5 failure scenario is a partial fix).
         Rows->Tooltip = FText::FromString(
+            // ns-scanfilter-4: one row per resource, two switches. Every factual assertion is graded in its handoff.
+            TEXT("ONE ROW PER RESOURCE, TWO SWITCHES: 'Protected' answers other mods' node checks; 'Show in ")
+            TEXT("scanner' changes what NodeShuffle tells the resource scanner.\n\n")
             TEXT("THIS LIST FILLS ITSELF IN — you do not add to it. A resource appears here after ")
-            TEXT("another mod's node handler has checked nodes of that resource at least once, so the ")
-            TEXT("list starts empty and grows as you play with other mods.\n\n")
-            TEXT("TICKED (the default for everything, including anything not listed yet): NodeShuffle ")
+            TEXT("another mod's node handler has checked nodes of that resource at least once, and, in a ")
+            TEXT("world you host while NodeShuffle's 'Enabled' is on, for each modded resource NodeShuffle ")
+            TEXT("shuffles in that world and each modded resource in the scanner's list, up to 256 rows.\n\n")
+            TEXT("PROTECTED, TICKED (the default for everything, including anything not listed yet): NodeShuffle ")
             TEXT("answers that check for this resource, refusing the handler's condition at that hook.\n\n")
             TEXT("UNTICKED: NodeShuffle does not answer for that resource, and the other mod's handler ")
-            TEXT("decides on its own at that check. Everything else in the list stays protected.\n\n")
+            TEXT("decides on its own at that check. Everything else in the list stays protected. A row whose ")
+            TEXT("resource no other mod's handler checks changes nothing about protection.\n\n")
             TEXT("A ROW IS A RESOURCE, NOT A NODE TYPE. Several different node types — possibly from ")
             TEXT("several different mods — can yield the same resource, and one row covers all of them. ")
             TEXT("Untick a row and you hand back every node type that yields that resource, not just the ")
             TEXT("one you had in mind. A row can also name an ORDINARY game resource, which means some ")
             TEXT("mod added its own node type that yields it.\n\n")
-            TEXT("WHEN A CHANGE TAKES EFFECT: THE NEXT TIME YOU LOAD THE SAVE. The list is read once ")
-            TEXT("while the world is loading, before the other mod's cleanup runs, and is not re-read ")
-            TEXT("while you play. Unticking in the pause menu changes nothing until you load again. ")
-            TEXT("Unticking does NOT bring back nodes that have already been removed.\n\n")
+            TEXT("WHEN A 'PROTECTED' CHANGE TAKES EFFECT: THE NEXT TIME YOU LOAD THE SAVE. The ticks are ")
+            TEXT("read once while the world is loading, before the other mod's cleanup runs, and are not ")
+            TEXT("re-read while you play. Change 'Protected' from the main menu. Unticking does NOT bring ")
+            TEXT("back nodes that have already been removed.\n\n")
+            TEXT("SHOW IN SCANNER takes effect in a running game: reopen the scanner. ON: NodeShuffle adds the ")
+            TEXT("resource to the list of resources it hands to the resource scanner, including a resource you ")
+            TEXT("have not researched. OFF: NodeShuffle takes it out of that list. When you scan for an ON ")
+            TEXT("resource, NodeShuffle also lets the scan look for its nodes; it does not promise that one is ")
+            TEXT("found. Nothing is written to your save: the switches change only what NodeShuffle tells the ")
+            TEXT("scanner, and no research or scanner unlock is added or removed. An ON resource is added to ")
+            TEXT("that list only once the game has loaded it. A new row starts ON for a modded resource ")
+            TEXT("NodeShuffle shuffles in that world or that is already in the game's list of scannable ")
+            TEXT("resources, and OFF otherwise; resources from All Minable start OFF. On a base-game resource ")
+            TEXT("this switch does nothing. While NodeShuffle's 'Enabled' is off, nothing is hidden or added. ")
+            TEXT("In multiplayer only the host's game applies it. These switches apply to every world on ")
+            TEXT("this install, not to one save.\n\n")
             TEXT("THE TEXT BOX IS THE RESOURCE'S IDENTITY, not a label to edit. It is the full asset ")
             TEXT("path of the resource, which is what tells two mods' similarly-named ores apart. ")
             TEXT("Change it and the row stops matching anything and does nothing; the real resource ")
-            TEXT("goes back to being protected and gets a fresh row. Delete a row and it comes back the ")
-            TEXT("next time that resource is seen. Adding a row by hand does nothing unless the text ")
-            TEXT("happens to be an exact resource path.\n\n")
-            // ---- T68 (2026-08-11): THE CONSOLE INSTRUCTION IS GONE. ------------------------------
-            // This paragraph used to tell the player to set TWO console variables -- the only place in
-            // the whole panel that asked for the console. NodeShuffle.ProtectForeignNodes has been
-            // deleted (it had no reachable state of its own: inert unless the master gate was on, and
-            // already at its intended value), and the master gate is now the checkbox above.
-            // BOTH REPLACEMENT CLAIMS ARE MEASURED, not assumed: the ticks are read only by the veto's
-            // consumption predicate, which is never reached while the hook is observing; and the rows
-            // are added from the same population pass in either mode (NodeShuffleForeignProtectConfig
-            // .cpp), which is what the sentence after this one says.
-            // T68 F4 introduced an AMBIGUITY THIS LINE HAS TO RESOLVE, and it is named here because the
-            // F4 decision created it: the checkbox's new generic label is now a strict PREFIX of THIS
-            // list's own title ("Protect Other Mods' Nodes (Per Resource)"), so an unqualified quote
-            // could be read as pointing at the list the player is already reading about. The
-            // parenthetical says which control. It adds no new claim -- "above" was already asserted by
-            // the sentence this replaces, and rests on the same registration-order argument as every
-            // other ordering statement in this file (runtime test step 2 is the decider, not C++).
-            TEXT("NOTHING HERE APPLIES unless the \"Protect Other Mods' Nodes\" tick box above this ")
+            TEXT("goes back to being protected and gets a fresh row. Delete a row and it comes back, ")
+            TEXT("ticked and with its starting scanner value, the next time NodeShuffle sees that ")
+            TEXT("resource. Adding a row by hand does nothing unless the text happens to be an exact ")
+            TEXT("resource path.\n\n")
+            TEXT("NO 'PROTECTED' TICK APPLIES unless the \"Protect Other Mods' Nodes\" tick box above this ")
             TEXT("list is ticked. It is ON by default. A change to it takes effect at the next world ")
             TEXT("load. ")
             // T61 REPLACED THE SENTENCE THAT USED TO SIT HERE. It said the list "stays EMPTY" while
@@ -385,7 +392,7 @@ void UNodeShuffleConfig::PostInitProperties()
             // .cpp), and the ticks are only ever read by the veto's consumption predicate, which is
             // never reached while the hook is observing.
             TEXT("The list still FILLS UP while that setting is off — that is what lets you choose ")
-            TEXT("before turning protection on — but every tick in it does nothing at all until it is ")
+            TEXT("before turning protection on — but every 'Protected' tick in it does nothing at all until it is ")
             TEXT("ticked and you load again. ")
             TEXT("Resource wells that NodeShuffle itself changed to a modded resource are ")
             TEXT("deliberately NOT listed here, and unticking a row can never affect one — they are ")
@@ -397,7 +404,7 @@ void UNodeShuffleConfig::PostInitProperties()
         // check in NodeShuffleForeignProtectConfig.cpp, which is the only static-analysis gap here.
         UConfigPropertySection* RowTemplate = NewObject<UConfigPropertySection>(Rows, SectionClass,
             TEXT("ForeignResourceRow"));
-        RowTemplate->bRequiresWorldReload = true; // F10
+        RowTemplate->bRequiresWorldReload = false; // ns-scanfilter-4: the row holds one live field ('Show in scanner')
         // COLD REVIEW F7, both halves.
         //  (a) THE TEMPLATE NOW CARRIES A FALLBACK LABEL. Every element created by
         //      UConfigPropertyArray::Deserialize is cloned from this template, so without it every row
@@ -489,6 +496,8 @@ void UNodeShuffleConfig::PostInitProperties()
             TEXT("answer stands for this one resource. Takes effect the next time you load the save."));
         ProtectedProp->bRequiresWorldReload = true; // F10
         RowTemplate->SectionProperties.Add(TEXT("Protected"), ProtectedProp);
+        // ns-scanfilter-4: 'Show in scanner', between the tick box and the path (NodeShuffleScanFilterRows.cpp).
+        NodeShuffleScanFilter::AddShowFieldToRowTemplate(RowTemplate, BoolClass);
 
         UConfigPropertyString* ResourceProp = NewObject<UConfigPropertyString>(RowTemplate, StringClass,
             TEXT("Resource"));

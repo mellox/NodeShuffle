@@ -27,6 +27,7 @@
 
 #include "NodeShuffle.h"
 #include "NodeShuffleConfig.h"
+#include "NodeShuffleScanFilter.h" // ns-scanfilter-4: the switch's starting value and the in-game row name
 
 #include "Configuration/ConfigManager.h"
 #include "Configuration/Properties/ConfigPropertyArray.h"
@@ -353,7 +354,23 @@ namespace
         {
             // The header slot.
             RowWidget->HeaderText = FText::FromString(NameLabel);
+            // ns-scanfilter-4 (user request: the readable name, as the scanner list showed it): when the resource class is
+            // already in memory, the header slot takes its in-game name ("Dirty Screw"); otherwise the path-derived name
+            // above stays. Only this slot changes: the notice, the logs and the sort key still use the path-derived label.
+            FString InGameName;
+            if (!FullPath.IsEmpty() && NodeShuffleScanFilter::InGameNameIfLoaded(FullPath, InGameName))
+            {
+                RowWidget->HeaderText = FText::FromString(InGameName);
+            }
         }
+    }
+
+    // ns-scanfilter-4: the row's 'Show in scanner' field, or null when the element does not carry one.
+    UConfigPropertyBool* NodeShuffleFindShowField(UConfigProperty* Element)
+    {
+        UConfigPropertySection* Section = Cast<UConfigPropertySection>(Element);
+        TObjectPtr<UConfigProperty>* Entry = Section ? Section->SectionProperties.Find(TEXT("ShowInScanner")) : nullptr;
+        return Entry ? Cast<UConfigPropertyBool>(Entry->Get()) : nullptr;
     }
 
     // Reads one row. Returns false when the element is not the shape the schema declares -- which is
@@ -456,7 +473,9 @@ void FNodeShuffleModule::LatchForeignResourceOptOutsFromConfig(UObject* WorldCon
 // ---- T68 (ns-t68-release-config, 2026-08-11): ROW ORDER. -----------------------------------------
 // THE AUTHOR ASKED FOR THE LIST SORTED BY MOD, THEN BY RESOURCE NAME. Both label parts come from the
 // row's own stored path through NodeShuffleDeriveForeignResourceLabelParts -- the same derivation the
-// stamp uses -- so the sort key and the visible label can never disagree.
+// stamp uses for the bracket slot. ns-scanfilter-4: the HEADER slot now shows the in-game name when the
+// resource class is in memory, so a row's visible name can differ from its sort key (the order stays by
+// content, then by the path-derived name).
 //
 // BLAST RADIUS, ENUMERATED BEFORE THIS WAS WRITTEN (workspace rule). Every consumer of Values ORDER:
 //   1. SML serialization. UConfigPropertyArray::Serialize writes the elements POSITIONALLY, so this
@@ -552,6 +571,28 @@ static void NodeShuffleSortForeignResourceRows(UConfigPropertyArray* Rows, const
         TEXT("NodeShuffle.cfg changes on the next save. The changed-position count is a LOWER BOUND: two ")
         TEXT("rows carrying the same key that swap with each other cannot be told apart by it."),
         CallSite, Rows->Values.Num(), Moved, Unreadable, BlankPath);
+}
+
+// ---- ns-scanfilter-4: the three entry points the scanner side uses on this same list. ------------------------------------
+// A path this session has sighted is left to SyncForeignResourceRowsToConfig, which announces a new row (T61); the scanner side
+// creates rows only for the rest. Same key and same comparison as the add loop's ExistingByPath test (FString, case-insensitive).
+bool FNodeShuffleModule::IsForeignResourceSightedThisSession(const FString& ResourceClassPath)
+{
+    return GNodeShuffleSeenForeignResources.Contains(ResourceClassPath);
+}
+
+void FNodeShuffleModule::StampResourceRowLabel(UConfigPropertySection* Section, const FString& ResourceClassPath)
+{
+    FString MountLabel;
+    FString NameLabel;
+    bool bParsed = false;
+    NodeShuffleDeriveForeignResourceLabelParts(ResourceClassPath, MountLabel, NameLabel, &bParsed);
+    NodeShuffleStampRowLabel(Section, NameLabel, MountLabel, ResourceClassPath); // the single label writer
+}
+
+void FNodeShuffleModule::SortResourceRows(UConfigPropertyArray* Rows, const TCHAR* CallSite)
+{
+    NodeShuffleSortForeignResourceRows(Rows, CallSite);
 }
 
 void FNodeShuffleModule::StampForeignResourceRowLabelsFromConfig(UObject* WorldContext)
@@ -766,6 +807,7 @@ void FNodeShuffleModule::SyncForeignResourceRowsToConfig(UObject* WorldContext)
 
     int32 AddedThisPass = 0;
     int32 RefusedOverCap = 0;
+    UConfigPropertyBool* TemplateShow = NodeShuffleFindShowField(Rows->DefaultValue); // ns-scanfilter-4: never written through
     int32 WithdrawnThisPass = 0; // R1 (scoped re-review): counted, so the Error line can report it
     for (const TPair<FString, FNodeShuffleSeenForeignResource>& Pair : GNodeShuffleSeenForeignResources)
     {
@@ -799,6 +841,15 @@ void FNodeShuffleModule::SyncForeignResourceRowsToConfig(UObject* WorldContext)
 
         ResourceProp->Value = Pair.Key;
         ProtectedProp->Value = true; // default PROTECTED -- the author's both-mods-work ruling
+        // ns-scanfilter-4: the row's 'Show in scanner' starting value, by the rule every row creator uses. Not a protection
+        // field: the latch and the veto never read it. A field shared with the template is left alone, never written through.
+        UConfigPropertyBool* ShowProp = NodeShuffleFindShowField(NewElement);
+        const TCHAR* ShowBasis = TEXT("<notWritten>");
+        const bool bShowWritten = ShowProp != nullptr && ShowProp != TemplateShow;
+        if (bShowWritten) { ShowProp->Value = NodeShuffleScanFilter::StartingShowValue(WorldContext, Pair.Key, &ShowBasis); }
+        // Arity hand-counted: 4 format specifiers, 4 arguments.
+        UE_LOG(LogNodeShuffle, Display, TEXT("SCANFILTER-PROTROW resource=%s showFieldWritten=%d showStartsOn=%d startBasis=%s"),
+            *Pair.Key, bShowWritten ? 1 : 0, (bShowWritten && ShowProp->Value) ? 1 : 0, ShowBasis);
         if (UConfigPropertySection* Section = Cast<UConfigPropertySection>(NewElement))
         {
             // T65: the stored key (Pair.Key, the full path) is what the tooltip carries; the trimmed

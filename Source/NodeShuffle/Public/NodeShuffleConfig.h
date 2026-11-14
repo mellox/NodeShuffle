@@ -29,6 +29,10 @@ struct NODESHUFFLE_API FNodeShuffleForeignResourceRow
     // would with NodeShuffle absent. Default TRUE — an unlisted or untouched resource is protected.
     UPROPERTY(BlueprintReadWrite)
     bool Protected{true};
+
+    // ns-scanfilter-4: the row's 'Show in scanner' switch (mirror only; NodeShuffleScanFilterRows.cpp reads the live tree).
+    UPROPERTY(BlueprintReadWrite)
+    bool ShowInScanner{false};
 };
 
 // rwg-seedgas-1 (2026-10-31, amendment A1): ONE row of the RWG modded vanilla-count table. Mirrors the three properties
@@ -150,6 +154,10 @@ struct NODESHUFFLE_API FNodeShuffleConfigStruct
     // ns-scanfilter-1: mirror of the scanner-wheel visibility rows (present for the check(), never read).
     UPROPERTY(BlueprintReadWrite)
     TArray<FNodeShuffleScannerVisibilityRow> ScannerResourceVisibility;
+
+    // ns-scanfilter-4: mirror of the hidden carry-over flag (present for the mirror convention, never read).
+    UPROPERTY(BlueprintReadWrite)
+    bool ScannerSwitchesMerged{false};
 
     // Diagnostics gate. OFF by default so normal users get NO extra log output and
     // no overhead. When ON, the mod writes verbose HOLOGRAMHOOK / placement / node
