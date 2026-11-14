@@ -133,6 +133,11 @@ namespace NodeShuffleMapMode
     struct FRwgCaveCandidateGen { FVector A = FVector::ZeroVector; FVector B = FVector::ZeroVector; double Rx = 0.0, Ry = 0.0, FloorHintZ = 0.0, Weight = 0.0; uint8 Kind = 0; };
     // Appends one cave object's generators (rooms_geom rooms; without rooms_geom: stand + mouth discs and c0 / c1 segments). Returns the count added.
     int32 RwgCaveGensFromJson(const TSharedPtr<FJsonObject>& Cave, TArray<FRwgCaveCandidateGen>& Out);
+    // rwg-0-2-0-2: through-tunnel exclusion (NodeShuffleMapModeCaveJson.cpp). IsThroughTunnel = `rooms` 0 AND stand == mouth; ExclusionShapes
+    // appends that cave's XY footprint (tubes, else c0/c1 + stand disc); InsideCaveShape tests one footprint shape in XY.
+    bool RwgCaveIsThroughTunnel(const TSharedPtr<FJsonObject>& Cave);
+    int32 RwgCaveExclusionShapes(const TSharedPtr<FJsonObject>& Cave, TArray<FRwgCaveCandidateGen>& Out);
+    bool RwgInsideCaveShape(const FRwgCaveCandidateGen& G, double X, double Y);
 
     // RWG P2b ground query over the runtime-bound RWG exports (NodeShuffleMapModeHeightApi.cpp). Construct once
     // per batch (it holds the density field's strong reference for its lifetime, never across frames).

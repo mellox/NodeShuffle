@@ -170,7 +170,7 @@ if (-not $kb) { $fails += 'F7: RwgEnsureKillboxTop body not found' } else {
 }
 
 # F8
-if (-not $text.place.Contains('rejectedVoid=%d rejectedKillbox=%d dealtBelowKillbox=%d killboxTopZ=%.0f killboxTopActorZ=%.0f killboxTop' + 'ApiZ=%.0f voidUsable=%d"),')) { $fails += 'F8: ROLLCENSUS must carry the P2f fields' }
+if (-not $text.place.Contains('rejectedVoid=%d rejectedKillbox=%d dealtBelowKillbox=%d killboxTopZ=%.0f killboxTopActorZ=%.0f killboxTop' + 'ApiZ=%.0f voidUsable=%d caveRejExcluded=%d excludedCaves=%d excludedCaveIds=%s"),')) { $fails += 'F8: ROLLCENSUS must carry the P2f fields' } # rwg-0-2-0-2 appended the cave-exclusion fields
 # RWG P4c (2026-10-18): WELLROLL's tail grew authoredFrom*/membersFromClaim* after voidUsable; the P2f run is pinned up to the first P4c field.
 if (-not $text.wrwg.Contains('rejectedVoid=%d rejectedKillbox=%d dealtBelowKillbox=%d killboxTopZ=%.0f killboxTopActorZ=%.0f killboxTop' + 'ApiZ=%.0f voidUsable=%d authoredFromLive=%d')) { $fails += 'F8: WELLROLL must carry the P2f fields' }
 $spb = Get-Body $text.place ('void ' + $cls + 'RwgSpawnPass(float SpawnRadiusCm, bool& bChangedWorld)')

@@ -81,10 +81,18 @@ function Invoke-NChecks($T) {
     if ((Count $T.mmh 'void RwgNoteNonFinite(const TCHAR* Site, double X, double Y, double Value);') -ne 1 -or (Count $T.hapi 'void NodeShuffleMapMode::RwgNoteNonFinite(const TCHAR* Site, double X, double Y, double Value)') -ne 1) { $f += '(N4) RwgNoteNonFinite must be declared once and defined once' }
     $ng = Span $T.hapi 'void NodeShuffleMapMode::RwgNoteNonFinite(' 'Site, X, Y, Value, N);'
     if (-not (Ordered $ng @('++N;', 'if (N <= 4)', 'UE_LOG(LogNodeShuffle, Warning, TEXT("RWGNANGUARD: site=%s x=%.0f y=%.0f value=%f countThisSite=%d; '))) { $f += '(N4) RWGNANGUARD must print the first 4 per site as a Warning, tag first' }
+    # N5 (rwg-0-2-0-2 item 3) through-tunnel exclusion on BOTH sides: the predicate (rooms 0 AND stand == mouth); RWGCAVECHECK skips the
+    #    excluded stands (denominator = tested stands) and gives them no generator; the verify refuses their footprint before any RWG read.
+    $tt = Span $T.cjson 'bool NodeShuffleMapMode::RwgCaveIsThroughTunnel(' 'int32 NodeShuffleMapMode::RwgCaveExclusionShapes('
+    if (-not (Ordered $tt @('Rooms != 0) { return false; }', 'return Stand == Mouth;'))) { $f += '(N5) the through-tunnel predicate must be rooms 0 AND stand == mouth' }
+    $vx = Span $T.cjson 'bool ANodeShuffleSubsystem::RwgVerifyCaveCandidate(' 'OutSpot = FVector(X, Y, Floor);'
+    if (-not (Ordered $vx @('if (Q.Outside(X, Y)) { return false; }', 'for (const FRwgCaveCandidateGen& Ex : RwgCaveExcludedShapes) { if (RwgInsideCaveShape(Ex, X, Y)) { ++RwgRcCaveRejExcluded; return false; } }', 'const double SurfZ = Q.SurfaceZ(X, Y);'))) { $f += '(N5) the cave verify must refuse an excluded footprint first' }
+    if (-not (Ordered $T.cave @('const bool bExcluded = RwgCaveIsThroughTunnel(O);', 'StandExcluded.Add(bExcluded);', 'if (bExcluded)', 'ExcludedShapeLog +=', 'continue;', 'RwgCaveGensFromJson(O, Gens);', 'if (StandExcluded[I])', 'const bool bStandOk = StandsTested == 0 || StandInside == StandsTested;', 'RwgCaveExcludedShapes = ExcludedShapes;'))) { $f += '(N5) RWGCAVECHECK must skip excluded stands and generators and latch the footprints' }
+    if (-not $T.cave.Contains('usable=%d excludedCaves=%d excludedCaveIds=%s excludedShapesPerCave=%s standsTested=%d"),') -or -not $T.place.Contains('caveRejExcluded=%d excludedCaves=%d excludedCaveIds=%s"),')) { $f += '(N5) RWGCAVECHECK and ROLLCENSUS must print the exclusion' }
     return $f
 }
 
-$fails = @(Invoke-N1 $all) + @(Invoke-NChecks $T)
+$fails =@(Invoke-N1 $all) + @(Invoke-NChecks $T)
 # Mutants: each must trip the named check. The N1 mutants run against a copy of the module text with ONE file edited.
 $mut = @(
     @{ Name = 'M1 EDGESTRIP sentinel back to NaN'; Key = 'hapi'; Expect = 'N1'; Find = '        double EdgeLoggedH = 0.0;'; Repl = ('        double EdgeLoggedH = ' + $qn + '();') }
@@ -99,6 +107,12 @@ $mut = @(
     @{ Name = 'M10 RWGNANGUARD unbounded'; Key = 'hapi'; Expect = 'N4'; Find = '    if (N <= 4)'; Repl = '    if (N > 0)' }
     @{ Name = 'M11 direct compare against the producer'; Key = 'void'; Expect = 'N1'; Find = '    if (bBelowKillbox) { Bits |= 16; }'; Repl = ('    if (bBelowKillbox) { Bits |= 16; } if (P.Z != NodeShuffleMapMode::' + $rn + '()) { Bits |= 0; }') }
     @{ Name = 'M12 NaN-initialised local compared'; Key = 'void'; Expect = 'N1'; Find = '    if (bBelowKillbox) { Bits |= 16; }'; Repl = ('    if (bBelowKillbox) { Bits |= 16; } const double KbProbe = ' + $qn + '(); if (P.Z > KbProbe) { Bits |= 0; }') }
+)
+$mut += @(
+    @{ Name = 'M13 predicate drops stand == mouth'; Key = 'cjson'; Expect = 'N5'; Find = 'return Stand == Mouth;'; Repl = ('return ' + 'true;') }
+    @{ Name = 'M14 verify ignores the footprints'; Key = 'cjson'; Expect = 'N5'; Find = '{ if (RwgInsideCaveShape(Ex, X, Y)) { ++RwgRcCaveRejExcluded; return false; } }'; Repl = '{ }' }
+    @{ Name = 'M15 excluded cave still yields generators'; Key = 'cave'; Expect = 'N5'; Find = ('CaveIdx, Shapes);' + "`n" + '                    continue;'); Repl = 'CaveIdx, Shapes);' }
+    @{ Name = 'M16 stand denominator counts excluded stands'; Key = 'cave'; Expect = 'N5'; Find = 'StandInside == StandsTested;'; Repl = ('StandInside == Stands.' + 'Num();') }
 )
 $caught = 0
 foreach ($m in $mut) {

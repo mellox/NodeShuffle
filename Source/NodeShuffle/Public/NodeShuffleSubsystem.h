@@ -1293,6 +1293,13 @@ private:
     bool RwgVerifyCaveCandidate(const NodeShuffleMapMode::FRwgGroundQuery& Q, double X, double Y, const double* ZHintOrSurface, const TCHAR* Source, int32 Index, int32 AnyNearCalls, FVector& OutSpot);
     TArray<NodeShuffleMapMode::FRwgCaveCandidateGen> RwgCaveGens; // latched at RWGCAVECHECK; used only while bRwgCaveJsonCandidates
     double RwgCaveGenWeight = 0.0;
+    // rwg-0-2-0-2: through-tunnel caves (JSON rooms == 0 AND stand == mouth) are EXCLUDED from the cave share: no control at RWGCAVECHECK
+    // and no candidate generator; their XY footprint (each `tubes` segment widened by its larger radius; c0/c1 + stand disc when the file
+    // has no tubes) is latched here and RwgVerifyCaveCandidate refuses any spot inside it, whichever source drew the spot.
+    TArray<NodeShuffleMapMode::FRwgCaveCandidateGen> RwgCaveExcludedShapes;
+    FString RwgCaveExcludedIds; // JSON indices, comma-separated, for RWGCAVECHECK and ROLLCENSUS
+    int32 RwgCaveExcludedCount = 0;
+    int32 RwgRcCaveRejExcluded = 0; // per roll: verified candidates refused inside an excluded cave's footprint
     bool bRwgCaveJsonCandidates = false, bRwgCaveCapacityFromJson = false;
     int32 RwgCaveCapacity = 0;                          // RWGCAVECHECK: sum of JSON rooms, or Num() * RwgCaveDefaultRoomsPerCave without the file
     int32 RwgRcCaveCandidatesTried = 0;                 // ROLLCENSUS (per roll): JSON candidates verified

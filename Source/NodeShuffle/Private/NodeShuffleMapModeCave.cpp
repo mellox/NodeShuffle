@@ -204,6 +204,10 @@ bool ANodeShuffleSubsystem::RwgEnsureCaveCheck(const NodeShuffleMapMode::FRwgGro
     int32 JsonCaves = -1;
     int32 JsonRooms = 0, JsonRoomsDefaulted = 0; // P5-2 capacity: sum of each cave's `rooms` (a cave without the field counts RwgCaveDefaultRoomsPerCave)
     TArray<FRwgCaveCandidateGen> Gens;
+    TArray<bool> StandExcluded;                    // rwg-0-2-0-2: parallel to Stands
+    TArray<FRwgCaveCandidateGen> ExcludedShapes;   // rwg-0-2-0-2: footprints of the excluded (through-tunnel) caves
+    FString ExcludedIds, ExcludedShapeLog;
+    int32 ExcludedN = 0;
     FString Text;
     if (Seed >= 0 && FFileHelper::LoadFileToString(Text, *JsonPath))
     {
@@ -214,22 +218,43 @@ bool ANodeShuffleSubsystem::RwgEnsureCaveCheck(const NodeShuffleMapMode::FRwgGro
         {
             JsonStatus = TEXT("read");
             JsonCaves = Arr.Num();
-            for (const TSharedPtr<FJsonValue>& V : Arr)
+            for (int32 CaveIdx = 0; CaveIdx < Arr.Num(); ++CaveIdx)
             {
+                const TSharedPtr<FJsonValue>& V = Arr[CaveIdx];
                 const TSharedPtr<FJsonObject> O = V.IsValid() ? V->AsObject() : nullptr;
+                // rwg-0-2-0-2: a through-tunnel cave is excluded on BOTH sides -- its stand is no control here and it yields no generator; its
+                // footprint goes to ExcludedShapes, which RwgVerifyCaveCandidate refuses for every candidate source.
+                const bool bExcluded = RwgCaveIsThroughTunnel(O);
                 FVector S;
-                if (O.IsValid() && JsonVec(O, TEXT("stand"), S) && Stands.Num() < 64) { Stands.Add(S); double Hm = 0.0; O->TryGetNumberField(TEXT("headroom_m"), Hm); HeadroomCm.Add(Hm * 100.0); }
+                // The control window stays the first 64 caves BY JSON INDEX (an excluded cave's slot is skipped, never refilled).
+                if (O.IsValid() && JsonVec(O, TEXT("stand"), S) && Stands.Num() < 64) { Stands.Add(S); StandExcluded.Add(bExcluded); double Hm = 0.0; O->TryGetNumberField(TEXT("headroom_m"), Hm); HeadroomCm.Add(Hm * 100.0); }
                 int32 Rooms = 0;
                 if (O.IsValid() && O->TryGetNumberField(TEXT("rooms"), Rooms) && Rooms >= 0) { JsonRooms += Rooms; } else { JsonRooms += RwgCaveDefaultRoomsPerCave; ++JsonRoomsDefaulted; }
+                if (bExcluded)
+                {
+                    ++ExcludedN;
+                    const int32 Shapes = RwgCaveExclusionShapes(O, ExcludedShapes);
+                    ExcludedIds += FString::Printf(TEXT("%s%d"), ExcludedIds.IsEmpty() ? TEXT("") : TEXT(","), CaveIdx);
+                    ExcludedShapeLog += FString::Printf(TEXT("%s%d:%d"), ExcludedShapeLog.IsEmpty() ? TEXT("") : TEXT(","), CaveIdx, Shapes);
+                    continue;
+                }
                 RwgCaveGensFromJson(O, Gens);
             }
         }
     }
     // Positive controls at the stand points: IsInsideAt at stand and at stand + RwgCaveInsideProbeCm; FloorCmAt (hint = stand Z) at the first 16.
-    int32 StandInside = 0, StandInsideRaw = 0, FloorN = 0, FloorFound = 0, FloorWithin = 0;
+    int32 StandInside = 0, StandInsideRaw = 0, FloorN = 0, FloorFound = 0, FloorWithin = 0, StandsTested = 0, StandsExcluded = 0;
     for (int32 I = 0; I < Stands.Num(); ++I)
     {
         const FVector& S = Stands[I];
+        if (StandExcluded[I])
+        {
+            // rwg-0-2-0-2: an excluded (through-tunnel) cave's stand is not a control; the strict rule below grades every other stand.
+            ++StandsExcluded;
+            if (I < 16) { UE_LOG(LogNodeShuffle, Display, TEXT("RWGCAVECHECK stand %d: at=(%.0f,%.0f,%.0f) excludedThroughTunnel=1 (rooms 0 and stand equal to mouth in the JSON); not tested"), I, S.X, S.Y, S.Z); }
+            continue;
+        }
+        ++StandsTested;
         const bool bRaw = Q.CaveInsideAt(S);
         const bool bUp = Q.CaveInsideAt(S + FVector(0, 0, RwgCaveInsideProbeCm));
         StandInsideRaw += bRaw ? 1 : 0;
@@ -271,7 +296,7 @@ bool ANodeShuffleSubsystem::RwgEnsureCaveCheck(const NodeShuffleMapMode::FRwgGro
     // inside; every FloorCmAt at a stand point must find a floor within its headroom; and the node sample must not be ALL inside (a
     // stub answering true everywhere fails this; RWG cave nodes, if any, are expected to be a minority).
     const bool bNumOk = Num >= 0 && (JsonStatus != TEXT("read") || JsonCaves == Num);
-    const bool bStandOk = Stands.Num() == 0 || StandInside == Stands.Num();
+    const bool bStandOk = StandsTested == 0 || StandInside == StandsTested; // rwg-0-2-0-2: excluded stands are not in the denominator
     const bool bFloorOk = FloorN == 0 || FloorWithin == FloorN;
     const bool bNotAllInside = SampleN == 0 || SampleInside < SampleN;
     bRwgCaveUsable = bNumOk && bStandOk && bFloorOk && bNotAllInside;
@@ -281,16 +306,21 @@ bool ANodeShuffleSubsystem::RwgEnsureCaveCheck(const NodeShuffleMapMode::FRwgGro
     RwgCaveCapacity = bJsonMatches ? JsonRooms : FMath::Max(0, Num) * RwgCaveDefaultRoomsPerCave;
     // P5-2 user decision 2: candidates from the file when it matches (numMatchesJson=1) and yielded generators; else random XY + AnyNear.
     RwgCaveGens = bJsonMatches ? Gens : TArray<FRwgCaveCandidateGen>();
+    // rwg-0-2-0-2: the exclusion footprints latch whenever the file was READ (even on a count mismatch, where the random ring draws), so the
+    // verify refuses tunnel spots for both candidate sources. File unread / unparsable: nothing is known to exclude and none is latched.
+    RwgCaveExcludedShapes = ExcludedShapes;
+    RwgCaveExcludedIds = ExcludedIds.IsEmpty() ? FString(TEXT("none")) : ExcludedIds;
+    RwgCaveExcludedCount = ExcludedN;
     RwgCaveGenWeight = 0.0;
     for (const FRwgCaveCandidateGen& G : RwgCaveGens) { RwgCaveGenWeight += G.Weight; }
     bRwgCaveJsonCandidates = bRwgCaveUsable && RwgCaveGens.Num() > 0 && RwgCaveGenWeight > 0.0;
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("RWGCAVECHECK: num=%d seed=%lld seedSource=%s json='%s' jsonStatus=%s jsonCaves=%d numMatchesJson=%d standPoints=%d insideAtStandOrProbe=%d insideAtStandRaw=%d floorChecked=%d floorFound=%d floorWithin300=%d nodeSample=%d nodeSampleInside=%d nodeSampleFloorFound=%d originalsTested=%d originalsInsideCave=%d seedsExcludedOurs=%d seedsExcludedNotPool=%d caveCapacity=%d caveCapacitySource=%s jsonRooms=%d jsonRoomsDefaulted=%d caveCandidateSource=%s caveCandidateGens=%d naturalShareCap=%.2f usable=%d"),
+        TEXT("RWGCAVECHECK: num=%d seed=%lld seedSource=%s json='%s' jsonStatus=%s jsonCaves=%d numMatchesJson=%d standPoints=%d insideAtStandOrProbe=%d insideAtStandRaw=%d floorChecked=%d floorFound=%d floorWithin300=%d nodeSample=%d nodeSampleInside=%d nodeSampleFloorFound=%d originalsTested=%d originalsInsideCave=%d seedsExcludedOurs=%d seedsExcludedNotPool=%d caveCapacity=%d caveCapacitySource=%s jsonRooms=%d jsonRoomsDefaulted=%d caveCandidateSource=%s caveCandidateGens=%d naturalShareCap=%.2f usable=%d excludedCaves=%d excludedCaveIds=%s excludedShapesPerCave=%s standsTested=%d"),
         Num, Seed, *SeedSrc, *JsonPath, *JsonStatus, JsonCaves, (JsonStatus == TEXT("read") && JsonCaves == Num) ? 1 : 0, Stands.Num(), StandInside, StandInsideRaw,
         FloorN, FloorFound, FloorWithin, SampleN, SampleInside, SampleFloor, RwgCaveSeedDen, RwgCaveSeedCount, ExcludedOurs, ExcludedNotPool, RwgCaveCapacity,
         bRwgCaveCapacityFromJson ? TEXT("json") : TEXT("default"), JsonRooms, JsonRoomsDefaulted, bRwgCaveJsonCandidates ? TEXT("json") : TEXT("random"), RwgCaveGens.Num(),
-        RwgCaveShareCapMirror, bRwgCaveUsable ? 1 : 0);
-    if (!bRwgCaveUsable) { UE_LOG(LogNodeShuffle, Warning, TEXT("RWGCAVECHECK-OFF: numOk=%d standOk=%d floorOk=%d nodeSampleNotAllInside=%d; the cave share is 0 this session"), bNumOk ? 1 : 0, bStandOk ? 1 : 0, bFloorOk ? 1 : 0, bNotAllInside ? 1 : 0); }
+        RwgCaveShareCapMirror, bRwgCaveUsable ? 1 : 0, RwgCaveExcludedCount, *RwgCaveExcludedIds, ExcludedShapeLog.IsEmpty() ? TEXT("none") : *ExcludedShapeLog, StandsTested);
+    if (!bRwgCaveUsable) { UE_LOG(LogNodeShuffle, Warning, TEXT("RWGCAVECHECK-OFF: numOk=%d standOk=%d floorOk=%d nodeSampleNotAllInside=%d excludedCaves=%d; the cave share is 0 this session"), bNumOk ? 1 : 0, bStandOk ? 1 : 0, bFloorOk ? 1 : 0, bNotAllInside ? 1 : 0, RwgCaveExcludedCount); }
     else if (Num == 0) { UE_LOG(LogNodeShuffle, Display, TEXT("RWGCAVECHECK: this world holds no carved cave; usable, cave share 0 (every spot is a surface spot)")); }
     else if (Seeds == 0) { UE_LOG(LogNodeShuffle, Display, TEXT("RWGCAVECHECK: no tested pool node lies inside a cave (%d tested, %d caves); comparison only, the cave share uses the capacity"), RwgCaveSeedDen, Num); }
     return bRwgCaveUsable;

@@ -204,7 +204,7 @@ bool ANodeShuffleSubsystem::GenerateRwgLocations(FRandomStream& Rng, const TArra
     RwgRcRejectedSea = RwgRcApiLevelOnly = 0; // RWG P2e: this roll only
     RwgRcRejectedVoid = RwgRcRejectedKillbox = RwgRcDealtBelowKillbox = 0; // RWG P2f: this roll only
     RwgRcCaveSpots = RwgRcCaveDrawsTried = RwgRcCaveDealFailed = RwgRcCaveAnyNearCalls = RwgRcCaveNearHits = RwgRcCaveFloorHits = RwgRcCaveCandidatesTried = 0; // RWG P5: this roll only
-    RwgRcCaveRejInside = RwgRcCaveRejHeadroom = RwgRcCaveRejCeiling = RwgRcCaveRejSurface = RwgRcCaveRejKillbox = RwgRcCaveRejSpacing = 0; bRwgRcCaveBudgetSpent = false;
+    RwgRcCaveRejInside = RwgRcCaveRejHeadroom = RwgRcCaveRejCeiling = RwgRcCaveRejSurface = RwgRcCaveRejKillbox = RwgRcCaveRejSpacing = 0; bRwgRcCaveBudgetSpent = false; RwgRcCaveRejExcluded = 0; // rwg-0-2-0-2
     // RWG P5-2: the cave share by CAPACITY (RwgCaveShare: min(0.25, capacity / PoolSize)); only when the caller takes cave indices.
     const float CaveChance = (OutCaveIndices && RwgEnsureCaveCheck(Q)) ? RwgCaveShare(PoolSize) : 0.0f;
     const int32 CaveRollBudget = FMath::Max(NodeShuffleMapMode::RwgCaveAnyNearPerRoll, FMath::CeilToInt(Count * CaveChance) * NodeShuffleMapMode::RwgCaveAnyNearPerSpot); // TODO(2026-10-18 P5 review F3): re-check vs rollDurationMs
@@ -252,13 +252,13 @@ bool ANodeShuffleSubsystem::GenerateRwgLocations(FRandomStream& Rng, const TArra
     DealMeanZ = OutLocations.Num() > 0 ? static_cast<float>(ZSum / OutLocations.Num()) : RwgMeanZ;
     if (OutLocations.Num() == 0) { ZMin = ZMax = 0.0; }
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("ROLLCENSUS: map=rwg deal=api extentHalfCm=%.0f requested=%d dealt=%d drawn=%d rejectedOutside=%d rejectedWater=%d rejectedWaterSurfaceZBelow0=%d rejectedWaterSurfaceZAtOrAbove0=%d dealtBelowZ0=%d rejectedSea=%d rejectedApiLevelOnly=%d waterApiDisagree=%d rejectedSlope=%d rejectedSpacing=%d resolvedZ=%d resolvedZMin=%.0f resolvedZMax=%.0f waterVolumes=%d caveSpots=%d caveDrawsTried=%d caveDealFailed=%d caveAnyNearCalls=%d caveNearHits=%d caveFloorHits=%d caveRejInside=%d caveRejHeadroom=%d caveRejCeiling=%d caveRejSurface=%d caveRejKillbox=%d caveRejSpacing=%d caveBudgetSpent=%d caveShare=%.4f caveCapacity=%d poolSize=%d originalsInsideCave=%d caveCandidateSource=%s caveCandidatesTried=%d caveRollBudget=%d caveNum=%d caveUsable=%d rollDurationMs=%.0f rejectedVoid=%d rejectedKillbox=%d dealtBelowKillbox=%d killboxTopZ=%.0f killboxTopActorZ=%.0f killboxTopApiZ=%.0f voidUsable=%d"),
+        TEXT("ROLLCENSUS: map=rwg deal=api extentHalfCm=%.0f requested=%d dealt=%d drawn=%d rejectedOutside=%d rejectedWater=%d rejectedWaterSurfaceZBelow0=%d rejectedWaterSurfaceZAtOrAbove0=%d dealtBelowZ0=%d rejectedSea=%d rejectedApiLevelOnly=%d waterApiDisagree=%d rejectedSlope=%d rejectedSpacing=%d resolvedZ=%d resolvedZMin=%.0f resolvedZMax=%.0f waterVolumes=%d caveSpots=%d caveDrawsTried=%d caveDealFailed=%d caveAnyNearCalls=%d caveNearHits=%d caveFloorHits=%d caveRejInside=%d caveRejHeadroom=%d caveRejCeiling=%d caveRejSurface=%d caveRejKillbox=%d caveRejSpacing=%d caveBudgetSpent=%d caveShare=%.4f caveCapacity=%d poolSize=%d originalsInsideCave=%d caveCandidateSource=%s caveCandidatesTried=%d caveRollBudget=%d caveNum=%d caveUsable=%d rollDurationMs=%.0f rejectedVoid=%d rejectedKillbox=%d dealtBelowKillbox=%d killboxTopZ=%.0f killboxTopActorZ=%.0f killboxTopApiZ=%.0f voidUsable=%d caveRejExcluded=%d excludedCaves=%d excludedCaveIds=%s"),
         H, Count, OutLocations.Num(), Drawn, Outside, Water, RwgRcWaterZBelow0, RwgRcWaterZAtOrAbove0, RwgRcDealtBelowZ0, RwgRcRejectedSea, RwgRcApiLevelOnly, Disagree, Slope, Spacing, OutLocations.Num(), ZMin, ZMax,
         RwgWaterVolumes.Num(), RwgRcCaveSpots, RwgRcCaveDrawsTried, RwgRcCaveDealFailed, RwgRcCaveAnyNearCalls, RwgRcCaveNearHits, RwgRcCaveFloorHits, RwgRcCaveRejInside,
         RwgRcCaveRejHeadroom, RwgRcCaveRejCeiling, RwgRcCaveRejSurface, RwgRcCaveRejKillbox, RwgRcCaveRejSpacing, bRwgRcCaveBudgetSpent ? 1 : 0, CaveChance, RwgCaveCapacity, PoolSize, RwgCaveSeedCount,
         bRwgCaveJsonCandidates ? TEXT("json") : TEXT("random"), RwgRcCaveCandidatesTried, CaveRollBudget, RwgCaveNumAtCheck, bRwgCaveUsable ? 1 : 0, (FPlatformTime::Seconds() - T0) * 1000.0, RwgRcRejectedVoid, RwgRcRejectedKillbox, RwgRcDealtBelowKillbox,
         bRwgKillboxKnown ? RwgKillboxTopZ : NodeShuffleMapMode::RwgNaN(), bRwgKillboxActorKnown ? RwgKillboxTopActorZ : NodeShuffleMapMode::RwgNaN(),
-        bRwgKillboxApiKnown ? RwgKillboxTopApiZ : NodeShuffleMapMode::RwgNaN(), bRwgVoidUsable ? 1 : 0);
+        bRwgKillboxApiKnown ? RwgKillboxTopApiZ : NodeShuffleMapMode::RwgNaN(), bRwgVoidUsable ? 1 : 0, RwgRcCaveRejExcluded, RwgCaveExcludedCount, *RwgCaveExcludedIds);
     return true;
 }
 

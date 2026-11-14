@@ -72,6 +72,69 @@ int32 NodeShuffleMapMode::RwgCaveGensFromJson(const TSharedPtr<FJsonObject>& Cav
     return Out.Num() - Before;
 }
 
+bool NodeShuffleMapMode::RwgCaveIsThroughTunnel(const TSharedPtr<FJsonObject>& Cave)
+{
+    // rwg-0-2-0-2: the design's measured shape (RWG 0.2.0 `plan.archetype` = through-tunnel; 3 of 78 caves on world 619268545, 0 of 65 in
+    // the 0.1.x files): `rooms` present and 0 AND `stand` exactly equal to `mouth`. Both fields must read; any missing field = not excluded.
+    int32 Rooms = -1;
+    FVector Stand, Mouth;
+    if (!Cave.IsValid() || !Cave->TryGetNumberField(TEXT("rooms"), Rooms) || Rooms != 0) { return false; }
+    if (!CaveVec3(Cave, TEXT("stand"), Stand) || !CaveVec3(Cave, TEXT("mouth"), Mouth)) { return false; }
+    return Stand == Mouth;
+}
+
+int32 NodeShuffleMapMode::RwgCaveExclusionShapes(const TSharedPtr<FJsonObject>& Cave, TArray<FRwgCaveCandidateGen>& Out)
+{
+    // rwg-0-2-0-2: an excluded cave's XY footprint. Every `tubes` segment {from, to} widened by max(r, r_from); a file without tubes falls
+    // back to the c0 / c1 segments and a stand disc widened by radius_cm. XY only (no Z test): a spot of another cave directly above or
+    // below a tunnel is refused too (fail closed).
+    if (!Cave.IsValid()) { return 0; }
+    const int32 Before = Out.Num();
+    const TArray<TSharedPtr<FJsonValue>>* Tubes = nullptr;
+    if (Cave->TryGetArrayField(TEXT("tubes"), Tubes) && Tubes)
+    {
+        for (const TSharedPtr<FJsonValue>& V : *Tubes)
+        {
+            const TSharedPtr<FJsonObject>* TubeObj = nullptr;
+            if (!V.IsValid() || !V->TryGetObject(TubeObj) || !TubeObj || !TubeObj->IsValid()) { continue; }
+            FVector A, B;
+            double R = 0.0, RFrom = 0.0;
+            if (!CaveVec3(*TubeObj, TEXT("from"), A) || !CaveVec3(*TubeObj, TEXT("to"), B)) { continue; }
+            (*TubeObj)->TryGetNumberField(TEXT("r"), R);
+            (*TubeObj)->TryGetNumberField(TEXT("r_from"), RFrom);
+            const double Rad = FMath::Max(R, RFrom);
+            if (!(Rad > 0.0)) { continue; }
+            FRwgCaveCandidateGen G;
+            G.Kind = 2; G.A = A; G.B = B; G.Rx = G.Ry = Rad;
+            Out.Add(G);
+        }
+        if (Out.Num() > Before) { return Out.Num() - Before; }
+    }
+    double Radius = 0.0;
+    if (!Cave->TryGetNumberField(TEXT("radius_cm"), Radius) || !(Radius > 0.0)) { return 0; }
+    FVector P, B;
+    if (CaveVec3(Cave, TEXT("stand"), P)) { FRwgCaveCandidateGen G; G.Kind = 1; G.A = P; G.Rx = G.Ry = Radius; Out.Add(G); }
+    const TCHAR* const Segs[2][2] = { { TEXT("c0_from"), TEXT("c0_to") }, { TEXT("c1_from"), TEXT("c1_to") } };
+    for (int32 S = 0; S < 2; ++S)
+    {
+        if (!CaveVec3(Cave, Segs[S][0], P) || !CaveVec3(Cave, Segs[S][1], B)) { continue; }
+        FRwgCaveCandidateGen G; G.Kind = 2; G.A = P; G.B = B; G.Rx = G.Ry = Radius; Out.Add(G);
+    }
+    return Out.Num() - Before;
+}
+
+bool NodeShuffleMapMode::RwgInsideCaveShape(const FRwgCaveCandidateGen& G, double X, double Y)
+{
+    // XY distance from (X, Y) to the disc centre (Kind 1) or to the segment A->B (Kind 2), against Rx. Kind 0 (room ellipse) is never a shape.
+    const FVector2D P(X, Y), A(G.A.X, G.A.Y);
+    if (G.Kind == 1) { return FVector2D::DistSquared(P, A) <= G.Rx * G.Rx; }
+    if (G.Kind != 2) { return false; }
+    const FVector2D B(G.B.X, G.B.Y), AB = B - A;
+    const double L2 = AB.SizeSquared();
+    const double T = L2 > 0.0 ? FMath::Clamp(FVector2D::DotProduct(P - A, AB) / L2, 0.0, 1.0) : 0.0;
+    return FVector2D::DistSquared(P, A + AB * T) <= G.Rx * G.Rx;
+}
+
 bool ANodeShuffleSubsystem::RwgDrawCaveSpotJson(const NodeShuffleMapMode::FRwgGroundQuery& Q, FRandomStream& Rng, FVector& OutSpot)
 {
     using namespace NodeShuffleMapMode;
@@ -105,6 +168,8 @@ bool ANodeShuffleSubsystem::RwgVerifyCaveCandidate(const NodeShuffleMapMode::FRw
     // at floor + probe (brief) -> + vanilla headroom (350 cm) -> + vanilla Miner ceiling (1200 cm, review F6) -> the surface prefilters at the
     // spot's XY (sea / void / killbox / slope, as the surface deal) -> the killbox at the FLOOR (stops deal -> teardown ping-pong).
     if (Q.Outside(X, Y)) { return false; }
+    // rwg-0-2-0-2: never deal into an excluded (through-tunnel) cave, whichever source drew the spot (json, random ring, water redeal).
+    for (const FRwgCaveCandidateGen& Ex : RwgCaveExcludedShapes) { if (RwgInsideCaveShape(Ex, X, Y)) { ++RwgRcCaveRejExcluded; return false; } }
     const double SurfZ = Q.SurfaceZ(X, Y);
     const double Hint = ZHintOrSurface ? *ZHintOrSurface : SurfZ;
     double Floor = 0.0;
