@@ -48,7 +48,7 @@ namespace NodeShuffleScanFilter
     // Modded = filterable. Predicate: the path is non-empty, does NOT start with BaseGameContentRoot, and does NOT start
     // with BaseGameScriptRoot. Everything else (vanilla, base-game native, empty) is never hidden and never gets a row.
     bool IsModdedPath(const FString& ClassPath);
-    // The default for a modded resource with no row (and the value a new row is created with): hidden under
+    // The hook's rule for a modded resource with no row (ns-scanfilter-4: a NEW row's value is StartingShowValue, below): hidden under
     // AllMinableMountRoot, shown otherwise.
     bool DefaultShownForPath(const FString& ClassPath);
 

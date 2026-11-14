@@ -574,11 +574,12 @@ static void NodeShuffleSortForeignResourceRows(UConfigPropertyArray* Rows, const
 }
 
 // ---- ns-scanfilter-4: the three entry points the scanner side uses on this same list. ------------------------------------
-// A path this session has sighted is left to SyncForeignResourceRowsToConfig, which announces a new row (T61); the scanner side
-// creates rows only for the rest. Same key and same comparison as the add loop's ExistingByPath test (FString, case-insensitive).
-bool FNodeShuffleModule::IsForeignResourceSightedThisSession(const FString& ResourceClassPath)
+// A path this session has sighted, while a protection pass is still PENDING (the revision moved since the last sync), is left to
+// SyncForeignResourceRowsToConfig, which announces a new row (T61). Once that pass has run, the scanner side may re-create a row the
+// player deleted or Reset away. Same key and comparison as the add loop's ExistingByPath test (FString, case-insensitive).
+bool FNodeShuffleModule::IsForeignRowPendingFromProtectionSync(const FString& ResourceClassPath)
 {
-    return GNodeShuffleSeenForeignResources.Contains(ResourceClassPath);
+    return GNodeShuffleLastSyncedRevision != GNodeShuffleSeenForeignRevision && GNodeShuffleSeenForeignResources.Contains(ResourceClassPath);
 }
 
 void FNodeShuffleModule::StampResourceRowLabel(UConfigPropertySection* Section, const FString& ResourceClassPath)

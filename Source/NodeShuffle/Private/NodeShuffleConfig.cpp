@@ -395,7 +395,7 @@ void UNodeShuffleConfig::PostInitProperties()
             TEXT("before turning protection on — but every 'Protected' tick in it does nothing at all until it is ")
             TEXT("ticked and you load again. ")
             TEXT("Resource wells that NodeShuffle itself changed to a modded resource are ")
-            TEXT("deliberately NOT listed here, and unticking a row can never affect one — they are ")
+            TEXT("never affected by unticking a row, even when their resource has a row here — they are ")
             TEXT("NodeShuffle's own doing, not another mod's."));
 
         // The element TEMPLATE. AddNewElement() clones this (NewObject with it as archetype), and

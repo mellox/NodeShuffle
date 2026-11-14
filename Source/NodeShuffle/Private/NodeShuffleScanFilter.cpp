@@ -145,7 +145,7 @@ namespace NodeShuffleScanFilter
                 else
                 {
                     GSeenNoRow.Add(Info.Path); // source (b): the periodic pass gives it a row
-                    bShown = DefaultShownForPath(Info.Path); // the same rule a new row is created with
+                    bShown = DefaultShownForPath(Info.Path); // the hook's no-row rule; a new row's value is StartingShowValue (ns-scanfilter-4)
                     if (!bShown) { ++F.HidByDefault; }
                 }
                 if (bShown) { Kept.Add(Entry); continue; }

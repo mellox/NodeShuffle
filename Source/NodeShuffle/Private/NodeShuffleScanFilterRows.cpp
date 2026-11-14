@@ -41,6 +41,7 @@ namespace NodeShuffleScanFilter
         int32 GLastRefused = 0;
         int32 GLastWithdrawn = 0;
         bool GCarryLogged = false;              // the "nothing to carry" line: once per world session
+        bool GCarryWaitLogged = false;          // the "waiting for the scannable list" line: once per world session
         // The starting-value context, captured by Tick for one world: managed modded paths and the unlock subsystem's scannable list.
         TWeakObjectPtr<UWorld> GStartWorld;
         TSet<FString> GStartManaged;
@@ -150,6 +151,7 @@ namespace NodeShuffleScanFilter
             GLastWithdrawn = 0;
             GLoggedDisabled = false;
             GCarryLogged = false;
+            GCarryWaitLogged = false;
             GStartWorld.Reset();
             GStartManaged.Reset();
             GStartGameList.Reset();
@@ -297,6 +299,19 @@ namespace NodeShuffleScanFilter
         }
 
         CaptureStartContext(World, ManagedModdedPaths);
+        // The carry-over gives every legacy row a permanent starting value, so it waits until the scannable list was read. Until
+        // it has run, no snapshot is published: rows it has not reached would read the template's OFF and the hook would act on it.
+        UConfigPropertyBool* CarryFlag = Cast<UConfigPropertyBool>(FindChild(Root, MergedFlagKey));
+        if (CarryFlag && !CarryFlag->Value && !GStartGameListRead)
+        {
+            GSnapWorld.Reset();
+            if (!GCarryWaitLogged)
+            {
+                UE_LOG(LogNodeShuffle, Display, TEXT("SCANFILTER-CARRY waiting gameListRead=0: the carry-over and the snapshot wait for the unlock subsystem; every scanner list is returned unfiltered until then"));
+                GCarryWaitLogged = true;
+            }
+            return;
+        }
         FRowProps Tpl;
         const bool bTplReadable = ReadRow(Rows->DefaultValue.Get(), Tpl);
         int32 RefusedOverCap = 0; int32 Withdrawn = 0;
@@ -327,9 +342,9 @@ namespace NodeShuffleScanFilter
         for (const FString& Path : Wanted)
         {
             if (Existing.Contains(Path)) { continue; }
-            // A resource the protection side has sighted this session gets its row from that side (SyncForeignResourceRowsToConfig),
-            // which is what announces a new protection row; creating it here first would skip that announcement.
-            if (FNodeShuffleModule::IsForeignResourceSightedThisSession(Path)) { ++Deferred; continue; }
+            // A resource the protection side has sighted, while its pass is pending, gets its row from that side
+            // (SyncForeignResourceRowsToConfig), which announces a new protection row; creating it here first would skip that.
+            if (FNodeShuffleModule::IsForeignRowPendingFromProtectionSync(Path)) { ++Deferred; continue; }
             if (Rows->Values.Num() >= MaxRows) { ++RefusedOverCap; continue; }
             const TCHAR* Basis = nullptr;
             const bool bDefaultShown = StartingShowValue(World, Path, &Basis);
@@ -359,7 +374,7 @@ namespace NodeShuffleScanFilter
         if ((RefusedOverCap > 0 || Withdrawn > 0) && (RefusedOverCap != GLastRefused || Withdrawn != GLastWithdrawn))
         {
             UE_LOG(LogNodeShuffle, Warning,
-                TEXT("SCANFILTER-ROWS notAdded: refusedOverCap=%d cap=%d withdrawnSharedWithTemplate=%d; those resources keep the starting-value rule in the hook"),
+                TEXT("SCANFILTER-ROWS notAdded: refusedOverCap=%d cap=%d withdrawnSharedWithTemplate=%d; those resources keep the hook's no-row rule"),
                 RefusedOverCap, MaxRows, Withdrawn);
         }
         GLastRefused = RefusedOverCap; GLastWithdrawn = Withdrawn;
@@ -439,28 +454,15 @@ namespace NodeShuffleScanFilter
         UConfigPropertySection* RowTemplate = NewObject<UConfigPropertySection>(Retired, SectionClass, TEXT("ScannerResourceRow"));
         RowTemplate->bRequiresWorldReload = false;
         RowTemplate->bHidden = true;
-        const auto AddBoolField = [&](const TCHAR* Key)
-        {
-            UConfigPropertyBool* P = NewObject<UConfigPropertyBool>(RowTemplate, BoolClass, FName(Key));
-            P->Value = true;
-            P->DefaultValue = true;
-            P->bRequiresWorldReload = false;
-            P->bHidden = true;
-            RowTemplate->SectionProperties.Add(Key, P);
-        };
-        const auto AddString = [&](const TCHAR* Key)
+        UConfigPropertyBool* OldShow = NewObject<UConfigPropertyBool>(RowTemplate, BoolClass, TEXT("ShowInScanner"));
+        OldShow->Value = true; OldShow->DefaultValue = true; OldShow->bRequiresWorldReload = false; OldShow->bHidden = true;
+        RowTemplate->SectionProperties.Add(TEXT("ShowInScanner"), OldShow);
+        for (const TCHAR* Key : { TEXT("Name"), TEXT("Mod"), TEXT("Resource") }) // the old row shape, so old rows still deserialize
         {
             UConfigPropertyString* P = NewObject<UConfigPropertyString>(RowTemplate, StringClass, FName(Key));
-            P->Value = TEXT("");
-            P->DefaultValue = TEXT("");
-            P->bRequiresWorldReload = false;
-            P->bHidden = true;
+            P->Value = TEXT(""); P->DefaultValue = TEXT(""); P->bRequiresWorldReload = false; P->bHidden = true;
             RowTemplate->SectionProperties.Add(Key, P);
-        };
-        AddBoolField(TEXT("ShowInScanner"));
-        AddString(TEXT("Name"));
-        AddString(TEXT("Mod"));
-        AddString(TEXT("Resource"));
+        }
         Retired->DefaultValue = RowTemplate;
         Root->SectionProperties.Add(RetiredRowsKey, Retired);
 

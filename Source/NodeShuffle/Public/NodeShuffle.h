@@ -360,9 +360,9 @@ public:
     // Snapshot for callers that want the raw sightings (the sync pass; diagnostics).
     static void GetSeenForeignResources(TArray<FNodeShuffleSeenForeignResource>& Out);
     // ns-scanfilter-4: the scanner side (NodeShuffleScanFilterRows.cpp) adds rows to the same list. It leaves a resource this
-    // session has SIGHTED to the population pass above (which announces a new row), stamps the label of a row it creates
+    // session has SIGHTED, while the population pass above is still pending, to that pass (which announces a new row), stamps the label of a row it creates
     // through the same single label writer, and sorts after its appends with the same sort helper (sort last).
-    static bool IsForeignResourceSightedThisSession(const FString& ResourceClassPath);
+    static bool IsForeignRowPendingFromProtectionSync(const FString& ResourceClassPath);
     static void StampResourceRowLabel(class UConfigPropertySection* Section, const FString& ResourceClassPath);
     static void SortResourceRows(class UConfigPropertyArray* Rows, const TCHAR* CallSite);
 
