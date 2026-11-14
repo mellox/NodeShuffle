@@ -42,6 +42,8 @@ namespace NodeShuffleScanFilter
         int32 GLastWithdrawn = 0;
         bool GCarryLogged = false;              // the "nothing to carry" line: once per world session
         bool GCarryWaitLogged = false;          // the "waiting for the scannable list" line: once per world session
+        TMap<FString, int32> GDeferPasses;      // per sighted path: passes the scanner side has left it to the protection pass
+        constexpr int32 MaxDeferPasses = 24;    // TODO(2026-11-14, ns-scanfilter-4 review F3): 2 min at 5 s, unmeasured; bounds the wait where ApplyLayout never runs (Unknown map, RWG before its pipeline latches)
         // The starting-value context, captured by Tick for one world: managed modded paths and the unlock subsystem's scannable list.
         TWeakObjectPtr<UWorld> GStartWorld;
         TSet<FString> GStartManaged;
@@ -56,7 +58,6 @@ namespace NodeShuffleScanFilter
             if (!Path.StartsWith(TEXT("/")) || !After.FindChar(TEXT('/'), Slash) || Slash <= 0) { return Path; }
             return After.Left(Slash);
         }
-
         FString LeafName(const FString& Path)
         {
             FString Leaf = Path;
@@ -65,7 +66,6 @@ namespace NodeShuffleScanFilter
             if (Leaf.EndsWith(TEXT("_C"), ESearchCase::CaseSensitive)) { Leaf = Leaf.LeftChop(2); }
             return Leaf;
         }
-
         UConfigPropertySection* GetRoot(UObject* WorldContext, UConfigManager** OutManager)
         {
             *OutManager = nullptr;
@@ -76,13 +76,11 @@ namespace NodeShuffleScanFilter
             *OutManager = Manager;
             return Manager ? Manager->GetConfigurationRootSection(FConfigId{"NodeShuffle", ""}) : nullptr;
         }
-
         UConfigProperty* FindChild(UConfigPropertySection* Section, const TCHAR* Key)
         {
             TObjectPtr<UConfigProperty>* P = Section ? Section->SectionProperties.Find(Key) : nullptr;
             return P ? P->Get() : nullptr;
         }
-
         // A merged row: {Protected, ShowInScanner, Resource}. False when the element is not that shape.
         struct FRowProps { UConfigPropertySection* Section = nullptr; UConfigPropertyBool* Show = nullptr; UConfigPropertyBool* Protected = nullptr; UConfigPropertyString* Resource = nullptr; };
 
@@ -95,7 +93,6 @@ namespace NodeShuffleScanFilter
             Out.Resource = Cast<UConfigPropertyString>(FindChild(Out.Section, TEXT("Resource")));
             return Out.Show && Out.Protected && Out.Resource;
         }
-
         // A retired row: only the two fields the carry-over copies.
         bool ReadRetiredRow(UConfigProperty* Element, UConfigPropertyBool*& OutShow, UConfigPropertyString*& OutResource)
         {
@@ -104,7 +101,6 @@ namespace NodeShuffleScanFilter
             OutResource = Cast<UConfigPropertyString>(FindChild(Section, TEXT("Resource")));
             return OutShow && OutResource;
         }
-
         // THE ONLY PLACE THIS FILE CREATES A ROW. Same guard as T60 (cold review F8): never write through a value object the
         // template owns. Protected is written TRUE: a ticked row and an absent row give the latch the same set (handoff, item 3).
         bool AppendRow(UConfigPropertyArray* Rows, const FRowProps& Tpl, bool bTplReadable, const FString& Path, bool bShow, int32& InOutWithdrawn)
@@ -123,7 +119,6 @@ namespace NodeShuffleScanFilter
             FNodeShuffleModule::StampResourceRowLabel(R.Section, Path);
             return true;
         }
-
         void CaptureStartContext(UWorld* World, const TArray<FString>& ManagedModdedPaths)
         {
             GStartWorld = World;
@@ -139,7 +134,6 @@ namespace NodeShuffleScanFilter
             for (const TSubclassOf<UFGResourceDescriptor>& Cls : Unlocks->GetScannableResources()) { if (Cls.Get()) { GStartGameList.Add(Cls.Get()->GetPathName()); } }
             for (const FScannableResourcePair& Pair : Unlocks->GetScannableResourcePairs()) { if (Pair.ResourceDescriptor.Get()) { GStartGameList.Add(Pair.ResourceDescriptor.Get()->GetPathName()); } }
         }
-
         void ResetForWorld()
         {
             ResetHookSideForWorld();
@@ -152,12 +146,12 @@ namespace NodeShuffleScanFilter
             GLoggedDisabled = false;
             GCarryLogged = false;
             GCarryWaitLogged = false;
+            GDeferPasses.Reset();
             GStartWorld.Reset();
             GStartManaged.Reset();
             GStartGameList.Reset();
             GStartGameListRead = false;
         }
-
         // ---- THE ONE-TIME CARRY-OVER. Runs while the hidden flag is false; sets it true in the same pass, so it never runs again. ----
         bool RunCarryOverOnce(UWorld* World, UConfigPropertySection* Root, UConfigPropertyArray* Rows, const FRowProps& Tpl, bool bTplReadable,
             int32& InOutWithdrawn, int32& InOutRefused)
@@ -229,7 +223,6 @@ namespace NodeShuffleScanFilter
             return true;
         }
     }
-
     bool StartingShowValue(const UObject* WorldContext, const FString& Path, const TCHAR** OutBasis)
     {
         const UWorld* World = WorldContext ? WorldContext->GetWorld() : nullptr;
@@ -245,7 +238,6 @@ namespace NodeShuffleScanFilter
         if (OutBasis) { *OutBasis = Basis; }
         return bOn;
     }
-
     bool InGameNameIfLoaded(const FString& Path, FString& OutName)
     {
         UClass* Cls = Path.IsEmpty() ? nullptr : FSoftClassPath(Path).ResolveClass();
@@ -253,7 +245,6 @@ namespace NodeShuffleScanFilter
         OutName = UFGItemDescriptor::GetItemName(TSubclassOf<UFGItemDescriptor>(Cls)).ToString();
         return !OutName.IsEmpty();
     }
-
     // ---- THE PERIODIC PASS ----
     void Tick(UObject* WorldContext, const TArray<FString>& ManagedModdedPaths, bool bModEnabled)
     {
@@ -344,7 +335,16 @@ namespace NodeShuffleScanFilter
             if (Existing.Contains(Path)) { continue; }
             // A resource the protection side has sighted, while its pass is pending, gets its row from that side
             // (SyncForeignResourceRowsToConfig), which announces a new protection row; creating it here first would skip that.
-            if (FNodeShuffleModule::IsForeignRowPendingFromProtectionSync(Path)) { ++Deferred; continue; }
+            if (FNodeShuffleModule::IsForeignRowPendingFromProtectionSync(Path))
+            {
+                int32& DeferPasses = GDeferPasses.FindOrAdd(Path);
+                if (++DeferPasses <= MaxDeferPasses) { ++Deferred; continue; }
+                if (DeferPasses == MaxDeferPasses + 1)
+                {
+                    // Arity hand-counted: 2 format specifiers, 2 arguments.
+                    UE_LOG(LogNodeShuffle, Display, TEXT("SCANFILTER-ROWS deferralEnded resource=%s passesDeferred=%d: the protection pass had not added a row for this sighted resource, so the scanner side adds it"), *Path, MaxDeferPasses);
+                }
+            }
             if (Rows->Values.Num() >= MaxRows) { ++RefusedOverCap; continue; }
             const TCHAR* Basis = nullptr;
             const bool bDefaultShown = StartingShowValue(World, Path, &Basis);
