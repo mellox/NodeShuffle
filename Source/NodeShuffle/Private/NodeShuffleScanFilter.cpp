@@ -239,11 +239,11 @@ namespace NodeShuffleScanFilter
             {
                 UClass* AddCls = Weak.Get(); // null when the class went away since the last Tick
                 if (!AddCls || Present.Contains(AddCls)) { continue; }
-                // Same key and predicate as the removal above: the class's OWN path must be modded and must not have a row
-                // that is OFF (last row wins, as in GRowShown), whatever row text resolved to it.
+                // Same key as the removal above: the class's OWN path must be modded and must have a row that is ON (last row
+                // wins, as in GRowShown). A row whose text resolves to a class with a different path adds nothing.
                 const FClassInfo& AddInfo = ClassInfoFor(AddCls);
                 const bool* AddRow = GRowShown.Find(AddInfo.Path);
-                if (!AddInfo.bModded || (AddRow && !*AddRow)) { continue; }
+                if (!AddInfo.bModded || AddRow == nullptr || !*AddRow) { continue; }
                 Present.Add(AddCls);
                 Kept.Add(TSubclassOf<UFGResourceDescriptor>(AddCls));
                 ++F.AddedByRow;
@@ -484,7 +484,7 @@ namespace NodeShuffleScanFilter
         };
         AddString(TEXT("Name"), TEXT("Name"), TEXT("The resource's in-game name, or its asset name when the game had not loaded it yet. Not a setting."));
         AddString(TEXT("Mod"), TEXT("Mod"), TEXT("The content folder the resource comes from (the first part of its path). Not a setting."));
-        AddString(TEXT("Resource"), TEXT("Resource"), TEXT("The resource's full asset path. This is the row's identity: if you edit it, the switch applies to the path you typed instead, and to nothing if no loaded resource has that path. Not a setting."));
+        AddString(TEXT("Resource"), TEXT("Resource"), TEXT("The resource's full asset path. This is the row's identity: the switch acts only on a modded resource whose own path matches this text (capital letters and outer spaces aside). If you edit it, the row may match nothing; a base-game path never matches. Not a setting."));
 
         Rows->DefaultValue = RowTemplate;
         Root->SectionProperties.Add(RowsKey, Rows);

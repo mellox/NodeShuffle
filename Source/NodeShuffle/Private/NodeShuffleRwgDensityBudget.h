@@ -35,8 +35,8 @@ namespace NodeShuffleRwgDensityBudget
     constexpr int32 FallbackReserveDrawsPerSpot = 20; // caps lift when the draws left in a call <= this * spots still needed (today's uniform deal needs ~14 draws per accept) TODO(2026-11-01 rwg-density-1 review F3): unmeasured; re-read capsLiftedThisCall / spotsLeftAtOpen on the first re-roll
     constexpr int32 RoomSlackPerLandCell = 1;        // TODO(2026-11-01 rwg-density-1 review F3): model-only value (cold-review sim: call-2 draws 18-35k at 0, 10-15k at 1); re-read ROLLDENSITY-CALL draws on the first re-roll
     // ns-scanfilter-2 round 2 (2026-11-14): raised from 120 so every land cell prints. MEASURED: 163 land cells on the user's
-    // map, 2026-11-14; 120 cut off 43 (counted in cellLinesOmitted). 1024 cannot bind on a 16 x 16 grid (256 cells) and stays a
-    // finite ceiling against a pathological grid.
+    // map, 2026-11-14; 120 cut off 43 (counted in cellLinesOmitted). It binds only when a roll has more than 1024 cells with a
+    // budget or a pinned entry (the grid allows up to 256 x 256); it caps log lines only, never placement.
     constexpr int32 CellLinesMax = 1024;             // ROLLDENSITY-CELL lines per roll, in index order; the rest are counted in cellLinesOmitted
 
     // Largest-remainder apportionment of Target over Weights, ties to the lower index. Sum(Out) == Target when the weights sum
