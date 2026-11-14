@@ -49,6 +49,27 @@ struct NODESHUFFLE_API FNodeShuffleModdedCountRow
     int32 VanillaCount{0};
 };
 
+// ns-scanfilter-1 (2026-11-14): ONE row of the scanner-wheel visibility list. Mirrors the four properties of the
+// ScannerResourceVisibility element section BY NAME. Required for the same check() reason as the T60 row above.
+// NOTHING READS THE MIRRORED ROWS: NodeShuffleScanFilter.cpp reads the LIVE config tree, as T60 does.
+USTRUCT(BlueprintType)
+struct NODESHUFFLE_API FNodeShuffleScannerVisibilityRow
+{
+    GENERATED_BODY()
+
+    UPROPERTY(BlueprintReadWrite)
+    bool ShowInScanner{true};
+
+    UPROPERTY(BlueprintReadWrite)
+    FString Name;
+
+    UPROPERTY(BlueprintReadWrite)
+    FString Mod;
+
+    UPROPERTY(BlueprintReadWrite)
+    FString Resource;
+};
+
 // Plain struct mirror of the configuration. Field names MUST match the
 // section property keys registered in UNodeShuffleConfig exactly —
 // UConfigManager::FillConfigurationStruct maps them by name.
@@ -125,6 +146,10 @@ struct NODESHUFFLE_API FNodeShuffleConfigStruct
     // never ran in this save. Vanilla resources are never touched.
     UPROPERTY(BlueprintReadWrite)
     bool UnlockModdedKnowledge{true};
+
+    // ns-scanfilter-1: mirror of the scanner-wheel visibility rows (present for the check(), never read).
+    UPROPERTY(BlueprintReadWrite)
+    TArray<FNodeShuffleScannerVisibilityRow> ScannerResourceVisibility;
 
     // Diagnostics gate. OFF by default so normal users get NO extra log output and
     // no overhead. When ON, the mod writes verbose HOLOGRAMHOOK / placement / node

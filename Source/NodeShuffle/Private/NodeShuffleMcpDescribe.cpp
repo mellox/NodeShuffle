@@ -45,6 +45,8 @@ namespace
           TEXT("Read by RollLayout (node eligibility), by each late-original scan (it gates the scan, which appends layout entries) and by RwgEnsureCaveCheck.") },
         { TEXT("UnlockModdedKnowledge"), TEXT("world-load"), true, TEXT("structural"),
           TEXT("Read by UnlockModdedScannerKnowledge, which runs until it completes once per load, and again after each roll and after each late-original scan that re-arms it. When true it adds managed modded resources to the game's scanner-unlock list, which the code comment describes as SaveGame and replicated.") },
+        { TEXT("ScannerResourceVisibility"), TEXT("tick"), false, TEXT("none"),
+          TEXT("Array of rows {ShowInScanner, Name, Mod, Resource}, read from the live config tree each RefreshTick by NodeShuffleScanFilter::Tick (which also adds rows to NodeShuffle.cfg). The GetScannableResources hook removes modded classes whose row is false from the list the scanner receives; it never unlocks anything and writes nothing to the save.") },
         { TEXT("ProtectOtherModsNodes"), TEXT("world-load"), true, TEXT("structural"),
           TEXT("Read once per world init by ArmDestroyerVetoIfEnabled through NodeShuffleResolveDestroyerVetoRequested, which reads the console variable NodeShuffle.DestroyerVeto instead when that variable's set-by flag is not ECVF_SetByConstructor. It decides whether NodeShuffle answers other mods' node-destroyer checks.") },
         { TEXT("ProtectedForeignResources"), TEXT("world-load"), true, TEXT("structural"),

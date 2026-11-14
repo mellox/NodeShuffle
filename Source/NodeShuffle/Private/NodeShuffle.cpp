@@ -11,6 +11,8 @@
 #include "Buildables/FGBuildableFrackingActivator.h"
 #include "Buildables/FGBuildableFrackingExtractor.h"
 #include "Equipment/FGResourceScanner.h"
+#include "Resources/FGResourceDescriptor.h" // ns-scanfilter-1: complete type for the GetScannableResources hook
+#include "NodeShuffleScanFilter.h"           // ns-scanfilter-1: the hook body
 #include "Equipment/FGPortableMinerDispenser.h"
 #include "NodeShuffleResourceNode.h"
 #include "NodeShuffleNodeComponent.h"
@@ -618,6 +620,7 @@ void FNodeShuffleModule::StartupModule()
     UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle packet marker (2026-11-14-rollchat-1)=====")); // own line, same reason as the lines above; also listed in NodeShuffleBuildMarkers.h
     UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle packet marker (2026-11-14-rocks-1)=====")); // own line, same reason as the lines above; also listed in NodeShuffleBuildMarkers.h
     UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle packet marker (2026-11-14-quietchat-1)=====")); // own line, same reason as the lines above; also listed in NodeShuffleBuildMarkers.h
+    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle packet marker (2026-11-14-scanfilter-1)=====")); // own line, same reason as the lines above; also listed in NodeShuffleBuildMarkers.h
     FNodeShuffleModule::LogAutoAllowExtractorsState(); // Packet G: log the CVar state once at startup
 
 #if !WITH_EDITOR
@@ -1008,6 +1011,18 @@ void FNodeShuffleModule::StartupModule()
                 Dropped, Cleaned, Clusters.Num());
         }
     });
+
+    // ns-scanfilter-1 (2026-11-14): SCANNER-WHEEL SHOW/HIDE. The original runs first (the unlock subsystem's list, route file
+    // section 2); the body removes hidden MODDED classes and keeps the rest in order. Override only when something was removed.
+    // One-line forward on purpose: the macro splitter tracks only round parens. Body: NodeShuffleScanFilter.cpp.
+    const FDelegateHandle ScanFilterHook = SUBSCRIBE_UOBJECT_METHOD(AFGResourceScanner, GetScannableResources,
+        [](auto& Scope, const AFGResourceScanner* Self)
+    {
+        TArray<TSubclassOf<UFGResourceDescriptor>> List = Scope(Self);
+        if (NodeShuffleScanFilter::FilterScannableResources(Self, List)) { Scope.Override(List); }
+    });
+    UE_LOG(LogNodeShuffle, Display, TEXT("SCANFILTER-HOOK target=AFGResourceScanner::GetScannableResources installed=%d"),
+        ScanFilterHook.IsValid() ? 1 : 0);
 
     // SCANNER PHANTOM-PING FIX (scanner-6). scanner-5 proved (SCANDIAG) the resource scanner groups EVERY
     // AFGResourceNode by resource class with NO filter on hidden/collision, so our hidden originals

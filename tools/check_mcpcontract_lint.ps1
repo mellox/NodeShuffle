@@ -126,7 +126,7 @@ $golden = @{
     'SpawnRadiusMeters' = 'true/structural'; 'UnlockModdedKnowledge' = 'true/structural'; 'ProtectOtherModsNodes' = 'true/structural'
     'ProtectedForeignResources' = 'true/structural'; 'SeedOverride' = 'false/none'; 'NewNodeCount' = 'false/none'; 'EnableStarterNodes' = 'false/none'
     'StarterNodeRadiusMeters' = 'false/none'; 'RwgDensityBudget' = 'false/none'; 'ModdedVanillaCountsOnRwg' = 'false/none'
-    'ModdedVanillaCountRows' = 'false/none'; 'EnableDiagnostics' = 'false/none'
+    'ModdedVanillaCountRows' = 'false/none'; 'EnableDiagnostics' = 'false/none'; 'ScannerResourceVisibility' = 'false/none' # ns-scanfilter-1
     'NodeShuffle.SeedHere' = 'true/structural'; 'NodeShuffle.Here' = 'true/structural'; 'NodeShuffle.PointAtHere' = 'true/structural'
     'NodeShuffle.WellProbe' = 'true/structural'; 'NodeShuffle.AuditPlacements' = 'true/structural'; 'NodeShuffle.DumpLayout' = 'false/none'
     'NodeShuffle.ProbeNearestNode' = 'false/none'; 'NodeShuffle.NearestCave' = 'false/none'; 'NodeShuffle.DumpExtractors' = 'false/none'
@@ -381,7 +381,8 @@ function Invoke-McpChecks($Txt, $Cod) {
     # rwg-0-2-0-2: no longer the newest; pinned present (check_rwg020_lint G6). ns-rollchat-1 bumped the newest marker.
     # ns-rollchat-1: no longer the newest; pinned present (check_rollchat_lint RC1). ns-rocks-1 bumped the newest marker.
     # ns-rocks-1: no longer the newest; pinned present (check_rocks_lint K1). ns-quietchat-1 bumped the newest marker.
-    $own = '2026-11-14-' + 'quietchat-1' # McpDescribe's buildMarker reads the header's newest entry
+    # ns-quietchat-1: no longer the newest; pinned present (check_scanfilter_lint S9). ns-scanfilter-1 bumped the newest marker.
+    $own = '2026-11-14-' + 'scanfilter-1' # McpDescribe's buildMarker reads the header's newest entry
     if ($hdrTags.Count -eq 0 -or $hdrTags[-1] -ne $own -or (Count $nsm $own) -ne 1) { $f += '(C4) this packet marker must be the newest, once, on its own line' }
     if ((Count $Txt[$pin.desc] $newestExpr) -ne 1 -or [regex]::IsMatch($Txt[$pin.desc], 'TEXT\("20\d\d-\d\d-\d\d-')) { $f += '(C4) buildMarker must come from the markers header (newest entry), never a literal in Describe' }
     # ---- F (contract R4.4: finite numbers only)

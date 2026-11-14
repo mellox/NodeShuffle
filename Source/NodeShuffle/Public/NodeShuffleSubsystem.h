@@ -1724,6 +1724,9 @@ private:
     // only on true.
     bool UnlockModdedScannerKnowledge();
     bool bKnowledgeUnlockDone = false;
+    // ns-scanfilter-1 (2026-11-14): the scanner-wheel filter's periodic pass (rows + snapshot), from the top of RefreshTick.
+    // Body: NodeShuffleScanFilter.cpp. Never unlocks anything and never writes the save; writes only NodeShuffle.cfg rows.
+    void ScanFilterTick(bool bModEnabled);
     // Packet G (ns-automatch): once per load (and once more after a re-roll -- re-armed alongside
     // bKnowledgeUnlockDone in RollLayout, same reasoning: a re-roll can change which node types are
     // actively MANAGED), run the auto-allow-extractors pass. Mirrors UnlockModdedScannerKnowledge()'s

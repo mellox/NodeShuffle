@@ -287,6 +287,9 @@ void ANodeShuffleSubsystem::RefreshTick()
     // exactly one "has this pass already refreshed scanners" answer, even a pass that returns early.
     bScannerRefreshedThisPass = false;
     const FNodeShuffleConfigStruct Config = FNodeShuffleConfigStruct::GetActiveConfig(this);
+    // ns-scanfilter-1: scanner-wheel filter rows + snapshot. ABOVE the Enabled and map-mode early-outs so it runs on RWG
+    // before the pipeline latches; Enabled off withdraws the snapshot (the hook then filters nothing).
+    ScanFilterTick(Config.Enabled);
     if (!Config.Enabled)
     {
         if (!bLoggedDisabled)

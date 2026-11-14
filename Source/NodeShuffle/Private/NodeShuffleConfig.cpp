@@ -11,6 +11,7 @@
 #include "Engine/World.h"
 #include "Engine/GameInstance.h"
 #include "NodeShuffleRwgSeedGas.h"
+#include "NodeShuffleScanFilter.h" // ns-scanfilter-1: the scanner-wheel visibility rows
 
 FNodeShuffleConfigStruct FNodeShuffleConfigStruct::GetActiveConfig(UObject* WorldContext)
 {
@@ -208,7 +209,13 @@ void UNodeShuffleConfig::PostInitProperties()
 
     AddBool(TEXT("UnlockModdedKnowledge"), true,
         TEXT("Unlock Scanner Knowledge For Shuffled Modded Resources"),
-        TEXT("Shuffled modded resources are registered with the resource scanner so scanners recognize them. NOTE: some overhaul mods also gate MINER PLACEMENT on scanner knowledge, so this can let you place miners on modded ores before that overhaul's own research would have allowed it (crafting/recipes stay gated as normal). Turn off if you prefer each mod's own progression to grant this. Vanilla resources are never affected."));
+        // ns-scanfilter-1 (2026-11-14): tooltip corrected, behaviour unchanged. The old first sentence ("are registered ... so
+        // scanners recognize them") was false whenever the KAPI guard withholds (measured: 37 of 37 withheld in the user's world).
+        // Every assertion is graded in the ns-scanfilter-1 handoff.
+        TEXT("ON: after a world loads, and again after a re-roll or when NodeShuffle finds new nodes, NodeShuffle adds the modded resources it shuffles in that world to the game's list of researched scanner resources, unless a resource is already on it. When the KAPI library is loaded, a resource is added only if KAPI has miner data for it or NodeShuffle can supply that data; the rest are skipped. Added resources are stored in the save, and nothing removes them: turning this OFF later does not take them back. NOTE: some overhaul mods also gate MINER PLACEMENT on this list, so this can let you place miners on modded ores before that overhaul's own research would have allowed it (crafting/recipes stay gated as normal). Base-game resources are never added. To hide modded resources from the scanner instead, use 'Show Modded Resources In Scanner (Per Resource)'."));
+    // ns-scanfilter-1 (2026-11-14): the per-resource scanner-wheel SHOW/HIDE rows, right under the option above (OTHER MODS group).
+    // Rows + logic in NodeShuffleScanFilter.cpp (this file is over the 500-line rule: call sites only).
+    NodeShuffleScanFilter::RegisterConfigRows(Root, ArrayClass, SectionClass, StringClass, BoolClass);
 
     // ---- T68 (audit §5.12, option (b)): THE PROTECTION MASTER SWITCH, PROMOTED TO THE PANEL. ----------
     // Before T68 the only way to turn the per-resource protection list on was the console variable
