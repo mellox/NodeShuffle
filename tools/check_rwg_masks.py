@@ -17,7 +17,7 @@ FILES = {'hapi': 'NodeShuffleMapModeHeightApi.cpp', 'cave': 'NodeShuffleMapModeC
 BASE_COMMIT = 'c47fe27'
 DEFAULT_DLL = r'C:/Claude/Projects/_archive/RWG-binaries/0.2.0-build1063/Binaries/Win64/FactoryGameSteam-ProceduralWorld-Win64-Shipping.dll'
 SIG_RX = re.compile(r'(?m)^\s*(?:static )?(?:const )?int16 (\w+)\[\] = \{([^}]*)\};')
-SYM_RX = re.compile(r'const char\* const (Sym\w+) = "([^"]+)";')
+SYM_RX = re.compile(r'const char\* const ((?:Gate)?Sym\w+) = "([^"]+)";')  # rwg-0-2-0-2 F8: the gate file's copies are Gate-prefixed
 FAILS = []
 
 
@@ -74,7 +74,7 @@ BINDS = [
     ('Ready', 'IsStartReady', 'ready', 'hapi', 'SymStartReady', 'hapi', None, 'SigStartReady1063'),
     ('Ready', 'IsContentSpawned', 'ready', 'hapi', 'SymContentSpawned', 'hapi', None, 'SigContentSpawned1063'),
 ]
-GATE_COPY = {'SigCaves': 'SigCaves', 'SigNum': 'SigNum', 'SigAnyNear': 'SigAnyNear', 'SigFloor': 'SigFloor', 'SigInside': 'SigInside',
+GATE_COPY = {'SigCaves': 'GateSigCaves', 'SigNum': 'GateSigNum', 'SigAnyNear': 'GateSigAnyNear', 'SigFloor': 'GateSigFloor', 'SigInside': 'GateSigInside',
              'SigCaves1063': 'GateSigCaves1063', 'SigAnyNear1063': 'GateSigAnyNear1063', 'SigFloor1063': 'GateSigFloor1063'}
 
 
@@ -188,7 +188,7 @@ def static_asserts(src):
         if c['sigs'].get(a) is None or g['sigs'].get(b) is None or c['sigs'][a] != g['sigs'][b]:
             fail('cave mask copy differs: Cave.cpp %s vs GateNotice.cpp %s' % (a, b))
     for s in ('SymCaves', 'SymNum', 'SymAnyNear', 'SymFloor', 'SymInside'):
-        if c['syms'].get(s) != g['syms'].get(s):
+        if c['syms'].get(s) is None or c['syms'].get(s) != g['syms'].get('Gate' + s):
             fail('decorated name %s differs between the cave and gate files' % s)
     for lane, nm, grp, sf, sym, mf, sa, sb in BINDS:
         if sym not in src[sf]['syms']:
@@ -209,8 +209,9 @@ def static_asserts(src):
             continue
         old_decl = {n: b.strip() for n, b in SIG_RX.findall(old.replace('\r\n', '\n'))}
         new_decl = {n: b.strip() for n, b in SIG_RX.findall(src[k]['text'])}
-        same = [n for n in old_decl if new_decl.get(n) == old_decl[n]]
-        diff = [n for n in old_decl if new_decl.get(n) != old_decl[n]]
+        cur = lambda n: new_decl[n] if n in new_decl else new_decl.get('Gate' + n)  # rwg-0-2-0-2 F8: gate copies renamed Gate*
+        same = [n for n in old_decl if cur(n) == old_decl[n]]
+        diff = [n for n in old_decl if cur(n) != old_decl[n]]
         print('CONTROL(c) %s: %d generation-A arrays at %s, %d byte-identical now, changed=%s' % (fn, len(old_decl), BASE_COMMIT, len(same), diff or 'none'))
         if diff:
             fail('control (c): generation-A arrays changed in %s: %s' % (fn, diff))

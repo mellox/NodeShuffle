@@ -47,8 +47,8 @@ namespace
     //   0.2.0 build 1063, sha256 6AEF57A9652D77AD..., 2026-11-13 (rwg-0-2-0-1; _team/test-logs/2026-11-13-rwg-0.2.0-export-diff.md and
     //   -height-semantics.md): 11 of 16 masks byte-identical; SurfaceHeightCm, InSeaVolume, CarvedCaves, AnyNear, FloorCmAt match only the
     //   GENERATION-B masks below (offline: tools/check_rwg_masks.py on the archived DLL). SurfaceHeightCm gained edge branches, so generation B
-    //   also REQUIRES the HalfWorldCm / GridCmValue getters and the ground query's edge-strip guard. OWED: the RWGHEIGHTAPI census (plus
-    //   RWGEDGESTRIP, RWGSEACHECK, RWGVOIDCHECK, RWGCAVECHECK) on this build at its first load, BEFORE the rwg-0-2-0-1 branch is merged.
+    //   also REQUIRES the HalfWorldCm / GridCmValue getters and the ground query's edge-strip guard. RAN 2026-11-13 (first 0.2.0 load, world
+    //   size 15652 m): RWGHEIGHTAPI census usable=1, terrain n=84, median |dZ| 8.6 cm, p95 40.3 cm (design 2026-11-13-nodeshuffle-rwg-0-2-0-2).
     struct FRwgAcceptedBuild { const TCHAR* SemVer; int32 Build; };
     const FRwgAcceptedBuild RwgHeightApiAccepted[] = { { TEXT("0.1.7"), 705 }, { TEXT("0.1.9"), 745 }, { TEXT("0.1.12"), 802 }, { TEXT("0.2.0"), 1063 } };
     // RWG 0.1.9 (2026-10-18): the accept list as printed by the census and the refusals, e.g. {0.1.7,705} {0.1.9,745}.

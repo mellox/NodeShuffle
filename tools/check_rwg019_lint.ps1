@@ -148,15 +148,15 @@ function Invoke-019Checks($T) {
         if ((Count $b 'A.bUsable = true;') -ne 1) { $f += '(V6) A.bUsable must be set true at exactly one site' }
     }
     foreach ($name in @('SigCaves', 'SigNum', 'SigAnyNear', 'SigFloor', 'SigInside')) {
-        $a = Mask $T.cave $name; $g = Mask $T.gate $name
+        $a = Mask $T.cave $name; $g = Mask $T.gate ('Gate' + $name)
         if (-not $a -or -not $g) { $f += "(V6) $name must be declared exactly once in both the cave file and the gate notice file"; continue }
         if (($a.Tokens -join ',') -ne ($g.Tokens -join ',')) { $f += "(V6) $name differs between NodeShuffleMapModeCave.cpp and NodeShuffleRwgGateNotice.cpp: the trial's cave half has drifted" }
     }
     foreach ($sym in @('SymCaves', 'SymNum', 'SymAnyNear', 'SymFloor', 'SymInside')) {
-        $ra = [regex]::Match($T.cave, 'const char\* const ' + $sym + ' = "([^"]*)";'); $rg = [regex]::Match($T.gate, 'const char\* const ' + $sym + ' = "([^"]*)";')
+        $ra = [regex]::Match($T.cave, 'const char\* const ' + $sym + ' = "([^"]*)";'); $rg = [regex]::Match($T.gate, 'const char\* const Gate' + $sym + ' = "([^"]*)";')
         if (-not $ra.Success -or -not $rg.Success -or $ra.Groups[1].Value -ne $rg.Groups[1].Value) { $f += "(V6) decorated name $sym must be identical in the cave file and the gate notice file" }
     }
-    if ((Count $T.gate 'Check(SymCaves, CavesSig, CavesN, TEXT("CarvedCaves"));') -ne 1 -or (Count $T.gate 'Check(SymInside, SigInside, UE_ARRAY_COUNT(SigInside), TEXT("IsInsideAt"));') -ne 1 -or ([regex]::Matches($T.gate, '(?m)^\s*Check\(Sym[A-Za-z]+, [A-Za-z]+, [A-Za-z_()]+, TEXT\("[A-Za-z]+"\)\);')).Count -ne 5) { $f += '(V6) CheckCaveSignatures must check all five cave exports' } # rwg-0-2-0-1: three of them through the generation-selected mask
+    if ((Count $T.gate 'Check(GateSymCaves, CavesSig, CavesN, TEXT("CarvedCaves"));') -ne 1 -or (Count $T.gate 'Check(GateSymInside, GateSigInside, UE_ARRAY_COUNT(GateSigInside), TEXT("IsInsideAt"));') -ne 1 -or ([regex]::Matches($T.gate, '(?m)^\s*Check\(GateSym[A-Za-z]+, [A-Za-z]+, [A-Za-z_()]+, TEXT\("[A-Za-z]+"\)\);')).Count -ne 5) { $f += '(V6) CheckCaveSignatures must check all five cave exports' } # rwg-0-2-0-1: three of them through the generation-selected mask
     $ccs = $T.gate.IndexOf('int32 NodeShuffleRwgGate::CheckCaveSignatures('); $ccsEnd = $T.gate.IndexOf('int32 NodeShuffleRwgGate::ClassifyCaveGenerations('); $ccsB = if ($ccs -ge 0 -and $ccsEnd -gt $ccs) { $T.gate.Substring($ccs, $ccsEnd - $ccs) } else { '' }
     if ((Count $ccsB ('if (Sig[I] >= 0 && B[I] != static_cast<uint8>(Sig[I]))')) -ne 1 -or (Count $T.gate ('++' + 'Bad;')) -ne 1) { $f += '(V6) the cave check must compare pinned bytes only and count each mismatching export once' }
     # V7 -- the in-game notice
@@ -224,8 +224,8 @@ $mutants = @(
     @{ Name = 'M40 VoidAt not named in the unlisted refusal'; Key = 'hapi'; Expect = 'V6'; Find = '            NameOpt(A.VoidStatus, TEXT("VoidAt"));' + "`n"; Repl = '' }
     @{ Name = 'M24 strict refusal falls through (return removed)'; Key = 'hapi'; Expect = 'V6'; Find = "*A.Missing, *CaveMissing));`n                return;"; Repl = "*A.Missing, *CaveMissing));" }
     @{ Name = 'M25 usable status always bound'; Key = 'hapi'; Expect = 'V6'; Find = 'A.Status = bUnlisted ? TEXT("signatureVerifiedUnlisted") : TEXT("bound");'; Repl = 'A.Status = TEXT("bound");' }
-    @{ Name = 'M26 cave mask drifted in the gate copy'; Key = 'gate'; Expect = 'V6'; Find = 'const int16 SigNum[] = { 0x8B,0x41,0x08,0xC3 };'; Repl = 'const int16 SigNum[] = { 0x8B,0x41,-1,0xC3 };' }
-    @{ Name = 'M27 cave check skips IsInsideAt'; Key = 'gate'; Expect = 'V6'; Find = '    Check(SymInside, SigInside, UE_ARRAY_COUNT(SigInside), TEXT("IsInsideAt"));' + "`n"; Repl = '' }
+    @{ Name = 'M26 cave mask drifted in the gate copy'; Key = 'gate'; Expect = 'V6'; Find = 'const int16 GateSigNum[] = { 0x8B,0x41,0x08,0xC3 };'; Repl = 'const int16 GateSigNum[] = { 0x8B,0x41,-1,0xC3 };' }
+    @{ Name = 'M27 cave check skips IsInsideAt'; Key = 'gate'; Expect = 'V6'; Find = '    Check(GateSymInside, GateSigInside, UE_ARRAY_COUNT(GateSigInside), TEXT("IsInsideAt"));' + "`n"; Repl = '' }
     @{ Name = 'M28 exportMissing refusal no longer queues the notice'; Key = 'hapi'; Expect = 'V7'; Find = ' NodeShuffleRwgGate::QueueRefusalNotice(A.SemVer, A.Build, A.Status, FString::Printf(TEXT("missing: %s"), *A.Missing));'; Repl = '' }
     @{ Name = 'M29 required signatureMismatch refusal no longer queues the notice'; Key = 'hapi'; Expect = 'V7'; Find = ' NodeShuffleRwgGate::QueueRefusalNotice(A.SemVer, A.Build, TEXT("signatureMismatch"), FString::Printf(TEXT("mismatched: %s"), *SigBad));'; Repl = '' }
     @{ Name = 'M30 verified-unlisted branch no longer queues the notice'; Key = 'hapi'; Expect = 'V7'; Find = '            NodeShuffleRwgGate::QueueUnlistedVerifiedNotice(A.SemVer, A.Build, RwgAcceptedList(), 16 + EdgeGettersResolved);' + "`n"; Repl = '' }

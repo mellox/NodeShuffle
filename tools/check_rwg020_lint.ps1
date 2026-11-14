@@ -13,7 +13,7 @@
 #      the raw answer unchanged when StripInnerCm <= 0 (generation A) and ORs the strip test otherwise.
 #   G4 Cave masks: generation A arrays keep their exact text; generation B arrays pin CarvedCaves @3 = 0x38, AnyNear @22 = 0x50,
 #      FloorCmAt @30 = 0x50 (no wildcard -- D2); the Cave.cpp and GateNotice.cpp copies are token-equal; both select by generation.
-#   G5 Accept list carries {0.2.0,1063} with the sha256 prefix and the owed-census sentence.
+#   G5 Accept list carries {0.2.0,1063} with the sha256 prefix and the record of the census that ran (rwg-0-2-0-2).
 #   G6 Marker 2026-11-13-rwg-0-2-0-1 newest in the header, once in NodeShuffle.cpp, absent from the packet's source files.
 #   G7 New formats: each starts with its tag (Display/Warning), no field repeats in a format, no `word=` inside a legend parenthetical.
 #   G8 The mask tool parses masks from source (no hard-coded mask bytes); the edited lints carry the 0.2.0 anchors.
@@ -98,7 +98,7 @@ function Invoke-020Checks($T, $others) {
     if ((Count $T.hapi 'if (!HasVoid() || Outside(X, Y)) { return false; }') -ne 1) { $f += '(G3) the query VoidAt must still ask the choke point first' }
     # G4
     $expA = @{ SigCaves = '0x48,0x8D,0x41,0x28,0xC3'; SigNum = '0x8B,0x41,0x08,0xC3'; SigAnyNear = '0x48,0x8B,0xC4,0x48,0x89,0x58,0x08,0x48,0x89,0x68,0x10,0x48,0x89,0x70,0x18,0x57,0x48,0x83,0xEC,0x70,0x8B,0x59,0x48,0x48,0x8B,0xF1'; SigFloor = '0x4C,0x8B,0xDC,0x53,0x41,0x55,0x48,0x81,0xEC,0xF8,0x00,0x00,0x00,0x8B,0x59,0x48,0x4C,0x8B,0xE9' }
-    foreach ($n in $expA.Keys) { foreach ($k in @('cave', 'gate')) { $m = Mask $T[$k] $n; if (-not $m -or ($m -join ',') -ne $expA[$n]) { $f += "(G4) generation-A $n changed in $k" } } }
+    foreach ($n in $expA.Keys) { foreach ($k in @('cave', 'gate')) { $m = Mask $T[$k] $(if ($k -eq 'gate') { 'Gate' + $n } else { $n }); if (-not $m -or ($m -join ',') -ne $expA[$n]) { $f += "(G4) generation-A $n changed in $k" } } }
     $pairs = @{ SigCaves1063 = 'GateSigCaves1063'; SigAnyNear1063 = 'GateSigAnyNear1063'; SigFloor1063 = 'GateSigFloor1063' }
     $pins = @{ SigCaves1063 = @(3, '0x38', 5); SigAnyNear1063 = @(22, '0x50', 26); SigFloor1063 = @(30, '0x50', 34) }
     foreach ($n in $pairs.Keys) {
@@ -110,10 +110,10 @@ function Invoke-020Checks($T, $others) {
         if (@($a | Where-Object { $_ -eq '-1' }).Count -ne 0) { $f += "(G4) $n must carry no wildcard (D2)" }
     }
     if ((Count $T.cave 'const bool bGenB = Gen == NodeShuffleMapMode::RwgHeightApiGenB;') -ne 1 -or (Count $T.cave 'A.Caves = reinterpret_cast<FnCaves>(Bind(SymCaves, CavesSig, CavesN, TEXT("CarvedCaves")));') -ne 1 -or (Count $T.cave 'A.Floor = reinterpret_cast<FnFloor>(Bind(SymFloor, FloorSig, FloorN, TEXT("FloorCmAt")));') -ne 1 -or (Count $T.cave 'A.AnyNear = reinterpret_cast<FnAnyNear>(Bind(SymAnyNear, AnyNearSig, AnyNearN, TEXT("AnyNear")));') -ne 1) { $f += '(G4) the cave bind must select its three generation-specific masks by the accepted generation' }
-    if ((Count $T.gate 'const bool bGenB = Gen == GenB;') -ne 1 -or (Count $T.gate 'const int16* const CavesSig = bGenB ? GateSigCaves1063 : SigCaves;') -ne 1 -or (Count $T.gate 'const int16* const FloorSig = bGenB ? GateSigFloor1063 : SigFloor;') -ne 1 -or (Count $T.gate 'const int16* const AnyNearSig = bGenB ? GateSigAnyNear1063 : SigAnyNear;') -ne 1) { $f += '(G4) the unlisted cave half must select the same masks by generation' }
+    if ((Count $T.gate 'const bool bGenB = Gen == GenB;') -ne 1 -or (Count $T.gate 'const int16* const CavesSig = bGenB ? GateSigCaves1063 : GateSigCaves;') -ne 1 -or (Count $T.gate 'const int16* const FloorSig = bGenB ? GateSigFloor1063 : GateSigFloor;') -ne 1 -or (Count $T.gate 'const int16* const AnyNearSig = bGenB ? GateSigAnyNear1063 : GateSigAnyNear;') -ne 1) { $f += '(G4) the unlisted cave half must select the same masks by generation' }
     if ((Count $T.mmh 'constexpr int32 RwgHeightApiGenB = 2;') -ne 1 -or (Count $T.gateh 'constexpr int32 GenB = 2;') -ne 1 -or (Count $T.hapi 'static_assert(NodeShuffleMapMode::RwgHeightApiGenA == NodeShuffleRwgGate::GenA && NodeShuffleMapMode::RwgHeightApiGenB == NodeShuffleRwgGate::GenB,') -ne 1) { $f += '(G4) the two generation constant pairs must be equal and asserted' }
     # G5
-    if ((Count $T.hapi ', { TEXT("0.2.0"), 1063 } };') -ne 1 -or (Count $T.hapi '0.2.0 build 1063, sha256 6AEF57A9652D77AD') -ne 1 -or (Count $T.hapi 'OWED: the RWGHEIGHTAPI census') -ne 1 -or (Count $T.hapi 'BEFORE the rwg-0-2-0-1 branch is merged') -ne 1) { $f += '(G5) the accept list must carry {0.2.0,1063} with its sha256 prefix and the owed-census sentence' }
+    if ((Count $T.hapi ', { TEXT("0.2.0"), 1063 } };') -ne 1 -or (Count $T.hapi '0.2.0 build 1063, sha256 6AEF57A9652D77AD') -ne 1 -or (Count $T.hapi 'RAN 2026-11-13 (first 0.2.0 load, world') -ne 1 -or (Count $T.hapi 'RWGHEIGHTAPI census usable=1, terrain n=84, median |dZ| 8.6 cm, p95 40.3 cm') -ne 1) { $f += '(G5) the accept list must carry {0.2.0,1063} with its sha256 prefix and the owed-census sentence' }
     # G6
     $arr = [regex]::Match($T.mk, 'PacketMarkers\[\] = \{([\s\S]*?)\};')
     $hdrTags = @(if ($arr.Success) { [regex]::Matches($arr.Groups[1].Value, 'TEXT\("([\w-]+)"\)') | ForEach-Object { $_.Groups[1].Value } })
@@ -157,7 +157,7 @@ $mutants = @(
     @{ Name = 'M16 generation-A SigCaves edited'; Key = 'cave'; Expect = 'G4'; Find = 'SigCaves[] = { 0x48,0x8D,0x41,0x28,0xC3 };'; Repl = 'SigCaves[] = { 0x48,0x8D,0x41,-1,0xC3 };' }
     @{ Name = 'M17 cave bind ignores the generation'; Key = 'cave'; Expect = 'G4'; Find = 'Bind(SymCaves, CavesSig, CavesN, TEXT("CarvedCaves"))'; Repl = 'Bind(SymCaves, SigCaves, UE_ARRAY_COUNT(SigCaves), TEXT("CarvedCaves"))' }
     @{ Name = 'M18 accept entry dropped'; Key = 'hapi'; Expect = 'G5'; Find = ', { TEXT("0.2.0"), 1063 } };'; Repl = ' };' }
-    @{ Name = 'M19 owed-census sentence dropped'; Key = 'hapi'; Expect = 'G5'; Find = 'OWED: the RWGHEIGHTAPI census'; Repl = 'the RWGHEIGHTAPI census' }
+    @{ Name = 'M19 census record dropped'; Key = 'hapi'; Expect = 'G5'; Find = 'RAN 2026-11-13 (first 0.2.0 load, world'; Repl = 'OWED (first 0.2.0 load, world' }
     @{ Name = 'M20 marker dropped from the header'; Key = 'mk'; Expect = 'G6'; Find = ('        TEXT("' + $marker + '"),' + $N); Repl = '' }
     @{ Name = 'M21 marker literal in the gate file'; Key = 'gate'; Expect = 'G6'; Find = '// RWG 0.1.12 gate lane (2026-10-26)'; Repl = ('// ' + $marker + ' gate lane (2026-10-26)') }
     @{ Name = 'M22 field=value in the RWGGENERATION legend'; Key = 'hapi'; Expect = 'G7'; Find = 'a FirstDiff of -1 means'; Repl = 'surfaceFirstDiffA=-1 means' }
