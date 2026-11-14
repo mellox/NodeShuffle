@@ -89,12 +89,13 @@ $orderBad  = @(('.Insert' + '('), ('RemoveAt' + 'Swap'), ('RemoveAll' + 'Swap'),
 $knowHash  = '4E858636E0CDF8AAD25DF652BEEEAACAFF22BD2F54F7C51D4FA82C983AEC1CC1' # measured at 187df97 and at this packet (identical)
 $oldKnow   = 'Shuffled modded resources are registered with the resource ' + 'scanner so scanners recognize them'
 $fmts = @('TEXT("SCANFILTER-CALL full call=%d snapshotForThisWorld=%d sizeIn=%d sizeOut=%d hiddenByRow=%d hiddenByNoRowDefault=%d moddedSeen=%d vanillaSeen=%d rowsInSnapshot=%d removed=[%s] addedByRow=%d added=[%s]"),',
+          'TEXT("SCANFILTER-CALL addedSetChanged call=%d addedByRow=%d added=[%s]"),',
           'TEXT("SCANFILTER-CALL census callsSinceLastLine=%d callsTotal=%d ',
-          'TEXT("SCANFILTER-ROWS %s rowsTotal=%d rowsInSnapshot=%d shown=%d hidden=%d malformed=%d blankPath=%d addedThisPass=%d perMount:%s onRowsUnresolved=%d"),',
+          'TEXT("SCANFILTER-ROWS %s rowsTotal=%d rowsInSnapshot=%d shown=%d hidden=%d malformed=%d blankPath=%d addedThisPass=%d perMount:%s onRowsClassNotFound=%d onRowsFoundNotAddable=%d classNotFound=[%s]"),',
           'TEXT("SCANFILTER-ROWS emptied: the list held %d row(s)',
           'TEXT("SCANFILTER-ROWADD resource=%s name=''%s'' nameFromItemName=%d mount=%s startsShown=%d source=%s"),')
 $title = 'Show Modded Resources In ' + 'Scanner (Per Resource)'
-$plain = @('ON: NodeShuffle puts the resource in the list the resource scanner ', 'offers, including a resource you have not researched. OFF: NodeShuffle takes it out of that list. ',
+$plain = @('ON: NodeShuffle adds the resource to the list of resources it hands ', 'to the resource scanner, including a resource you have not researched. OFF: NodeShuffle takes it out of that list. ',
            'Nothing is written to your save: the switches change only the list NodeShuffle hands to the scanner, and no ',
            'These switches apply to every world on this install, not to one save.')
 
@@ -159,13 +160,16 @@ function Invoke-Checks($T) {
     if ((Count $T.sfh 'constexpr int32 FullCallLines = 20;') -ne 1 -or (Count $T.sfh 'constexpr double CallCensusPeriodSeconds = 5.0;') -ne 1) { $f += '(S11) 20 full lines, then a census at most every 5 s' }
     if ($hook -eq '' -or -not (Ordered $hook @('const bool bFullLine = GCallsTotal <= FullCallLines;', 'EmitCallLine(F, RemovedNames, AddedNames);', 'else if (Now - GLastCallLineTime >= CallCensusPeriodSeconds && (FNodeShuffleModule::AreDiagnosticsEnabled() || !SameFigures(GLatest, GLastCensus)))', 'EmitCallCensus(Now);'))) { $f += '(S11) the call lines are emitted from the hook' }
     if ($tick -eq '' -or (Count $tick 'if (GLastRowCount > 0 && Rows->Values.Num() == 0)') -ne 1) { $f += '(S11) an emptied list is measured and logged' }
-    foreach ($o in @(('A switch only hides' + ' or shows'), ('never add' + ' one: a resource'), ('never makes the resource ' + 'scannable'), ('To hide modded resources from the ' + 'scanner instead'), ('stays in the list the resource ' + 'scanner offers'))) { if ((Count $T.sf $o) + (Count $T.cfgc $o) -ne 0) { $f += "(S10) remove-only wording is gone ($o)" } }
+    foreach ($o in @(('A switch only hides' + ' or shows'), ('never add' + ' one: a resource'), ('never makes the resource ' + 'scannable'), ('To hide modded resources from the ' + 'scanner instead'), ('stays in the list the resource ' + 'scanner offers'), ('edit it and the row ' + 'matches nothing'), ('the list the resource ' + 'scanner offers'))) { if ((Count $T.sf $o) + (Count $T.cfgc $o) -ne 0) { $f += "(S10) remove-only wording is gone ($o)" } }
     if ((Count $T.sf 'latestAddedByRow=%d"),') -ne 1) { $f += '(S11) census carries latestAddedByRow' }
+    if ((Count $T.sf 'ON: NodeShuffle adds this resource to the list it hands the resource scanner, even if') -ne 1) { $f += '(S10) row switch text' }
+    if ((Count $hook 'if (F.bSnapshot && AddedNames != GLastAddedNames) { if (!bFullLine) { EmitAddedSetChanged(AddedNames, F.AddedByRow); } GLastAddedNames = AddedNames; }') -ne 1) { $f += '(S11) a changed added set is named after the full lines' }
     # S13
+    if ($hook -eq '' -or -not (Ordered $hook @('Present.Contains(AddCls)) { continue; }', 'const bool* AddRow = GRowShown.Find(AddInfo.Path);', 'if (!AddInfo.bModded || (AddRow && !*AddRow)) { continue; }', 'Present.Add(AddCls);'))) { $f += '(S13) the add step uses the removal''s key: own path modded, no OFF row' }
     $addLoop = 'for (const TWeakObjectPtr<UClass>& Weak : GAddOrder)'
     if ($hook -eq '' -or -not (Ordered $hook @('if (F.bSnapshot)', 'Present.Add(Cls);', $vanKeep, $keepShown, 'Present.Remove(Cls);', $addLoop, 'UClass* AddCls = Weak.Get();', 'if (!AddCls || Present.Contains(AddCls)) { continue; }', 'Present.Add(AddCls);', 'Kept.Add(TSubclassOf<UFGResourceDescriptor>(AddCls));', '++F.AddedByRow;', $commitOut))) { $f += '(S13) the add step appends absent ON-row classes inside the snapshot branch, after the removal, without duplicates' }
     if ((Count $T.sf 'GAddOrder.Add(') -ne 1 -or (Count $T.sf 'TArray<TWeakObjectPtr<UClass>> GAddOrder;') -ne 1 -or (Count $T.sf 'GAddOrder.Reset();') -ne 2) { $f += '(S13) GAddOrder is weak, filled only by Tick, cleared per pass and per world' }
-    if ($tick -eq '' -or -not (Ordered $tick @('GAddOrder.Reset();', 'if (!IsModdedPath(Path)) { continue; }', 'const bool bShow = R.Show->Value;', 'if (bShow)', 'UClass* RowCls = FSoftClassPath(Path).ResolveClass();', 'if (RowCls && RowCls->IsChildOf(UFGResourceDescriptor::StaticClass())) { GAddOrder.Add(RowCls); }', 'else { ++OnUnresolved; }'))) { $f += '(S13) only ON, modded, resolved descriptor rows enter GAddOrder' }
+    if ($tick -eq '' -or -not (Ordered $tick @('GAddOrder.Reset();', 'if (!IsModdedPath(Path)) { continue; }', 'const bool bShow = R.Show->Value;', 'if (bShow)', 'UClass* RowCls = FSoftClassPath(Path).ResolveClass();', '&& !RowCls->HasAnyClassFlags(CLASS_Abstract | CLASS_Deprecated | CLASS_NewerVersionExists)) { GAddOrder.Add(RowCls); }', 'else if (RowCls) { ++OnFoundNotAddable; }'))) { $f += '(S13) only ON, modded, resolved descriptor rows enter GAddOrder' }
     $ai = if ($tick -ne '') { $tick.IndexOf('Rows->AddNewElement()') } else { -1 }
     $mi = if ($tick -ne '') { $tick.IndexOf('Rows->MarkDirty();') } else { -1 }
     $vw = '->Value' + ' ='
@@ -203,7 +207,9 @@ $mutants = @(
     @{ Name = 'M22 list title drifts from the quote';  Key = 'sf';    Expect = 'S10'; Find = ('TEXT("' + $title + '")'); Repl = 'TEXT("Scanner Visibility")' }
     @{ Name = 'M23 census made unconditional';         Key = 'sf';    Expect = 'S11'; Find = 'else if (Now - GLastCallLineTime >= CallCensusPeriodSeconds && (FNodeShuffleModule::AreDiagnosticsEnabled() || !SameFigures(GLatest, GLastCensus)))'; Repl = 'else if (Now - GLastCallLineTime >= CallCensusPeriodSeconds)' } # round 2, coder-written
     @{ Name = 'M24 notAdded latch removed';           Key = 'sf';    Expect = 'S11'; Find = 'if ((RefusedOverCap > 0 || Withdrawn > 0) && (RefusedOverCap != GLastRefused || Withdrawn != GLastWithdrawn))'; Repl = 'if (RefusedOverCap > 0 || Withdrawn > 0)' } # round 2, coder-written
-    @{ Name = 'M25 remove-only wording back';         Key = 'sf';    Expect = 'S10'; Find = 'offers, including a resource you have not researched.'; Repl = ('offers. A switch only hides' + ' or shows.') } # scanfilter-2 (was round 2's old-sentence mutant)
+    @{ Name = 'M25 remove-only wording back';         Key = 'sf';    Expect = 'S10'; Find = 'to the resource scanner, including a resource you have not researched.'; Repl = ('to the resource scanner. A switch only hides' + ' or shows.') } # scanfilter-2 (was round 2's old-sentence mutant)
+    @{ Name = 'M37 add ignores an OFF own-path row'; Key = 'sf'; Expect = 'S13'; Find = 'if (!AddInfo.bModded || (AddRow && !*AddRow)) { continue; }'; Repl = 'if (!AddInfo.bModded) { continue; }' }
+    @{ Name = 'M38 added set never named late'; Key = 'sf'; Expect = 'S11'; Find = 'if (F.bSnapshot && AddedNames != GLastAddedNames)'; Repl = 'if (false && AddedNames != GLastAddedNames)' }
     @{ Name = 'M27 add path removed';                 Key = 'sf';    Expect = 'S13'; Find = 'Kept.Add(TSubclassOf<UFGResourceDescriptor>(AddCls));'; Repl = '' }
     @{ Name = 'M28 OFF rows added';                   Key = 'sf';    Expect = 'S13'; Find = "            if (bShow)`n            {`n                UClass* RowCls"; Repl = "            if (true)`n            {`n                UClass* RowCls" }
     @{ Name = 'M29 no-row resource added';            Key = 'sf';    Expect = 'S13'; Find = 'GSeenNoRow.Add(Info.Path); // source (b)'; Repl = 'GSeenNoRow.Add(Info.Path); GAddOrder.Add(Cls); // source (b)' }

@@ -40,6 +40,7 @@ namespace NodeShuffleScanFilter
         // ns-scanfilter-2: ON rows whose class the periodic pass resolved (in memory, never loaded), in row order. Weak, so a
         // class that goes away between Ticks is skipped by the hook rather than dereferenced.
         TArray<TWeakObjectPtr<UClass>> GAddOrder;
+        FString GLastAddedNames; // the added=[...] set last seen by the hook; a change after the full lines prints addedSetChanged
         int32 GCallsTotal = 0;
         int32 GCallsSinceLine = 0;
         double GLastCallLineTime = 0.0;
@@ -134,6 +135,12 @@ namespace NodeShuffleScanFilter
                 F.AddedByRow, *AddedNames);
         }
 
+        void EmitAddedSetChanged(const FString& AddedNames, int32 AddedByRow)
+        {
+            // Arity hand-counted: 3 format specifiers, 3 arguments.
+            UE_LOG(LogNodeShuffle, Display, TEXT("SCANFILTER-CALL addedSetChanged call=%d addedByRow=%d added=[%s]"), GCallsTotal, AddedByRow, *AddedNames);
+        }
+
         FCallFigures GLastCensus;
         bool SameFigures(const FCallFigures& A, const FCallFigures& B) { return A.In == B.In && A.Out == B.Out && A.HidByRow == B.HidByRow && A.HidByDefault == B.HidByDefault && A.Modded == B.Modded && A.Vanilla == B.Vanilla && A.bSnapshot == B.bSnapshot && A.AddedByRow == B.AddedByRow; }
 
@@ -153,6 +160,7 @@ namespace NodeShuffleScanFilter
         {
             GRowShown.Reset();
             GAddOrder.Reset();
+            GLastAddedNames.Reset();
             GSeenNoRow.Reset();
             GCallsTotal = 0;
             GCallsSinceLine = 0;
@@ -231,11 +239,16 @@ namespace NodeShuffleScanFilter
             {
                 UClass* AddCls = Weak.Get(); // null when the class went away since the last Tick
                 if (!AddCls || Present.Contains(AddCls)) { continue; }
+                // Same key and predicate as the removal above: the class's OWN path must be modded and must not have a row
+                // that is OFF (last row wins, as in GRowShown), whatever row text resolved to it.
+                const FClassInfo& AddInfo = ClassInfoFor(AddCls);
+                const bool* AddRow = GRowShown.Find(AddInfo.Path);
+                if (!AddInfo.bModded || (AddRow && !*AddRow)) { continue; }
                 Present.Add(AddCls);
                 Kept.Add(TSubclassOf<UFGResourceDescriptor>(AddCls));
                 ++F.AddedByRow;
                 bAddedAny = true;
-                if (bFullLine) { AddedNames += (AddedNames.IsEmpty() ? TEXT("") : TEXT(" ")) + AddCls->GetName(); }
+                AddedNames += (AddedNames.IsEmpty() ? TEXT("") : TEXT(" ")) + AddInfo.Short;
             }
             if (bRemovedAny || bAddedAny) { InOutList = MoveTemp(Kept); }
         }
@@ -252,6 +265,7 @@ namespace NodeShuffleScanFilter
         {
             EmitCallCensus(Now);
         }
+        if (F.bSnapshot && AddedNames != GLastAddedNames) { if (!bFullLine) { EmitAddedSetChanged(AddedNames, F.AddedByRow); } GLastAddedNames = AddedNames; }
         return bRemovedAny || bAddedAny;
     }
 
@@ -374,7 +388,7 @@ namespace NodeShuffleScanFilter
         // Rebuild the snapshot from the LIVE tree: this is what delivers a switch flipped in the settings screen.
         GRowShown.Reset();
         GAddOrder.Reset();
-        int32 OnUnresolved = 0; // ON rows whose class is not in memory (ResolveClass never loads) or is not a resource descriptor
+        int32 OnNotFound = 0; int32 OnFoundNotAddable = 0; FString OnNotFoundNames; // ON rows: path found no class (ResolveClass never loads) / found a class that is not a concrete UFGResourceDescriptor child
         int32 Shown = 0;
         int32 Hidden = 0;
         uint32 Signature = 0x5CA9u;
@@ -391,15 +405,16 @@ namespace NodeShuffleScanFilter
             if (bShow)
             {
                 UClass* RowCls = FSoftClassPath(Path).ResolveClass();
-                if (RowCls && RowCls->IsChildOf(UFGResourceDescriptor::StaticClass())) { GAddOrder.Add(RowCls); }
-                else { ++OnUnresolved; }
+                if (RowCls && RowCls->IsChildOf(UFGResourceDescriptor::StaticClass()) && !RowCls->HasAnyClassFlags(CLASS_Abstract | CLASS_Deprecated | CLASS_NewerVersionExists)) { GAddOrder.Add(RowCls); }
+                else if (RowCls) { ++OnFoundNotAddable; }
+                else { ++OnNotFound; OnNotFoundNames += (OnNotFoundNames.IsEmpty() ? TEXT("") : TEXT(" ")) + LeafName(Path); }
             }
             FMountCount& M = PerMount.FindOrAdd(MountLabel(Path));
             ++M.Total;
             if (bShow) { ++Shown; ++M.Shown; } else { ++Hidden; ++M.Hidden; }
             Signature = HashCombine(Signature, HashCombine(GetTypeHash(Path), bShow ? 1u : 2u));
         }
-        Signature = HashCombine(Signature, static_cast<uint32>(OnUnresolved));
+        Signature = HashCombine(Signature, HashCombine(static_cast<uint32>(OnNotFound), static_cast<uint32>(OnFoundNotAddable)));
         GSnapWorld = World;
         GLastRowCount = Rows->Values.Num();
 
@@ -410,11 +425,11 @@ namespace NodeShuffleScanFilter
             {
                 PerMountText += FString::Printf(TEXT(" %s(total %d shown %d hidden %d)"), *M.Key, M.Value.Total, M.Value.Shown, M.Value.Hidden);
             }
-            // Arity hand-counted: 10 format specifiers, 10 arguments. ns-scanfilter-2 appended onRowsUnresolved.
+            // Arity hand-counted: 12 format specifiers, 12 arguments. ns-scanfilter-2 round 2 (R3): the two ON-row predicates, split.
             UE_LOG(LogNodeShuffle, Display,
-                TEXT("SCANFILTER-ROWS %s rowsTotal=%d rowsInSnapshot=%d shown=%d hidden=%d malformed=%d blankPath=%d addedThisPass=%d perMount:%s onRowsUnresolved=%d"),
+                TEXT("SCANFILTER-ROWS %s rowsTotal=%d rowsInSnapshot=%d shown=%d hidden=%d malformed=%d blankPath=%d addedThisPass=%d perMount:%s onRowsClassNotFound=%d onRowsFoundNotAddable=%d classNotFound=[%s]"),
                 GRowsLogged ? TEXT("changed") : TEXT("loaded"), Rows->Values.Num(), GRowShown.Num(), Shown, Hidden, Malformed, Blank,
-                Added, *PerMountText, OnUnresolved);
+                Added, *PerMountText, OnNotFound, OnFoundNotAddable, *OnNotFoundNames);
             GRowsLogged = true;
             GLastRowsSignature = Signature;
         }
@@ -431,10 +446,10 @@ namespace NodeShuffleScanFilter
         Rows->DisplayName = FText::FromString(TEXT("Show Modded Resources In Scanner (Per Resource)"));
         // Every factual assertion is graded in the ns-scanfilter-1 handoff.
         Rows->Tooltip = FText::FromString(
-            TEXT("One row per resource added by another mod. ON: NodeShuffle puts the resource in the list the resource scanner ")
-            TEXT("offers, including a resource you have not researched. OFF: NodeShuffle takes it out of that list. ")
+            TEXT("One row per resource added by another mod. ON: NodeShuffle adds the resource to the list of resources it hands ")
+            TEXT("to the resource scanner, including a resource you have not researched. OFF: NodeShuffle takes it out of that list. ")
             TEXT("Nothing is written to your save: the switches change only the list NodeShuffle hands to the scanner, and no ")
-            TEXT("research or scanner unlock is added or removed. An ON resource is put in the list only once the game has ")
+            TEXT("research or scanner unlock is added or removed. An ON resource is added to that list only once the game has ")
             TEXT("loaded it.\n\n")
             TEXT("THIS LIST FILLS ITSELF IN in a world you host while NodeShuffle's 'Enabled' is on: a row is added for each modded resource NodeShuffle ")
             TEXT("shuffles in that world, and for each modded resource that appears in the scanner's list, up to 256 rows. A new row starts OFF ")
@@ -453,7 +468,7 @@ namespace NodeShuffleScanFilter
         Show->Value = true;
         Show->DefaultValue = true;
         Show->DisplayName = FText::FromString(TEXT("Show in scanner"));
-        Show->Tooltip = FText::FromString(TEXT("ON: NodeShuffle puts this resource in the scanner's list, even if you have not researched it. OFF: NodeShuffle takes it out of that list. Nothing is written to your save."));
+        Show->Tooltip = FText::FromString(TEXT("ON: NodeShuffle adds this resource to the list it hands the resource scanner, even if you have not researched it, once the game has loaded the resource. OFF: NodeShuffle takes it out of that list. Nothing is written to your save."));
         Show->bRequiresWorldReload = false;
         RowTemplate->SectionProperties.Add(TEXT("ShowInScanner"), Show);
 
@@ -469,7 +484,7 @@ namespace NodeShuffleScanFilter
         };
         AddString(TEXT("Name"), TEXT("Name"), TEXT("The resource's in-game name, or its asset name when the game had not loaded it yet. Not a setting."));
         AddString(TEXT("Mod"), TEXT("Mod"), TEXT("The content folder the resource comes from (the first part of its path). Not a setting."));
-        AddString(TEXT("Resource"), TEXT("Resource"), TEXT("The resource's full asset path. This is the row's identity; edit it and the row matches nothing."));
+        AddString(TEXT("Resource"), TEXT("Resource"), TEXT("The resource's full asset path. This is the row's identity: if you edit it, the switch applies to the path you typed instead, and to nothing if no loaded resource has that path. Not a setting."));
 
         Rows->DefaultValue = RowTemplate;
         Root->SectionProperties.Add(RowsKey, Rows);
