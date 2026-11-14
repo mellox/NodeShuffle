@@ -66,7 +66,10 @@ void ANodeShuffleSubsystem::ChatProbeStep()
     }
     const int32 V = ChatProbeNext + 1;
     APlayerController* LocalPc = nullptr;
-    for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It) { LocalPc = It->Get(); break; } // first controller
+    // First controller only. Written without a loop: a loop whose body always breaks leaves its increment unreachable,
+    // which this build rejects (C4702 as an error; measured 2026-11-14 on the first compile of this file).
+    FConstPlayerControllerIterator PcIt = World->GetPlayerControllerIterator();
+    if (PcIt) { LocalPc = PcIt->Get(); }
     FChatMessageStruct Msg;
     Msg.MessageSender = FText::FromString(TEXT("NODE SHUFFLE"));
     Msg.MessageSenderColor = FLinearColor(1.0f, 0.55f, 0.10f);
