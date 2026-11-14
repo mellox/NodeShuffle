@@ -1125,6 +1125,42 @@ private:
     bool RwgSolidTopTryAccept(const struct FHitResult& Hit, double TraceStartZ, const struct FCollisionQueryParams& Params, float MinNormalZ, float RingCm,
                               float TiltClampDeg, bool bSkippedWater, FVector& OutLoc, FRotator& InOutRot, bool& bOutWater, FVector* OutGroundNormal,
                               struct FHitResult* OutGroundHit) const;
+    // ---- ns-rocks-1 (2026-11-14): rock near search (RaycastSettle), sunken solid-top column test (rule B) and their censuses.
+    // NodeShuffleMapModeRocks.cpp. Plain members, never saved; counters are SESSION totals (since this world load), never reset by a roll.
+    // First-hit kinds: 0 terrain, 1 canopy, 2 water, 3 other, 4 boulder, 5 cliff, 6 stone, 7 rock, 8 largeFlat (4..8 = solid families).
+    mutable bool bRwgRocksCaptureFirst = false;    // armed by RaycastSettle around its PRIMARY probe only; the first raw hit is noted, then cleared
+    mutable int32 RwgRocksLastKind = -1;           // last primary first-hit kind (-1 = no hit or not captured)
+    mutable FString RwgRocksLastMesh;
+    mutable float RwgRocksLastWidthM = 0.0f, RwgRocksLastHeightM = 0.0f; // per-instance world AABB: largest horizontal FULL width, full height (m)
+    mutable int32 RwgRocksLastMove = 0;            // last RaycastSettle: 0 no sideways move, 1 near search, 2 spiral
+    mutable float RwgRocksLastMoveCm = 0.0f;
+    mutable bool bRwgRocksLastSpiralAfterRock = false;
+    mutable int32 RwgRkNearRun = 0, RwgRkNearFound = 0, RwgRkNearToSpiral = 0, RwgRkSpiralAfterNear = 0, RwgRkNoSpotAfterNear = 0;
+    int32 RwgRkFirstKind[9] = {};
+    int32 RwgRkDeferredNotBinned = 0;
+    int32 RwgRkWidthBins[5][7] = {};
+    float RwgRkWidthMaxM[5] = {};
+    TMap<FString, FIntPoint> RwgRkMeshCounts;      // mesh name -> (settles, largest width in cm)
+    int32 RwgRkMoveNear = 0, RwgRkMoveSpiralRock = 0, RwgRkMoveSpiralOther = 0;
+    int32 RwgRkMoveBins[7] = {};
+    mutable int32 RwgRkSunkTested = 0, RwgRkSunkRefused = 0, RwgRkSunkApiUnknown = 0;
+    mutable int32 RwgRkSunkBins[4] = {};
+    mutable int32 RwgRkSunkRefusedBins[4] = {};
+    mutable int32 RwgRkSamples = 0, RwgRkSamplePass = -1;
+    void RwgRocksNoteFirstHit(const struct FHitResult& H) const;
+    void RwgRocksRecordSettle(bool bDecided, bool bSettled);
+    bool RwgRocksSunkenRefuses(const struct FHitResult& Hit, double TraceStartZ, const struct FCollisionQueryParams& Params, float RingCm) const;
+    void RwgRocksEmitCensus() const;
+    FString RwgRocksLastFirstHitText() const;
+    const TCHAR* RwgRocksLastMoveName() const;
+    bool RwgRocksSampleSlot() const;
+    // ns-rocks-1 D: NodeShuffle.ChatProbe (NodeShuffleChatProbe.cpp). One labelled chat line per variant, ChatProbeGapSeconds apart.
+    FTimerHandle ChatProbeTimer;
+    int32 ChatProbeNext = 0;
+    bool bChatProbeRunning = false;
+    bool bChatProbeLimitsLogged = false;
+    void RunChatProbe();
+    void ChatProbeStep();
     void RwgRecordSolidTopDz(double DzCm);
     int32 RwgRockOcclusionProbe(const FVector& At, const AActor* IgnoreActor, FString& OutMeshPath, double* OutHitZ = nullptr) const; // 0 clear, 1 solid above, 2 terrain/buildable above
     bool RwgRedealLiveEntry(FNodeShuffleEntry& E, const TCHAR* Why);   // false = refused (pinned/occupied); despawn + API redeal

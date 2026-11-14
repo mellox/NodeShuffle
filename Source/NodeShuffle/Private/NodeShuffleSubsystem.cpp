@@ -33,6 +33,7 @@
 #include "Components/BoxComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
+#include "NodeShuffleRocks.h" // ns-rocks-1: near-search pattern (RaycastSettle)
 #include "Components/DecalComponent.h"
 #include "GameFramework/PlayerController.h"
 
@@ -7688,6 +7689,7 @@ bool ANodeShuffleSubsystem::RaycastGroundAt(const FVector& ProbeXY, float StartZ
             const int32 Cls = RwgHitClassOf(H, &Rule);
             if (Cls != 0) { RwgNoteHitClass(H, Cls, Rule); }
             if (K == 0 && bRwgProbeArmed && RwgProbeFirstClass < 0) { RwgProbeFirstClass = Cls; RwgProbeFirstZ = H.ImpactPoint.Z; }
+            if (K == 0 && bRwgRocksCaptureFirst) { bRwgRocksCaptureFirst = false; RwgRocksNoteFirstHit(H); } // ns-rocks-1 C1: RaycastSettle's primary probe only
             // A player buildable is accepted like terrain: vanilla settles nodes on foundations by design. Lightweight buildables
             // (foundations, walls, ramps) collide through abstract-instance components owned by AAbstractInstanceManager, not by
             // the AFGBuildable actor, so that owner counts too (by class NAME: no new UClass import).
@@ -7829,12 +7831,21 @@ bool ANodeShuffleSubsystem::RaycastSettle(FNodeShuffleEntry& Entry, const AActor
 
     bool bWater = false;
     bool bSteep = false;
+    // ns-rocks-1: this settle's own move record (read by RwgRocksRecordSettle and PROVSETTLE); the first-hit capture is armed for the
+    // PRIMARY probe only and cleared right after it (a primary that misses never reaches the capture, so it cannot leak into later probes).
+    RwgRocksLastMove = 0; RwgRocksLastMoveCm = 0.0f; bRwgRocksLastSpiralAfterRock = false; RwgRocksLastKind = -1; RwgRocksLastMesh.Reset();
+    RwgRocksLastWidthM = RwgRocksLastHeightM = 0.0f;
+    bRwgRocksCaptureFirst = bTerrainOnly;
 
     // 1. Primary probe at the entry's own XY. steepfix-1: a placeable spot is a hit that is neither
     //    water NOR steeper than the Miner hologram tolerates.
-    if (RaycastGroundAt(Entry.Location, Entry.Location.Z, IgnoreNode, IgnoreMesh, Loc, Rot, bWater, false, &bSteep,
-                        nullptr, nullptr, bTerrainOnly) // RWG P2c: bTerrainOnly forwarded (false on every vanilla call)
-        && !bWater && !bSteep)
+    const bool bPrimaryHit = RaycastGroundAt(Entry.Location, Entry.Location.Z, IgnoreNode, IgnoreMesh, Loc, Rot, bWater, false, &bSteep,
+                        nullptr, nullptr, bTerrainOnly); // RWG P2c: bTerrainOnly forwarded (false on every vanilla call)
+    bRwgRocksCaptureFirst = false;
+    // ns-rocks-1 A: read NOW -- every later RaycastGroundAt resets bRwgLastProbeSolid. True only when the primary's terrain-only trace
+    // stopped on a solid (rock-family) mesh that was not accepted as a top (never on vanilla: bSolidBlocks needs bTerrainOnly).
+    const bool bPrimaryRockRefused = bPrimaryHit && bSteep && !bWater && bRwgLastProbeSolid;
+    if (bPrimaryHit && !bWater && !bSteep)
     {
         Entry.Location = Loc;
         Entry.Rotation = Rot;
@@ -7856,14 +7867,23 @@ bool ANodeShuffleSubsystem::RaycastSettle(FNodeShuffleEntry& Entry, const AActor
         const FVector OriginXY = Entry.Location; // current (unplaceable) XY/Z probe base
         // Golden-angle spiral: even areal coverage as the radius grows ring by ring.
         constexpr float GoldenAngleRad = 2.39996323f;
-        for (int32 i = 1; i <= LandRelocationTries; i++)
+        // ns-rocks-1 A: a primary refused on a ROCK first tries NodeShuffleRocks::NearProbeCount near points (10 m and 20 m rings,
+        // NodeShuffleRocks.h), then the spiral below unchanged. Both kinds of point go through THIS loop body: the same RaycastGroundAt
+        // call, the same water/steep acceptance and the same commit block, so a near spot passes exactly what a spiral spot passes.
+        const int32 NearTries = bPrimaryRockRefused ? NodeShuffleRocks::NearProbeCount : 0;
+        if (NearTries > 0) { ++RwgRkNearRun; }
+        for (int32 Step = 0; Step < NearTries + LandRelocationTries; Step++)
         {
+            const bool bNear = Step < NearTries;
+            const int32 i = Step - NearTries + 1; // spiral index 1..LandRelocationTries (unused for near points)
+            if (Step == NearTries && NearTries > 0) { ++RwgRkNearToSpiral; } // the near search found nothing; the spiral starts
             const float Radius = FMath::Min(LandRelocationMaxRadiusCm,
-                LandRelocationStepCm * FMath::Sqrt(static_cast<float>(i)));
+                LandRelocationStepCm * FMath::Sqrt(static_cast<float>(FMath::Max(i, 1))));
             const float Angle = GoldenAngleRad * i;
-            const FVector Probe(OriginXY.X + Radius * FMath::Cos(Angle),
-                                OriginXY.Y + Radius * FMath::Sin(Angle),
-                                OriginXY.Z);
+            const FVector Probe = bNear ? NodeShuffleRocks::NearProbe(OriginXY, Entry.EntryGuid, Step)
+                                        : FVector(OriginXY.X + Radius * FMath::Cos(Angle),
+                                                  OriginXY.Y + Radius * FMath::Sin(Angle),
+                                                  OriginXY.Z);
             FRotator TryRot = Entry.Rotation;
             FVector TryLoc;
             bool bTryWater = false;
@@ -7875,12 +7895,23 @@ bool ANodeShuffleSubsystem::RaycastSettle(FNodeShuffleEntry& Entry, const AActor
                 UE_LOG(LogNodeShuffle, Verbose, TEXT("Land-check: relocated %s off %s to %s"),
                     *Entry.EntryGuid.ToString(), bWater ? TEXT("water") : TEXT("a cliff face"),
                     *TryLoc.ToCompactString());
+                // ns-rocks-1 C2: which search found it and how far (XY from the refused spot); counted when the resolve completes.
+                RwgRocksLastMove = bNear ? 1 : 2; RwgRocksLastMoveCm = static_cast<float>(FVector::Dist2D(TryLoc, OriginXY));
+                bRwgRocksLastSpiralAfterRock = !bNear && bPrimaryRockRefused;
+                if (bNear) { ++RwgRkNearFound; } else if (NearTries > 0) { ++RwgRkSpiralAfterNear; }
+                if (RwgRocksSampleSlot())
+                {
+                    UE_LOG(LogNodeShuffle, Display, TEXT("ROCKNEAR: entry=%s search=%s step=%d of %d moveM=%.1f primaryRockRefused=%d to=%s"),
+                        *Entry.EntryGuid.ToString().Left(8), bNear ? TEXT("near") : TEXT("spiral"), Step + 1, NearTries + LandRelocationTries,
+                        RwgRocksLastMoveCm / 100.0f, bPrimaryRockRefused ? 1 : 0, *TryLoc.ToCompactString());
+                }
                 Entry.Location = TryLoc; // persist the corrected location (stable thereafter)
                 Entry.bRwgOnSolidTop = bRwgLastProbeTopAccepted; // rwg-clifftop-1: the winning spiral probe's own accept signal
                 Entry.Rotation = TryRot;
                 return true;
             }
         }
+        if (NearTries > 0) { ++RwgRkNoSpotAfterNear; }
         // playtest-fixes-1 / steepfix-1: definitive UNPLACEABLE spot (water or cliffside with no flat
         // land in the spiral) — report it so the caller redeals instead of retrying forever. Detail
         // log once per entry per session (was 22k lines).

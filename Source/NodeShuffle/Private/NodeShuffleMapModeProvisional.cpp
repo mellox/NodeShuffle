@@ -270,10 +270,11 @@ void ANodeShuffleSubsystem::RwgSettleProvisional(FNodeShuffleEntry& E, bool& bCh
         ++RwgProvSettleSamples;
         // movedXYm: from the provisional actor to the respawned actor (inPlace), else to the entry's location after this call.
         const FVector MovedTo = bFresh ? FreshAt : E.Location;
-        UE_LOG(LogNodeShuffle, Display, TEXT("PROVSETTLE: entry=%s res=%s provZ=%.0f settledZ=%.0f dzCm=%.0f movedXYm=%.1f outcome=%s hitClass=%d apiUsed=%d onSolidTop=%d localMapRevealsBefore=%d localMapRevealsAfter=%d serverMapRevealsBefore=%d serverMapRevealsAfter=%d moveCheck=%s origin=%s"),
+        UE_LOG(LogNodeShuffle, Display, TEXT("PROVSETTLE: entry=%s res=%s provZ=%.0f settledZ=%.0f dzCm=%.0f movedXYm=%.1f outcome=%s hitClass=%d apiUsed=%d onSolidTop=%d localMapRevealsBefore=%d localMapRevealsAfter=%d serverMapRevealsBefore=%d serverMapRevealsAfter=%d moveCheck=%s origin=%s firstHit=%s sideways=%s sidewaysM=%.1f"),
             *E.EntryGuid.ToString(), *ProvShort(E.AssignedResourceClassPath), ProvAt.Z, SettledZ, SettledZ - ProvAt.Z,
             FVector::Dist2D(MovedTo, ProvAt) / 100.0, Outcome, HitClass, bApiUsed ? 1 : 0, E.bRwgOnSolidTop ? 1 : 0,
-            LocalRevealsBefore, LocalRevealsAfter, ServerRevealsBefore, ServerRevealsAfter, MoveCheck, RwgProvisionalOriginName(E.EntryGuid));
+            LocalRevealsBefore, LocalRevealsAfter, ServerRevealsBefore, ServerRevealsAfter, MoveCheck, RwgProvisionalOriginName(E.EntryGuid),
+            *RwgRocksLastFirstHitText(), RwgRocksLastMoveName(), RwgRocksLastMoveCm / 100.0f); // ns-rocks-1 C1/C2: this settle's own first hit and sideways move
     }
 }
 

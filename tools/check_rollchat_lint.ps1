@@ -4,7 +4,7 @@
 # LOADS every file the packet touched: NodeShuffleRollChat.cpp, NodeShuffleSubsystem.cpp/.h, NodeShuffle.cpp, NodeShuffleBuildMarkers.h,
 # NodeShuffleMapModePlace.cpp (the deal-pass file, to prove no call lives there), and the three lints it edited
 # (check_rerollwipe_lint, check_mcpcontract_lint, check_rwg020_lint).
-#   RC1  marker: newest in the markers header, once on its own line in NodeShuffle.cpp, absent from the packet's source files
+#   RC1  marker: listed in the markers header (newest until ns-rocks-1), once on its own line in NodeShuffle.cpp, absent from the packet's source files
 #   RC2  ONE post-shuffle point: exactly one queue call, the last statement of RollLayout after EmitRollCensus and the REROLLAUDIT call;
 #        no call in the deal-pass file; one definition, one declaration
 #   RC3  not on a plain load: rows are appended only in RollChatQueueBreakdown; the row member is not UPROPERTY (never saved); the
@@ -118,7 +118,7 @@ function Invoke-Checks($T) {
     $rowFn = Span $T.chat $rowSig "`n    }`n"
     # RC1
     $hdrTags = @([regex]::Matches($T.mark, 'TEXT\("(20\d\d-\d\d-\d\d-[\w-]+)"\),') | ForEach-Object { $_.Groups[1].Value })
-    if ($hdrTags.Count -eq 0 -or $hdrTags[-1] -ne $marker) { $f += '(RC1) marker must be the newest entry in the markers header' }
+    if ($hdrTags -notcontains $marker) { $f += '(RC1) marker must stay listed in the markers header (ns-rocks-1 is newer)' }
     if ((Count $T.nsmod ('packet marker (' + $marker + ')=====')) -ne 1) { $f += '(RC1) marker once on its own line in NodeShuffle.cpp' }
     if ((Count $T.chat $marker) -ne 0 -or (Count $T.sub $marker) -ne 0 -or (Count $T.subh $marker) -ne 0) { $f += '(RC1) no marker inside the packet source files' }
     # RC2
@@ -168,7 +168,7 @@ function Invoke-Checks($T) {
     if ((Count $T.chat 'UFGItemDescriptor::GetItemName(TSubclassOf<UFGItemDescriptor>(Cls)).ToString()') -ne 1) { $f += '(RC9) display name through GetItemName' }
     # RC10
     if (-not $T.lwipe.Contains('RollChatQueue' + 'Breakdown(bIsReroll, ActiveCount); // ns-rollchat-1')) { $f += '(RC10) check_rerollwipe R11 must pin the queue call as the statement after the audit' }
-    if (-not $T.lmcp.Contains("`$own = '2026-11-14-' + 'rollchat-1'")) { $f += '(RC10) check_mcpcontract C4 must name this packet marker as the newest' }
+    if (-not $T.lmcp.Contains('# ns-rollchat-1: no longer the newest; pinned present (check_rollchat_lint RC1)')) { $f += '(RC10) check_mcpcontract C4 must carry the no-longer-newest note for this marker' }
     if (-not $T.l020.Contains("-not `$T.lmcp.Contains('# rwg-0-2-0-2: no longer the newest; pinned present')")) { $f += '(RC10) check_rwg020 G8 must anchor on the no-longer-newest note' }
     # RC11
     if ((Count $T.chat $rowBody) -ne 1 -or (Count $T.chat $rowSig) -ne 1) { $f += '(RC11) the one count-first row builder: count, then 2*M-2 (header) or 8+2*(M-digits) spaces, then the label' }
@@ -219,10 +219,10 @@ $mutants = @(
     @{ Name = 'M8 sorted by count';                    Key = 'chat';  Expect = 'RC5';  Find = $sortName; Repl = ('const int32 ByName = B.' + 'Nodes - A.' + 'Nodes;') }
     @{ Name = 'M9 direct broadcast';                   Key = 'chat';  Expect = 'RC6';  Find = '        ++RollChatAttempts;'; Repl = ('        ++RollChatAttempts; // ' + 'BroadcastChat' + 'Message') }
     @{ Name = 'M10 legend syntax in summary';          Key = 'chat';  Expect = 'RC8';  Find = 'censusActive %d nodesReconciled'; Repl = ('censusActive' + '=%d nodesReconciled') }
-    @{ Name = 'M11 marker not newest';                 Key = 'mark';  Expect = 'RC1';  Find = ('        TEXT("' + $marker + '"),'); Repl = '' }
+    @{ Name = 'M11 marker dropped from header';        Key = 'mark';  Expect = 'RC1';  Find = ('        TEXT("' + $marker + '"),'); Repl = '' }
     @{ Name = 'M12 tick call removed';                 Key = 'sub';   Expect = 'RC7';  Find = '        TickRollChatEmitter();'; Repl = '       ' }
     @{ Name = 'M13 rerollwipe lint unpins the call';   Key = 'lwipe'; Expect = 'RC10'; Find = ('RollChatQueue' + 'Breakdown(bIsReroll, ActiveCount); // ns-rollchat-1'); Repl = 'X' }
-    @{ Name = 'M14 mcpcontract newest reverted';       Key = 'lmcp';  Expect = 'RC10'; Find = "'2026-11-14-' + 'rollchat-1'"; Repl = "'2026-11-13-' + 'rwg-0-2-0-2'" }
+    @{ Name = 'M14 mcpcontract note dropped';          Key = 'lmcp';  Expect = 'RC10'; Find = '# ns-rollchat-1: no longer the newest; pinned present'; Repl = '' } # ns-rocks-1 (2026-11-14): newest moved on
     @{ Name = 'M15 teardown clear removed';            Key = 'sub';   Expect = 'RC7';  Find = $teardown; Repl = '   ' }
     @{ Name = 'M16 several rows per fire';             Key = 'chat';  Expect = 'RC12'; Find = ('    if (!' + $postCall + ')'); Repl = ('    for (int32 k = 0; k < 1; ++k) {}' + "`n    if (!" + $postCall + ')') }
     @{ Name = 'M17 looping timer';                     Key = 'chat';  Expect = 'RC12'; Find = $armOnce; Repl = $armOnce.Replace('false);', ('tr' + 'ue);')) }

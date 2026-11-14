@@ -338,6 +338,7 @@ bool ANodeShuffleSubsystem::RwgResolveAtSpawn(FNodeShuffleEntry& Entry, bool& bO
         if (RwgProbeFirstClass == 0) { ++RwgPcFarTerrain; } else if (RwgProbeFirstClass == 1) { ++RwgPcFarCanopy; }
         else if (RwgProbeFirstClass == 2) { ++RwgPcFarWater; } else if (RwgProbeFirstClass == 4) { ++RwgPcFarSolid; } else { ++RwgPcFarOther; }
     }
+    RwgRocksRecordSettle(bSettled || bOutWaterNoLand, /*bCompleted=*/false); // ns-rocks-1 C1: first-hit bins (a no-hit defer is counted, not binned)
     if (!bSettled)
     {
         if (!bOutWaterNoLand) { ++RwgPcNoTerrainDefer; } else { RwgSteepNoteUnplaceable(Q, Entry); } // rwg-steep-1: re-probe the primary, arm the ring (NodeShuffleMapModeSteep.cpp)
@@ -368,6 +369,7 @@ bool ANodeShuffleSubsystem::RwgResolveAtSpawn(FNodeShuffleEntry& Entry, bool& bO
     ++RwgPcSettledTerrain; RwgPcSettledOnSolidTop += Entry.bRwgOnSolidTop ? 1 : 0; // settledOnTerrain counts every settle; settledOnSolidTop is the subset
     if (Entry.bRwgOnSolidTop) { RwgRecordSolidTopDz(Entry.RwgApiToTerrainDzCm); } else { RwgRecordDz(Entry.Location, Entry.RwgApiToTerrainDzCm); } // rwg-clifftop-1: PLACEDZ split by the marker
     RwgNoteSettledInsideCave(Q, Entry); // RWG P5: settledInsideCave census (surface entries; cave entries count in RwgResolveCaveAtSpawn)
+    RwgRocksRecordSettle(true, /*bCompleted=*/true); // ns-rocks-1 C2: a sideways move is counted only when the resolve kept it
     return true;
 }
 

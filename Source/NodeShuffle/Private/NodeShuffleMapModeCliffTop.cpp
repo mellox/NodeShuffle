@@ -21,6 +21,7 @@
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Buildables/FGBuildable.h"
+#include "NodeShuffleRocks.h" // ns-rocks-1 rule B constants (the test itself lives in NodeShuffleMapModeRocks.cpp)
 
 namespace
 {
@@ -89,6 +90,10 @@ bool ANodeShuffleSubsystem::RwgSolidTopTryAccept(const FHitResult& Hit, double T
     else if (!bFootprint) { ++RwgPcSolidTopRejFootprint; Reject = TEXT("footprint"); }
     else if (!bGentle) { ++RwgPcSolidTopRejNormal; Reject = TEXT("normal"); }
     const bool bAccepted = bGuard && bClearAbove && bFootprint && bGentle;
+    // ns-rocks-1 rule B (NodeShuffleMapModeRocks.cpp): a top that passed every gate above but lies more than NodeShuffleRocks::SunkenMarginCm
+    // below RWG's API surface must also have its 4 footprint columns clear from the TRACE START down (not only from 4 m above the hit).
+    const bool bSunkenRefused = bAccepted && RwgRocksSunkenRefuses(Hit, TraceStartZ, Params, RingCm);
+    if (bSunkenRefused) { Reject = TEXT("sunkenColumn"); }
     if (RwgCliffTopSamples < RwgCliffTopSampleCap && FNodeShuffleModule::AreDiagnosticsEnabled())
     {
         ++RwgCliffTopSamples;
@@ -101,9 +106,10 @@ bool ANodeShuffleSubsystem::RwgSolidTopTryAccept(const FHitResult& Hit, double T
         UE_LOG(LogNodeShuffle, Display,
             TEXT("RWGCLIFFTOP: sample=%d via=%s entry=%s at=%.0f/%.0f res=%s hitMesh=%s smoothedRiseRun=%.2f hitZ=%.0f apiZ=%.0f dzCm=%.0f startZ=%.0f startPenetrating=%d normalZ=%.3f smoothedNormalZ=%.3f gateNormalZ=%.3f outerProbesSameMesh=%d/4 steepOuterProbes=%d accepted=%d rejectReason=%s aboveComponent=%s"),
             RwgCliffTopSamples, RwgSolidTopVia, *RwgSolidTopGuid.ToString().Left(8), P.X, P.Y, *RwgCliffTopShort(RwgSolidTopRes), *MeshName, RiseRun, P.Z, ApiZ,
-            P.Z - ApiZ, TraceStartZ, bStartPen ? 1 : 0, Hit.ImpactNormal.Z, N.Z, MinNormalZ, SameMesh, SameMeshSteep, bAccepted ? 1 : 0, Reject, *AboveMesh);
+            P.Z - ApiZ, TraceStartZ, bStartPen ? 1 : 0, Hit.ImpactNormal.Z, N.Z, MinNormalZ, SameMesh, SameMeshSteep, (bAccepted && !bSunkenRefused) ? 1 : 0, Reject, *AboveMesh);
     }
     if (!bAccepted) { return false; }
+    if (bSunkenRefused) { return false; } // ns-rocks-1 rule B: refused like any other top -> the settle's near search, then the spiral
     // Accepted: the terrain path's outputs, from this hit.
     bRwgLastProbeTopAccepted = true;
     ++RwgPcSolidTopAccepted;

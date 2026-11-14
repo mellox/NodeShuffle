@@ -116,6 +116,7 @@ void ANodeShuffleSubsystem::RwgSpawnPass(float SpawnRadiusCm, bool& bChangedWorl
             RwgPcFallback, AttemptRadiusCm / 100.f, SpawnRadiusCm / 100.f, Layout.Num(), RwgPcCaveSettleTried, RwgPcCaveSettled, RwgPcCaveDeferred, RwgPcCaveEscaped,
             RwgPcCaveFar, RwgPcCaveSolid, RwgPcCaveWater, RwgPcCaveRedealCave, RwgPcCaveRedealSurface, RwgPcInsideCaveChecked, RwgPcSettledInsideCave, RwgPcSettledInsideCaveSurfaceEntry,
             RwgPcSteepRing, RwgPcSteepMapwide, RwgPcSteepOccluded, RwgPcSteepOccludedRing, RwgPcSettledOnSolidTop, RwgPcSolidTopAccepted, RwgPcSolidTopRejStartInside, RwgPcSolidTopRejNormal, RwgPcSolidTopRejFootprint, RwgPcProvSpawned, RwgPcProvSettled);
+        RwgRocksEmitCensus(); // ns-rocks-1 C: ROCKFIRSTHIT / ROCKSIZE / ROCKMOVE / ROCKSUNKEN-CENSUS session totals, on the PLACECENSUS cadence
         RwgEmitDzCensus(); // RWG P2c: session apiToTerrainDz distribution by band, emitted with PLACECENSUS
     }
     NodeShuffleRwgTraceDiag::EmitPassCensus(RwgPcPasses, RwgPcAttempted, RwgPcSettledTerrain, RwgPcNoTerrainDefer, DeferredThisPass - DeferredBefore); // rwg-trace-diag-1: before RwgEmitPlaceCensus resets the counters
