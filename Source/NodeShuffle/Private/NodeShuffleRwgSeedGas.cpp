@@ -87,7 +87,7 @@ namespace NodeShuffleRwgSeedGas
             TEXT("on the vanilla map. That number is scaled by how many vanilla ore nodes this world has compared with the vanilla ")
             TEXT("map and replaces the resource's own node count in the shuffle. A gas resource with no node on this world gets new ")
             TEXT("nodes of its own node class (one NodeShuffle finds in that resource's mod, otherwise the class in the row); if ")
-            TEXT("neither is usable, nothing is added. Pre-filled: Lead 6, Lithium 23, Thorium 45."));
+            TEXT("neither is usable, nothing is added. Pre-filled: Lead 6, Lithium 23, Thorium 20 (thorium is set below the 45 counted on a vanilla map)."));
 
         UConfigPropertySection* RowTemplate = NewObject<UConfigPropertySection>(Rows, SectionClass, TEXT("ModdedVanillaCountRow"));
         RowTemplate->bRequiresWorldReload = true;

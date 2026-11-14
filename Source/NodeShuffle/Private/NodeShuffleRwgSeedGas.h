@@ -40,7 +40,7 @@ namespace NodeShuffleRwgSeedGas
     extern const TCHAR* const DefaultLithiumNodeClass;
     constexpr int32 DefaultLithiumVanillaCount = 23;
     extern const TCHAR* const DefaultThoriumResource;
-    constexpr int32 DefaultThoriumVanillaCount = 45;
+    constexpr int32 DefaultThoriumVanillaCount = 20;  // user choice 2026-11-14: deliberately below the 45 counted on one vanilla-map save
     constexpr int32 RwgBaseSolidNodes = 429;  // RWG's documented base-map solid-node count at 1x (amendment A1)
     constexpr float VanillaOreScaleMin = 0.25f;
     constexpr float VanillaOreScaleMax = 4.0f;
