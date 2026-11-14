@@ -1423,15 +1423,18 @@ private:
     // this actor, so a later load cannot post numbers from an earlier roll.
     mutable int32 RollChatCensusActiveEntries = -1;
     void RollChatQueueBreakdown(bool bIsReroll, int32 RolledLineActive);  // the last statement of RollLayout: after every deal pass
-    void TickRollChatEmitter();                   // every RefreshTick, beside the other two notice emitters
-    void RollChatNoteFirstApply() const;          // once per session (first apply); Verbose only
-    TArray<FString> RollChatPendingBodies;        // composed messages not yet accepted by PostChatNotice
-    FString RollChatSummary;                      // the measured counts, carried into the ROLLCHAT outcome line
+    void TickRollChatEmitter();                   // every RefreshTick, beside the other two notice emitters: Waiting/Stalled -> Draining
+    void RollChatDrainStep();                     // the drain timer's callback: posts ONE row, re-arms itself
+    void RollChatClear(const TCHAR* Why);         // stops the drain and drops unsent rows (new roll, give-up, EndPlay)
+    void RollChatNoteFirstApply() const;          // first apply after each load or roll; Verbose only
+    TArray<FString> RollChatRows;                 // the opening line, header, resource rows, Total -- one chat message each
+    int32 RollChatNext = 0;                       // index of the next row to post; advances only on acceptance
+    FTimerHandle RollChatDrainTimer;              // one-shot, re-armed per accepted row (RollChatRowGapSeconds)
+    double RollChatStartSeconds = 0.0;            // drain start, for ROLLCHAT-DONE's elapsed time
+    FString RollChatSummary;                      // the measured counts, carried into the ROLLCHAT outcome lines
     bool bRollChatTotalsMatch = true;
-    int32 RollChatComposed = 0;
-    int32 RollChatAccepted = 0;
-    int32 RollChatGateTicks = -1;                 // -1 nothing armed; 0 player seen, hold one tick; then post
-    int32 RollChatAttempts = 0;
+    int32 RollChatGateTicks = -1;                 // -1 nothing armed; 0 player seen, hold one tick; then drain
+    int32 RollChatAttempts = 0;                   // refusals by the emitter for this table
     // redesign-1: before a re-roll, UN-HIDE every previously-suppressed original node (and its
     // mesh actor) that is streamed in, so the world returns to its pristine state before the new
     // layout re-hides per the new roll. Nothing was ever destroyed (whole-actor hide is reversible),

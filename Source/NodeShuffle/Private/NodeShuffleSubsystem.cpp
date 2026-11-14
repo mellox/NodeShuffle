@@ -272,6 +272,7 @@ void ANodeShuffleSubsystem::BeginPlay()
 void ANodeShuffleSubsystem::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
     GetWorldTimerManager().ClearTimer(TickTimerHandle);
+    RollChatClear(TEXT("world teardown")); // ns-rollchat-1: stop the row drain; unsent rows are dropped and counted
     FlushWaterGridIfDirty(); // playtest-fixes-3: persist learned water cells on session end
     FlushCaveStoreIfDirty(); // cave-nodes-1: persist discovered cavern floors on session end
     Super::EndPlay(EndPlayReason);
@@ -367,7 +368,7 @@ void ANodeShuffleSubsystem::RefreshTick()
         {
             bDidInitialApply = true;
             LogLayoutSummary();
-            RollChatNoteFirstApply(); // ns-rollchat-1: one Verbose line per session; posts nothing
+            RollChatNoteFirstApply(); // ns-rollchat-1: one Verbose line per first apply (load or roll); posts nothing
         }
         // knowledge-1 item 1: once per load (and once more after a re-roll — RollLayout re-arms the
         // flag), after the layout is applied and resource classes resolve: register managed MODDED

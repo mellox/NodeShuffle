@@ -1,22 +1,27 @@
-# check_rollchat_lint.ps1 -- ns-rollchat-1 (2026-11-14): the post-shuffle chat breakdown.
-# Handoff: _team/test-logs/2026-11-14-nodeshuffle-rollchat-1-handoff.md
+# check_rollchat_lint.ps1 -- ns-rollchat-1 (2026-11-14): the post-shuffle chat breakdown (round 2: two-column fixed-width table,
+# one row per chat message, paced drain). Handoff: _team/test-logs/2026-11-14-nodeshuffle-rollchat-1-handoff.md
 #
-# LOADS every file the packet touched: NodeShuffleRollChat.cpp, NodeShuffleSubsystem.cpp/.h, NodeShuffle.cpp,
-# NodeShuffleBuildMarkers.h, and NodeShuffleMapModePlace.cpp (the deal-pass file, to prove no call lives there).
-#   RC1 marker: newest in the markers header, once on its own line in NodeShuffle.cpp, absent from the packet's source files
-#   RC2 ONE post-shuffle point: exactly one queue call, inside RollLayout, after EmitRollCensus and the REROLLAUDIT call, as
-#       RollLayout's last statement; no call in the deal-pass file (GenerateRwgLocations) nor anywhere else
-#   RC3 not on a plain load: the queue is written only by RollChatQueueBreakdown; the queue member is not UPROPERTY (never saved);
-#       the first-apply note posts nothing and writes no queue
-#   RC4 reconcile: EmitRollCensus stashes its `active` figure after its counting loop and before the ROLLCENSUS line; the breakdown
-#       compares named+no-resource against it, reads it once (reset to -1), and the wells total against WellLayout.Num()
-#   RC5 order: alphabetical by display name, case-insensitive, class-path tie-break; the count is not a sort key
-#   RC6 one emitter: the file posts only through PostChatNotice (tag ROLLCHAT); it builds no chat struct and calls no broadcast
-#   RC7 tick site beside the other notice emitters; the first-apply note after LogLayoutSummary
-#   RC8 diagnostics: ROLLCHAT-QUEUED, ROLLCHAT-BODY, the outcome line and its two Warning variants; no field=value legend in the summary
-#   RC10 the edited lints (also LOADED): rerollwipe R11 pins the queue call after the audit; mcpcontract C4 names this marker;
-#        rwg020 G8 anchors on its no-longer-newest note
-#   RC9 RollChat.cpp under 500 lines; display name through UFGItemDescriptor::GetItemName
+# LOADS every file the packet touched: NodeShuffleRollChat.cpp, NodeShuffleSubsystem.cpp/.h, NodeShuffle.cpp, NodeShuffleBuildMarkers.h,
+# NodeShuffleMapModePlace.cpp (the deal-pass file, to prove no call lives there), and the three lints it edited
+# (check_rerollwipe_lint, check_mcpcontract_lint, check_rwg020_lint).
+#   RC1  marker: newest in the markers header, once on its own line in NodeShuffle.cpp, absent from the packet's source files
+#   RC2  ONE post-shuffle point: exactly one queue call, the last statement of RollLayout after EmitRollCensus and the REROLLAUDIT call;
+#        no call in the deal-pass file; one definition, one declaration
+#   RC3  not on a plain load: rows are appended only in RollChatQueueBreakdown; the row member is not UPROPERTY (never saved); the
+#        first-apply note posts nothing and queues nothing; the queue function never posts
+#   RC4  reconcile: EmitRollCensus stashes its `active` figure; the breakdown reads it once, resets it, compares NodeTotal to it, and the
+#        Total row prints NodeTotal; the wells self-comparison is gone (review F2)
+#   RC5  order: alphabetical by display name, case-insensitive, class-path tie-break; the count is not a sort key
+#   RC6  one emitter: posts only through PostChatNotice (tag ROLLCHAT), one row per call; no chat struct, no broadcast
+#   RC7  tick site beside the other notice emitters; the first-apply note after LogLayoutSummary; EndPlay clears the drain (teardown)
+#   RC8  diagnostics: ROLLCHAT-QUEUED (with widths), ROLLCHAT-BODY delimited, ROLLCHAT-DONE and its Warning variant; no field=value legend
+#   RC9  RollChat.cpp under 500 lines; display name through UFGItemDescriptor::GetItemName
+#   RC10 the edited lints: rerollwipe R11 pins the queue call after the audit; mcpcontract C4 names this marker; rwg020 G8 its note
+#   RC11 the two-column fixed-width composer: one row builder (name padded right, two spaces, count padded left); both widths computed
+#        from this table; header, (no resource) and Total rows go through it; the old pipe/three-column, grouped/numbered and wells
+#        shapes are absent
+#   RC12 paced drain: one one-shot timer per row (never looping), one post per timer fire, no loop in the step; index advances after acceptance
+#   RC13 drop-on-new-roll: the queue function first clears any table still draining; the clear stops the timer, logs the drop, resets
 # Mutants run in-file. Exit 0 = all hold and every mutant is caught; 1 = a check failed or a mutant survived; 2 = a pinned file is missing.
 
 $ErrorActionPreference = 'Stop'
@@ -30,7 +35,6 @@ $files = [ordered]@{
     mark  = 'NodeShuffle\Private\NodeShuffleBuildMarkers.h'
     place = 'NodeShuffle\Private\NodeShuffleMapModePlace.cpp'
 }
-# The three existing lints this packet edited, loaded so their new pins are pinned here too (RC10).
 $lintFiles = [ordered]@{
     lwipe = 'check_rerollwipe_lint.ps1'
     lmcp  = 'check_mcpcontract_lint.ps1'
@@ -60,21 +64,44 @@ function Span([string]$t, [string]$a, [string]$b) {
     return $t.Substring($i, $j - $i)
 }
 
-$marker    = '2026-11-14-' + 'rollchat-1'
-$queueCall = '    RollChatQueueBreakdown(bIsReroll, ActiveCount); // ns-rollchat-1: post-shuffle chat breakdown; after every deal pass and the census, once per roll'
-$auditLine = '    RerollWipeEmitListAudit(bIsReroll, AuditNotYieldedBeforeWipe);'
+$marker     = '2026-11-14-' + 'rollchat-1'
+$queueCall  = '    RollChatQueueBreakdown(bIsReroll, ActiveCount); // ns-rollchat-1: post-shuffle chat breakdown; after every deal pass and the census, once per roll'
+$auditLine  = '    RerollWipeEmitListAudit(bIsReroll, AuditNotYieldedBeforeWipe);'
 $censusCall = '    EmitRollCensus(Seed, bIsReroll, PoolSize, TargetActive, VanillaCount, NewLocations.Num(),'
-$stash     = '    RollChatCensusActiveEntries = ActiveEntries; // ns-rollchat-1'
-$reconcile = '    const bool bNodesMatch = CensusActive >= 0 && NodesNamed + NodesNoResource == CensusActive;'
-$wellsRec  = '    const bool bWellsMatch = WellsNamed + WellsNoResource == WellLayout.Num();'
-$readOnce  = '    RollChatCensusActiveEntries = -1;'
-$sortName  = 'const int32 ByName = A.Name.Compare(B.Name, ESearchCase::IgnoreCase);'
-$sortTie   = 'return A.ClassPath.Compare(B.ClassPath, ESearchCase::CaseSensitive) < 0;'
-$summaryFmt = 'TEXT("trigger %s | nodeResources %d nodeTotal %d nodesNoResource %d censusActive %d nodesReconciled %d rolledLineActive %d | wellResources %d wellTotal %d wellsNoResource %d wellLayoutEntries %d wellsReconciled %d | nameFallbacks %d"),'
-$queueDecl = '    TArray<FString> RollChatPendingBodies;'
+$stash      = '    RollChatCensusActiveEntries = ActiveEntries; // ns-rollchat-1'
+$reconcile  = '    const bool bNodesMatch = CensusActive >= 0 && NodeTotal == CensusActive;'
+$nodeTotal  = '    const int32 NodeTotal = NodesNamed + NodesNoResource;'
+$readOnce   = '    RollChatCensusActiveEntries = -1;'
+$sortName   = 'const int32 ByName = A.Name.Compare(B.Name, ESearchCase::IgnoreCase);'
+$sortTie    = 'return A.ClassPath.Compare(B.ClassPath, ESearchCase::CaseSensitive) < 0;'
+$summaryFmt = 'TEXT("trigger %s | rows %d resources %d | nodeTotal %d nodesNoResource %d censusActive %d nodesReconciled %d rolledLineActive %d | wellLayoutEntries %d | nameWidth %d countWidth %d lineLength %d | nameFallbacks %d"),'
+$rowsDecl   = '    TArray<FString> RollChatRows;'
+$rowBody    = "        return Name + FString::ChrN(NameWidth - Name.Len(), TEXT(' ')) + TEXT(`"  `")`n             + FString::ChrN(CountWidth - Count.Len(), TEXT(' ')) + Count;"
+$hdrRow     = 'RollChatRows.Add(RollChatFixedRow(TEXT("Resource"), TEXT("Count"), NameWidth, CountWidth));'
+$totalRow   = 'RollChatRows.Add(RollChatFixedRow(TEXT("Total"), FString::FromInt(NodeTotal), NameWidth, CountWidth));'
+$noResRow   = 'RollChatRows.Add(RollChatFixedRow(NoResourceLabel, FString::FromInt(NodesNoResource), NameWidth, CountWidth));'
+$resRow     = 'RollChatRows.Add(RollChatFixedRow(R.Name, FString::FromInt(R.Nodes), NameWidth, CountWidth));'
+$opening    = 'RollChatRows.Add(FString::Printf(TEXT("New layout (%s), counted at the shuffle:"), Trigger));'
+$widths     = @('int32 NameWidth = FMath::Max(FCString::Strlen(TEXT("Resource")), FCString::Strlen(TEXT("Total")));',
+                'int32 CountWidth = FCString::Strlen(TEXT("Count"));',
+                'NameWidth = FMath::Max(NameWidth, R.Name.Len());',
+                'CountWidth = FMath::Max(CountWidth, FString::FromInt(R.Nodes).Len());',
+                'NameWidth = FMath::Max(NameWidth, NoResourceLabel.Len());',
+                'CountWidth = FMath::Max(CountWidth, FString::FromInt(NodesNoResource).Len());',
+                'CountWidth = FMath::Max(CountWidth, FString::FromInt(NodeTotal).Len());')
+$postCall   = 'FNodeShuffleModule::PostChatNotice(World, RollChatRows[RollChatNext], TEXT("ROLLCHAT"))'
+$armOnce    = 'World->GetTimerManager().SetTimer(RollChatDrainTimer, this, &ANodeShuffleSubsystem::RollChatDrainStep,' + "`n" + '        RollChatRowGapSeconds, false);'
+$armNext    = 'World->GetTimerManager().SetTimer(RollChatDrainTimer, this, &ANodeShuffleSubsystem::RollChatDrainStep,' + "`n" + '            RollChatRowGapSeconds, false);'
+$supersede  = '    RollChatClear(TEXT("superseded by a new roll"));'
+$teardown   = '    RollChatClear(TEXT("world teardown"));'
 
 function Invoke-Checks($T) {
     $f = @()
+    $qb    = Span $T.chat 'void ANodeShuffleSubsystem::RollChatQueueBreakdown(bool bIsReroll, int32 RolledLineActive)' 'void ANodeShuffleSubsystem::TickRollChatEmitter()'
+    $tick  = Span $T.chat 'void ANodeShuffleSubsystem::TickRollChatEmitter()' 'void ANodeShuffleSubsystem::RollChatDrainStep()'
+    $step  = Span $T.chat 'void ANodeShuffleSubsystem::RollChatDrainStep()' 'void ANodeShuffleSubsystem::RollChatNoteFirstApply() const'
+    $clear = Span $T.chat 'void ANodeShuffleSubsystem::RollChatClear(const TCHAR* Why)' 'void ANodeShuffleSubsystem::RollChatQueueBreakdown('
+    $note  = Span $T.chat 'void ANodeShuffleSubsystem::RollChatNoteFirstApply() const' "`n}`n"
     # RC1
     $hdrTags = @([regex]::Matches($T.mark, 'TEXT\("(20\d\d-\d\d-\d\d-[\w-]+)"\),') | ForEach-Object { $_.Groups[1].Value })
     if ($hdrTags.Count -eq 0 -or $hdrTags[-1] -ne $marker) { $f += '(RC1) marker must be the newest entry in the markers header' }
@@ -86,71 +113,97 @@ function Invoke-Checks($T) {
     if ($roll -eq '') { $f += '(RC2) RollLayout span missing' }
     elseif ((Count $roll $callTok) -ne 1 -or -not (Ordered $roll @($censusCall, $auditLine, ($queueCall + "`n}`n")))) { $f += '(RC2) one queue call, the last statement of RollLayout, after EmitRollCensus and the audit' }
     if ((Count $T.sub $callTok) -ne 1 -or (Count $T.place $callTok) -ne 0 -or (Count $T.chat $callTok) -ne 1 -or (Count $T.subh $callTok) -ne 1) { $f += '(RC2) the queue call exists once (RollLayout); never in the deal-pass file; one definition, one declaration' }
+    if ((Count $T.subh 'void RollChatQueueBreakdown(bool bIsReroll, int32 RolledLineActive);') -ne 1) { $f += '(RC2) the queue declaration' }
     # RC3
-    $qWrite = 'RollChatPendingBodies = '
-    if ((Count $T.chat $qWrite) -ne 1 -or (Count $T.sub $qWrite) -ne 0 -or (Count $T.sub 'RollChatPendingBodies') -ne 0) { $f += '(RC3) the queue is written only in RollChatQueueBreakdown' }
-    if ((Count $T.subh $queueDecl) -ne 1 -or [regex]::IsMatch($T.subh, 'UPROPERTY[^\n]*\n?\s*TArray<FString> RollChatPendingBodies')) { $f += '(RC3) the queue member is plain (not UPROPERTY, never saved)' }
-    $note = Span $T.chat 'void ANodeShuffleSubsystem::RollChatNoteFirstApply() const' "`n}`n"
-    if ($note -eq '' -or (Count $note ('PostChat' + 'Notice')) -ne 0 -or (Count $note 'RollChatPendingBodies.Add') -ne 0) { $f += '(RC3) the first-apply note posts nothing and queues nothing' }
-    $qb = Span $T.chat 'void ANodeShuffleSubsystem::RollChatQueueBreakdown(bool bIsReroll, int32 RolledLineActive)' 'void ANodeShuffleSubsystem::TickRollChatEmitter()'
+    if ($qb -eq '' -or (Count $T.chat 'RollChatRows.Add(') -ne (Count $qb 'RollChatRows.Add(') -or (Count $T.sub 'RollChatRows') -ne 0) { $f += '(RC3) rows are appended only in RollChatQueueBreakdown' }
+    if ((Count $T.subh $rowsDecl) -ne 1 -or [regex]::IsMatch($T.subh, 'UPROPERTY[^\n]*\n?\s*TArray<FString> RollChatRows')) { $f += '(RC3) the row member is plain (not UPROPERTY, never saved)' }
+    if ($note -eq '' -or (Count $note ('PostChat' + 'Notice')) -ne 0 -or (Count $note 'RollChatRows.Add') -ne 0) { $f += '(RC3) the first-apply note posts nothing and queues nothing' }
     if ($qb -eq '' -or (Count $qb ('PostChat' + 'Notice')) -ne 0) { $f += '(RC3) the queue function never posts (posting waits for the tick gates)' }
     # RC4
     $census = Span $T.sub 'void ANodeShuffleSubsystem::EmitRollCensus(' 'void ANodeShuffleSubsystem::GenerateNewLocations('
     if ($census -eq '' -or -not (Ordered $census @('++ActiveEntries;', $stash, 'TEXT("ROLLCENSUS: seed=%d reroll=%d '))) { $f += '(RC4) EmitRollCensus stashes its active figure after counting and before printing it' }
     if ((Count $T.sub 'RollChatCensusActiveEntries') -ne 1) { $f += '(RC4) only the stash writes the census figure in Subsystem.cpp' }
-    if ($qb -eq '' -or -not (Ordered $qb @('const int32 CensusActive = RollChatCensusActiveEntries;', $readOnce, $reconcile, $wellsRec))) { $f += '(RC4) reconcile: read the stash once, reset it, compare nodes and wells' }
+    if ($qb -eq '' -or -not (Ordered $qb @('const int32 CensusActive = RollChatCensusActiveEntries;', $readOnce, $nodeTotal, $reconcile, $totalRow))) { $f += '(RC4) reconcile: read the stash once, reset it, NodeTotal compared and printed in the Total row' }
     if ((Count $T.subh 'mutable int32 RollChatCensusActiveEntries = -1;') -ne 1) { $f += '(RC4) the stash member declaration' }
+    if ((Count $T.chat ('wells' + 'Reconciled')) -ne 0 -or (Count $T.chat ('bWells' + 'Match')) -ne 0) { $f += '(RC4) the wells self-comparison must stay gone (review F2)' }
     # RC5
-    $rows = Span $T.chat 'TArray<FRollChatRow> RollChatRows(' 'void RollChatAppendGroups('
+    $rows = Span $T.chat 'TArray<FRollChatRow> RollChatTableRows(' 'FString RollChatFixedRow('
     if ($rows -eq '' -or -not (Ordered $rows @('Rows.StableSort(', $sortName, 'if (ByName != 0) { return ByName < 0; }', $sortTie))) { $f += '(RC5) alphabetical stable sort on the display name, class-path tie-break' }
-    if ($rows -ne '' -and ((Count $rows ('A.' + 'Count')) -ne 0 -or (Count $rows ('B.' + 'Count')) -ne 0)) { $f += '(RC5) the count must not be a sort key' }
+    if ($rows -ne '' -and ((Count $rows ('A.' + 'Nodes')) -ne 0 -or (Count $rows ('B.' + 'Nodes')) -ne 0)) { $f += '(RC5) the count must not be a sort key' }
     # RC6
     foreach ($bad in @(('FChatMessage' + 'Struct'), ('BroadcastChat' + 'Message'), ('AddChatMessage' + 'ToReceived'), ('AFGChat' + 'Manager'))) {
-        if ((Count $T.chat $bad) -ne 0) { $f += "(RC6) RollChat.cpp must post only through the shared emitter (found a direct chat use)" }
+        if ((Count $T.chat $bad) -ne 0) { $f += '(RC6) RollChat.cpp must post only through the shared emitter (found a direct chat use)' }
     }
-    if ((Count $T.chat 'FNodeShuffleModule::PostChatNotice(World, RollChatPendingBodies[0], TEXT("ROLLCHAT"))') -ne 1) { $f += '(RC6) one PostChatNotice call with tag ROLLCHAT' }
+    if ((Count $T.chat ('PostChat' + 'Notice(')) -ne 1 -or (Count $step $postCall) -ne 1) { $f += '(RC6) one PostChatNotice call, in the drain step, one row, tag ROLLCHAT' }
     # RC7
     if ((Count $T.sub 'TickRollChatEmitter();') -ne 1 -or -not (Ordered $T.sub @('FNodeShuffleModule::TickForeignNoticeEmitter(GetWorld(), /*bNoticesEnabled=*/true);', 'TickRollChatEmitter();'))) { $f += '(RC7) one tick call, after the foreign-notice emitter' }
     if ((Count $T.sub 'RollChatNoteFirstApply();') -ne 1 -or -not (Ordered $T.sub @('            LogLayoutSummary();', '            RollChatNoteFirstApply();'))) { $f += '(RC7) the first-apply note follows LogLayoutSummary' }
+    $endPlay = Span $T.sub 'void ANodeShuffleSubsystem::EndPlay(' 'Super::EndPlay(EndPlayReason);'
+    if ($endPlay -eq '' -or (Count $endPlay $teardown) -ne 1) { $f += '(RC7) EndPlay clears the drain before Super::EndPlay (teardown)' }
     # RC8
-    foreach ($fmt in @('TEXT("ROLLCHAT-QUEUED: %d message(s) composed | %s")', 'TEXT("ROLLCHAT-BODY %d/%d: %s")', 'TEXT("ROLLCHAT: composed %d, emitter accepted %d, attempts %d | %s")',
-        'TEXT("ROLLCHAT: TOTALS DIFFER -- composed %d, emitter accepted %d, attempts %d | %s")', 'TEXT("ROLLCHAT: EMITTER REFUSED -- composed %d, emitter accepted %d, %d dropped after %d attempts | %s")', $summaryFmt)) {
+    foreach ($fmt in @('TEXT("ROLLCHAT-QUEUED: %s")', 'TEXT("ROLLCHAT-BODY %d/%d: |%s|")', 'TEXT("ROLLCHAT-DONE: %d of %d row(s) sent in %.1f s, %d refusal(s) | %s")',
+        'TEXT("ROLLCHAT-DONE: table dropped part-way (%s) -- %d of %d row(s) sent, %d dropped | %s")', 'TEXT("ROLLCHAT-DONE: emitter refused %d time(s); giving up")', $summaryFmt)) {
         if ((Count $T.chat $fmt) -ne 1) { $f += "(RC8) diagnostic format missing or duplicated: $fmt" }
     }
     $sm = [regex]::Match($T.chat, 'RollChatSummary = FString::Printf\(\s*TEXT\("([^"]*)"\)')
     if (-not $sm.Success -or $sm.Groups[1].Value.Contains('=')) { $f += '(RC8) the summary format prints fields without field=value legend syntax' }
-    if ((Count $T.chat 'FString Body = FString::Printf(TEXT("%s %d/%d: "), Label, i / RollChatNamesPerMessage + 1, Groups);') -ne 1) { $f += '(RC8) list messages are numbered (Label k/n)' }
-    if ((Count $T.subh 'void RollChatQueueBreakdown(bool bIsReroll, int32 RolledLineActive);') -ne 1) { $f += '(RC2) the queue declaration' }
-    # RC10 the edited lints carry this packet's pins
-    if (-not $T.lwipe.Contains('RollChatQueue' + 'Breakdown(bIsReroll, ActiveCount); // ns-rollchat-1')) { $f += '(RC10) check_rerollwipe R11 must pin the queue call as the statement after the audit' }
-    if (-not $T.lmcp.Contains("`$own = '2026-11-14-' + 'rollchat-1'")) { $f += '(RC10) check_mcpcontract C4 must name this packet marker as the newest' }
-    if (-not $T.l020.Contains("-not `$T.lmcp.Contains('# rwg-0-2-0-2: no longer the newest; pinned present')")) { $f += '(RC10) check_rwg020 G8 must anchor on the no-longer-newest note' }
     # RC9
     if (($T.chat -split "`n").Count -ge 500) { $f += '(RC9) NodeShuffleRollChat.cpp must stay under 500 lines' }
     if ((Count $T.chat 'UFGItemDescriptor::GetItemName(TSubclassOf<UFGItemDescriptor>(Cls)).ToString()') -ne 1) { $f += '(RC9) display name through GetItemName' }
+    # RC10
+    if (-not $T.lwipe.Contains('RollChatQueue' + 'Breakdown(bIsReroll, ActiveCount); // ns-rollchat-1')) { $f += '(RC10) check_rerollwipe R11 must pin the queue call as the statement after the audit' }
+    if (-not $T.lmcp.Contains("`$own = '2026-11-14-' + 'rollchat-1'")) { $f += '(RC10) check_mcpcontract C4 must name this packet marker as the newest' }
+    if (-not $T.l020.Contains("-not `$T.lmcp.Contains('# rwg-0-2-0-2: no longer the newest; pinned present')")) { $f += '(RC10) check_rwg020 G8 must anchor on the no-longer-newest note' }
+    # RC11
+    if ((Count $T.chat $rowBody) -ne 1) { $f += '(RC11) the one fixed-width row builder: name padded right, two spaces, count padded left' }
+    if ($qb -eq '' -or -not (Ordered $qb ($widths + @($opening, $hdrRow, $resRow, $noResRow, $totalRow)))) { $f += '(RC11) widths computed from this table before the rows; opening, header, resource, (no resource), Total in order' }
+    if ($qb -ne '' -and ((Count $qb 'RollChatRows.Add(') -ne 5 -or (Count $qb 'RollChatRows.Add(RollChatFixedRow(') -ne 4)) { $f += '(RC11) every table row goes through the fixed-width builder (only the opening line does not)' }
+    foreach ($old in @(('" ' + '| "'), ('%s ' + '| %d'), ('Resource ' + '| Nodes'), ('RollChatNamesPer' + 'Message'), ('RollChatAppend' + 'Groups'), ('%d' + '/%d: "), Label'), ('TEXT("' + 'Wells'), ('Well' + 'Counts'), "`t")) {
+        if ((Count $T.chat $old) -ne 0) { $f += "(RC11) an old shape is back (pipe/three-column, grouped/numbered, wells column, or a tab)" }
+    }
+    # RC12
+    if ((Count $T.chat 'constexpr float RollChatRowGapSeconds = 0.3f;') -ne 1) { $f += '(RC12) the row gap constant' }
+    if ($tick -eq '' -or (Count $tick $armOnce) -ne 1 -or (Count $tick ('PostChat' + 'Notice')) -ne 0) { $f += '(RC12) the tick only arms the one-shot drain timer; it never posts' }
+    if ($step -eq '' -or (Count $step $armNext) -ne 1 -or -not (Ordered $step @(('if (!' + $postCall + ')'), 'return;', 'ROLLCHAT-BODY', '++RollChatNext;', $armNext))) { $f += '(RC12) the step posts one row, advances only after acceptance, then re-arms one gap later' }
+    if ($step -ne '' -and (Count $step '++RollChatNext;') -ne 1) { $f += '(RC12) the step posts one row, advances only after acceptance, then re-arms one gap later' }
+    if ($step -ne '' -and ((Count $step 'while (') -ne 0 -or (Count $step 'for (') -ne 0)) { $f += '(RC12) no loop inside the drain step (one row per timer fire)' }
+    if ((Count $T.chat ('RollChatRowGapSeconds, ' + 'true')) -ne 0) { $f += '(RC12) the drain timer must never loop' }
+    if ((Count $T.subh '    FTimerHandle RollChatDrainTimer;') -ne 1) { $f += '(RC12) the drain timer handle' }
+    # RC13
+    if ($qb -eq '' -or -not (Ordered $qb @($supersede, 'RollChatRows.Add('))) { $f += '(RC13) a new roll first drops any table still draining' }
+    if ($clear -eq '' -or -not (Ordered $clear @('ClearTimer(RollChatDrainTimer);', 'table dropped part-way', 'RollChatRows.Reset();', 'RollChatNext = 0;'))) { $f += '(RC13) the clear stops the timer, logs the drop, resets the rows and index' }
     return ,$f
 }
 
 $fails = Invoke-Checks $text
 foreach ($x in $fails) { Write-Host "FAIL$x" }
 
-# Mutants: each must trip the named rule.
 $mutants = @(
-    @{ Name = 'M1 queue call removed';                 Key = 'sub';   Expect = 'RC2'; Find = $queueCall; Repl = '' }
-    @{ Name = 'M2 queue call per pass (after census)'; Key = 'sub';   Expect = 'RC2'; Find = $censusCall; Repl = ('    RollChatQueue' + 'Breakdown(bIsReroll);' + "`n" + $censusCall) }
-    @{ Name = 'M3 queue call in the deal-pass file';   Key = 'place'; Expect = 'RC2'; Find = '    RwgBuildWaterVolumeCache();'; Repl = ('    RwgBuildWaterVolumeCache(); RollChatQueue' + 'Breakdown(true);') }
-    @{ Name = 'M4 queue saved';                        Key = 'subh';  Expect = 'RC3'; Find = $queueDecl; Repl = ('    UPROPERTY(Save' + 'Game)' + "`n" + $queueDecl) }
-    @{ Name = 'M5 first-apply note posts';             Key = 'chat';  Expect = 'RC3'; Find = '    // Reached once per session'; Repl = ('    FNodeShuffleModule::PostChat' + 'Notice(nullptr, FString(), TEXT("X"));' + "`n    // Reached once per session") }
-    @{ Name = 'M6 census stash removed';               Key = 'sub';   Expect = 'RC4'; Find = $stash; Repl = '   ' }
-    @{ Name = 'M7 reconcile widened';                  Key = 'chat';  Expect = 'RC4'; Find = $reconcile; Repl = '    const bool bNodesMatch = CensusActive >= 0;' }
-    @{ Name = 'M8 sorted by count';                    Key = 'chat';  Expect = 'RC5'; Find = $sortName; Repl = ('const int32 ByName = B.' + 'Count - A.' + 'Count;') }
-    @{ Name = 'M9 direct broadcast';                   Key = 'chat';  Expect = 'RC6'; Find = '    ++RollChatAttempts;'; Repl = ('    ++RollChatAttempts; // ' + 'BroadcastChat' + 'Message') }
-    @{ Name = 'M10 legend syntax in summary';          Key = 'chat';  Expect = 'RC8'; Find = 'censusActive %d nodesReconciled'; Repl = ('censusActive' + '=%d nodesReconciled') }
-    @{ Name = 'M11 marker not newest';                 Key = 'mark';  Expect = 'RC1'; Find = ('        TEXT("' + $marker + '"),'); Repl = '' }
+    @{ Name = 'M1 queue call removed';                 Key = 'sub';   Expect = 'RC2';  Find = $queueCall; Repl = '' }
+    @{ Name = 'M2 queue call per pass';                Key = 'sub';   Expect = 'RC2';  Find = $censusCall; Repl = ('    RollChatQueue' + 'Breakdown(bIsReroll, 0);' + "`n" + $censusCall) }
+    @{ Name = 'M3 queue call in the deal-pass file';   Key = 'place'; Expect = 'RC2';  Find = '    RwgBuildWaterVolumeCache();'; Repl = ('    RwgBuildWaterVolumeCache(); RollChatQueue' + 'Breakdown(true, 0);') }
+    @{ Name = 'M4 rows saved';                         Key = 'subh';  Expect = 'RC3';  Find = $rowsDecl; Repl = ('    UPROPERTY(Save' + 'Game)' + "`n" + $rowsDecl) }
+    @{ Name = 'M5 first-apply note posts';             Key = 'chat';  Expect = 'RC3';  Find = '    // Reached on the first apply'; Repl = ('    FNodeShuffleModule::PostChat' + 'Notice(nullptr, FString(), TEXT("X"));' + "`n    // Reached on the first apply") }
+    @{ Name = 'M6 census stash removed';               Key = 'sub';   Expect = 'RC4';  Find = $stash; Repl = '   ' }
+    @{ Name = 'M7 reconcile widened';                  Key = 'chat';  Expect = 'RC4';  Find = $reconcile; Repl = '    const bool bNodesMatch = CensusActive >= 0;' }
+    @{ Name = 'M8 sorted by count';                    Key = 'chat';  Expect = 'RC5';  Find = $sortName; Repl = ('const int32 ByName = B.' + 'Nodes - A.' + 'Nodes;') }
+    @{ Name = 'M9 direct broadcast';                   Key = 'chat';  Expect = 'RC6';  Find = '        ++RollChatAttempts;'; Repl = ('        ++RollChatAttempts; // ' + 'BroadcastChat' + 'Message') }
+    @{ Name = 'M10 legend syntax in summary';          Key = 'chat';  Expect = 'RC8';  Find = 'censusActive %d nodesReconciled'; Repl = ('censusActive' + '=%d nodesReconciled') }
+    @{ Name = 'M11 marker not newest';                 Key = 'mark';  Expect = 'RC1';  Find = ('        TEXT("' + $marker + '"),'); Repl = '' }
+    @{ Name = 'M12 tick call removed';                 Key = 'sub';   Expect = 'RC7';  Find = '        TickRollChatEmitter();'; Repl = '       ' }
     @{ Name = 'M13 rerollwipe lint unpins the call';   Key = 'lwipe'; Expect = 'RC10'; Find = ('RollChatQueue' + 'Breakdown(bIsReroll, ActiveCount); // ns-rollchat-1'); Repl = 'X' }
     @{ Name = 'M14 mcpcontract newest reverted';       Key = 'lmcp';  Expect = 'RC10'; Find = "'2026-11-14-' + 'rollchat-1'"; Repl = "'2026-11-13-' + 'rwg-0-2-0-2'" }
-    @{ Name = 'M15 groups unnumbered';                 Key = 'chat';  Expect = 'RC8'; Find = 'TEXT("%s %d/%d: "), Label, i / RollChatNamesPerMessage + 1, Groups)'; Repl = 'TEXT("%s: "), Label)' }
-    @{ Name = 'M12 tick call removed';                 Key = 'sub';   Expect = 'RC7'; Find = '        TickRollChatEmitter();'; Repl = '       ' }
+    @{ Name = 'M15 teardown clear removed';            Key = 'sub';   Expect = 'RC7';  Find = $teardown; Repl = '   ' }
+    @{ Name = 'M16 several rows per fire';             Key = 'chat';  Expect = 'RC12'; Find = ('    if (!' + $postCall + ')'); Repl = ('    for (int32 k = 0; k < 1; ++k) {}' + "`n    if (!" + $postCall + ')') }
+    @{ Name = 'M17 looping timer';                     Key = 'chat';  Expect = 'RC12'; Find = $armOnce; Repl = $armOnce.Replace('false);', ('tr' + 'ue);')) }
+    @{ Name = 'M18 no supersede on a new roll';        Key = 'chat';  Expect = 'RC13'; Find = $supersede; Repl = '   ' }
+    @{ Name = 'M19 header row not padded';             Key = 'chat';  Expect = 'RC11'; Find = $hdrRow; Repl = 'RollChatRows.Add(FString(TEXT("Resource  Count")));' }
+    @{ Name = 'M20 pipe row format back';              Key = 'chat';  Expect = 'RC11'; Find = '    // THE ONE ROW FORMAT'; Repl = ('    // TEXT("%s ' + '| %d | %d")' + "`n    // THE ONE ROW FORMAT") }
+    @{ Name = 'M21 count width ignores the Total';     Key = 'chat';  Expect = 'RC11'; Find = $widths[6]; Repl = '' }
+    @{ Name = 'M22 name width ignores the names';      Key = 'chat';  Expect = 'RC11'; Find = $widths[2]; Repl = '' }
+    @{ Name = 'M23 wells column back';                 Key = 'chat';  Expect = 'RC11'; Find = $hdrRow; Repl = ($hdrRow + ' // TEXT("' + 'Wells")') }
+    @{ Name = 'M24 BODY not delimited';                Key = 'chat';  Expect = 'RC8';  Find = 'ROLLCHAT-BODY %d/%d: |%s|'; Repl = 'ROLLCHAT-BODY %d/%d: %s' }
+    @{ Name = 'M25 index advances before acceptance';  Key = 'chat';  Expect = 'RC12'; Find = ('    if (!' + $postCall + ')'); Repl = ('    ++RollChatNext;' + "`n    if (!" + $postCall + ')') }
 )
 $caught = 0
 foreach ($m in $mutants) {
@@ -162,6 +215,6 @@ foreach ($m in $mutants) {
     else { Write-Host "FAIL(mutant) $($m.Name) survived (expected $($m.Expect))"; $fails += 'mutant-survived' }
 }
 
-if ($fails.Count -eq 0) { Write-Host "PASS check_rollchat_lint: RC1-RC10 hold; $caught/$($mutants.Count) mutants caught"; exit 0 }
+if ($fails.Count -eq 0) { Write-Host "PASS check_rollchat_lint: RC1-RC13 hold; $caught/$($mutants.Count) mutants caught"; exit 0 }
 Write-Host "check_rollchat_lint: $($fails.Count) failure(s); $caught/$($mutants.Count) mutants caught"
 exit 1
