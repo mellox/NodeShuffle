@@ -97,6 +97,11 @@ function Invoke-NChecks($T) {
     $rb = Span $T.hapi '    void TryBindReadyGetters(FRwgReadyGetters& R)' 'FString NodeShuffleMapMode::RwgReadinessFields('
     if ($rb -eq '' -or $rb.Contains('Usable') -or $rb.Contains('A.Status') -or -not $rb.Contains('if (!Hmod) { R.Status = TEXT("heightApiNotBound"); return; }')) { $f += '(N6) the readiness bind must never touch the height-API state' }
     if ((Count $T.mmc '*NodeShuffleMapMode::RwgReadinessFields(GetWorld())') -ne 2 -or ([regex]::Matches($T.mmc, 'RwgReadinessFields\(')).Count -ne 2 -or -not $T.mmc.Contains('stableAnyStage=%d/%d%s"),') -or -not $T.mmc.Contains('rollOffVanillaEnabled=%d%s"),')) { $f += '(N6) the getters print only on RWGWAIT and RWGREADY' }
+    # N7 (item 5) the killbox comparison uses the highest volume top; the CONSUMED value is unchanged (bottom-first actor value, max rule).
+    $kb = Span $T.void 'void ANodeShuffleSubsystem::RwgEnsureKillboxTop(' 'TEXT("RWGKILLBOX: known=%d'
+    if ($kb -eq '' -or -not $kb.Contains('const bool bAgree = bRwgKillboxActorKnown && bRwgKillboxApiKnown && HighestN > 0 && FMath::Abs(HighestTop - RwgKillboxTopApiZ) <= 100.0;') -or
+        -not $kb.Contains('if (BottomN > 0 && Plausible(BottomTop)) { RwgKillboxTopActorZ = BottomTop;') -or -not $kb.Contains('RwgKillboxTopZ = FMath::Max(RwgKillboxTopActorZ, RwgKillboxTopApiZ);') -or
+        [regex]::IsMatch($kb, 'RwgKillboxTop\w*\s*=\s*[^=;]*HighestTop')) { $f += '(N7) bAgree must compare the highest volume top while the consumed killbox value stays bottom-first + max' }
     return $f
 }
 
@@ -123,6 +128,8 @@ $mut += @(
     @{ Name = 'M17 resettle dz unguarded'; Key = 'rset'; Expect = 'N3'; Find = '(Q.IsUsable() && FMath::IsFinite(ResettleApiZ)) ?'; Repl = 'Q.IsUsable() ?' }
     @{ Name = 'M18 readiness bind refuses the API'; Key = 'hapi'; Expect = 'N6'; Find = 'if (!Hmod) { R.Status = TEXT("heightApiNotBound"); return; }'; Repl = ('if (!Hmod) { R.Status = TEXT("heightApiNotBound"); Api().b' + 'Usable = false; return; }') }
     @{ Name = 'M19 getter read feeds a decision'; Key = 'mmc'; Expect = 'N6'; Find = '        RwgLogReadyDiagnostics();'; Repl = ('            if (NodeShuffleMapMode::RwgReadiness' + 'Fields(GetWorld()).Contains(TEXT("x"))) { return; } RwgLogReadyDiagnostics();') }
+    @{ Name = 'M20 agree back on the bottom-first value'; Key = 'void'; Expect = 'N7'; Find = 'HighestN > 0 && FMath::Abs(HighestTop - RwgKillboxTopApiZ)'; Repl = 'FMath::Abs(RwgKillboxTopActorZ - RwgKillboxTopApiZ)' }
+    @{ Name = 'M21 consumed value moves to the highest top'; Key = 'void'; Expect = 'N7'; Find = '{ RwgKillboxTopActorZ = BottomTop;'; Repl = '{ RwgKillboxTopActorZ = HighestTop;' }
     @{ Name = 'M16 stand denominator counts excluded stands'; Key = 'cave'; Expect = 'N5'; Find = 'StandInside == StandsTested;'; Repl = ('StandInside == Stands.' + 'Num();') }
 )
 $caught = 0
@@ -136,5 +143,5 @@ foreach ($m in $mut) {
     if (@($r | Where-Object { $_ -like "($($m.Expect))*" }).Count -gt 0) { $caught++ } else { $fails += "(mutant) $($m.Name) was NOT caught by $($m.Expect)" }
 }
 if ($fails.Count -gt 0) { Write-Host "RWGNAN LINT: FAIL -- $($fails.Count) problem(s). Mutants caught $caught/$($mut.Count)."; $fails | ForEach-Object { Write-Host "  $_" }; exit 1 }
-Write-Host "PASS: RWGNAN lint -- N1..N4 hold across $($all.Count) module files ($($T.Count) pinned); mutants caught $caught/$($mut.Count)."
+Write-Host "PASS: RWGNAN lint -- N1..N7 hold across $($all.Count) module files ($($T.Count) pinned); mutants caught $caught/$($mut.Count)."
 exit 0
