@@ -1,5 +1,6 @@
 // ns-scanfilter-1 (2026-11-14): scanner-wheel SHOW/HIDE switches for modded resources. Design: NodeShuffleScanFilter.h.
 // No code in this file adds a scanner unlock or writes to the save; tools/check_scanfilter_lint.ps1 forbids it.
+// TODO(2026-11-14 ns-scanfilter-3 review F2): 560 lines, over the 500-line rule; split the pick answer into its own file with the shared snapshot exposed.
 #include "NodeShuffleScanFilter.h"
 #include "NodeShuffle.h"
 #include "NodeShuffleSubsystem.h"
@@ -293,7 +294,7 @@ namespace NodeShuffleScanFilter
 
     bool ShouldAnswerScannable(UClass* ResourceClass, bool bGameAnswer)
     {
-        if (!GInClosestPick) { return false; } // any other caller keeps the game's own answer, and is not counted
+        if (!GInClosestPick) { return false; } // a call made outside that pick gets the game's answer (a call made by other code while the pick runs gets the changed answer too); not counted
         ++GPickAsked;
         if (bGameAnswer) { ++GPickGameYes; return false; } // a true is never touched
         const UWorld* PickWorld = GPickWorld.Get();
