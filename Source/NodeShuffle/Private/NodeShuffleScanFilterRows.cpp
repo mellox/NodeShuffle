@@ -353,7 +353,7 @@ namespace NodeShuffleScanFilter
         for (UConfigProperty* Element : Rows->Values)
         {
             FRowProps R;
-            if (!ReadRow(Element, R)) { continue; }
+            if (!ReadRow(Element, R) || (bTplReadable && R.Show == Tpl.Show)) { continue; } // never write through the template's box
             FShowRow S; S.Path = R.Resource->Value.TrimStartAndEnd(); S.Show = R.Show;
             if (!S.Path.IsEmpty()) { Shows.Add(MoveTemp(S)); }
         }
@@ -436,7 +436,7 @@ namespace NodeShuffleScanFilter
         Show->DefaultValue = false;
         Show->DisplayName = FText::FromString(TEXT("Show in scanner"));
         // Every factual assertion is graded in the ns-scanfilter-4 handoff.
-        Show->Tooltip = FText::FromString(TEXT("Takes effect in a running game: reopen the scanner. Until you change this box, NodeShuffle leaves this resource's scanner entry to the game and only keeps the box matching the game's own list of scannable resources; a resource from All Minable is kept out of that list and its box OFF. Once you change the box, it stays as you set it. ON: NodeShuffle adds this resource to the list it hands the resource scanner, even if you have not researched it, once the game has loaded the resource. OFF: NodeShuffle takes it out of that list. Has no effect on a base-game resource. Nothing is written to your save."));
+        Show->Tooltip = FText::FromString(TEXT("Takes effect in a running game: reopen the scanner. Until you change this box, NodeShuffle leaves this resource's scanner entry to the game and only keeps the box matching the game's own list of scannable resources; a resource from All Minable is kept out of that list and its box OFF. Once you change the box, it stays as you set it (a value carried over from the old scanner list counts as changed). ON: NodeShuffle adds this resource to the list it hands the resource scanner, even if you have not researched it, once the game has loaded the resource. OFF: NodeShuffle takes it out of that list. Has no effect on a base-game resource. Nothing is written to your save."));
         Show->bRequiresWorldReload = false; // the one field of the row that is editable in a running world
         RowTemplate->SectionProperties.Add(TEXT("ShowInScanner"), Show);
     }

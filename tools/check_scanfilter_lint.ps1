@@ -127,6 +127,7 @@ $fmts = @('TEXT("SCANFILTER-CALL full call=%d snapshotForThisWorld=%d sizeIn=%d 
           'TEXT("SCANFILTER-STATE recordDropped resource=%s wasPlayerSet=%d: ',
           'TEXT("SCANFILTER-STATE fileWritten path=%s records=%d playerSet=%d"),',
           'TEXT("SCANFILTER-STATE fileWriteFailed path=%s"),',
+          'TEXT("SCANFILTER-STATE carryOverPass recordsKept=%d recordsForgotten=%d: ',
           'TEXT("SCANFILTER-ROWS emptied: the list held %d row(s)',
           'TEXT("SCANFILTER-ROWADD resource=%s name=''%s'' nameFromItemName=%d mount=%s startsShown=%d source=%s startBasis=%s"),',
           'TEXT("SCANFILTER-CARRY done retiredRowsRead=%d retiredRowsUnreadable=%d valuesCopied=%d rowsCreated=%d rowsNotCreatedOverCap=%d rowsWithdrawn=%d otherRowsLeftAuto=%d retiredRowsEmptied=%d gameListRead=%d"),',
@@ -141,7 +142,8 @@ $plain = @('resource to the list of resources it hands to the resource scanner, 
            'SHOW IN SCANNER takes effect in a running game: reopen the scanner. UNTIL YOU CHANGE A ROW''S ',
            'BOX, NodeShuffle leaves that resource''s scanner entry to the game and only keeps the box ',
            'are kept out of that list. ONCE YOU CHANGE A BOX, it stays as you set it. ON: NodeShuffle adds the ',
-           'ticked and following the game''s scanner list again, the next time NodeShuffle sees that ') # round 3: the two row states
+           'ticked and following the game''s scanner list again, the next time NodeShuffle sees that ',
+           'this install, not to one save. A box carried over from the old scanner list counts as changed, ') # round 3: the two row states
 
 function Invoke-Checks($T) {
     $f = @()
@@ -265,8 +267,10 @@ function Invoke-Checks($T) {
     if ($tick -eq '' -or -not (Ordered $tick @('EnsureRowStateRecordLoaded();', 'const bool bCarried = RunCarryOverOnce(', 'ResolveMissingRecordOnce(Existing, bCarried);', 'DropRecordsWithoutRows(Existing);', 'if (Existing.Contains(Path)) { continue; }', 'const FRowStateCounts States = UpdateRowStates(World, Shows);', 'if (Added > 0 || bCarried || States.Mirrored > 0)', 'Manager->FlushPendingSaves();', 'FlushRowStateRecordIfDirty();', 'GRowShown.Reset();'))) { $f += '(S16) Tick order: load, carry-over, missing-file decision before the adds, states, config save (also for a mirror write), record write, snapshot' }
     if ($update -eq '' -or $drop -eq '' -or -not (Ordered $drop @('if (RowsBeforeAdds.Contains(It.Key())) { continue; }', 'It.RemoveCurrent();')) -or (Count $T.sfs 'TEXT("NodeShuffle_ScannerRows.txt")') -ne 1) { $f += '(S16) a record whose path has no row is dropped; the record file name' }
     foreach ($n in $stateIo) { foreach ($s in @($hook, $answer16, $nsHook)) { if ($s -ne '' -and (Count $s $n) -ne 0) { $f += "(S16) no record-file call from a hook ($n)" } }; if ((Count ($T.sf + $T.sdiag + $T.nsmod) $n) -ne 0) { $f += "(S16) no record-file call in the hook files ($n)" } }
+    if ($resolve -eq '' -or $noted -eq '' -or -not (Ordered $resolve @('if (bCarriedThisPass)', 'if (GNotedByCarry.Contains(It.Key())) { continue; }', 'It.RemoveCurrent();', 'if (GMissingResolved || !GRecordsLoaded) { return; }')) -or (Count $noted 'GNotedByCarry.Add(Path);') -ne 1) { $f += '(S16) on the carry-over pass every record the carry-over did not note is forgotten (a record file left from another config)' }
+    if ((Count $T.sfr 'if (!ReadRow(Element, R) || (bTplReadable && R.Show == Tpl.Show)) { continue; }') -ne 1) { $f += '(S16) the mirror never writes through the template''s box' }
     if ((Count $T.sfr ('FlushRowState' + 'RecordIfDirty();')) -ne 1) { $f += '(S16) the record is written from Tick only' }
-    if ((Count $T.sfr 'Once you change the box, it stays as you set it.') -ne 1) { $f += '(S10) row switch text: the two states' }
+    if ((Count $T.sfr 'Once you change the box, it stays as you set it (a value carried over from the old scanner list counts as changed).') -ne 1) { $f += '(S10) row switch text: the two states' }
     # S14
     $diagHook = Span $T.sdiag 'SUBSCRIBE_UOBJECT_METHOD(AFGResourceScanner, GetClosetClusters,' 'void ANodeShuffleSubsystem::EmitScanPing('
     if ($diagHook -eq '' -or -not (Ordered $diagHook @('NodeShuffleScanFilter::BeginClosestPick(Self);', 'ON_SCOPE_EXIT { NodeShuffleScanFilter::EndClosestPick(); };', 'Scope(Self, Closest);', '}', 'NodeShuffleScanFilter::EmitPickLine(Self, Closest.Num());', 'if (!FNodeShuffleModule::AreDiagnosticsEnabled() || !IsValid(Self) || !Self->GetWorld()) { return; }', 'It->EmitScanPing(Self, Closest); return; }')) -or (Count $diagHook 'BeginClosestPick(') -ne 1 -or (Count $diagHook 'Scope(Self, Closest);') -ne 1) { $f += '(S14) the pick flag brackets exactly the original call; SCANPING kept' }
@@ -368,6 +372,8 @@ $mutants = @(
     @{ Name = 'M87 record written from a hook';        Key = 'sf';    Expect = 'S16'; Find = "        GLatest = F;`n"; Repl = ("        GLatest = F; " + 'FlushRowState' + "RecordIfDirty();`n") }
     @{ Name = 'M88 deleted row''s record kept';        Key = 'sfs';   Expect = 'S16'; Find = "            It.RemoveCurrent();`n"; Repl = '' }
     @{ Name = 'M91 record pruned after the adds';     Key = 'sfr';   Expect = 'S16'; Find = "        DropRecordsWithoutRows(Existing);`n"; Repl = '' }
+    @{ Name = 'M92 stale record survives a carry-over'; Key = 'sfs'; Expect = 'S16'; Find = 'if (bCarriedThisPass) // the config'; Repl = 'if (false) // the config' }
+    @{ Name = 'M93 mirror writes through the template'; Key = 'sfr'; Expect = 'S16'; Find = 'if (!ReadRow(Element, R) || (bTplReadable && R.Show == Tpl.Show)) { continue; }'; Repl = 'if (!ReadRow(Element, R)) { continue; }' }
     @{ Name = 'M89 mirror write never saved';          Key = 'sfr';   Expect = 'S16'; Find = 'if (Added > 0 || bCarried || States.Mirrored > 0)'; Repl = 'if (Added > 0 || bCarried)' }
     @{ Name = 'M90 mirror while the list is unread';   Key = 'sfs';   Expect = 'S16'; Find = 'if (!bKnown) { ++OutUnknown; continue; }'; Repl = '' }
     @{ Name = 'M62 retired list shown';                Key = 'sfr';   Expect = 'S15'; Find = '        Retired->bHidden = true;'; Repl = '' }

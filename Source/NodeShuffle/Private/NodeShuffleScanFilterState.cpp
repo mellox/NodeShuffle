@@ -26,6 +26,7 @@ namespace NodeShuffleScanFilter
         bool GRecordsLoaded = false;
         bool GMissingResolved = false;       // the missing/unreadable case was decided once, in the first pass past the carry-over wait
         bool GRecordsDirty = false;
+        TSet<FString> GNotedByCarry;         // paths the carry-over noted in the pass it ran (it runs at most once per config file)
         const TCHAR* const RecordHeader = TEXT("# NodeShuffle scanner-row record v1: playerSet<TAB>lastValue<TAB>path");
 
         FString RecordFilePath() { return FPaths::Combine(FPaths::ProjectDir(), TEXT("Configs"), TEXT("NodeShuffle_ScannerRows.txt")); }
@@ -113,6 +114,7 @@ namespace NodeShuffleScanFilter
     void NoteCarriedRow(const FString& Path, bool bValue)
     {
         FRowRecord& Rec = GRecords.FindOrAdd(Path); // a carried-over row is PLAYER-SET with its old switch value
+        GNotedByCarry.Add(Path);
         Rec.bPlayerSet = true;
         Rec.bLastValue = bValue;
         GRecordsDirty = true;
@@ -120,6 +122,20 @@ namespace NodeShuffleScanFilter
 
     void ResolveMissingRecordOnce(const TSet<FString>& RowsBeforeAdds, bool bCarriedThisPass)
     {
+        if (bCarriedThisPass) // the config's flag was false: any record the carry-over did not note describes another config file
+        {
+            int32 Forgotten = 0;
+            for (TMap<FString, FRowRecord>::TIterator It = GRecords.CreateIterator(); It; ++It)
+            {
+                if (GNotedByCarry.Contains(It.Key())) { continue; }
+                It.RemoveCurrent();
+                ++Forgotten;
+            }
+            GNotedByCarry.Reset();
+            GRecordsDirty = true;
+            // Arity hand-counted: 2 format specifiers, 2 arguments.
+            UE_LOG(LogNodeShuffle, Display, TEXT("SCANFILTER-STATE carryOverPass recordsKept=%d recordsForgotten=%d: records the carry-over did not note were dropped"), GRecords.Num(), Forgotten);
+        }
         if (GMissingResolved || !GRecordsLoaded) { return; }
         GMissingResolved = true;
         GRecordsDirty = true; // a fresh file is written at the end of this pass, even with no record in it
