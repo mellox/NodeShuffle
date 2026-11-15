@@ -20,6 +20,8 @@
 #   R11 no legend (comment) in the new file and no DIAGNOSTICS.md text carries a field=value token of a new line's own fields.
 #   R12 the log-only sea-done helper is the candidate scan's expression, term for term; the roll time is noted right after the roll mark.
 #   R13 touched files stay under 500 lines; the reorder and the per-pass report walk no Layout.
+#   R14 (round 2) the DONE latch starts closed; the per-pass report keeps its K/latch guard and its Left gate. R3 also pins the top-K
+#       guard that keeps T.Last() off an empty array; R5 pins SeaFirstN to the validated list; R4 counts SetAsideOk's tests.
 # Mutants run in-file. Exit 0 = all hold; 1 = at least one does not; 2 = a pinned FILE is missing.
 
 $ErrorActionPreference = 'Stop'
@@ -65,10 +67,10 @@ function Span([string]$t, [string]$a, [string]$b) {
 
 # The four new formats and their field lists (R7, R11). The tag text is built by concatenation so this file is not a copy of it.
 $fmts = [ordered]@{
-    build = @{ Tag = ('ROLLFIRST' + '-BUILD: '); Fields = @('generation','build','perResource','resources','picks','wanted','resourcesShortOfK','passedOver','listEntries','buildMs','secondsSinceRoll') }
-    pass  = @{ Tag = ('ROLLFIRST' + '-PASS: ');  Fields = @('pass','generation','wanted','withActor','seaPending','seaCheckedFirst','candidates','attempted','spawnedThisPass','failedThisPass','setAside','resources','resourcesAtK','secondsSinceRoll') }
+    build = @{ Tag = ('ROLLFIRST' + '-BUILD: '); Fields = @('generation','build','perResource','resources','picks','wanted','resourcesShortOfK','passedOver','listEntries','buildMs','secondsSinceRoll','supersededOpenGeneration') }
+    pass  = @{ Tag = ('ROLLFIRST' + '-PASS: ');  Fields = @('pass','generation','wanted','withActor','prioSeaPending','seaCheckedFirst','prioCandidates','prioAttempted','prioSpawnedThisPass','prioFailedThisPass','setAside','resources','resourcesAtK','secondsSinceRoll') }
     done  = @{ Tag = ('ROLLFIRST' + '-DONE: ');  Fields = @('pass','generation','secondsSinceRoll','wanted','withActor','resources','resourcesAtK','resourcesShortOfK','setAside','perResource') }
-    cover = @{ Tag = ('SCAN' + 'COVER: ');       Fields = @('resource','dealtActive','withActor','withoutActor','nearestWithoutActorM','nearestWithoutActorSeaChecked','nearestWithoutActorQueuePos','clustersForResource','secondsSinceRoll') }
+    cover = @{ Tag = ('SCAN' + 'COVER: ');       Fields = @('resource','dealtActive','withActor','withoutActor','nearestWithoutActorM','nearestWithoutActorSeaDone','nearestWithoutActorQueuePos','clustersForResource','secondsSinceRoll') }
 }
 
 function Invoke-RollFirstChecks($T) {
@@ -97,7 +99,7 @@ function Invoke-RollFirstChecks($T) {
     if ((Count $seaFn '        const int32 I = (Step < SeaFirstN) ? SeaFirst[Step] : Step - SeaFirstN;') -ne 1) { $f += '(R2) the sea pass maps Step to the layout index unchanged once the priority steps are spent' }
     # R3
     if (-not (Ordered $reord @('    for (int32 P = 0; P < Sorted.Num(); ++P) { if (RankOfPos[P] >= 0) { Buckets[RankOfPos[P]].Add(P); } }', '    for (int32 J = 0; J < K; ++J) { for (const int32 P : Buckets[J]) { Out.Add(Sorted[P]); RwgRollFirstList.Emplace(', '    for (int32 P = 0; P < Sorted.Num(); ++P) { if (RankOfPos[P] < 0) { Out.Add(Sorted[P]); } }', '    Sorted = MoveTemp(Out);'))) { $f += '(R3) priority tier first, rank before distance (buckets in nearest-first order), then the rest in order' }
-    if ((Count $reord '            if (S.SortedPos >= 0) { RankOfPos[S.SortedPos] = J; }') -ne 1 -or (Count $reord '        while (At > 0 && T[At - 1].D > D) { --At; }') -ne 1 -or (Count $reord '        if (T.Num() > K) { T.SetNum(K); }') -ne 1) { $f += '(R3) the per-resource top K keeps ascending distance, truncates to K, and ranks only actorless picks' }
+    if ((Count $reord '            if (S.SortedPos >= 0) { RankOfPos[S.SortedPos] = J; }') -ne 1 -or (Count $reord '        while (At > 0 && T[At - 1].D > D) { --At; }') -ne 1 -or (Count $reord '        if (T.Num() > K) { T.SetNum(K); }') -ne 1 -or (Count $reord '        if (T.Num() >= K && D >= T.Last().D) { return; }') -ne 1) { $f += '(R3) the per-resource top K keeps ascending distance, truncates to K, and ranks only actorless picks' }
     if ((Count $rf ('.' + 'Sort(')) -ne 0 -or (Count $rf ('Algo::' + 'Sort')) -ne 0) { $f += '(R3) no sort call in the new file' }
     # R4
     if (-not (Ordered $reord @('        if (!RwgRollFirstCanLoad(Layout[Sorted[P].Value])) { ++PassedOver; continue; }', '        Offer(Sorted[P].Key, Sorted[P].Value, P);', '    for (const TPair<double, int32>& L : Loaded) { Offer(L.Key, L.Value, -1); }'))) { $f += '(R4) set-aside entries are passed over before the offer; loaded entries hold a slot with no Sorted position' }
@@ -105,7 +107,7 @@ function Invoke-RollFirstChecks($T) {
         if ((Count $canl $n) -ne 1) { $f += "(R4) the can-load test must hold: $n" }
     }
     # R5
-    if (-not (Ordered $seaFn @('    int32 Left = NodeShuffleMapMode::RwgSeaRedealPerPass;', '    TArray<int32> SeaFirst;', '    for (const TPair<FGuid, int32>& G : RwgRollFirstList) { if (Layout.IsValidIndex(G.Value) && Layout[G.Value].EntryGuid == G.Key) { SeaFirst.Add(G.Value); } }', '    for (int32 Step = 0; Step < SeaFirstN + Layout.Num() && Left > 0; ++Step)', '        const int32 I = (Step < SeaFirstN) ? SeaFirst[Step] : Step - SeaFirstN;', '        FNodeShuffleEntry& E = Layout[I];', '        if (!E.bIsNewNode || !E.bActive || (E.bRwgSeaChecked && (E.bRwgVoidChecked || !bVoidOn)) || RwgSeaDealFailed.Contains(E.EntryGuid)) { continue; }', '        --Left; ++Checked;'))) { $f += '(R5) priority first, same loop, same skip, same Left, stale pairs dropped' }
+    if (-not (Ordered $seaFn @('    int32 Left = NodeShuffleMapMode::RwgSeaRedealPerPass;', '    TArray<int32> SeaFirst;', '    for (const TPair<FGuid, int32>& G : RwgRollFirstList) { if (Layout.IsValidIndex(G.Value) && Layout[G.Value].EntryGuid == G.Key) { SeaFirst.Add(G.Value); } }', '    const int32 SeaFirstN = SeaFirst.Num();', '    for (int32 Step = 0; Step < SeaFirstN + Layout.Num() && Left > 0; ++Step)', '        const int32 I = (Step < SeaFirstN) ? SeaFirst[Step] : Step - SeaFirstN;', '        FNodeShuffleEntry& E = Layout[I];', '        if (!E.bIsNewNode || !E.bActive || (E.bRwgSeaChecked && (E.bRwgVoidChecked || !bVoidOn)) || RwgSeaDealFailed.Contains(E.EntryGuid)) { continue; }', '        --Left; ++Checked;'))) { $f += '(R5) priority first, same loop, same skip, same Left, stale pairs dropped' }
     if ((Count $seaFn 'for (int32 Step = ') -ne 1 -or (Count $seaFn ('for (int32 I = 0; I < Layout.Num() && Left > ' + '0; ++I)')) -ne 0 -or (Count $seaFn '        --Left; ++Checked;') -ne 1) { $f += '(R5) exactly one node loop in the sea pass' }
     if ((Count $T.maph ('constexpr int32 RwgSeaRedealPerPass = ' + '64;')) -ne 1) { $f += '(R5) the sea bound stays 64' }
     # R6
@@ -150,6 +152,9 @@ function Invoke-RollFirstChecks($T) {
     # R13
     foreach ($k in @('rf', 'pscan', 'sea', 'prov', 'sdiag', 'sfr')) { $lines = ($T[$k] -split "`n").Count; if ($lines -gt 501) { $f += "(R13) $k is over 500 lines ($lines)" } }
     foreach ($sp in @($reord, $emit)) { if ($sp.Contains('for (int32 I = 0; I < Layout.Num()') -or $sp.Contains('for (const FNodeShuffleEntry& E : Layout)')) { $f += '(R13) the reorder and the per-pass report walk no Layout' } }
+    # R14 (round 2, review F5)
+    if ((Count $emit '    if (RwgRollFirstK <= 0 || bRwgRollFirstDoneLogged) { return; }') -ne 1 -or (Count $emit '    if (Left > 0)') -ne 1 -or (Count $T.subh '    bool bRwgRollFirstDoneLogged = true;') -ne 1) { $f += '(R14) DONE latch starts closed; K guard and Left gate in the per-pass report' }
+    $sao = Span $T.pscan '    const auto SetAsideOk = [this](const FNodeShuffleEntry& E)' '    const auto NearestSq ='; if ($sao -eq '' -or (Count $sao ('return ' + 'false;')) -ne 4) { $f += '(R4) SetAsideOk changed: mirror it in RwgRollFirstCanLoad' }
     return $f
 }
 
@@ -186,6 +191,9 @@ $mutants = @(
     @{ Name = 'Q28 Layout walk in the per-pass report'; Key = 'rf'; Expect = 'R13'; Find = '    // State of the priority set now.'; Repl = '    for (const FNodeShuffleEntry& E : Layout) { }' }
     @{ Name = 'Q29 roll time not noted'; Key = 'sub'; Expect = 'R12'; Find = '    RwgRollFirstNoteRoll();'; Repl = '' }
     @{ Name = 'Q30 sort call in the new file'; Key = 'rf'; Expect = 'R3'; Find = '    Sorted = MoveTemp(Out);'; Repl = ("    Out" + ".Sort();`n    Sorted = MoveTemp(Out);") }
+    @{ Name = 'Q31 SeaFirstN counts stale pairs'; Key = 'sea'; Expect = 'R5'; Find = '    const int32 SeaFirstN = SeaFirst.Num();'; Repl = '    const int32 SeaFirstN = RwgRollFirstList.Num();' }
+    @{ Name = 'Q32 top-K guard dropped'; Key = 'rf'; Expect = 'R3'; Find = '        if (T.Num() >= K && D >= T.Last().D) { return; }'; Repl = '        if (D >= T.Last().D) { return; }' }
+    @{ Name = 'Q33 DONE latch starts open'; Key = 'subh'; Expect = 'R14'; Find = '    bool bRwgRollFirstDoneLogged = true;'; Repl = '    bool bRwgRollFirstDoneLogged = false;' }
 )
 $mutantFails = @()
 $caught = 0
@@ -204,5 +212,5 @@ if ($all.Count -gt 0) {
     Write-Host "ROLLFIRST LINT: FAIL -- $($all.Count) problem(s). Mutants caught $caught/$($mutants.Count)."
     exit 1
 }
-Write-Host "PASS: ROLLFIRST lint -- R1..R13 hold across $($text.Count) loaded files; mutants caught $caught/$($mutants.Count)."
+Write-Host "PASS: ROLLFIRST lint -- R1..R14 hold across $($text.Count) loaded files; mutants caught $caught/$($mutants.Count)."
 exit 0

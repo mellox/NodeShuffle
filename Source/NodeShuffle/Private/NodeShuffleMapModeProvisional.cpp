@@ -394,7 +394,7 @@ void ANodeShuffleSubsystem::RwgProvisionalSpawnPass(const TArray<FVector>& Pawns
             RayCastedNoActor, SeaDealFailed, WithinSpawned, WithinCands.Num(), WetSpot, WithinUnderground, BudgetHit, BudgetMs,
             ScanMs, RwgProvCandList.Num(), ListBuild, RwgProvCandBuilds, InsideRedealt);
     }
-    RwgRollFirstEmitPass(Cands, K); // ns-rollfirst-1 (NodeShuffleRollFirst.cpp): after the attempt loop and msBatch; walks only the priority set
+    RwgRollFirstEmitPass(Cands, K); // ns-rollfirst-1 (NodeShuffleRollFirst.cpp): after the attempt loop and msBatch; walks this pass's candidates, the priority set and the picks (no Layout walk)
 }
 
 void ANodeShuffleSubsystem::RwgProvisionalEmitCensus()

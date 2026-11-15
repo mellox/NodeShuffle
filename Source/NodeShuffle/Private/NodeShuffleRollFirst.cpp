@@ -23,10 +23,11 @@ namespace
         3,
         TEXT("RWG maps only. Each time the provisional candidate list is rebuilt (a roll, re-roll, reload, redeal or pin, or every 12 spawn ")
         TEXT("passes), the N new node spots of each resource nearest to any player are picked; a spot that already has a node takes one of the N, ")
-        TEXT("and a spot set aside this session is passed over. The picked spots without a node are sea-checked first and tried first by the ")
-        TEXT("provisional spawn pass, after only that pass's within-radius spots whose ground fit left no node; every resource's nearest is ")
-        TEXT("tried before any resource's second. Default 3. 0: off, the list keeps its nearest-first order. Values are clamped to 0..16. ")
-        TEXT("Read when the list is rebuilt."),
+        TEXT("and a spot without a node that the provisional pass will not try (pinned, set aside this session, already settled, water-locked, ")
+        TEXT("or with no dry spot found) is passed over. The picked spots without a node are sea-checked first and queued first for the ")
+        TEXT("provisional spawn pass, after only that pass's within-radius spots whose ground fit left no node, so every resource's nearest is ")
+        TEXT("queued before any resource's second; a queued spot still waiting for its sea check is skipped that pass. ")
+        TEXT("Default 3. 0: off, the list keeps its nearest-first order. Values are clamped to 0..16. Read when the list is rebuilt."),
         ECVF_Default);
 }
 
@@ -125,16 +126,20 @@ void ANodeShuffleSubsystem::RwgRollFirstReorder(TArray<TPair<double, int32>>& So
     for (int32 P = 0; P < Sorted.Num(); ++P) { if (RankOfPos[P] < 0) { Out.Add(Sorted[P]); } }
     Sorted = MoveTemp(Out);
     const int32 Wanted = RwgRollFirstList.Num();
+    const bool bSuperseded = !bRwgRollFirstDoneLogged; // a generation was still open: no ROLLFIRST-DONE yet and no earlier build replaced it
     if (Wanted > 0) { ++RwgRollFirstGeneration; bRwgRollFirstDoneLogged = false; } // a new generation: DONE re-armed
-    if (Wanted > 0 || FNodeShuffleModule::AreDiagnosticsEnabled())
+    else { bRwgRollFirstDoneLogged = true; } // nothing to load: no DONE is owed for an emptied list
+    if (Wanted > 0 || bSuperseded || FNodeShuffleModule::AreDiagnosticsEnabled())
     {
         // Legend (prose only): generation numbers the builds that picked at least one priority entry this session; build is the candidate
         // list's own build reason; perResource is K; resources counts the resources with at least one pickable entry; picks counts the
         // picked entries, wanted the picks without an actor; resourcesShortOfK counts resources with fewer than K pickable entries;
-        // passedOver counts actorless entries the pick skipped as set aside; buildMs is this function's own time.
-        UE_LOG(LogNodeShuffle, Display, TEXT("ROLLFIRST-BUILD: generation=%d build=%s perResource=%d resources=%d picks=%d wanted=%d resourcesShortOfK=%d passedOver=%d listEntries=%d buildMs=%.2f secondsSinceRoll=%.0f"),
+        // passedOver counts actorless entries the pick skipped because the provisional pass would not try them; buildMs is this
+        // function's own time (the loaded-entry collection in the candidate walk is not included); supersededOpenGeneration is 1 when
+        // this build replaced a generation that was still open (it had not printed its DONE line and no earlier build had replaced it).
+        UE_LOG(LogNodeShuffle, Display, TEXT("ROLLFIRST-BUILD: generation=%d build=%s perResource=%d resources=%d picks=%d wanted=%d resourcesShortOfK=%d passedOver=%d listEntries=%d buildMs=%.2f secondsSinceRoll=%.0f supersededOpenGeneration=%d"),
             RwgRollFirstGeneration, Why ? Why : TEXT("none"), K, RwgRollFirstResources, RwgRollFirstPicks.Num(), Wanted, RwgRollFirstShortOfK,
-            PassedOver, Sorted.Num(), (FPlatformTime::Seconds() - T0) * 1000.0, RwgRollFirstSecondsSinceRoll());
+            PassedOver, Sorted.Num(), (FPlatformTime::Seconds() - T0) * 1000.0, RwgRollFirstSecondsSinceRoll(), bSuperseded ? 1 : 0);
     }
 }
 
@@ -178,17 +183,21 @@ void ANodeShuffleSubsystem::RwgRollFirstEmitPass(const TArray<int32>& Cands, int
     }
     int32 AtK = 0;
     for (int32 R = 0; R < PicksPerRes.Num(); ++R) { AtK += (PicksPerRes[R] == RwgRollFirstK && LoadedPerRes[R] == RwgRollFirstK) ? 1 : 0; }
-    // Legend (prose only): wanted counts this generation's priority entries; withActor those that have an actor now; seaPending those still
-    // waiting for the sea pass by the candidate scan's own test; seaCheckedFirst the entries the sea pass checked from the priority walk on
-    // its latest run; candidates the priority entries among this pass's candidates; attempted, spawnedThisPass and failedThisPass the
-    // priority candidates the attempt loop reached, and of those the ones with and without an actor afterwards; setAside the priority
-    // entries left without an actor that the pick would now pass over (or whose layout slot was replaced); resourcesAtK counts resources
-    // whose K picks all have an actor. The PASS line prints while a priority entry is left to load; DONE prints once per generation.
+    // Legend (prose only): wanted counts this generation's priority entries; withActor those that have an actor now; prioSeaPending those
+    // still waiting for the sea pass by the candidate scan's own test; seaCheckedFirst how many the sea pass checked from the priority walk
+    // on this spawn pass (0 when it checked none of them or did not run); prioCandidates the priority entries among this pass's candidates;
+    // prioAttempted, prioSpawnedThisPass and prioFailedThisPass the priority candidates the attempt loop reached, and of those the ones with
+    // and without an actor afterwards; setAside the priority entries left without an actor that the pick would now pass over (or whose
+    // layout slot was replaced); resourcesAtK counts resources whose K picks all have an actor. The PASS line prints (with diagnostics on)
+    // while a priority entry is left to load; DONE prints at most once per generation.
     if (Left > 0)
     {
-        UE_LOG(LogNodeShuffle, Display, TEXT("ROLLFIRST-PASS: pass=%d generation=%d wanted=%d withActor=%d seaPending=%d seaCheckedFirst=%d candidates=%d attempted=%d spawnedThisPass=%d failedThisPass=%d setAside=%d resources=%d resourcesAtK=%d secondsSinceRoll=%.0f"),
-            RwgPcPasses, RwgRollFirstGeneration, RwgRollFirstList.Num(), With, SeaPend, SeaFirst, CandN, SpawnedN + FailedN, SpawnedN, FailedN, Aside,
-            RwgRollFirstResources, AtK, RwgRollFirstSecondsSinceRoll());
+        if (FNodeShuffleModule::AreDiagnosticsEnabled())
+        {
+            UE_LOG(LogNodeShuffle, Display, TEXT("ROLLFIRST-PASS: pass=%d generation=%d wanted=%d withActor=%d prioSeaPending=%d seaCheckedFirst=%d prioCandidates=%d prioAttempted=%d prioSpawnedThisPass=%d prioFailedThisPass=%d setAside=%d resources=%d resourcesAtK=%d secondsSinceRoll=%.0f"),
+                RwgPcPasses, RwgRollFirstGeneration, RwgRollFirstList.Num(), With, SeaPend, SeaFirst, CandN, SpawnedN + FailedN, SpawnedN, FailedN, Aside,
+                RwgRollFirstResources, AtK, RwgRollFirstSecondsSinceRoll());
+        }
         return;
     }
     bRwgRollFirstDoneLogged = true;
@@ -216,7 +225,7 @@ void ANodeShuffleSubsystem::EmitScanCover(AFGResourceScanner* Scanner)
         if (M < NearestM) { NearestM = M; NearestI = I; }
     }
     int32 SeaDone = -1, QueuePos = -1;
-    if (NearestI != INDEX_NONE)
+    if (NearestI != INDEX_NONE && GetMapMode() == ENodeShuffleMapMode::Rwg)
     {
         SeaDone = RwgRollFirstSeaDone(Layout[NearestI]) ? 1 : 0;
         for (int32 Q = 0; Q < RwgProvCandList.Num(); ++Q)
@@ -228,10 +237,11 @@ void ANodeShuffleSubsystem::EmitScanCover(AFGResourceScanner* Scanner)
     for (const FNodeClusterData& C : Scanner->mNodeClusters) { if (C.ResourceDescriptor.Get() == Res) { ++ForRes; } }
     // Legend (prose only): counts are this machine's active new-node layout entries of the scanned resource (a client that holds no
     // layout prints zeros); the actor test is a valid spawned node for the entry. The nearest-without-actor fields describe the one such
-    // entry nearest the scanning pawn (3-D metres; -1 when none): its sea-checked flag is the candidate scan's sea-done test (1/0), and its
-    // queue position is its index in the provisional candidate list as last compacted (-1 when not on it; this pass's within-radius
-    // fresh entries are tried ahead of the list). clustersForResource counts this scanner's cluster list entries for the resource.
-    UE_LOG(LogNodeShuffle, Display, TEXT("SCANCOVER: resource=%s dealtActive=%d withActor=%d withoutActor=%d nearestWithoutActorM=%.0f nearestWithoutActorSeaChecked=%d nearestWithoutActorQueuePos=%d clustersForResource=%d secondsSinceRoll=%.0f"),
+    // entry nearest the scanning pawn (3-D metres; -1 when none): its sea-done value is the candidate scan's sea-done test (1 or 0; 1 also
+    // when the sea check is done and the sea latch reads unusable, whatever the entry's own flags; -1 when there is no such entry or the map is not RWG), and its queue
+    // position is its index in the provisional candidate list as last compacted (-1 when not on it or the map is not RWG; this pass's
+    // within-radius fresh entries are tried ahead of the list). clustersForResource counts this scanner's cluster list entries for the resource.
+    UE_LOG(LogNodeShuffle, Display, TEXT("SCANCOVER: resource=%s dealtActive=%d withActor=%d withoutActor=%d nearestWithoutActorM=%.0f nearestWithoutActorSeaDone=%d nearestWithoutActorQueuePos=%d clustersForResource=%d secondsSinceRoll=%.0f"),
         Res ? *Res->GetName() : TEXT("<none>"), Dealt, With, Without, NearestI != INDEX_NONE ? NearestM : -1.0, SeaDone, QueuePos, ForRes,
         RwgRollFirstSecondsSinceRoll());
 }
