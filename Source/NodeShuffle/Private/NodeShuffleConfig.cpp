@@ -309,7 +309,7 @@ void UNodeShuffleConfig::PostInitProperties()
         // and 'Resource' keep true. What a player can now do in a running world (add / delete a row; Reset is refused below) and
         // what each does to protection is in the ns-scanfilter-4 handoff; protection still latches at world load.
         Rows->bRequiresWorldReload = false;
-        Rows->bAllowUserReset = false; // ns-scanfilter-4 review F2: the list's Reset is refused, so protection choices cannot be wiped from a running world
+        Rows->bAllowUserReset = false; // ns-scanfilter-4 review F2: the list's Reset is refused, in the main menu too, and SML also refuses per-row and per-field Reset on rows loaded from file (rows added at runtime keep theirs until the next load), so protection choices cannot be wiped by a Reset
         // T65 RETITLED. The old title was "Protect Other Mods' RESOURCES", which asserts the resource
         // itself belongs to another mod -- FALSE for the population that motivated T61's copy fix:
         // vanilla NitrogenGas / LiquidOil carried by another mod's well actors. What every row in this
@@ -367,7 +367,7 @@ void UNodeShuffleConfig::PostInitProperties()
             TEXT("SHOW IN SCANNER takes effect in a running game: reopen the scanner. UNTIL YOU CHANGE A ROW'S ")
             TEXT("BOX, NodeShuffle leaves that resource's scanner entry to the game and only keeps the box ")
             TEXT("matching the game's own list of scannable resources; resources from All Minable start OFF and ")
-            TEXT("are kept out of that list. ONCE YOU CHANGE A BOX, it stays as you set it. ON: NodeShuffle adds the ")
+            TEXT("are kept out of the list NodeShuffle hands the scanner. ONCE YOU CHANGE A BOX, it stays as you set it. ON: NodeShuffle adds the ")
             TEXT("resource to the list of resources it hands to the resource scanner, including a resource you ")
             TEXT("have not researched. OFF: NodeShuffle takes it out of that list. When you scan for an ON ")
             TEXT("resource, NodeShuffle also lets the scan look for its nodes; it does not promise that one is ")

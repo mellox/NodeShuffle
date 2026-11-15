@@ -288,6 +288,7 @@ namespace NodeShuffleScanFilter
         const bool bTplReadable = ReadRow(Rows->DefaultValue.Get(), Tpl);
         int32 RefusedOverCap = 0; int32 Withdrawn = 0;
         EnsureRowStateRecordLoaded(); // round 3: before the carry-over, so the carried rows' records are not overwritten by the file
+        ApplyPendingRowStateForgets(); // review r2 F1: before the carry-over, so a carried row's record is never forgotten
         const bool bCarried = RunCarryOverOnce(Root, Rows, Tpl, bTplReadable, Withdrawn, RefusedOverCap);
 
         // Existing rows (by path), and a first-pass label stamp (the in-game name may be known by now).
@@ -347,7 +348,7 @@ namespace NodeShuffleScanFilter
                 *Path, *Name, bFromItemName ? 1 : 0, *MountLabel(Path), bDefaultShown ? 1 : 0,
                 (bA && bB) ? TEXT("managed+scannerList") : (bA ? TEXT("managed") : TEXT("scannerList")), Basis ? Basis : TEXT("<none>"));
         }
-        if (Added > 0) { FNodeShuffleModule::SortResourceRows(Rows, TEXT("scanner-add")); } // T68 sort-last, after every append above
+        if (Added > 0 || bCarried) { FNodeShuffleModule::SortResourceRows(Rows, TEXT("scanner-add")); } // T68 sort-last, after every append above
         // Round 3: every row's box, by path, for touch detection, the mirror and the record (NodeShuffleScanFilterState.cpp).
         TArray<FShowRow> Shows;
         for (UConfigProperty* Element : Rows->Values)
@@ -436,7 +437,7 @@ namespace NodeShuffleScanFilter
         Show->DefaultValue = false;
         Show->DisplayName = FText::FromString(TEXT("Show in scanner"));
         // Every factual assertion is graded in the ns-scanfilter-4 handoff.
-        Show->Tooltip = FText::FromString(TEXT("Takes effect in a running game: reopen the scanner. Until you change this box, NodeShuffle leaves this resource's scanner entry to the game and only keeps the box matching the game's own list of scannable resources; a resource from All Minable is kept out of that list and its box OFF. Once you change the box, it stays as you set it (a value carried over from the old scanner list counts as changed). ON: NodeShuffle adds this resource to the list it hands the resource scanner, even if you have not researched it, once the game has loaded the resource. OFF: NodeShuffle takes it out of that list. Has no effect on a base-game resource. Nothing is written to your save."));
+        Show->Tooltip = FText::FromString(TEXT("Takes effect in a running game: reopen the scanner. Until you change this box, NodeShuffle leaves this resource's scanner entry to the game and only keeps the box matching the game's own list of scannable resources; a resource from All Minable is kept out of the list NodeShuffle hands the scanner, and its box is kept OFF. Once you change the box, it stays as you set it (a value carried over from the old scanner list counts as changed). ON: NodeShuffle adds this resource to the list it hands the resource scanner, even if you have not researched it, once the game has loaded the resource. OFF: NodeShuffle takes it out of that list. Has no effect on a base-game resource. Nothing is written to your save."));
         Show->bRequiresWorldReload = false; // the one field of the row that is editable in a running world
         RowTemplate->SectionProperties.Add(TEXT("ShowInScanner"), Show);
     }

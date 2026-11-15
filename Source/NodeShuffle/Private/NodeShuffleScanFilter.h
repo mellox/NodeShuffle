@@ -86,4 +86,6 @@ namespace NodeShuffleScanFilter
     bool AutoShowValue(const UObject* WorldContext, const FString& Path, const TCHAR** OutBasis, bool* bOutKnown);
     // The in-game item name when the class is already in memory (ResolveClass never loads) and is a resource descriptor.
     bool InGameNameIfLoaded(const FString& Path, FString& OutName);
+    // Round 3 review r2 F1: a row another creator (the protection side) made new starts AUTO; its old record is dropped next pass.
+    void ForgetRowState(const FString& Path);
 }

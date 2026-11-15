@@ -37,6 +37,7 @@ namespace NodeShuffleScanFilter
     struct FShowRow { FString Path; UConfigPropertyBool* Show = nullptr; };
     struct FRowStateCounts { int32 AutoRows = 0; int32 PlayerSetRows = 0; int32 BecamePlayerSet = 0; int32 Mirrored = 0; int32 MirrorUnknown = 0; };
     void EnsureRowStateRecordLoaded();            // reads the record file once per process
+    void ApplyPendingRowStateForgets();          // after the file is read, BEFORE the carry-over notes its rows
     void NoteCarriedRow(const FString& Path, bool bValue); // the carry-over: that row is PLAYER-SET with its old value
     void ResolveMissingRecordOnce(const TSet<FString>& RowsBeforeAdds, bool bCarriedThisPass);
     int32 DropRecordsWithoutRows(const TSet<FString>& RowsBeforeAdds); // before the adds: a deleted then re-created row is AUTO

@@ -124,9 +124,10 @@ $fmts = @('TEXT("SCANFILTER-CALL full call=%d snapshotForThisWorld=%d sizeIn=%d 
           'TEXT("SCANFILTER-STATE fileUnreadable path=%s linesRead=%d: ',
           'TEXT("SCANFILTER-STATE fileRead path=%s records=%d playerSet=%d malformedLines=%d"),',
           'TEXT("SCANFILTER-STATE noRecordFile carriedThisPass=%d rowsBefore=%d rowsMadePlayerSet=%d rowsLeftAuto=%d"),',
-          'TEXT("SCANFILTER-STATE recordDropped resource=%s wasPlayerSet=%d: ',
+          'TEXT("SCANFILTER-STATE recordDropped resource=%s wasPlayerSet=%d: no row has this path now"),',
+          'TEXT("SCANFILTER-STATE recordDropped resource=%s wasPlayerSet=%d: the protection side created this row again"),',
           'TEXT("SCANFILTER-STATE fileWritten path=%s records=%d playerSet=%d"),',
-          'TEXT("SCANFILTER-STATE fileWriteFailed path=%s"),',
+          'TEXT("SCANFILTER-STATE fileWriteFailed path=%s: ',
           'TEXT("SCANFILTER-STATE carryOverPass recordsKept=%d recordsForgotten=%d: ',
           'TEXT("SCANFILTER-ROWS emptied: the list held %d row(s)',
           'TEXT("SCANFILTER-ROWADD resource=%s name=''%s'' nameFromItemName=%d mount=%s startsShown=%d source=%s startBasis=%s"),',
@@ -141,7 +142,7 @@ $plain = @('resource to the list of resources it hands to the resource scanner, 
            'In multiplayer only the host''s game applies it. These switches apply to every world on ', # ns-scanfilter-4: the merged list's tooltip
            'SHOW IN SCANNER takes effect in a running game: reopen the scanner. UNTIL YOU CHANGE A ROW''S ',
            'BOX, NodeShuffle leaves that resource''s scanner entry to the game and only keeps the box ',
-           'are kept out of that list. ONCE YOU CHANGE A BOX, it stays as you set it. ON: NodeShuffle adds the ',
+           'are kept out of the list NodeShuffle hands the scanner. ONCE YOU CHANGE A BOX, it stays as you set it. ON: NodeShuffle adds the ',
            'ticked and following the game''s scanner list again, the next time NodeShuffle sees that ',
            'this install, not to one save. A box carried over from the old scanner list counts as changed, ') # round 3: the two row states
 
@@ -254,7 +255,7 @@ function Invoke-Checks($T) {
     if ((Count $T.prot 'const bool bShowWritten = ShowProp != nullptr && ShowProp != TemplateShow;') -ne 1 -or (Count $T.prot 'if (bShowWritten) { ShowProp->Value = NodeShuffleScanFilter::AutoShowValue(WorldContext, Pair.Key, &ShowBasis, nullptr); }') -ne 1 -or (Count $T.prot 'if (ExistingByPath.Contains(Pair.Key)) { continue; }') -ne 1) { $f += '(S15) the protection pass gives a new row the same starting value and never writes through the template' }
     if ((Count $T.nsh 'static bool IsForeignRowPendingFromProtectionSync(const FString& ResourceClassPath);') -ne 1 -or (Count $T.prot 'return GNodeShuffleLastSyncedRevision != GNodeShuffleSeenForeignRevision && GNodeShuffleSeenForeignResources.Contains(ResourceClassPath);') -ne 1) { $f += '(S15) the scanner side defers only while a protection pass is pending for a sighted resource' }
     if ($tick -eq '' -or -not (Ordered $tick @('CaptureStartContext(World);', 'if (CarryFlag && !CarryFlag->Value && !GStartGameListRead)', 'GSnapWorld.Reset();', 'return;', 'const bool bCarried = RunCarryOverOnce('))) { $f += '(S15) the carry-over and the snapshot wait for the scannable list' }
-    if ($tick -eq '' -or -not (Ordered $tick @('if (!AppendRow(Rows, Tpl, bTplReadable, Path, bDefaultShown, Withdrawn)) { continue; }', '++Added;', 'if (Added > 0) { FNodeShuffleModule::SortResourceRows(Rows, TEXT("scanner-add")); }', 'Rows->MarkDirty();'))) { $f += '(S15) the scanner side sorts after every append, before the save' }
+    if ($tick -eq '' -or -not (Ordered $tick @('if (!AppendRow(Rows, Tpl, bTplReadable, Path, bDefaultShown, Withdrawn)) { continue; }', '++Added;', 'if (Added > 0 || bCarried) { FNodeShuffleModule::SortResourceRows(Rows, TEXT("scanner-add")); }', 'Rows->MarkDirty();'))) { $f += '(S15) the scanner side sorts after every append, before the save' }
     # S16 (round 3) AUTO / PLAYER-SET
     if ($tick -eq '' -or -not (Ordered $tick @('const bool bShow = R.Show->Value;', 'const bool bPlayerSet = IsRowPlayerSet(Path);', $snapMode, 'if (bShow && bPlayerSet)', 'GAddOrder.Add(RowCls)')) -or (Count $sfAll 'GRowShown.Add(') -ne 1 -or (Count $sfAll 'GAutoRow.Add(') -ne 1) { $f += '(S16) only a PLAYER-SET row enters GRowShown and GAddOrder; an AUTO row enters GAutoRow only' }
     if ($hook -eq '' -or -not (Ordered $hook @($rowFind, $autoFind, $autoRule, 'else', $noRowSeen, $noRowRule)) -or (Count $hook $autoRule) -ne 1 -or (Count $hook 'GSeenNoRow.Add(') -ne 1 -or (Count $hook 'GAutoRow') -ne 1) { $f += '(S16) the hook keeps an AUTO row''s entry unless All Minable, and adds nothing for it' }
@@ -269,6 +270,9 @@ function Invoke-Checks($T) {
     foreach ($n in $stateIo) { foreach ($s in @($hook, $answer16, $nsHook)) { if ($s -ne '' -and (Count $s $n) -ne 0) { $f += "(S16) no record-file call from a hook ($n)" } }; if ((Count ($T.sf + $T.sdiag + $T.nsmod) $n) -ne 0) { $f += "(S16) no record-file call in the hook files ($n)" } }
     if ($resolve -eq '' -or $noted -eq '' -or -not (Ordered $resolve @('if (bCarriedThisPass)', 'if (GNotedByCarry.Contains(It.Key())) { continue; }', 'It.RemoveCurrent();', 'if (GMissingResolved || !GRecordsLoaded) { return; }')) -or (Count $noted 'GNotedByCarry.Add(Path);') -ne 1) { $f += '(S16) on the carry-over pass every record the carry-over did not note is forgotten (a record file left from another config)' }
     if ((Count $T.sfr 'if (!ReadRow(Element, R) || (bTplReadable && R.Show == Tpl.Show)) { continue; }') -ne 1) { $f += '(S16) the mirror never writes through the template''s box' }
+    if ((Count $T.sfr 'EnsureRowStateRecordLoaded();') -ne 1 -or -not (Ordered $T.sfr @('EnsureRowStateRecordLoaded();', 'ApplyPendingRowStateForgets();', 'const bool bCarried = RunCarryOverOnce('))) { $f += '(S16) protection-created rows are forgotten before the carry-over' }
+    if ((Count $T.sfs 'if (Trailer != Read.Num())') -ne 1) { $f += '(S16) a truncated record file is treated as lost' }
+    foreach ($o in @(('All Minable is kept out of ' + 'that list'), ('are kept out of ' + 'that list'))) { if ((Count ($sfAll + $T.cfgc) $o) -ne 0) { $f += '(S10) All Minable sentence names the scanner''s list' } }
     if ((Count $T.sfr ('FlushRowState' + 'RecordIfDirty();')) -ne 1) { $f += '(S16) the record is written from Tick only' }
     if ((Count $T.sfr 'Once you change the box, it stays as you set it (a value carried over from the old scanner list counts as changed).') -ne 1) { $f += '(S10) row switch text: the two states' }
     # S14
@@ -370,10 +374,12 @@ $mutants = @(
     @{ Name = 'M85 missing file treated as all-AUTO';  Key = 'sfs';   Expect = 'S16'; Find = '            NewRec.bPlayerSet = true;'; Repl = '' }
     @{ Name = 'M86 missing file decided after the adds'; Key = 'sfr'; Expect = 'S16'; Find = "        ResolveMissingRecordOnce(Existing, bCarried);`n"; Repl = '' }
     @{ Name = 'M87 record written from a hook';        Key = 'sf';    Expect = 'S16'; Find = "        GLatest = F;`n"; Repl = ("        GLatest = F; " + 'FlushRowState' + "RecordIfDirty();`n") }
-    @{ Name = 'M88 deleted row''s record kept';        Key = 'sfs';   Expect = 'S16'; Find = "            It.RemoveCurrent();`n"; Repl = '' }
+    @{ Name = 'M88 deleted row''s record kept';        Key = 'sfs';   Expect = 'S16'; Find = "            It.RemoveCurrent();`n            GRecordsDirty = true;`n            ++Dropped;"; Repl = "            GRecordsDirty = true;`n            ++Dropped;" }
     @{ Name = 'M91 record pruned after the adds';     Key = 'sfr';   Expect = 'S16'; Find = "        DropRecordsWithoutRows(Existing);`n"; Repl = '' }
     @{ Name = 'M92 stale record survives a carry-over'; Key = 'sfs'; Expect = 'S16'; Find = 'if (bCarriedThisPass) // the config'; Repl = 'if (false) // the config' }
     @{ Name = 'M93 mirror writes through the template'; Key = 'sfr'; Expect = 'S16'; Find = 'if (!ReadRow(Element, R) || (bTplReadable && R.Show == Tpl.Show)) { continue; }'; Repl = 'if (!ReadRow(Element, R)) { continue; }' }
+    @{ Name = 'M94 protection re-creation keeps the record'; Key = 'sfr'; Expect = 'S16'; Find = "        ApplyPendingRowStateForgets(); // review r2 F1"; Repl = "        // review r2 F1" }
+    @{ Name = 'M95 truncated record read as whole'; Key = 'sfs'; Expect = 'S16'; Find = 'if (Trailer != Read.Num())'; Repl = 'if (false)' }
     @{ Name = 'M89 mirror write never saved';          Key = 'sfr';   Expect = 'S16'; Find = 'if (Added > 0 || bCarried || States.Mirrored > 0)'; Repl = 'if (Added > 0 || bCarried)' }
     @{ Name = 'M90 mirror while the list is unread';   Key = 'sfs';   Expect = 'S16'; Find = 'if (!bKnown) { ++OutUnknown; continue; }'; Repl = '' }
     @{ Name = 'M62 retired list shown';                Key = 'sfr';   Expect = 'S15'; Find = '        Retired->bHidden = true;'; Repl = '' }
@@ -387,7 +393,7 @@ $mutants = @(
     @{ Name = 'M68 unlock write in the rows file';     Key = 'sfr';   Expect = 'S7';  Find = '            GStartGameListRead = true;'; Repl = ('            GStartGameListRead = true; // Unlocks->' + 'UnlockScannable' + 'Resource(Pair);') }
     @{ Name = 'M69 existing switch rewritten by the protection pass'; Key = 'sfr'; Expect = 'S13'; Find = '            const bool bShow = R.Show->Value;'; Repl = '            const bool bShow = R.Show->Value; R.Show->Value = bShow;' }
     @{ Name = 'M72 list resettable'; Key = 'cfgc'; Expect = 'S15'; Find = '        Rows->bAllowUserReset = false;'; Repl = '' }
-    @{ Name = 'M73 scanner side never sorts'; Key = 'sfr'; Expect = 'S15'; Find = 'if (Added > 0) { FNodeShuffleModule::SortResourceRows(Rows, TEXT("scanner-add")); }'; Repl = '' }
+    @{ Name = 'M73 scanner side never sorts'; Key = 'sfr'; Expect = 'S15'; Find = 'if (Added > 0 || bCarried) { FNodeShuffleModule::SortResourceRows(Rows, TEXT("scanner-add")); }'; Repl = '' }
     @{ Name = 'M21 census period widened';            Key = 'sfh';   Expect = 'S11'; Find = 'constexpr double CallCensusPeriodSeconds = 5.0;'; Repl = 'constexpr double CallCensusPeriodSeconds = 60.0;' }
 )
 $caught = 0

@@ -27,6 +27,8 @@ namespace NodeShuffleScanFilter
         bool GMissingResolved = false;       // the missing/unreadable case was decided once, in the first pass past the carry-over wait
         bool GRecordsDirty = false;
         TSet<FString> GNotedByCarry;         // paths the carry-over noted in the pass it ran (it runs at most once per config file)
+        TSet<FString> GForgetPending;        // paths whose row the protection side created since the last pass
+        bool GWarnedWriteFailed = false; // fileWriteFailed prints once until a write succeeds
         const TCHAR* const RecordHeader = TEXT("# NodeShuffle scanner-row record v1: playerSet<TAB>lastValue<TAB>path");
 
         FString RecordFilePath() { return FPaths::Combine(FPaths::ProjectDir(), TEXT("Configs"), TEXT("NodeShuffle_ScannerRows.txt")); }
@@ -95,18 +97,27 @@ namespace NodeShuffleScanFilter
             UE_LOG(LogNodeShuffle, Warning, TEXT("SCANFILTER-STATE fileUnreadable path=%s linesRead=%d: the file could not be read or its first line is not the record header"), *Path, Lines.Num());
             return;
         }
-        int32 Malformed = 0; int32 PlayerSet = 0;
+        int32 Malformed = 0; int32 PlayerSet = 0; int32 Trailer = -1;
+        TMap<FString, FRowRecord> Read;
         for (int32 i = 1; i < Lines.Num(); ++i)
         {
+            if (Lines[i].StartsWith(TEXT("# end "))) { Trailer = FCString::Atoi(*Lines[i].Mid(6)); break; }
             TArray<FString> Parts;
             Lines[i].ParseIntoArray(Parts, TEXT("\t"), false);
             if (Parts.Num() != 3 || (Parts[0] != TEXT("0") && Parts[0] != TEXT("1")) || (Parts[1] != TEXT("0") && Parts[1] != TEXT("1")) || Parts[2].TrimStartAndEnd().IsEmpty()) { ++Malformed; continue; }
-            FRowRecord& Rec = GRecords.FindOrAdd(Parts[2].TrimStartAndEnd());
+            FRowRecord& Rec = Read.FindOrAdd(Parts[2].TrimStartAndEnd());
             Rec.bPlayerSet = Parts[0] == TEXT("1");
             Rec.bLastValue = Parts[1] == TEXT("1");
-            if (Rec.bPlayerSet) { ++PlayerSet; }
         }
-        GMissingResolved = true; // the file was read: a row with no record is a new row (AUTO)
+        if (Trailer != Read.Num())
+        {
+            // Arity hand-counted: 3 format specifiers, 3 arguments.
+            UE_LOG(LogNodeShuffle, Warning, TEXT("SCANFILTER-STATE fileUnreadable path=%s recordsRead=%d endLineCount=%d: the end line is missing or its count differs, so the file is treated as lost"), *Path, Read.Num(), Trailer);
+            return;
+        }
+        GRecords = MoveTemp(Read);
+        for (const TPair<FString, FRowRecord>& P : GRecords) { if (P.Value.bPlayerSet) { ++PlayerSet; } }
+        GMissingResolved = true; // the file was read whole: a row with no record is a new row (AUTO)
         // Arity hand-counted: 4 format specifiers, 4 arguments.
         UE_LOG(LogNodeShuffle, Display, TEXT("SCANFILTER-STATE fileRead path=%s records=%d playerSet=%d malformedLines=%d"), *Path, GRecords.Num(), PlayerSet, Malformed);
     }
@@ -118,6 +129,22 @@ namespace NodeShuffleScanFilter
         Rec.bPlayerSet = true;
         Rec.bLastValue = bValue;
         GRecordsDirty = true;
+    }
+
+    void ForgetRowState(const FString& Path) { GForgetPending.Add(Path.TrimStartAndEnd()); }
+
+    void ApplyPendingRowStateForgets()
+    {
+        for (const FString& P : GForgetPending)
+        {
+            const FRowRecord* Rec = GRecords.Find(P);
+            if (!Rec) { continue; }
+            // Arity hand-counted: 2 format specifiers, 2 arguments.
+            UE_LOG(LogNodeShuffle, Display, TEXT("SCANFILTER-STATE recordDropped resource=%s wasPlayerSet=%d: the protection side created this row again"), *P, Rec->bPlayerSet ? 1 : 0);
+            GRecords.Remove(P);
+            GRecordsDirty = true;
+        }
+        GForgetPending.Reset();
     }
 
     void ResolveMissingRecordOnce(const TSet<FString>& RowsBeforeAdds, bool bCarriedThisPass)
@@ -159,13 +186,15 @@ namespace NodeShuffleScanFilter
         FRowStateCounts C;
         C.BecamePlayerSet = DetectTouches(Shows);
         C.Mirrored = MirrorAutoRows(WorldContext, Shows, C.MirrorUnknown);
-        for (const FShowRow& Row : Shows) // record what every box says NOW (a new row gets an AUTO record here)
+        TMap<FString, bool> LastByPath; // last row for a path wins, as in the snapshot: duplicates cannot flip the record every pass
+        for (const FShowRow& Row : Shows) { LastByPath.Add(Row.Path, Row.Show->Value); }
+        for (const TPair<FString, bool>& P : LastByPath) // record what every box says NOW (a new row gets an AUTO record here)
         {
-            FRowRecord* Rec = GRecords.Find(Row.Path);
-            if (!Rec) { Rec = &GRecords.Add(Row.Path, FRowRecord()); Rec->bLastValue = Row.Show->Value; GRecordsDirty = true; }
-            else if (Rec->bLastValue != Row.Show->Value) { Rec->bLastValue = Row.Show->Value; GRecordsDirty = true; }
-            if (Rec->bPlayerSet) { ++C.PlayerSetRows; } else { ++C.AutoRows; }
+            FRowRecord* Rec = GRecords.Find(P.Key);
+            if (!Rec) { Rec = &GRecords.Add(P.Key, FRowRecord()); Rec->bLastValue = P.Value; GRecordsDirty = true; }
+            else if (Rec->bLastValue != P.Value) { Rec->bLastValue = P.Value; GRecordsDirty = true; }
         }
+        for (const FShowRow& Row : Shows) { if (IsRowPlayerSet(Row.Path)) { ++C.PlayerSetRows; } else { ++C.AutoRows; } }
         return C;
     }
 
@@ -211,12 +240,14 @@ namespace NodeShuffleScanFilter
             Out += FString::Printf(TEXT("%d\t%d\t%s\n"), Pair.Value.bPlayerSet ? 1 : 0, Pair.Value.bLastValue ? 1 : 0, *Pair.Key);
             if (Pair.Value.bPlayerSet) { ++PlayerSet; }
         }
+        Out += FString::Printf(TEXT("# end %d\n"), GRecords.Num()); // a truncated file lacks this line and is treated as lost
         const FString Path = RecordFilePath();
         if (!FFileHelper::SaveStringToFile(Out, *Path, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
         {
-            UE_LOG(LogNodeShuffle, Warning, TEXT("SCANFILTER-STATE fileWriteFailed path=%s"), *Path);
+            if (!GWarnedWriteFailed) { UE_LOG(LogNodeShuffle, Warning, TEXT("SCANFILTER-STATE fileWriteFailed path=%s: tried again each pass; this warning prints once until a write succeeds"), *Path); GWarnedWriteFailed = true; }
             return; // stays dirty: the next pass tries again
         }
+        GWarnedWriteFailed = false;
         GRecordsDirty = false;
         // Arity hand-counted: 3 format specifiers, 3 arguments.
         UE_LOG(LogNodeShuffle, Display, TEXT("SCANFILTER-STATE fileWritten path=%s records=%d playerSet=%d"), *Path, GRecords.Num(), PlayerSet);

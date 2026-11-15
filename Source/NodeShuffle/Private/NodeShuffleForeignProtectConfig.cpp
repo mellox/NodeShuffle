@@ -842,6 +842,7 @@ void FNodeShuffleModule::SyncForeignResourceRowsToConfig(UObject* WorldContext)
 
         ResourceProp->Value = Pair.Key;
         ProtectedProp->Value = true; // default PROTECTED -- the author's both-mods-work ruling
+        NodeShuffleScanFilter::ForgetRowState(Pair.Key); // review r2 F1: a re-created row starts AUTO
         // ns-scanfilter-4: the row's 'Show in scanner' value, by the AUTO rule every row creator uses (round 3: AutoShowValue; the
         // row has no record yet, so the scanner side treats it as AUTO and keeps the box on that rule). Not a protection field: the
         // latch and the veto never read it. A field shared with the template is left alone, never written through.
