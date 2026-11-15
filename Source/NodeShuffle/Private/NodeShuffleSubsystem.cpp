@@ -701,6 +701,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
 {
     LastRoll.BeginRoll(Seed, bIsReroll); // mcp-lastroll-1: the one reset-and-sequence statement (McpSnapshot lastRoll); touches only LastRoll
     RwgProvCandMarkDirty(bIsReroll ? TEXT("reroll") : TEXT("roll")); // rwg-farspawn-1f C3: the provisional candidate list is rebuilt next pass
+    RwgRollFirstNoteRoll(); // ns-rollfirst-1: the roll time SCANCOVER / ROLLFIRST lines read as secondsSinceRoll
     const FNodeShuffleConfigStruct Config = FNodeShuffleConfigStruct::GetActiveConfig(this);
     FRandomStream Rng(Seed);
 

@@ -103,6 +103,7 @@ namespace
         TEXT("NodeShuffle.RwgSpawnAllAtRoll"),
         TEXT("NodeShuffle.RwgProvisionalBatchPerPass"),
         TEXT("NodeShuffle.RwgProvisionalBatchMs"),
+        TEXT("NodeShuffle.RwgFirstPerResource"), // ns-rollfirst-1
         TEXT("NodeShuffle.RwgRingRadiusM"),
     };
 

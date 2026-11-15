@@ -9,6 +9,9 @@
 // (an external destroy, a stale flag cleared) waits for the next build (at most 12 passes); far entries keep the build-time order.
 // Within-radius entries whose fresh attempt this pass left no actor (FreshNoActor) are tested first every pass, nearest first, whether or
 // not they are on the list, so 1e C1 does not wait for a build.
+// ns-rollfirst-1 (2026-11-14): at a build, RwgRollFirstReorder (NodeShuffleRollFirst.cpp) moves the priority entries (the actorless ones among
+// each resource's K nearest) to the front of the list, ordered by (rank within its resource, distance); every entry still reaches the
+// candidates only through the PassOk tests below (sea-done included), and this pass's within-radius fresh entries are still tested first.
 #include "NodeShuffleMapModeProvisional.h"
 #include "NodeShuffleSubsystem.h"
 #include "NodeShuffleMapMode.h"
@@ -75,8 +78,13 @@ void ANodeShuffleSubsystem::RwgProvisionalCollectCandidates(const TArray<FVector
     if (Why)
     {
         TArray<TPair<double, int32>> Sorted;
-        for (int32 I = 0; I < Layout.Num(); ++I) { if (SetAsideOk(Layout[I])) { Sorted.Emplace(NearestSq(Layout[I].Location), I); } }
+        // ns-rollfirst-1: the same walk also collects the active new-node entries that have an actor (each holds a slot in its resource's
+        // K nearest, never a priority entry); only while NodeShuffle.RwgFirstPerResource is above 0.
+        TArray<TPair<double, int32>> RfLoaded;
+        const bool bRfOn = NodeShuffleMapMode::RwgFirstPerResource() > 0;
+        for (int32 I = 0; I < Layout.Num(); ++I) { if (SetAsideOk(Layout[I])) { Sorted.Emplace(NearestSq(Layout[I].Location), I); } else if (bRfOn && Layout[I].bIsNewNode && Layout[I].bActive && IsValid(SpawnedNodes.FindRef(Layout[I].EntryGuid))) { RfLoaded.Emplace(NearestSq(Layout[I].Location), I); } }
         Sorted.Sort([](const TPair<double, int32>& A, const TPair<double, int32>& B) { return A.Key < B.Key; }); // nearest to any player first
+        RwgRollFirstReorder(Sorted, RfLoaded, Why); // ns-rollfirst-1 (NodeShuffleRollFirst.cpp): priority entries first by (rank, distance), the rest in the order above; K=0 leaves Sorted untouched
         RwgProvCandList.Reset(Sorted.Num());
         for (const TPair<double, int32>& S : Sorted) { RwgProvCandList.Emplace(Layout[S.Value].EntryGuid, S.Value); }
         RwgProvCandBuiltPass = RwgPcPasses;

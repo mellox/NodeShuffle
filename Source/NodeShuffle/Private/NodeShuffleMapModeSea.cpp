@@ -215,11 +215,20 @@ void ANodeShuffleSubsystem::RwgSeaRedealPass()
     int32 PlacedWet = 0;
     int32 VoidN = 0, KillboxN = 0; // P2f: spots rejected by the void term / the killbox floor (raw bits; may overlap the water count)
     const bool bDiag = FNodeShuffleModule::AreDiagnosticsEnabled();
-    for (int32 I = 0; I < Layout.Num() && Left > 0; ++I)
+    // ns-rollfirst-1 (2026-11-14): the priority entries (RwgRollFirstList, built with the provisional candidate list, (rank, distance) order) are
+    // walked first, then the layout-index walk as before. One loop, one body, one Left: the per-pass bound is unchanged, and an entry the
+    // first steps flagged is skipped by the same test when the index walk reaches it. A (guid, index) pair that no longer matches is dropped.
+    TArray<int32> SeaFirst;
+    for (const TPair<FGuid, int32>& G : RwgRollFirstList) { if (Layout.IsValidIndex(G.Value) && Layout[G.Value].EntryGuid == G.Key) { SeaFirst.Add(G.Value); } }
+    const int32 SeaFirstN = SeaFirst.Num();
+    RwgRollFirstSeaFirstChecked = 0;
+    for (int32 Step = 0; Step < SeaFirstN + Layout.Num() && Left > 0; ++Step)
     {
+        const int32 I = (Step < SeaFirstN) ? SeaFirst[Step] : Step - SeaFirstN;
         FNodeShuffleEntry& E = Layout[I];
         if (!E.bIsNewNode || !E.bActive || (E.bRwgSeaChecked && (E.bRwgVoidChecked || !bVoidOn)) || RwgSeaDealFailed.Contains(E.EntryGuid)) { continue; }
         --Left; ++Checked;
+        if (Step < SeaFirstN) { ++RwgRollFirstSeaFirstChecked; } // ns-rollfirst-1: ROLLFIRST-PASS seaCheckedFirst
         // Placed = a live actor, OR settled at any time (bRayCasted / bRwgSettledOnTerrain are SaveGame; SpawnedNodes may not have
         // re-adopted a far actor yet this session, and an unadopted actor could carry a miner). A sea spot never settles (no terrain).
         if (IsValid(SpawnedNodes.FindRef(E.EntryGuid)) || E.bRayCasted || E.bRwgSettledOnTerrain) { ++SkipPlaced; PlacedWet += (!Q.Outside(E.Location.X, E.Location.Y) && RwgWetV2(Q, FVector(E.Location.X, E.Location.Y, Q.SurfaceZ(E.Location.X, E.Location.Y))) != 0) ? 1 : 0; E.bRwgSeaChecked = true; E.bRwgVoidChecked |= bVoidOn; continue; }

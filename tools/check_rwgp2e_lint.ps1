@@ -123,7 +123,11 @@ if (-not $sp) { $fails += 'E5: RwgSeaRedealPass body not found' } else {
     if (-not $sp.Contains('if (bMoved) { ++Redealt; E.bRwgSeaChecked = ' + 'true; E.bRwgVoidChecked |= bVoidOn; }')) { $fails += 'E5: a node is flagged after a re-deal only when it moved' }
     $iWp = $sp.IndexOf('if (W.bGroupPlaced) { ++Skip' + 'Placed;'); $iWf = $sp.IndexOf('if (W.bRelocationFailed) { ++Skip' + 'FailedWell;'); $iWd = $sp.IndexOf('RwgDealWell' + 'Site(Q, Rng, Offs, Site)')
     if ($iWp -lt 0 -or $iWf -lt $iWp -or $iWd -lt $iWf) { $fails += 'E5: placed and failed wells must be skipped before the well re-deal' }
-    if ((Count $sp ('int32 Left = NodeShuffleMapMode::RwgSeaRedeal' + 'PerPass;')) -ne 1 -or (Count $sp ('&& Left > ' + '0; ++I)')) -ne 2) { $fails += 'E5: both loops must be bounded by RwgSeaRedealPerPass' }
+    # ns-rollfirst-1 (2026-11-14): the node loop walks the priority entries first, then Layout by index (one loop, one Left); each of the two
+    # loop headers is pinned whole, so a loop that stops spending Left, or a second node loop, fails here. The well loop keeps its old header.
+    if ((Count $sp ('int32 Left = NodeShuffleMapMode::RwgSeaRedeal' + 'PerPass;')) -ne 1 -or (Count $sp ('&& Left > ' + '0; ++')) -ne 2 -or
+        (Count $sp ('for (int32 Step = 0; Step < SeaFirstN + Layout.Num() && Left > ' + '0; ++Step)')) -ne 1 -or
+        (Count $sp ('for (int32 I = 0; I < WellLayout.Num() && Left > ' + '0; ++I)')) -ne 1 -or (Count $sp '--Left;') -ne 2) { $fails += 'E5: both loops must be bounded by RwgSeaRedealPerPass' }
 }
 
 # E6

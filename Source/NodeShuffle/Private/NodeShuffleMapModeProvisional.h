@@ -34,4 +34,8 @@ namespace NodeShuffleMapMode
     constexpr double RwgProvisionalMoveTolCm = 300.0;
     // rwg-farspawn-1f C3: the per-session provisional candidate list is rebuilt at least every this many spawn passes (no console variable).
     constexpr int32 RwgProvisionalCandRebuildPasses = 12;
+    // ns-rollfirst-1 (2026-11-14, NodeShuffleRollFirst.cpp): NodeShuffle.RwgFirstPerResource, default 3, clamped 0..16; 0 = off
+    // (the candidate list and the sea pass keep their old order). Read where the candidate list is built.
+    int32 RwgFirstPerResource();
+    constexpr int32 RwgFirstPerResourceMax = 16;
 }

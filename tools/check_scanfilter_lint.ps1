@@ -196,14 +196,15 @@ function Invoke-Checks($T) {
     if ((Count $T.subh '    void ScanFilterTick(bool bModEnabled);') -ne 1 -or (Count $T.sfr 'if (!E.bActive || !NodeShuffleScanFilter::IsModdedPath(E.AssignedResourceClassPath)) { continue; }') -ne 1) { $f += '(S8) the managed set is active modded layout entries through the same predicate' }
     # S9
     $hdrTags = @([regex]::Matches($T.mark, 'TEXT\("(20\d\d-\d\d-\d\d-[\w-]+)"\),') | ForEach-Object { $_.Groups[1].Value })
-    if ($hdrTags.Count -eq 0 -or $hdrTags[-1] -ne $marker4 -or $hdrTags -notcontains $marker -or $hdrTags -notcontains $marker2 -or $hdrTags -notcontains $marker3) { $f += '(S9) scanfilter-4 is the newest entry; scanfilter-1, -2 and -3 stay listed' }
+    # ns-rollfirst-1 (2026-11-14): scanfilter-4 is no longer the newest; it stays listed (the newest is pinned by check_rollfirst_lint R9 and check_mcpcontract C4).
+    if ($hdrTags.Count -eq 0 -or $hdrTags -notcontains $marker4 -or $hdrTags -notcontains $marker -or $hdrTags -notcontains $marker2 -or $hdrTags -notcontains $marker3) { $f += '(S9) scanfilter-4, -1, -2 and -3 stay listed' }
     if ((Count $T.nsmod ('packet marker (' + $marker4 + ')=====')) -ne 1) { $f += '(S9) scanfilter-4 once on its own line in NodeShuffle.cpp' }
     if ((Count $T.nsmod ('packet marker (' + $marker3 + ')=====')) -ne 1) { $f += '(S9) scanfilter-3 once on its own line in NodeShuffle.cpp' }
     if ((Count $T.nsmod ('packet marker (' + $marker2 + ')=====')) -ne 1) { $f += '(S9) scanfilter-2 once on its own line in NodeShuffle.cpp' }
     if ($hdrTags -notcontains $prevMark) { $f += '(S9) quietchat-1 stays listed in the markers header' }
     if ((Count $T.nsmod ('packet marker (' + $marker + ')=====')) -ne 1 -or (Count $T.nsmod ('packet marker (' + $prevMark + ')=====')) -ne 1) { $f += '(S9) both markers once on their own lines in NodeShuffle.cpp' }
     foreach ($k in @('sf', 'sfh', 'sfr', 'sfi', 'sfs')) { if ((Count $T[$k] $marker) -ne 0 -or (Count $T[$k] $marker2) -ne 0 -or (Count $T[$k] $marker3) -ne 0 -or (Count $T[$k] $marker4) -ne 0) { $f += "(S9) no marker inside the new file ($k)" } }
-    if (-not $T.lmcp.Contains("`$own = '2026-11-14-' + 'scanfilter-4'")) { $f += '(S9) check_mcpcontract C4 must name scanfilter-4 as the newest' }
+    if (-not $T.lmcp.Contains("`$own = '2026-11-14-' + 'rollfirst-1'")) { $f += '(S9) check_mcpcontract C4 must name rollfirst-1 as the newest (ns-rollfirst-1)' }
     # S10
     $cfgKnow = Span $T.cfgc '    AddBool(TEXT("UnlockModdedKnowledge"), true,' 'AddBool(TEXT("ProtectOtherModsNodes"), true,'
     if ($cfgKnow -eq '' -or (Count $cfgKnow 'NodeShuffleScanFilter::RegisterConfigRows(Root, ArrayClass, SectionClass, StringClass, BoolClass);') -ne 1) { $f += '(S10) the rows are registered right after the knowledge option' }

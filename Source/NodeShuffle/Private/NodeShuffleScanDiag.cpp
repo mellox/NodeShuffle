@@ -62,6 +62,8 @@ void ANodeShuffleSubsystem::InstallScanDiagHooks()
             Scope(Self, Closest); // the scanner's own pick first; this hook only reads what it returned
         }
         NodeShuffleScanFilter::EmitPickLine(Self, Closest.Num());
+        // ns-rollfirst-1: SCANCOVER, ungated, one line per pick, beside SCANFILTER-PICK (NodeShuffleRollFirst.cpp); never inside the spawn pass
+        if (IsValid(Self) && Self->GetWorld()) { for (TActorIterator<ANodeShuffleSubsystem> It(Self->GetWorld()); It; ++It) { It->EmitScanCover(Self); break; } }
         if (!FNodeShuffleModule::AreDiagnosticsEnabled() || !IsValid(Self) || !Self->GetWorld()) { return; }
         for (TActorIterator<ANodeShuffleSubsystem> It(Self->GetWorld()); It; ++It) { It->EmitScanPing(Self, Closest); return; }
     });

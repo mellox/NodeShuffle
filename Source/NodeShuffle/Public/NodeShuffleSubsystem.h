@@ -1269,6 +1269,21 @@ private:
     int32 RwgProvCandBuiltLayoutNum = -1;                                  // Layout.Num() at the last build
     const TCHAR* RwgProvCandDirtyWhy = nullptr;                            // set by RwgProvCandMarkDirty; cleared by a build
     int32 RwgProvCandBuilds = 0;                                           // session: list builds (PROVSPAWN candidateListBuilds)
+    // ns-rollfirst-1 (2026-11-14, NodeShuffleRollFirst.cpp): the K nearest active entries of every resource (K = NodeShuffle.RwgFirstPerResource)
+    // are picked by position when the candidate list is built; the picks with no actor (priority entries) lead the list and the sea pass.
+    bool RwgRollFirstCanLoad(const FNodeShuffleEntry& E) const;           // an actorless entry the provisional path may still give a node
+    bool RwgRollFirstSeaDone(const FNodeShuffleEntry& E) const;           // the candidate scan's sea-done test (same expression as PassOk)
+    void RwgRollFirstReorder(TArray<TPair<double, int32>>& Sorted, const TArray<TPair<double, int32>>& Loaded, const TCHAR* Why); // build block only
+    void RwgRollFirstEmitPass(const TArray<int32>& Cands, int32 Attempted); // after the provisional attempt loop: ROLLFIRST-PASS / ROLLFIRST-DONE
+    void RwgRollFirstNoteRoll();                                           // RollLayout: the roll time read by secondsSinceRoll
+    double RwgRollFirstSecondsSinceRoll() const;                           // -1 when no roll ran this session
+    void EmitScanCover(class AFGResourceScanner* Scanner);                 // SCANCOVER, one line per GetClosetClusters call (NodeShuffleScanDiag.cpp hook)
+    TArray<TPair<FGuid, int32>> RwgRollFirstList;                          // session: priority entries (guid, layout index), (rank, distance) order at build
+    TArray<TPair<FGuid, int32>> RwgRollFirstPicks;                         // session: every pick at build, with or without an actor
+    TArray<int32> RwgRollFirstPickRes;                                     // resource ordinal of each pick (parallel to RwgRollFirstPicks)
+    int32 RwgRollFirstK = 0, RwgRollFirstResources = 0, RwgRollFirstShortOfK = 0, RwgRollFirstGeneration = 0, RwgRollFirstSeaFirstChecked = 0;
+    bool bRwgRollFirstDoneLogged = true;                                   // ROLLFIRST-DONE latch; re-armed by a build that picks a priority entry
+    double RwgRollFirstRollTime = -1.0;                                    // FPlatformTime::Seconds() at the last RollLayout this session
     // rwg-rerollwipe-1 (2026-10-31, NodeShuffleRerollWipe.cpp): the re-roll wipe's registration teardown + REROLLWIPE census (RollLayout call sites only).
     void RerollWipeBegin(struct FNodeShuffleRerollWipeTally& T);                                        // records the snap-list count before the wipe
     void RerollWipeTeardownRegistrations(class AFGResourceNode* Node, struct FNodeShuffleRerollWipeTally& T); // snap list, representation, scan; caller Destroys after
