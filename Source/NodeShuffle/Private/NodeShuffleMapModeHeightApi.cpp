@@ -846,7 +846,7 @@ double NodeShuffleMapMode::FRwgGroundQuery::WaterLevelZ(double X, double Y) cons
 namespace
 {
     // rwg-0-2-0-2 item 4 (design Q2): RWG's four readiness getters, LOG-ONLY. Each 8-byte body was measured on build 1063
-    // (`movzx eax, byte [rcx+disp32]; ret`); the displacement is PINNED (only 0.2.0 is supported). A getter whose export is missing or whose
+    // (`movzx eax, byte [rcx+disp32]; ret`); the displacement is PINNED (rwg-0-2-1-1: 1063 forms, plus 1130 forms for GetState / IsContentSpawned). A getter whose export is missing or whose
     // bytes differ is left unbound and prints -1; the readiness bind never writes height-API state itself and feeds no decision, but its
     // first call can trigger the height-API TryBind (via RwgHeightApiBoundModule), i.e. at the first RWGWAIT line on a new world
     // (review F1; RWGGETTERS prints heightApiBindRanInThisCall).

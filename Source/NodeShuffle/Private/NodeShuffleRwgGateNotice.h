@@ -26,6 +26,7 @@ namespace NodeShuffleRwgGate
     // PINNED bytes differed; OutMissing / OutMismatched carry the export names. A missing export is not a mismatch.
     // rwg-0-2-0-1 (2026-11-13): Gen selects the mask generation the height-API bind accepted (GenA = the 705/745/802 masks,
     // GenB = the build-1063 masks); CarvedCaves / AnyNear / FloorCmAt differ per generation, Num / IsInsideAt are shared.
+    // rwg-0-2-1-1 (2026-11-15): on GenB, CarvedCaves has a second fully pinned form (build 1130, disp8 0x40), applied only on a full match.
     int32 CheckCaveSignatures(void* Hmod, int32 Gen, FString& OutMissing, FString& OutMismatched);
 
     // rwg-0-2-0-1: mask generations (D1, _team/test-logs/2026-11-13-rwg-0.2.0-export-diff.md). 0 = matched neither.
@@ -34,6 +35,7 @@ namespace NodeShuffleRwgGate
     // Measurement only (binds nothing): which generation's mask each of the three generation-specific cave exports matches.
     // Returns a bit set: bit GenA = at least one matched ONLY generation A's mask, bit GenB = at least one matched ONLY B's.
     // OutDetail lists each export as Name:A|B|both|none|missing. A missing, both-matching or neither-generation export sets no bit.
+    // rwg-0-2-1-1: CarvedCaves counts as B when either generation-B form (1063 or 1130) matches.
     int32 ClassifyCaveGenerations(void* Hmod, FString& OutDetail);
 
     // Queue the player notice for a REFUSAL (callsAllowed=0): Status is the refusal status the log prints, Detail the
