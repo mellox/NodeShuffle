@@ -142,7 +142,7 @@ $plain = @('resource to the list of resources it hands to the resource scanner, 
            'In multiplayer only the host''s game applies it. These switches apply to every world on ', # ns-scanfilter-4: the merged list's tooltip
            'SHOW IN SCANNER takes effect in a running game: reopen the scanner. UNTIL YOU CHANGE A ROW''S ',
            'BOX, NodeShuffle leaves that resource''s scanner entry to the game and only keeps the box ',
-           'are kept out of the list NodeShuffle hands the scanner. ONCE YOU CHANGE A BOX, it stays as you set it. ON: NodeShuffle adds the ',
+           'are kept out of the list NodeShuffle hands the scanner. ONCE YOU CHANGE A BOX, it stays as you set it, except a change made to a brand-new row in the few seconds before NodeShuffle first checks it. ON: NodeShuffle adds the ',
            'ticked and following the game''s scanner list again, the next time NodeShuffle sees that ',
            'this install, not to one save. A box carried over from the old scanner list counts as changed, ') # round 3: the two row states
 
@@ -273,6 +273,8 @@ function Invoke-Checks($T) {
     if ((Count $T.sfr 'EnsureRowStateRecordLoaded();') -ne 1 -or -not (Ordered $T.sfr @('EnsureRowStateRecordLoaded();', 'ApplyPendingRowStateForgets();', 'const bool bCarried = RunCarryOverOnce('))) { $f += '(S16) protection-created rows are forgotten before the carry-over' }
     if ((Count $T.sfs 'if (Trailer != Read.Num())') -ne 1) { $f += '(S16) a truncated record file is treated as lost' }
     foreach ($o in @(('All Minable is kept out of ' + 'that list'), ('are kept out of ' + 'that list'))) { if ((Count ($sfAll + $T.cfgc) $o) -ne 0) { $f += '(S10) All Minable sentence names the scanner''s list' } }
+    if ((Count $T.prot 'NodeShuffleScanFilter::ForgetRowState(Pair.Key); // review r2 F1') -ne 1) { $f += '(S16) a row the protection side creates forgets its old record' }
+    foreach ($o in @(('and so does every box if ' + 'NodeShuffle''s record'), ('is ' + 'lost.\n\n'))) { if ((Count $T.cfgc $o) -ne 0) { $f += '(S10) the record-file sentence names its exceptions' } }
     if ((Count $T.sfr ('FlushRowState' + 'RecordIfDirty();')) -ne 1) { $f += '(S16) the record is written from Tick only' }
     if ((Count $T.sfr 'Once you change the box, it stays as you set it (a value carried over from the old scanner list counts as changed).') -ne 1) { $f += '(S10) row switch text: the two states' }
     # S14
@@ -380,6 +382,7 @@ $mutants = @(
     @{ Name = 'M93 mirror writes through the template'; Key = 'sfr'; Expect = 'S16'; Find = 'if (!ReadRow(Element, R) || (bTplReadable && R.Show == Tpl.Show)) { continue; }'; Repl = 'if (!ReadRow(Element, R)) { continue; }' }
     @{ Name = 'M94 protection re-creation keeps the record'; Key = 'sfr'; Expect = 'S16'; Find = "        ApplyPendingRowStateForgets(); // review r2 F1"; Repl = "        // review r2 F1" }
     @{ Name = 'M95 truncated record read as whole'; Key = 'sfs'; Expect = 'S16'; Find = 'if (Trailer != Read.Num())'; Repl = 'if (false)' }
+    @{ Name = 'M96 protection re-creation not forgotten'; Key = 'prot'; Expect = 'S16'; Find = '        NodeShuffleScanFilter::ForgetRowState(Pair.Key); // review r2 F1: a re-created row starts AUTO'; Repl = '' }
     @{ Name = 'M89 mirror write never saved';          Key = 'sfr';   Expect = 'S16'; Find = 'if (Added > 0 || bCarried || States.Mirrored > 0)'; Repl = 'if (Added > 0 || bCarried)' }
     @{ Name = 'M90 mirror while the list is unread';   Key = 'sfs';   Expect = 'S16'; Find = 'if (!bKnown) { ++OutUnknown; continue; }'; Repl = '' }
     @{ Name = 'M62 retired list shown';                Key = 'sfr';   Expect = 'S15'; Find = '        Retired->bHidden = true;'; Repl = '' }

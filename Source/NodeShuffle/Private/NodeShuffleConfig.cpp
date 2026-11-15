@@ -309,7 +309,7 @@ void UNodeShuffleConfig::PostInitProperties()
         // and 'Resource' keep true. What a player can now do in a running world (add / delete a row; Reset is refused below) and
         // what each does to protection is in the ns-scanfilter-4 handoff; protection still latches at world load.
         Rows->bRequiresWorldReload = false;
-        Rows->bAllowUserReset = false; // ns-scanfilter-4 review F2: the list's Reset is refused, in the main menu too, and SML also refuses per-row and per-field Reset on rows loaded from file (rows added at runtime keep theirs until the next load), so protection choices cannot be wiped by a Reset
+        Rows->bAllowUserReset = false; // ns-scanfilter-4 review F2: SML refuses this list's Reset, in the main menu too; rows read from the file also refuse their own Reset and that of every field the file gave a value (ConfigPropertyArray/Section Deserialize). A row added during play, and a field the file lacked, keep their Reset until the next load.
         // T65 RETITLED. The old title was "Protect Other Mods' RESOURCES", which asserts the resource
         // itself belongs to another mod -- FALSE for the population that motivated T61's copy fix:
         // vanilla NitrogenGas / LiquidOil carried by another mod's well actors. What every row in this
@@ -366,8 +366,8 @@ void UNodeShuffleConfig::PostInitProperties()
             // Round 3 (user decision "One box, follows game"): the two row states; graded in the handoff's "Round 3".
             TEXT("SHOW IN SCANNER takes effect in a running game: reopen the scanner. UNTIL YOU CHANGE A ROW'S ")
             TEXT("BOX, NodeShuffle leaves that resource's scanner entry to the game and only keeps the box ")
-            TEXT("matching the game's own list of scannable resources; resources from All Minable start OFF and ")
-            TEXT("are kept out of the list NodeShuffle hands the scanner. ONCE YOU CHANGE A BOX, it stays as you set it. ON: NodeShuffle adds the ")
+            TEXT("matching the game's own list of scannable resources (only in a world you host with 'Enabled' on, once NodeShuffle has read that list); resources from All Minable start OFF and ")
+            TEXT("are kept out of the list NodeShuffle hands the scanner. ONCE YOU CHANGE A BOX, it stays as you set it, except a change made to a brand-new row in the few seconds before NodeShuffle first checks it. ON: NodeShuffle adds the ")
             TEXT("resource to the list of resources it hands to the resource scanner, including a resource you ")
             TEXT("have not researched. OFF: NodeShuffle takes it out of that list. When you scan for an ON ")
             TEXT("resource, NodeShuffle also lets the scan look for its nodes; it does not promise that one is ")
@@ -377,14 +377,14 @@ void UNodeShuffleConfig::PostInitProperties()
             TEXT("this switch does nothing. While NodeShuffle's 'Enabled' is off, nothing is hidden or added. ")
             TEXT("In multiplayer only the host's game applies it. These switches apply to every world on ")
             TEXT("this install, not to one save. A box carried over from the old scanner list counts as changed, ")
-            TEXT("and so does every box if NodeShuffle's record file (NodeShuffle_ScannerRows.txt, beside its ")
-            TEXT("config) is lost.\n\n")
+            TEXT("and so does every box already in the list if NodeShuffle's record file (NodeShuffle_ScannerRows.txt, beside its ")
+            TEXT("config) is lost or damaged, except on the first load after installing this version.\n\n")
             TEXT("THE TEXT BOX IS THE RESOURCE'S IDENTITY, not a label to edit. It is the full asset ")
             TEXT("path of the resource, which is what tells two mods' similarly-named ores apart. ")
             TEXT("Change it and the row stops matching anything and does nothing; the real resource ")
             TEXT("goes back to being protected and gets a fresh row. Delete a row and it comes back, ")
             TEXT("ticked and following the game's scanner list again, the next time NodeShuffle sees that ")
-            TEXT("resource. Adding a row by hand does nothing unless the text happens to be an exact ")
+            TEXT("resource; a row you delete and type back in before NodeShuffle notices keeps its old box. Adding a row by hand does nothing unless the text happens to be an exact ")
             TEXT("resource path.\n\n")
             TEXT("NO 'PROTECTED' TICK APPLIES unless the \"Protect Other Mods' Nodes\" tick box above this ")
             TEXT("list is ticked. It is ON by default. A change to it takes effect at the next world ")
