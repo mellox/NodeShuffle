@@ -63,7 +63,7 @@ confirmed working with NodeShuffle, **before** the update, were KBFL 2026.2.267,
 
 All settings are in the in-game **Mods → Node Shuffle** panel (and persist to
 `<game>/FactoryGame/Configs/NodeShuffle.cfg`), in three groups: **the shuffle**,
-**other mods**, and **troubleshooting** — 17 settings plus two lists: the protected-resource list and the modded-resource vanilla-count table. There is no resource-wells group: since 1.4.0 wells are part of the shuffle
+**other mods**, and **troubleshooting** — 18 settings plus two lists: the protected-resource list and the modded-resource vanilla-count table. There is no resource-wells group: since 1.4.0 wells are part of the shuffle
 and have no switches of their own (see **Resource wells** below).
 
 ### The shuffle
