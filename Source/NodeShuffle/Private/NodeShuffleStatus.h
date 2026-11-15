@@ -25,6 +25,15 @@ namespace NodeShuffleStatus
     constexpr double DisplayCapSeconds = 600.0; // after the first roll: the panel ends silently if S5 never comes
     constexpr double DoneHoldSeconds = 10.0;    // S5 shows "Done." this long, then the display ends for the session
     constexpr int32 ChatMaxAttempts = 12;       // a chat line whose chat manager never answers is abandoned after this many ticks
+    constexpr int32 StatusTickSeconds = 5;      // RefreshTick's period (NodeShuffleSubsystem.cpp TickIntervalSeconds; check_status_lint T12 pins both)
+
+    // The host panel (NodeShuffleStatusWidget / NodeShuffleStatusPanel.cpp). ONE named constant places it: moving it is a one-line change.
+    // RWG's own corner card position is not known yet (design Q1), so the default stays off the corners.
+    enum class EPanelPos : uint8 { TopLeft, TopRight, BottomLeft, BottomRight, MiddleLeft };
+    constexpr EPanelPos PanelPosition = EPanelPos::MiddleLeft;
+    constexpr float PanelMarginPx = 24.f;       // from the screen edge(s) the position names
+    constexpr float PanelWidthPx = 620.f;       // fixed; no font measuring (a longer line runs past the right edge: game-only check)
+    constexpr int32 PanelZOrder = 40;           // AddToViewport z-order (UrDead's reticle uses 50)
 
     // NodeShuffle.StatusPanelTest argument: s0, s0x, s1, s1floor, soon, s3, s4, s5 or off. False = not a known stage.
     bool ParseTestStage(const FString& Arg, EStage& OutStage, bool& bOutOff);

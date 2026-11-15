@@ -277,6 +277,7 @@ void ANodeShuffleSubsystem::EndPlay(const EEndPlayReason::Type EndPlayReason)
     RollChatClear(TEXT("world teardown")); // ns-rollchat-1: stop the row drain; unsent rows are dropped and counted
     FlushWaterGridIfDirty(); // playtest-fixes-3: persist learned water cells on session end
     FlushCaveStoreIfDirty(); // cave-nodes-1: persist discovered cavern floors on session end
+    StatusRemovePanel(TEXT("endPlay")); // ns-status-1: the host status panel never outlives this subsystem
     Super::EndPlay(EndPlayReason);
 }
 

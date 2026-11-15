@@ -243,6 +243,11 @@ struct NODESHUFFLE_API FNodeShuffleConfigStruct
     UPROPERTY(BlueprintReadWrite)
     bool RwgDensityBudget{true};
 
+    // ns-status-1 (2026-11-15): the host's first-shuffle status panel on RWG worlds. Default ON. Read only by the status display
+    // (NodeShuffleStatusPanel.cpp, each RefreshTick while a stage is shown); no roll, layout or save effect. Chat lines are not affected.
+    UPROPERTY(BlueprintReadWrite)
+    bool ShowStatusPanel{true};
+
     static FNodeShuffleConfigStruct GetActiveConfig(UObject* WorldContext);
 };
 

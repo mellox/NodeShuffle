@@ -164,6 +164,7 @@ void ANodeShuffleSubsystem::StatusTick(bool bEnabled)
     if (Next == EStage::S0) { bStsChatS0Wanted = true; }
     if (Next == EStage::S1 || Next == EStage::S1floor || Next == EStage::Soon) { bStsChatS1Wanted = true; }
     if (bEnabled) { StatusChatStep(World); }
+    StatusApplyPanel(StsStageNow); // the host panel: text refreshed from this 5 s tick only (NodeShuffleStatusPanel.cpp)
     if (Next == Prev && bStsStatusLogged) { return; }
     if (Next == EStage::None && !bStsStatusLogged) { return; } // nothing shown yet: no line for the initial None
     bStsStatusLogged = true;

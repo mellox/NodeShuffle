@@ -128,6 +128,7 @@ $golden = @{
     'StarterNodeRadiusMeters' = 'false/none'; 'RwgDensityBudget' = 'false/none'; 'ModdedVanillaCountsOnRwg' = 'false/none'
     'ModdedVanillaCountRows' = 'false/none'; 'EnableDiagnostics' = 'false/none'; 'ScannerResourceVisibility' = 'false/none' # ns-scanfilter-1
     'ScannerSwitchesMerged' = 'false/none' # ns-scanfilter-4: hidden carry-over flag
+    'ShowStatusPanel' = 'false/none'; 'NodeShuffle.StatusPanelTest' = 'false/none' # ns-status-1
     'NodeShuffle.SeedHere' = 'true/structural'; 'NodeShuffle.Here' = 'true/structural'; 'NodeShuffle.PointAtHere' = 'true/structural'
     'NodeShuffle.WellProbe' = 'true/structural'; 'NodeShuffle.AuditPlacements' = 'true/structural'; 'NodeShuffle.DumpLayout' = 'false/none'
     'NodeShuffle.ProbeNearestNode' = 'false/none'; 'NodeShuffle.NearestCave' = 'false/none'; 'NodeShuffle.DumpExtractors' = 'false/none'
@@ -138,6 +139,7 @@ $effectGolden = @{
     'NodeShuffle.Here' = 'write'; 'NodeShuffle.NearestCave' = 'write'; 'NodeShuffle.SeedHere' = 'write'; 'NodeShuffle.AuditPlacements' = 'write'
     'NodeShuffle.DumpExtractors' = 'write'; 'NodeShuffle.DumpLayout' = 'write'; 'NodeShuffle.ProbeNearestNode' = 'write'
     'NodeShuffle.PointAtHere' = 'write'; 'NodeShuffle.DumpWells' = 'read'; 'NodeShuffle.WellProbe' = 'write'; 'NodeShuffle.WhereCaveNodes' = 'write'; 'NodeShuffle.ChatProbe' = 'write' # ns-rocks-1
+    'NodeShuffle.StatusPanelTest' = 'write' # ns-status-1
 }
 $constPhrase = 'const ' + 'handler'
 # E (cold review regrade-1): every golden READ row is pinned at its SOURCE too -- each file its handler reaches in this module.

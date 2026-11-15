@@ -21,6 +21,10 @@ public class NodeShuffle : ModuleRules
             // installed-but-unloaded mod extractors. Same module NodeShuffleVetoKBFL already links
             // successfully (see its Build.cs) — this is the first time the MAIN module links it.
             "AssetRegistry",
+            // ns-status-1 (2026-11-15): the host status panel (NodeShuffleStatusWidget), UrDead's route (UrDead.Build.cs:15-26).
+            // UMG -> UUserWidget / CreateWidget / AddToViewport; Slate -> FSlateDrawElement; SlateCore -> FCoreStyle. These add REAL
+            // imports (UUserWidget's vtable, MakeLines/MakeText): run _team/tools/check_imports.ps1 on the built DLL before anyone plays.
+            "UMG", "Slate", "SlateCore",
         });
     }
 }

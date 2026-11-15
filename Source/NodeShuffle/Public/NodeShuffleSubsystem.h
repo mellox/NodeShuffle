@@ -3591,20 +3591,6 @@ private:
     // this at capture time is almost certainly PARTIALLY STREAMED, and relocating it would shrink it
     // permanently. Refuse, log, and retry on a later roll.
     static constexpr int32 WellMinSatellitesForRelocation = 4;
-    // H0 measured minimum inter-satellite distance 1818.8 cm over 401 pairs, against the 800 cm
-    // reject radius -- which is WHY H2 needs no same-group overlap exemption. That measurement is
-    // ASSERTED at capture, not assumed, and a violating well is refused with a loud line.
-    // ns-t27-review F7 (same correction as the log line at NodeShuffleWellRelocateRoll.cpp; the false
-    // cause lived on BOTH sides of this pair): the sentence that used to end this comment -- "a well
-    // whose own members sit closer than this could never validate its own footprint" -- was true only
-    // while members moved RIGIDLY, because the captured cloud was replayed at the destination.
-    // ns-t27-corefirst never replays the captured offsets; satellites are redrawn at >=
-    // WellSiblingMinSeparationCm from each other, so a tight vanilla well would now place fine. What
-    // this floor still guards is the MEASUREMENT design 4b's no-same-group-exemption conclusion rests
-    // on, and the backstop's vanilla-site reconstruction, which does still use LocalOffset. Refusing is
-    // the conservative call, not a statement that the group could not be placed.
-    static constexpr float WellSelfOverlapFloorCm = 800.0f;
-
 public:
     // ns-status-1 (2026-11-15, NodeShuffleStatus.cpp): what NodeShuffle is doing while the FIRST shuffle of an RWG world waits -- two
     // once-per-session chat lines, the NSSTATUS log line. DISPLAY ONLY: no roll, latch or apply clause reads any member below.
@@ -3612,7 +3598,17 @@ public:
     void StatusNoteFirstRoll();                               // RefreshTick, right after the first RollLayout of this session
     void StatusNoteRollFirst(int32 AtK, int32 Left, int32 Resources); // RwgRollFirstEmitPass, before its Left gate
     void StatusTick(bool bEnabled);                           // RefreshTick (map mode not vanilla, or the disabled branch)
+    void StatusRemovePanel(const TCHAR* Why);                 // EndPlay and every end of the display (NodeShuffleStatusPanel.cpp)
+    void StatusRunPanelTest(const FString& Arg);              // NodeShuffle.StatusPanelTest: display only, fake numbers, no chat, no state
 private:
+    void StatusEnsurePanel();                                 // lazily, for the first LOCAL player controller; none on a dedicated server
+    void StatusApplyPanel(uint8 StageU8);                     // text from the stage, or removal (None, setting off)
+    // The host panel widget. UPROPERTY so the garbage collector sees the reference: it cannot be collected while shown, and since every
+    // removal clears it (and EndPlay removes it) it never points at a widget this subsystem no longer owns. Transient: never saved.
+    UPROPERTY(Transient)
+    TObjectPtr<class UNodeShuffleStatusWidget> StatusWidget = nullptr;
+    bool bStsTestActive = false;                              // NodeShuffle.StatusPanelTest owns the widget until 'off'
+    bool bStsNoLocalPcLogged = false;
     uint8 StatusComputeStage(bool bEnabled);                  // NodeShuffleStatus::EStage as uint8
     void StatusChatStep(UWorld* World);
     bool bStsGateNoted = false, bStsReadable = false, bStsStageReady = false, bStsFloor = false;
@@ -3636,6 +3632,21 @@ private:
     bool bStsChatHeldLogged = false;
     bool bStsWidgetAdded = false;                             // ns-status-1 panel (later commit); 0 until then
     int32 StsPanelSetting = -1;                               // the Show status panel setting as read (-1 = not read)
+private:
+    // H0 measured minimum inter-satellite distance 1818.8 cm over 401 pairs, against the 800 cm
+    // reject radius -- which is WHY H2 needs no same-group overlap exemption. That measurement is
+    // ASSERTED at capture, not assumed, and a violating well is refused with a loud line.
+    // ns-t27-review F7 (same correction as the log line at NodeShuffleWellRelocateRoll.cpp; the false
+    // cause lived on BOTH sides of this pair): the sentence that used to end this comment -- "a well
+    // whose own members sit closer than this could never validate its own footprint" -- was true only
+    // while members moved RIGIDLY, because the captured cloud was replayed at the destination.
+    // ns-t27-corefirst never replays the captured offsets; satellites are redrawn at >=
+    // WellSiblingMinSeparationCm from each other, so a tight vanilla well would now place fine. What
+    // this floor still guards is the MEASUREMENT design 4b's no-same-group-exemption conclusion rests
+    // on, and the backstop's vanilla-site reconstruction, which does still use LocalOffset. Refusing is
+    // the conservative call, not a statement that the group could not be placed.
+    static constexpr float WellSelfOverlapFloorCm = 800.0f;
+
 public:
     // RWG cave navigation (2026-10-18, NodeShuffleNearestCave.cpp): `NodeShuffle.NearestCave` -- nearest carved-cave mouth from the
     // per-world cave file + nearest dealt bRwgCave entry, with distance / dZ / turn bearing. Log-only; one line and return off RWG.

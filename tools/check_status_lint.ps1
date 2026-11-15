@@ -12,12 +12,23 @@
 #   T7  StatusNoteGate sits on the line before the readiness return gate; RefreshTick calls StatusTick in both places; files <= 500 lines.
 #   T8  NSSTATUS format: tag first, no field twice, legend prose only; the two chat lines verbatim.
 #   T9  Marker 2026-11-15-status-1 is the newest header entry, once in NodeShuffle.cpp, absent from the status files.
+#   T10 PANEL: NativePaint draws nothing while the owning controller shows the cursor (early return, never SetVisibility); the widget is a
+#       UPROPERTY; EndPlay removes it; it is created only for a LOCAL player controller; Build.cs carries UMG/Slate/SlateCore privately.
+#   T11 TEST COMMAND: display only -- no chat call, no stage/latch/chat/layout write; assigns only the test flag; '(test)' title; never
+#       reads the map mode; registered like NodeShuffle.DumpLayout.
+#   T12 SETTING: ShowStatusPanel default true in the mirror and the panel; read only by the panel file; tick period constant matches.
 # Exit 0 = all hold; 1 = a rule or mutant fails; 2 = a pinned FILE is missing.
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $files = [ordered]@{
     st    = 'Source\NodeShuffle\Private\NodeShuffleStatus.cpp'
+    pn    = 'Source\NodeShuffle\Private\NodeShuffleStatusPanel.cpp'
+    wg    = 'Source\NodeShuffle\Private\NodeShuffleStatusWidget.cpp'
+    wgh   = 'Source\NodeShuffle\Private\NodeShuffleStatusWidget.h'
+    bcs   = 'Source\NodeShuffle\NodeShuffle.Build.cs'
+    cfg   = 'Source\NodeShuffle\Private\NodeShuffleConfig.cpp'
+    cfgh  = 'Source\NodeShuffle\Public\NodeShuffleConfig.h'
     sth   = 'Source\NodeShuffle\Private\NodeShuffleStatus.h'
     sub   = 'Source\NodeShuffle\Private\NodeShuffleSubsystem.cpp'
     subh  = 'Source\NodeShuffle\Public\NodeShuffleSubsystem.h'
@@ -41,7 +52,7 @@ function Count([string]$t, [string]$n) { return ([regex]::Matches($t, [regex]::E
 function Ordered([string]$t, [string[]]$needles) { $at = -1; foreach ($n in $needles) { $i = $t.IndexOf($n, $at + 1); if ($i -lt 0) { return $false }; $at = $i }; return $true }
 function Span([string]$t, [string]$a, [string]$b) { $i = $t.IndexOf($a); if ($i -lt 0) { return '' }; $j = $t.IndexOf($b, $i + $a.Length); if ($j -lt 0) { return '' }; return $t.Substring($i, $j - $i) }
 $marker = '2026-11-15-' + 'status-1'
-$statusKeys = @('st', 'sth')
+$statusKeys = @('st', 'sth', 'pn', 'wg', 'wgh')
 
 function Invoke-StatusChecks($T, $all) {
     $f = @()
@@ -84,7 +95,7 @@ function Invoke-StatusChecks($T, $all) {
     # T7
     if ((Count $T.mmc ("        StatusNoteGate(bStageReadable, bStageReady, bFloor, GatedBy, Stage);")) -ne 1 -or -not ($T.mmc -match 'StatusNoteGate\(bStageReadable, bStageReady, bFloor, GatedBy, Stage\);[^\n]*\n        if \(!bReadyNow\)')) { $f += '(T7) StatusNoteGate must be the line right before the readiness return gate' }
     if ((Count $T.sub 'StatusTick(/*bEnabled=*/false);') -ne 1 -or (Count $T.sub "RwgObserveTick();`n        StatusTick(/*bEnabled=*/true);") -ne 1) { $f += '(T7) RefreshTick calls StatusTick in the disabled branch and right after RwgObserveTick' }
-    foreach ($k in @('st', 'sth', 'mmc', 'rf')) { $n = ($T[$k] -split "`n").Count; if ($n -gt 501) { $f += "(T7) $k is over 500 lines ($n)" } }
+    foreach ($k in @('st', 'sth', 'mmc', 'rf', 'pn', 'wg', 'wgh')) { $n = ($T[$k] -split "`n").Count; if ($n -gt 501) { $f += "(T7) $k is over 500 lines ($n)" } }
     # T8
     $fmt = [regex]::Match($T.st, 'TEXT\("(NSSTATUS: [^"]*)"\)')
     if (-not $fmt.Success) { $f += '(T8) NSSTATUS format not found' } else {
@@ -102,6 +113,28 @@ function Invoke-StatusChecks($T, $all) {
     $tags = @(if ($arr.Success) { [regex]::Matches($arr.Groups[1].Value, 'TEXT\("([\w-]+)"\)') | ForEach-Object { $_.Groups[1].Value } })
     if ($tags.Count -eq 0 -or $tags[-1] -ne $marker -or @($tags | Where-Object { $_ -eq $marker }).Count -ne 1 -or (Count $T.nsmod ('packet marker (' + $marker + ')=====')) -ne 1) { $f += '(T9) marker status-1 must be the newest header entry, once, and once in NodeShuffle.cpp' }
     foreach ($k in $statusKeys) { if ($T[$k].Contains($marker)) { $f += "(T9) marker literal in $k" } }
+    # T10
+    $paint = Span $T.wg 'int32 UNodeShuffleStatusWidget::NativePaint(' "`n}"
+    if (-not (Ordered $paint @('const APlayerController* PC = GetOwningPlayer();', 'if (PC && PC->bShowMouseCursor) { return Layer; }', 'FSlateDrawElement::MakeLines(', 'FSlateDrawElement::MakeText('))) { $f += '(T10) NativePaint must return early while the cursor shows, before drawing' }
+    foreach ($k in $statusKeys) { if ($T[$k].Contains('SetVisibility' + '(')) { $f += "(T10) $k hides by visibility" } }
+    if ((Count $T.subh "    UPROPERTY(Transient)`n    TObjectPtr<class UNodeShuffleStatusWidget> StatusWidget = nullptr;") -ne 1) { $f += '(T10) the widget must be held by a transient UPROPERTY' }
+    if (-not (Ordered (Span $T.sub 'void ANodeShuffleSubsystem::EndPlay(' 'Super::EndPlay(EndPlayReason);') @('StatusRemovePanel(TEXT("endPlay"));'))) { $f += '(T10) EndPlay must remove the panel before Super::EndPlay' }
+    $rm = Span $T.pn 'void ANodeShuffleSubsystem::StatusRemovePanel(' "`n}"
+    if (-not (Ordered $rm @('StatusWidget->RemoveFromParent();', 'StatusWidget = nullptr;'))) { $f += '(T10) removal calls RemoveFromParent and clears the pointer' }
+    $en = Span $T.pn 'void ANodeShuffleSubsystem::StatusEnsurePanel()' "`n}"
+    if (-not (Ordered $en @('if (Pc && Pc->IsLocalController()) { LocalPc = Pc; break; }', 'if (!LocalPc)', 'CreateWidget<UNodeShuffleStatusWidget>(LocalPc, UNodeShuffleStatusWidget::StaticClass());', 'StatusWidget->AddToViewport('))) { $f += '(T10) the widget is created only for a local player controller' }
+    $priv = Span $T.bcs 'PrivateDependencyModuleNames.AddRange(' '});'
+    if ((Count $priv '"UMG", "Slate", "SlateCore",') -ne 1 -or (Count (Span $T.bcs 'PublicDependencyModuleNames.AddRange(' '});') 'UMG') -ne 0) { $f += '(T10) UMG/Slate/SlateCore must be private dependencies' }
+    # T11
+    $tst = Span $T.pn 'void ANodeShuffleSubsystem::StatusRunPanelTest(' "`n}"
+    if ($tst -eq '' -or $tst.Contains('PostChat' + 'Notice') -or $tst.Contains('GetMap' + 'Mode') -or (Count $tst 'StatusWidget->Title = TEXT("Node Shuffle (test)");') -ne 1) { $f += '(T11) the test command posts no chat, never reads the map mode and titles the panel (test)' }
+    $assign = @([regex]::Matches(($tst -replace '//[^\n]*', ''), '(?m)^\s*([A-Za-z_][\w>.-]*)\s*(=[^=]|\+\+|\+=)') | ForEach-Object { $_.Groups[1].Value })
+    foreach ($a in $assign) { if (@('bStsTestActive', 'StatusWidget->Title', 'StatusWidget->Body', 'StatusWidget->Detail', 'EStage S', 'bool bOff', 'FString Body, Detail') -notcontains $a -and $a -notmatch '^(EStage|bool|FString)$') { $f += "(T11) the test command assigns $a" } }
+    if (-not $T.pn.Contains('static FAutoConsoleCommandWithWorldAndArgs GNodeShuffleStatusPanelTestCmd(') -or -not $T.pn.Contains('for (TActorIterator<ANodeShuffleSubsystem> It(World); It; ++It)')) { $f += '(T11) registered like NodeShuffle.DumpLayout' }
+    # T12
+    if ((Count $T.cfgh '    bool ShowStatusPanel{true};') -ne 1 -or (Count $T.cfg 'AddBool(TEXT("ShowStatusPanel"), true,') -ne 1) { $f += '(T12) ShowStatusPanel defaults ON in the mirror and the panel' }
+    foreach ($k in $all.Keys) { $leaf = Split-Path -Leaf $k; if (@('NodeShuffleStatusPanel.cpp', 'NodeShuffleConfig.h') -notcontains $leaf -and $all[$k].Contains('.ShowStatus' + 'Panel')) { $f += "(T12) the panel setting is read in $leaf" } }
+    if ((Count $T.sub 'constexpr float TickIntervalSeconds = 5.0f;') -ne 1 -or (Count $T.sth 'constexpr int32 StatusTickSeconds = 5;') -ne 1) { $f += '(T12) the status tick constant must match RefreshTick (5 s)' }
     return $f
 }
 
@@ -126,6 +159,16 @@ $mutants = @(
     @{ Name = 'U16 legend shows a token'; Key = 'st'; Expect = 'T8'; Find = '// Legend (prose only, docs/DIAGNOSTICS.md): the stage'; Repl = ('// Legend (prose only, docs/DIAGNOSTICS.md): the stage' + '=S1') }
     @{ Name = 'U17 chat copy drifts'; Key = 'st'; Expect = 'T8'; Find = 'then shuffling. The game may pause briefly'; Repl = 'then shuffling in a few seconds. The game may pause briefly' }
     @{ Name = 'U18 marker not newest'; Key = 'mk'; Expect = 'T9'; Find = ('        TEXT("' + $marker + '"),'); Repl = '' }
+    @{ Name = 'U19 no cursor early return'; Key = 'wg'; Expect = 'T10'; Find = 'if (PC && PC->bShowMouseCursor) { return Layer; }'; Repl = '' }
+    @{ Name = 'U20 hidden by visibility'; Key = 'pn'; Expect = 'T10'; Find = '    StatusWidget->RemoveFromParent();'; Repl = ('    StatusWidget->SetVisibility' + '(ESlateVisibility::Collapsed);') }
+    @{ Name = 'U21 EndPlay keeps the panel'; Key = 'sub'; Expect = 'T10'; Find = '    StatusRemovePanel(TEXT("endPlay"));'; Repl = '' }
+    @{ Name = 'U22 widget not a UPROPERTY'; Key = 'subh'; Expect = 'T10'; Find = "    UPROPERTY(Transient)`n    TObjectPtr<class UNodeShuffleStatusWidget> StatusWidget"; Repl = '    TObjectPtr<class UNodeShuffleStatusWidget> StatusWidget' }
+    @{ Name = 'U23 any controller'; Key = 'pn'; Expect = 'T10'; Find = 'if (Pc && Pc->IsLocalController()) { LocalPc = Pc; break; }'; Repl = 'if (Pc) { LocalPc = Pc; break; }' }
+    @{ Name = 'U24 test posts chat'; Key = 'pn'; Expect = 'T11'; Find = '    bStsTestActive = true;'; Repl = ('    bStsTestActive = true; FNodeShuffleModule::PostChat' + 'Notice(GetWorld(), Body, TEXT("T"));') }
+    @{ Name = 'U25 test writes a chat flag'; Key = 'pn'; Expect = 'T11'; Find = '    bStsTestActive = true;'; Repl = ("    bStsTestActive = true;`n    bStsChatS1Done = true;") }
+    @{ Name = 'U26 test title not marked'; Key = 'pn'; Expect = 'T11'; Find = 'StatusWidget->Title = TEXT("Node Shuffle (test)");'; Repl = 'StatusWidget->Title = TEXT("Node Shuffle");' }
+    @{ Name = 'U27 setting default off'; Key = 'cfg'; Expect = 'T12'; Find = 'AddBool(TEXT("ShowStatusPanel"), true,'; Repl = 'AddBool(TEXT("ShowStatusPanel"), false,' }
+    @{ Name = 'U28 UMG made public'; Key = 'bcs'; Expect = 'T10'; Find = '"FactoryGame", "SML",'; Repl = '"FactoryGame", "SML", "UMG",' }
 )
 $mutantFails = @()
 $caught = 0
@@ -148,4 +191,4 @@ if ($out.Count -gt 0) {
     Write-Host "STATUS LINT: FAIL -- $($out.Count) problem(s). Mutants caught $caught/$($mutants.Count)."
     exit 1
 }
-Write-Host "PASS: STATUS lint -- T1..T9 hold across $($T.Count) pinned files + $($all.Count) scanned sources; mutants caught $caught/$($mutants.Count)."
+Write-Host "PASS: STATUS lint -- T1..T12 hold across $($T.Count) pinned files + $($all.Count) scanned sources; mutants caught $caught/$($mutants.Count)."

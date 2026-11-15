@@ -202,6 +202,12 @@ void UNodeShuffleConfig::PostInitProperties()
         TEXT("Spread Nodes Evenly By Land (Random World Generator)"),
         TEXT("ON by default. Random World Generator maps only, when a layout is rolled or re-rolled: the map is divided into 1 km squares and each square's share of the nodes is in proportion to how much of it the shuffle can place on (not sea, void or too steep), measured at 16 points per square. Nodes you have built on count toward their square's share first, so a square already full of them gets few or no fresh spots. If the deal runs low on draws before every share is filled, the remaining spots are placed anywhere on placeable land, so the configured total is still dealt. OFF: spots land anywhere on placeable land with no per-square limit, as before. Takes effect at the next roll or Re-roll Layout; other maps are not affected."));
 
+    // ns-status-1 (2026-11-15): THE SHUFFLE group, after the density row. Logic in NodeShuffleStatusPanel.cpp (call site only here).
+    // Every claim in the tooltip is graded in the ns-status-1 handoff.
+    AddBool(TEXT("ShowStatusPanel"), true,
+        TEXT("Show Status Panel (Random World Generator)"),
+        TEXT("ON by default. Random World Generator worlds only: while the first shuffle of a new world waits, and for up to ten minutes after it, a small panel on the host's screen says what Node Shuffle is doing. It is hidden while a menu is open. Other players do not see the panel; they get the two chat lines only. OFF hides the panel; the chat lines still post."));
+
     // ---------------------------------- OTHER MODS ----------------------------------------------------
     AddBool(TEXT("IncludeModdedNodes"), true,
         TEXT("Include Modded Nodes"),
