@@ -20,6 +20,8 @@
 #   R11 no legend (comment) in the new file and no DIAGNOSTICS.md text carries a field=value token of a new line's own fields.
 #   R12 the log-only sea-done helper is the candidate scan's expression, term for term; the roll time is noted right after the roll mark.
 #   R13 touched files stay under 500 lines; the reorder and the per-pass report walk no Layout.
+#   R15 (round 2 review N2) supersession is read before the latch is re-armed; an empty build closes the latch; PASS is
+#       diagnostics-gated and the DONE latch closes outside that gate.
 #   R14 (round 2) the DONE latch starts closed; the per-pass report keeps its K/latch guard and its Left gate. R3 also pins the top-K
 #       guard that keeps T.Last() off an empty array; R5 pins SeaFirstN to the validated list; R4 counts SetAsideOk's tests.
 # Mutants run in-file. Exit 0 = all hold; 1 = at least one does not; 2 = a pinned FILE is missing.
@@ -155,6 +157,9 @@ function Invoke-RollFirstChecks($T) {
     foreach ($sp in @($reord, $emit)) { if ($sp.Contains('for (int32 I = 0; I < Layout.Num()') -or $sp.Contains('for (const FNodeShuffleEntry& E : Layout)')) { $f += '(R13) the reorder and the per-pass report walk no Layout' } }
     # R14 (round 2, review F5)
     if ((Count $emit '    if (RwgRollFirstK <= 0 || bRwgRollFirstDoneLogged) { return; }') -ne 1 -or (Count $emit '    if (Left > 0)') -ne 1 -or (Count $T.subh '    bool bRwgRollFirstDoneLogged = true;') -ne 1) { $f += '(R14) DONE latch starts closed; K guard and Left gate in the per-pass report' }
+    # R15 (round 2 review, N2)
+    if (-not (Ordered $reord @('    const bool bSuperseded = !bRwgRollFirstDoneLogged;', '    if (Wanted > 0) { ++RwgRollFirstGeneration; bRwgRollFirstDoneLogged = false; }', '    else { bRwgRollFirstDoneLogged = true; }', '    if (Wanted > 0 || bSuperseded || FNodeShuffleModule::AreDiagnosticsEnabled())'))) { $f += '(R15) supersession is read before the latch is re-armed; an empty build closes the latch' }
+    if (-not (Ordered $emit @('    if (Left > 0)', '        if (FNodeShuffleModule::AreDiagnosticsEnabled())', ('            UE_LOG(LogNodeShuffle, Display, TEXT("ROLLFIRST' + '-PASS: '), '        return;', '    bRwgRollFirstDoneLogged = true;'))) { $f += '(R15) PASS prints only with diagnostics on; the DONE latch closes outside that gate' }
     $sao = Span $T.pscan '    const auto SetAsideOk = [this](const FNodeShuffleEntry& E)' '    const auto NearestSq ='; if ($sao -eq '' -or (Count $sao ('return ' + 'false;')) -ne 4) { $f += '(R4) SetAsideOk changed: mirror it in RwgRollFirstCanLoad' }
     return $f
 }
@@ -195,6 +200,9 @@ $mutants = @(
     @{ Name = 'Q31 SeaFirstN counts stale pairs'; Key = 'sea'; Expect = 'R5'; Find = '    const int32 SeaFirstN = SeaFirst.Num();'; Repl = '    const int32 SeaFirstN = RwgRollFirstList.Num();' }
     @{ Name = 'Q32 top-K guard dropped'; Key = 'rf'; Expect = 'R3'; Find = '        if (T.Num() >= K && D >= T.Last().D) { return; }'; Repl = '        if (D >= T.Last().D) { return; }' }
     @{ Name = 'Q33 DONE latch starts open'; Key = 'subh'; Expect = 'R14'; Find = '    bool bRwgRollFirstDoneLogged = true;'; Repl = '    bool bRwgRollFirstDoneLogged = false;' }
+    @{ Name = 'Q34 empty build leaves the DONE latch open'; Key = 'rf'; Expect = 'R15'; Find = '    else { bRwgRollFirstDoneLogged = true; }'; Repl = '' }
+    @{ Name = 'Q35 PASS ungated again'; Key = 'rf'; Expect = 'R15'; Find = '        if (FNodeShuffleModule::AreDiagnosticsEnabled())'; Repl = '        if (true)' }
+    @{ Name = 'Q36 supersession read after the re-arm'; Key = 'rf'; Expect = 'R15'; Find = ('    const bool bSuperseded = !bRwgRollFirstDoneLogged;' + ' // a generation was still open: no ROLLFIRST-DONE yet and no earlier build replaced it' + "`n" + '    if (Wanted > 0) { ++RwgRollFirstGeneration; bRwgRollFirstDoneLogged = false; } // a new generation: DONE re-armed'); Repl = ('    if (Wanted > 0) { ++RwgRollFirstGeneration; bRwgRollFirstDoneLogged = false; } // a new generation: DONE re-armed' + "`n" + '    const bool bSuperseded = !bRwgRollFirstDoneLogged;') }
 )
 $mutantFails = @()
 $caught = 0
@@ -213,5 +221,5 @@ if ($all.Count -gt 0) {
     Write-Host "ROLLFIRST LINT: FAIL -- $($all.Count) problem(s). Mutants caught $caught/$($mutants.Count)."
     exit 1
 }
-Write-Host "PASS: ROLLFIRST lint -- R1..R14 hold across $($text.Count) loaded files; mutants caught $caught/$($mutants.Count)."
+Write-Host "PASS: ROLLFIRST lint -- R1..R15 hold across $($text.Count) loaded files; mutants caught $caught/$($mutants.Count)."
 exit 0

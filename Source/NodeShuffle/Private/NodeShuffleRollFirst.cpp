@@ -74,6 +74,7 @@ void ANodeShuffleSubsystem::RwgRollFirstReorder(TArray<TPair<double, int32>>& So
     RwgRollFirstPickRes.Reset();
     RwgRollFirstResources = 0;
     RwgRollFirstShortOfK = 0;
+    if (K <= 0) { bRwgRollFirstDoneLogged = true; } // off: an open generation is dropped here, with no ROLLFIRST line
     if (K <= 0) { return; } // off: Sorted keeps its nearest-first order, and the sea pass walks Layout by index alone
     // Per resource, the K nearest picks: insertion into an array of at most K (no sort). SortedPos is the entry's position in Sorted,
     // -1 for an entry that has an actor (it holds a slot but is never a priority entry).
@@ -136,7 +137,7 @@ void ANodeShuffleSubsystem::RwgRollFirstReorder(TArray<TPair<double, int32>>& So
         // picked entries, wanted the picks without an actor; resourcesShortOfK counts resources with fewer than K pickable entries;
         // passedOver counts actorless entries the pick skipped because the provisional pass would not try them; buildMs is this
         // function's own time (the loaded-entry collection in the candidate walk is not included); supersededOpenGeneration is 1 when
-        // this build replaced a generation that was still open (it had not printed its DONE line and no earlier build had replaced it).
+        // this build replaced a generation that was still open (it had not printed its DONE line and no earlier build had replaced it); the replaced generation is the printed generation when wanted is 0, and the one before it otherwise.
         UE_LOG(LogNodeShuffle, Display, TEXT("ROLLFIRST-BUILD: generation=%d build=%s perResource=%d resources=%d picks=%d wanted=%d resourcesShortOfK=%d passedOver=%d listEntries=%d buildMs=%.2f secondsSinceRoll=%.0f supersededOpenGeneration=%d"),
             RwgRollFirstGeneration, Why ? Why : TEXT("none"), K, RwgRollFirstResources, RwgRollFirstPicks.Num(), Wanted, RwgRollFirstShortOfK,
             PassedOver, Sorted.Num(), (FPlatformTime::Seconds() - T0) * 1000.0, RwgRollFirstSecondsSinceRoll(), bSuperseded ? 1 : 0);

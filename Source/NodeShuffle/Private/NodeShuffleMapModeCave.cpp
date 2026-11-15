@@ -80,7 +80,7 @@ namespace
         // rwg-0-2-1-1 (2026-11-15): generation B accepts CarvedCaves in exactly TWO fully pinned forms, disp8 @3 = 0x38 (build 1063) or
         // 0x40 (RWG 0.2.1 build 1130, _team/test-logs/2026-11-15-rwg-0.2.1-export-diff.md Q3/Q4). The 1130 array is SELECTED only when every
         // one of its bytes matches; otherwise the 1063 array is applied exactly as before (so a 1063 DLL and any third form are unchanged:
-        // the latter still fails closed at @3). No wildcard. Copied token-equal into NodeShuffleRwgGateNotice.cpp (GateSigCaves1130).
+        // a third form fails closed at its first byte that differs from the 1063 array). No wildcard. Copied token-equal into NodeShuffleRwgGateNotice.cpp (GateSigCaves1130).
         static const int16 SigCaves1130[] = { 0x48,0x8D,0x41,0x40,0xC3 };
         const int32 Gen = NodeShuffleMapMode::RwgHeightApiGeneration();
         const bool bGenB = Gen == NodeShuffleMapMode::RwgHeightApiGenB;

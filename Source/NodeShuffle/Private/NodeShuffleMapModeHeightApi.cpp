@@ -49,8 +49,12 @@ namespace
     //   GENERATION-B masks below (offline: tools/check_rwg_masks.py on the archived DLL). SurfaceHeightCm gained edge branches, so generation B
     //   also REQUIRES the HalfWorldCm / GridCmValue getters and the ground query's edge-strip guard. RAN 2026-11-13 (first 0.2.0 load, world
     //   size 15652 m): RWGHEIGHTAPI census usable=1, terrain n=84, median |dZ| 8.6 cm, p95 40.3 cm (design 2026-11-13-nodeshuffle-rwg-0-2-0-2).
+    //   0.2.1 build 1130, sha256 7F5E4A64776A2CFB..., listed 2026-11-15 (ns-status-1; _team/test-logs/2026-11-15-rwg-0.2.1-export-diff.md):
+    //   generation B with the 1130 CarvedCaves / GetState / IsContentSpawned forms. RAN 2026-11-15 as an UNLISTED build (world "Bleak",
+    //   _team/test-logs/2026-11-15-nodeshuffle-rwg-0-2-1-newworld.md §A-B): signatureVerifiedUnlisted, all 16 + 2 matched; census terrain-mesh
+    //   n=99, median |dZ| 5.0 cm, p95 28.9 cm. Listing it drops the strict unlisted verdict (optional/cave misses refuse only unlisted builds).
     struct FRwgAcceptedBuild { const TCHAR* SemVer; int32 Build; };
-    const FRwgAcceptedBuild RwgHeightApiAccepted[] = { { TEXT("0.1.7"), 705 }, { TEXT("0.1.9"), 745 }, { TEXT("0.1.12"), 802 }, { TEXT("0.2.0"), 1063 } };
+    const FRwgAcceptedBuild RwgHeightApiAccepted[] = { { TEXT("0.1.7"), 705 }, { TEXT("0.1.9"), 745 }, { TEXT("0.1.12"), 802 }, { TEXT("0.2.0"), 1063 }, { TEXT("0.2.1"), 1130 } };
     // RWG 0.1.9 (2026-10-18): the accept list as printed by the census and the refusals, e.g. {0.1.7,705} {0.1.9,745}.
     FString RwgAcceptedList()
     {
