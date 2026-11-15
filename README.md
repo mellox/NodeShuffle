@@ -82,6 +82,7 @@ and have no switches of their own (see **Resource wells** below).
 | Starter Node Radius (m) | 200 | How far from spawn the starter nodes may sit. |
 | Spawn-On-Discovery Radius (m) | 600 | New nodes materialize once you come within this range and the terrain has streamed in. |
 | Spread Nodes Evenly By Land (Random World Generator) | on | Random World Generator maps only, when a layout is rolled or re-rolled: the map is divided into 1 km squares and each square's share of the nodes is in proportion to how much of it the shuffle can place on (not sea, void or too steep), measured at 16 points per square. Nodes you have built on count toward their square's share first, so a square already full of them gets few or no fresh spots. If the deal runs low on draws before every share is filled, the remaining spots are placed anywhere on placeable land, so the configured total is still dealt. Off: spots land anywhere on placeable land with no per-square limit, as before. Takes effect at the next roll or Re-roll Layout; other maps are not affected. |
+| Show Status Panel (Random World Generator) | on | Random World Generator worlds only: while the first shuffle of a new world waits, and for up to ten minutes after it, a small panel on the host's screen says what Node Shuffle is doing. It is hidden while the mouse cursor is shown (menus). Other players do not see the panel. Off hides the panel; the chat lines still post. |
 
 ### Other mods
 
