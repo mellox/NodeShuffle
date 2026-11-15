@@ -35,10 +35,11 @@ namespace NodeShuffleScanFilter
 
     // ---- round 3 (user decision "One box, follows game"): row states, NodeShuffleScanFilterState.cpp. Called from Tick only. ----
     struct FShowRow { FString Path; UConfigPropertyBool* Show = nullptr; };
-    struct FRowStateCounts { int32 AutoRows = 0; int32 PlayerSetRows = 0; int32 BecamePlayerSet = 0; int32 Mirrored = 0; int32 MirrorUnknown = 0; int32 Dropped = 0; };
+    struct FRowStateCounts { int32 AutoRows = 0; int32 PlayerSetRows = 0; int32 BecamePlayerSet = 0; int32 Mirrored = 0; int32 MirrorUnknown = 0; };
     void EnsureRowStateRecordLoaded();            // reads the record file once per process
     void NoteCarriedRow(const FString& Path, bool bValue); // the carry-over: that row is PLAYER-SET with its old value
     void ResolveMissingRecordOnce(const TSet<FString>& RowsBeforeAdds, bool bCarriedThisPass);
+    int32 DropRecordsWithoutRows(const TSet<FString>& RowsBeforeAdds); // before the adds: a deleted then re-created row is AUTO
     FRowStateCounts UpdateRowStates(const UObject* WorldContext, const TArray<FShowRow>& Shows); // touch detection, then the mirror, then the record
     bool IsRowPlayerSet(const FString& Path);
     void FlushRowStateRecordIfDirty();            // after the config save; never from a hook

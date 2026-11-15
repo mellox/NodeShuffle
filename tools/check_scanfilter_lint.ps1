@@ -30,7 +30,7 @@
 #   S16 (ns-scanfilter-4 round 3, "One box, follows game"; LOADS NodeShuffleScanFilterState.cpp) only a PLAYER-SET row adds, removes or
 #       answers the pick; an AUTO row is kept by the hook unless All Minable; touch detection runs before the mirror; the mirror writes
 #       only an AUTO row's box, only to AutoShowValue, only when known, never Protected; carried rows and (after a lost record file)
-#       existing rows are PLAYER-SET; a deleted row's record goes; the record is written by Tick after the config save, never by a hook
+#       existing rows are PLAYER-SET; a deleted row's record goes (pruned on the rows before the adds); the record is written by Tick after the config save, never by a hook
 # Forbidden needles are built by concatenation. Mutants run in-file. Exit 0 = all hold and every mutant is caught; 1 = failure; 2 = missing file.
 
 $ErrorActionPreference = 'Stop'
@@ -157,7 +157,8 @@ function Invoke-Checks($T) {
     $load = Span $T.sfs 'void EnsureRowStateRecordLoaded()' 'void NoteCarriedRow('
     $noted = Span $T.sfs 'void NoteCarriedRow(' 'void ResolveMissingRecordOnce('
     $resolve = Span $T.sfs 'void ResolveMissingRecordOnce(' 'FRowStateCounts UpdateRowStates('
-    $update = Span $T.sfs 'FRowStateCounts UpdateRowStates(' 'bool InGameNameIfLoaded('
+    $update = Span $T.sfs 'FRowStateCounts UpdateRowStates(' 'int32 DropRecordsWithoutRows('
+    $drop = Span $T.sfs 'int32 DropRecordsWithoutRows(' 'bool InGameNameIfLoaded('
     $refresh = Span $T.sub 'void ANodeShuffleSubsystem::RefreshTick()' 'RwgObserveTick();'
     $nsHook = Span $T.nsmod $subscribe 'SCANFILTER-HOOK target='
     # S1
@@ -261,8 +262,8 @@ function Invoke-Checks($T) {
     if ($mirror -eq '' -or -not (Ordered $mirror @('if (Rec && Rec->bPlayerSet) { continue; }', 'const bool bMirror = AutoShowValue(WorldContext, Row.Path, &Basis, &bKnown);', 'if (!bKnown) { ++OutUnknown; continue; }', 'if (Row.Show->Value == bMirror) { continue; }', 'Row.Show->Value = bMirror;')) -or (Count $T.sfs ('->Value' + ' = ')) -ne 1 -or (Count $mirror 'Row.Show->Value = bMirror;') -ne 1 -or (Count $T.sfs ('Protected' + '->')) -ne 0) { $f += '(S16) the mirror writes only an AUTO row''s box, only to the known AUTO value, and nothing else in the state file writes a value' }
     if ($noted -eq '' -or (Count $noted 'Rec.bPlayerSet = true;') -ne 1) { $f += '(S16) a carried-over row is recorded PLAYER-SET' }
     if ($resolve -eq '' -or -not (Ordered $resolve @('if (GMissingResolved || !GRecordsLoaded) { return; }', 'GRecordsDirty = true;', 'if (bCarriedThisPass) { ++LeftAuto; continue; }', 'NewRec.bPlayerSet = true;')) -or $load -eq '' -or (Count $load 'GMissingResolved = true;') -ne 1 -or -not (Ordered $load @('Lines[0].TrimStartAndEnd() != RecordHeader', 'return;', 'GMissingResolved = true;'))) { $f += '(S16) a missing or unreadable record makes every existing row PLAYER-SET (except on the carry-over pass) and a fresh file is written' }
-    if ($tick -eq '' -or -not (Ordered $tick @('EnsureRowStateRecordLoaded();', 'const bool bCarried = RunCarryOverOnce(', 'ResolveMissingRecordOnce(Existing, bCarried);', 'if (Existing.Contains(Path)) { continue; }', 'const FRowStateCounts States = UpdateRowStates(World, Shows);', 'if (Added > 0 || bCarried || States.Mirrored > 0)', 'Manager->FlushPendingSaves();', 'FlushRowStateRecordIfDirty();', 'GRowShown.Reset();'))) { $f += '(S16) Tick order: load, carry-over, missing-file decision before the adds, states, config save (also for a mirror write), record write, snapshot' }
-    if ($update -eq '' -or -not (Ordered $update @('if (Present.Contains(It.Key())) { continue; }', 'It.RemoveCurrent();')) -or (Count $T.sfs 'TEXT("NodeShuffle_ScannerRows.txt")') -ne 1) { $f += '(S16) a record whose path has no row is dropped; the record file name' }
+    if ($tick -eq '' -or -not (Ordered $tick @('EnsureRowStateRecordLoaded();', 'const bool bCarried = RunCarryOverOnce(', 'ResolveMissingRecordOnce(Existing, bCarried);', 'DropRecordsWithoutRows(Existing);', 'if (Existing.Contains(Path)) { continue; }', 'const FRowStateCounts States = UpdateRowStates(World, Shows);', 'if (Added > 0 || bCarried || States.Mirrored > 0)', 'Manager->FlushPendingSaves();', 'FlushRowStateRecordIfDirty();', 'GRowShown.Reset();'))) { $f += '(S16) Tick order: load, carry-over, missing-file decision before the adds, states, config save (also for a mirror write), record write, snapshot' }
+    if ($update -eq '' -or $drop -eq '' -or -not (Ordered $drop @('if (RowsBeforeAdds.Contains(It.Key())) { continue; }', 'It.RemoveCurrent();')) -or (Count $T.sfs 'TEXT("NodeShuffle_ScannerRows.txt")') -ne 1) { $f += '(S16) a record whose path has no row is dropped; the record file name' }
     foreach ($n in $stateIo) { foreach ($s in @($hook, $answer16, $nsHook)) { if ($s -ne '' -and (Count $s $n) -ne 0) { $f += "(S16) no record-file call from a hook ($n)" } }; if ((Count ($T.sf + $T.sdiag + $T.nsmod) $n) -ne 0) { $f += "(S16) no record-file call in the hook files ($n)" } }
     if ((Count $T.sfr ('FlushRowState' + 'RecordIfDirty();')) -ne 1) { $f += '(S16) the record is written from Tick only' }
     if ((Count $T.sfr 'Once you change the box, it stays as you set it.') -ne 1) { $f += '(S10) row switch text: the two states' }
@@ -366,6 +367,7 @@ $mutants = @(
     @{ Name = 'M86 missing file decided after the adds'; Key = 'sfr'; Expect = 'S16'; Find = "        ResolveMissingRecordOnce(Existing, bCarried);`n"; Repl = '' }
     @{ Name = 'M87 record written from a hook';        Key = 'sf';    Expect = 'S16'; Find = "        GLatest = F;`n"; Repl = ("        GLatest = F; " + 'FlushRowState' + "RecordIfDirty();`n") }
     @{ Name = 'M88 deleted row''s record kept';        Key = 'sfs';   Expect = 'S16'; Find = "            It.RemoveCurrent();`n"; Repl = '' }
+    @{ Name = 'M91 record pruned after the adds';     Key = 'sfr';   Expect = 'S16'; Find = "        DropRecordsWithoutRows(Existing);`n"; Repl = '' }
     @{ Name = 'M89 mirror write never saved';          Key = 'sfr';   Expect = 'S16'; Find = 'if (Added > 0 || bCarried || States.Mirrored > 0)'; Repl = 'if (Added > 0 || bCarried)' }
     @{ Name = 'M90 mirror while the list is unread';   Key = 'sfs';   Expect = 'S16'; Find = 'if (!bKnown) { ++OutUnknown; continue; }'; Repl = '' }
     @{ Name = 'M62 retired list shown';                Key = 'sfr';   Expect = 'S15'; Find = '        Retired->bHidden = true;'; Repl = '' }

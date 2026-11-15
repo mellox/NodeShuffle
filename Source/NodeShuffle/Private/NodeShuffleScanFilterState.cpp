@@ -143,25 +143,31 @@ namespace NodeShuffleScanFilter
         FRowStateCounts C;
         C.BecamePlayerSet = DetectTouches(Shows);
         C.Mirrored = MirrorAutoRows(WorldContext, Shows, C.MirrorUnknown);
-        TSet<FString> Present;
         for (const FShowRow& Row : Shows) // record what every box says NOW (a new row gets an AUTO record here)
         {
-            Present.Add(Row.Path);
             FRowRecord* Rec = GRecords.Find(Row.Path);
             if (!Rec) { Rec = &GRecords.Add(Row.Path, FRowRecord()); Rec->bLastValue = Row.Show->Value; GRecordsDirty = true; }
             else if (Rec->bLastValue != Row.Show->Value) { Rec->bLastValue = Row.Show->Value; GRecordsDirty = true; }
             if (Rec->bPlayerSet) { ++C.PlayerSetRows; } else { ++C.AutoRows; }
         }
+        return C;
+    }
+
+    // Runs on the rows that exist BEFORE this pass's adds: the scanner side re-creates a deleted row in the same pass, so a prune
+    // after the adds would never see the path missing and the re-created row would keep the deleted row's PLAYER-SET record.
+    int32 DropRecordsWithoutRows(const TSet<FString>& RowsBeforeAdds)
+    {
+        int32 Dropped = 0;
         for (TMap<FString, FRowRecord>::TIterator It = GRecords.CreateIterator(); It; ++It) // a deleted row's record goes: re-created = AUTO
         {
-            if (Present.Contains(It.Key())) { continue; }
+            if (RowsBeforeAdds.Contains(It.Key())) { continue; }
             // Arity hand-counted: 2 format specifiers, 2 arguments.
             UE_LOG(LogNodeShuffle, Display, TEXT("SCANFILTER-STATE recordDropped resource=%s wasPlayerSet=%d: no row has this path now"), *It.Key(), It.Value().bPlayerSet ? 1 : 0);
             It.RemoveCurrent();
             GRecordsDirty = true;
-            ++C.Dropped;
+            ++Dropped;
         }
-        return C;
+        return Dropped;
     }
 
     // Moved from NodeShuffleScanFilterRows.cpp in round 3 (500-line rule); unchanged.

@@ -272,8 +272,7 @@ namespace NodeShuffleScanFilter
         }
 
         CaptureStartContext(World);
-        // The carry-over waits until the scannable list was read, and until it has run no snapshot is published (the first pass
-        // after it decides what a missing record file means, below).
+        // The carry-over waits until the scannable list was read; until it has run no snapshot is published.
         UConfigPropertyBool* CarryFlag = Cast<UConfigPropertyBool>(FindChild(Root, MergedFlagKey));
         if (CarryFlag && !CarryFlag->Value && !GStartGameListRead)
         {
@@ -306,6 +305,7 @@ namespace NodeShuffleScanFilter
         }
         // Round 3: a missing or unreadable record file is decided here, once, on the rows that exist BEFORE this pass's adds.
         ResolveMissingRecordOnce(Existing, bCarried);
+        DropRecordsWithoutRows(Existing);
 
         // Source (a) first, then (b). Both through the same modded predicate the hook uses.
         TSet<FString> Managed;
