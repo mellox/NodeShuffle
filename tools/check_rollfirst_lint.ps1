@@ -131,7 +131,8 @@ function Invoke-RollFirstChecks($T) {
     # R9
     $hdrTags = @([regex]::Matches($T.mark, 'TEXT\("(20\d\d-\d\d-\d\d-[\w-]+)"\),') | ForEach-Object { $_.Groups[1].Value })
     $own = '2026-11-14-' + 'rollfirst-1'; $prev = '2026-11-14-' + 'scanfilter-4'
-    if ($hdrTags.Count -eq 0 -or $hdrTags[-1] -ne $own -or $hdrTags -notcontains $prev) { $f += '(R9) rollfirst-1 is the newest marker; scanfilter-4 stays listed' }
+    # rwg-0-2-1-1 (2026-11-15): rollfirst-1 is no longer the newest; it stays listed (the newest is pinned by check_rwg020_lint G9 and check_mcpcontract C4).
+    if ($hdrTags.Count -eq 0 -or $hdrTags -notcontains $own -or $hdrTags -notcontains $prev) { $f += '(R9) rollfirst-1 and scanfilter-4 stay listed' }
     if ((Count $T.nsmod ('packet marker (' + $own + ')=====')) -ne 1 -or (Count $T.nsmod ('packet marker (' + $prev + ')=====')) -ne 1) { $f += '(R9) both markers once on their own lines in NodeShuffle.cpp' }
     if ((Count $rf $own) -ne 0) { $f += '(R9) no marker literal inside the new file' }
     # R10
@@ -183,7 +184,7 @@ $mutants = @(
     @{ Name = 'Q20 BUILD tag renamed'; Key = 'rf'; Expect = 'R7'; Find = ('TEXT("ROLLFIRST' + '-BUILD: '); Repl = 'TEXT("ROLLFIRSTBUILD: ' }
     @{ Name = 'Q21 DONE drops setAside'; Key = 'rf'; Expect = 'R7'; Find = ' resourcesShortOfK=%d setAside=%d perResource=%d"),'; Repl = ' resourcesShortOfK=%d perResource=%d"),' }
     @{ Name = 'Q22 SCANCOVER behind the diagnostics gate'; Key = 'sdiag'; Expect = 'R8'; Find = '        if (IsValid(Self) && Self->GetWorld()) { for (TActorIterator<ANodeShuffleSubsystem> It(Self->GetWorld()); It; ++It) { It->EmitScanCover(Self); break; } }'; Repl = '' }
-    @{ Name = 'Q23 marker not newest'; Key = 'mark'; Expect = 'R9'; Find = ('        TEXT("2026-11-14-' + 'rollfirst-1"),'); Repl = '' }
+    @{ Name = 'Q23 marker dropped from the header'; Key = 'mark'; Expect = 'R9'; Find = ('        TEXT("2026-11-14-' + 'rollfirst-1"),'); Repl = '' }
     @{ Name = 'Q24 manifest row dropped'; Key = 'desc'; Expect = 'R10'; Find = 'TEXT("NodeShuffle.RwgFirstPerResource"),'; Repl = '' }
     @{ Name = 'Q25 legend shows a field token'; Key = 'rf'; Expect = 'R11'; Find = '// Legend (prose only): wanted counts'; Repl = ('// Legend (prose only): wanted' + '=3 counts') }
     @{ Name = 'Q26 sea-done helper drifts'; Key = 'rf'; Expect = 'R12'; Find = '    const bool bSeaPassIdle = bRwgSeaCheckDone && !bRwgSeaUsable;'; Repl = '    const bool bSeaPassIdle = bRwgSeaCheckDone;' }

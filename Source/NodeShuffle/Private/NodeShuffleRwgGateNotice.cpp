@@ -34,6 +34,18 @@ namespace
     const int16 GateSigCaves1063[] = { 0x48,0x8D,0x41,0x38,0xC3 };
     const int16 GateSigAnyNear1063[] = { 0x48,0x8B,0xC4,0x48,0x89,0x58,0x08,0x48,0x89,0x68,0x10,0x48,0x89,0x70,0x18,0x57,0x48,0x83,0xEC,0x70,0x8B,0x59,0x50,0x48,0x8B,0xF1 };
     const int16 GateSigFloor1063[] = { 0x48,0x8B,0xC4,0xF2,0x0F,0x11,0x58,0x20,0xF2,0x0F,0x11,0x50,0x18,0xF2,0x0F,0x11,0x48,0x10,0x53,0x41,0x55,0x48,0x81,0xEC,0x18,0x01,0x00,0x00,0x8B,0x59,0x50,0x4C,0x8B,0xE9 };
+    // rwg-0-2-1-1 (2026-11-15): the SECOND generation-B CarvedCaves form, RWG 0.2.1 build 1130 (disp8 @3 = 0x40), a COPY of
+    // NodeShuffleMapModeCave.cpp's SigCaves1130 (check_rwg020_lint.ps1 pins the pair). Selected only when every byte matches
+    // (GateCavesIs1130); otherwise GateSigCaves1063 applies exactly as before. No wildcard.
+    const int16 GateSigCaves1130[] = { 0x48,0x8D,0x41,0x40,0xC3 };
+#if PLATFORM_WINDOWS
+    bool GateCavesIs1130(const uint8* B)
+    {
+        if (!B) { return false; }
+        for (int32 I = 0; I < static_cast<int32>(UE_ARRAY_COUNT(GateSigCaves1130)); ++I) { if (B[I] != static_cast<uint8>(GateSigCaves1130[I])) { return false; } }
+        return true;
+    }
+#endif
 
     // ---- notice state. Per process, like the gate itself (the RWG DLL never unloads, TryBind runs once).
     constexpr int32 MaxNoticeAttempts = 8; // the drain runs <= 11 times per world (latch + every 60 s while SinceReady <= RwgReprobeWindowTicks = 120), one spent on the hold tick; 8 keeps "abandoned" reachable when a pawn exists by SinceReady = 24, later the window ends first
@@ -67,13 +79,20 @@ namespace
 int32 NodeShuffleRwgGate::CheckCaveSignatures(void* Hmod, int32 Gen, FString& OutMissing, FString& OutMismatched)
 {
     int32 Bad = 0;
+    const TCHAR* CavesMask = TEXT("notChecked"); // rwg-0-2-1-1: which CarvedCaves array was applied (A | B1063 | B1130)
+    FString CavesDisp = TEXT("notChecked");      // rwg-0-2-1-1: CarvedCaves byte 3 as read from the DLL in this run, or unresolved
 #if PLATFORM_WINDOWS
     HMODULE H = static_cast<HMODULE>(Hmod);
     if (!H) { OutMissing = TEXT("<module null>"); return 0; }
     // rwg-0-2-0-1: the generation the height-API bind accepted picks the three generation-specific masks; Num / IsInsideAt are shared.
     const bool bGenB = Gen == GenB;
-    const int16* const CavesSig = bGenB ? GateSigCaves1063 : GateSigCaves;
-    const int32 CavesN = bGenB ? static_cast<int32>(UE_ARRAY_COUNT(GateSigCaves1063)) : static_cast<int32>(UE_ARRAY_COUNT(GateSigCaves));
+    // rwg-0-2-1-1: the same two-form selection as the cave bind (1130 only on a full match, else 1063).
+    const uint8* const CavesBytes = reinterpret_cast<const uint8*>(::GetProcAddress(H, GateSymCaves));
+    const bool bCaves1130 = bGenB && GateCavesIs1130(CavesBytes);
+    const int16* const CavesSig = bGenB ? (bCaves1130 ? GateSigCaves1130 : GateSigCaves1063) : GateSigCaves;
+    const int32 CavesN = bGenB ? (bCaves1130 ? static_cast<int32>(UE_ARRAY_COUNT(GateSigCaves1130)) : static_cast<int32>(UE_ARRAY_COUNT(GateSigCaves1063))) : static_cast<int32>(UE_ARRAY_COUNT(GateSigCaves));
+    CavesMask = bGenB ? (bCaves1130 ? TEXT("B1130") : TEXT("B1063")) : TEXT("A");
+    CavesDisp = CavesBytes ? FString::Printf(TEXT("0x%02X"), static_cast<int32>(CavesBytes[3])) : FString(TEXT("unresolved"));
     const int16* const AnyNearSig = bGenB ? GateSigAnyNear1063 : GateSigAnyNear;
     const int32 AnyNearN = bGenB ? static_cast<int32>(UE_ARRAY_COUNT(GateSigAnyNear1063)) : static_cast<int32>(UE_ARRAY_COUNT(GateSigAnyNear));
     const int16* const FloorSig = bGenB ? GateSigFloor1063 : GateSigFloor;
@@ -100,8 +119,8 @@ int32 NodeShuffleRwgGate::CheckCaveSignatures(void* Hmod, int32 Gen, FString& Ou
 #else
     OutMissing = TEXT("<notWindows>");
 #endif
-    UE_LOG(LogNodeShuffle, Display, TEXT("RWGGATE-CAVESIG: unlisted trial, cave half: generation=%s mismatched=%d missing='%s' mismatchedList='%s' (each item is the export and the offset of its first differing pinned byte; the cave bind re-checks the same five masks later)"),
-        Gen == GenB ? TEXT("B") : TEXT("A"), Bad, *OutMissing, *OutMismatched);
+    UE_LOG(LogNodeShuffle, Display, TEXT("RWGGATE-CAVESIG: unlisted trial, cave half: generation=%s mismatched=%d missing='%s' mismatchedList='%s' cavesMaskApplied=%s cavesDisp=%s (each item is the export and the offset of its first differing pinned byte; the cave bind re-checks the same five masks later)"),
+        Gen == GenB ? TEXT("B") : TEXT("A"), Bad, *OutMissing, *OutMismatched, CavesMask, *CavesDisp);
     return Bad;
 }
 
@@ -116,19 +135,21 @@ int32 NodeShuffleRwgGate::ClassifyCaveGenerations(void* Hmod, FString& OutDetail
         for (int32 I = 0; I < N; ++I) { if (Sig[I] >= 0 && B[I] != static_cast<uint8>(Sig[I])) { return false; } }
         return true;
     };
-    const auto One = [&](const char* Sym, const int16* SigGenA, int32 NA, const int16* SigGenB, int32 NB, const TCHAR* Name)
+    // rwg-0-2-1-1: SigGenB2 (nullptr = none) is a second generation-B form; a match on EITHER form counts as B (CarvedCaves only:
+    // 1063 0x38 or 1130 0x40), so this label agrees with the cave bind's two-form selection.
+    const auto One = [&](const char* Sym, const int16* SigGenA, int32 NA, const int16* SigGenB, int32 NB, const int16* SigGenB2, int32 NB2, const TCHAR* Name)
     {
         const uint8* B = reinterpret_cast<const uint8*>(::GetProcAddress(H, Sym));
         const bool bA = B != nullptr && Matches(B, SigGenA, NA);
-        const bool bB = B != nullptr && Matches(B, SigGenB, NB);
+        const bool bB = B != nullptr && (Matches(B, SigGenB, NB) || (SigGenB2 != nullptr && Matches(B, SigGenB2, NB2)));
         const TCHAR* Label = !B ? TEXT("missing") : ((bA && bB) ? TEXT("both") : (bA ? TEXT("A") : (bB ? TEXT("B") : TEXT("none"))));
         if (bA && !bB) { Bits |= (1 << GenA); }
         if (bB && !bA) { Bits |= (1 << GenB); }
         OutDetail += FString::Printf(TEXT("%s%s:%s"), OutDetail.IsEmpty() ? TEXT("") : TEXT(" "), Name, Label);
     };
-    One(GateSymCaves, GateSigCaves, UE_ARRAY_COUNT(GateSigCaves), GateSigCaves1063, UE_ARRAY_COUNT(GateSigCaves1063), TEXT("CarvedCaves"));
-    One(GateSymAnyNear, GateSigAnyNear, UE_ARRAY_COUNT(GateSigAnyNear), GateSigAnyNear1063, UE_ARRAY_COUNT(GateSigAnyNear1063), TEXT("AnyNear"));
-    One(GateSymFloor, GateSigFloor, UE_ARRAY_COUNT(GateSigFloor), GateSigFloor1063, UE_ARRAY_COUNT(GateSigFloor1063), TEXT("FloorCmAt"));
+    One(GateSymCaves, GateSigCaves, UE_ARRAY_COUNT(GateSigCaves), GateSigCaves1063, UE_ARRAY_COUNT(GateSigCaves1063), GateSigCaves1130, UE_ARRAY_COUNT(GateSigCaves1130), TEXT("CarvedCaves"));
+    One(GateSymAnyNear, GateSigAnyNear, UE_ARRAY_COUNT(GateSigAnyNear), GateSigAnyNear1063, UE_ARRAY_COUNT(GateSigAnyNear1063), nullptr, 0, TEXT("AnyNear"));
+    One(GateSymFloor, GateSigFloor, UE_ARRAY_COUNT(GateSigFloor), GateSigFloor1063, UE_ARRAY_COUNT(GateSigFloor1063), nullptr, 0, TEXT("FloorCmAt"));
 #else
     OutDetail = TEXT("<notWindows>");
 #endif

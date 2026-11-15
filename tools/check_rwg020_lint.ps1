@@ -17,6 +17,12 @@
 #   G6 Marker 2026-11-13-rwg-0-2-0-1 newest in the header, once in NodeShuffle.cpp, absent from the packet's source files.
 #   G7 New formats: each starts with its tag (Display/Warning), no field repeats in a format, no `word=` inside a legend parenthetical.
 #   G8 The mask tool parses masks from source (no hard-coded mask bytes); the edited lints carry the 0.2.0 anchors.
+#   G9 rwg-0-2-1-1 (2026-11-15, RWG 0.2.1 build 1130; _team/test-logs/2026-11-15-rwg-0.2.1-export-diff.md): generation B accepts
+#      CarvedCaves in exactly two fully pinned forms (0x38 / 0x40 at @3), the 1130 array selected only on a FULL match, the same
+#      statement shape in the cave bind and the gate (token-equal pair); ClassifyCaveGenerations counts either form as B; the two
+#      1130 readiness forms are pinned beside their 1063 forms; RWGCAVEBIND / RWGGATE-CAVESIG / RWGGETTERS print the form and the
+#      byte read this run; the marker 2026-11-15-rwg-0-2-1-1 is newest and the three newest-marker lints are rotated; the mask tool and
+#      docs/DIAGNOSTICS.md carry the two forms. LOADS every file the packet touched.
 # Exit 0 = all hold; 1 = at least one does not; 2 = a pinned FILE is missing.
 
 $ErrorActionPreference = 'Stop'
@@ -33,6 +39,9 @@ $files = [ordered]@{
     l019  = 'tools\check_rwg019_lint.ps1'
     lmcp  = 'tools\check_mcpcontract_lint.ps1'
     lthh  = 'tools\check_thoriumhalf_lint.ps1'
+    lsf   = 'tools\check_scanfilter_lint.ps1'  # rwg-0-2-1-1
+    lrf   = 'tools\check_rollfirst_lint.ps1'   # rwg-0-2-1-1
+    doc   = 'docs\DIAGNOSTICS.md'              # rwg-0-2-1-1
 }
 $T = @{}
 foreach ($k in $files.Keys) {
@@ -55,6 +64,7 @@ function Ordered([string]$t, [string[]]$needles) { $at = -1; foreach ($n in $nee
 function Span([string]$t, [string]$a, [string]$b) { $i = $t.IndexOf($a); if ($i -lt 0) { return '' }; $j = $t.IndexOf($b, $i + $a.Length); if ($j -lt 0) { return '' }; return $t.Substring($i, $j - $i) }
 $R = 'ret' + 'urn;'
 $marker = '2026-11-13-' + 'rwg-0-2-0-1'
+$marker021 = '2026-11-15-' + 'rwg-0-2-1-1'
 
 function Invoke-020Checks($T, $others) {
     $f = @()
@@ -110,7 +120,7 @@ function Invoke-020Checks($T, $others) {
         if (@($a | Where-Object { $_ -eq '-1' }).Count -ne 0) { $f += "(G4) $n must carry no wildcard (D2)" }
     }
     if ((Count $T.cave 'const bool bGenB = Gen == NodeShuffleMapMode::RwgHeightApiGenB;') -ne 1 -or (Count $T.cave 'A.Caves = reinterpret_cast<FnCaves>(Bind(SymCaves, CavesSig, CavesN, TEXT("CarvedCaves")));') -ne 1 -or (Count $T.cave 'A.Floor = reinterpret_cast<FnFloor>(Bind(SymFloor, FloorSig, FloorN, TEXT("FloorCmAt")));') -ne 1 -or (Count $T.cave 'A.AnyNear = reinterpret_cast<FnAnyNear>(Bind(SymAnyNear, AnyNearSig, AnyNearN, TEXT("AnyNear")));') -ne 1) { $f += '(G4) the cave bind must select its three generation-specific masks by the accepted generation' }
-    if ((Count $T.gate 'const bool bGenB = Gen == GenB;') -ne 1 -or (Count $T.gate 'const int16* const CavesSig = bGenB ? GateSigCaves1063 : GateSigCaves;') -ne 1 -or (Count $T.gate 'const int16* const FloorSig = bGenB ? GateSigFloor1063 : GateSigFloor;') -ne 1 -or (Count $T.gate 'const int16* const AnyNearSig = bGenB ? GateSigAnyNear1063 : GateSigAnyNear;') -ne 1) { $f += '(G4) the unlisted cave half must select the same masks by generation' }
+    if ((Count $T.gate 'const bool bGenB = Gen == GenB;') -ne 1 -or (Count $T.gate 'const int16* const CavesSig = bGenB ? (bCaves1130 ? GateSigCaves1130 : GateSigCaves1063) : GateSigCaves;') -ne 1 -or (Count $T.gate 'const int16* const FloorSig = bGenB ? GateSigFloor1063 : GateSigFloor;') -ne 1 -or (Count $T.gate 'const int16* const AnyNearSig = bGenB ? GateSigAnyNear1063 : GateSigAnyNear;') -ne 1) { $f += '(G4) the unlisted cave half must select the same masks by generation' }
     if ((Count $T.mmh 'constexpr int32 RwgHeightApiGenB = 2;') -ne 1 -or (Count $T.gateh 'constexpr int32 GenB = 2;') -ne 1 -or (Count $T.hapi 'static_assert(NodeShuffleMapMode::RwgHeightApiGenA == NodeShuffleRwgGate::GenA && NodeShuffleMapMode::RwgHeightApiGenB == NodeShuffleRwgGate::GenB,') -ne 1) { $f += '(G4) the two generation constant pairs must be equal and asserted' }
     # G5
     if ((Count $T.hapi ', { TEXT("0.2.0"), 1063 } };') -ne 1 -or (Count $T.hapi '0.2.0 build 1063, sha256 6AEF57A9652D77AD') -ne 1 -or (Count $T.hapi 'RAN 2026-11-13 (first 0.2.0 load, world') -ne 1 -or (Count $T.hapi 'RWGHEIGHTAPI census usable=1, terrain n=84, median |dZ| 8.6 cm, p95 40.3 cm') -ne 1) { $f += '(G5) the accept list must carry {0.2.0,1063} with its sha256 prefix and the owed-census sentence' }
@@ -133,6 +143,48 @@ function Invoke-020Checks($T, $others) {
     # G8
     if (-not $T.tool.Contains("SIG_RX = re.compile(") -or $T.tool.Contains('0x48,' + '0x8B,0xC4') -or $T.tool.Contains('0x48, ' + '0x8B, 0xC4') -or -not $T.tool.Contains("'git', '-C', ROOT, 'show'")) { $f += '(G8) the mask tool must parse masks from source, carry no mask bytes of its own, and compare against the base commit' }
     if (-not $T.l019.Contains('{ TEXT("0.2.0"), 1063 } };') -or -not $T.l019.Contains('CheckCaveSignatures(H, A.Gen, CaveMissing, CaveBad);') -or -not $T.lmcp.Contains('# rwg-0-2-0-2: no longer the newest; pinned present') -or -not $T.lthh.Contains('# rwg-0-2-0-1: no longer the newest; pinned present')) { $f += '(G8) the edited lints must carry their 0.2.0 anchors' }
+    # G9 (rwg-0-2-1-1)
+    $c130 = Mask $T.cave 'SigCaves1130'; $g130 = Mask $T.gate 'GateSigCaves1130'
+    if (-not $c130 -or -not $g130) { $f += '(G9) SigCaves1130 / GateSigCaves1130 must be declared once in each file' }
+    else {
+        if (($c130 -join ',') -ne ($g130 -join ',')) { $f += '(G9) SigCaves1130 differs between NodeShuffleMapModeCave.cpp and NodeShuffleRwgGateNotice.cpp' }
+        if (($c130 -join ',') -ne '0x48,0x8D,0x41,0x40,0xC3') { $f += '(G9) the 1130 CarvedCaves form must be exactly lea rax,[rcx+40h]; ret, every byte pinned' }
+    }
+    $cb = Span $T.cave 'void TryBindCaves(FRwgCaveApi& A)' 'const FRwgCaveApi& BoundCaves()'
+    if ((Count $cb 'bool bCaves1130 = bGenB && CavesBytes != nullptr;') -ne 1 -or
+        (Count $cb 'for (int32 I = 0; bCaves1130 && I < static_cast<int32>(UE_ARRAY_COUNT(SigCaves1130)); ++I) { bCaves1130 = CavesBytes[I] == static_cast<uint8>(SigCaves1130[I]); }') -ne 1 -or
+        (Count $cb 'const int16* const CavesSig = bGenB ? (bCaves1130 ? SigCaves1130 : SigCaves1063) : SigCaves;') -ne 1 -or
+        (Count $cb 'const int32 CavesN = bGenB ? (bCaves1130 ? static_cast<int32>(UE_ARRAY_COUNT(SigCaves1130)) : static_cast<int32>(UE_ARRAY_COUNT(SigCaves1063))) : static_cast<int32>(UE_ARRAY_COUNT(SigCaves));') -ne 1 -or
+        -not (Ordered $cb @('const uint8* const CavesBytes = reinterpret_cast<const uint8*>(::GetProcAddress(H, SymCaves));', 'const int16* const CavesSig = bGenB ?', 'A.Caves = reinterpret_cast<FnCaves>(Bind(SymCaves, CavesSig, CavesN, TEXT("CarvedCaves")));'))) { $f += '(G9) the cave bind must select the 1130 CarvedCaves array only on a full match on generation B, else the 1063 array, before its single Bind' }
+    $gh = Span $T.gate '    bool GateCavesIs1130(const uint8* B)' 'FRwgGateNotice& Notice()'
+    $cs = Span $T.gate 'int32 NodeShuffleRwgGate::CheckCaveSignatures(' 'int32 NodeShuffleRwgGate::ClassifyCaveGenerations('
+    if ((Count $gh 'for (int32 I = 0; I < static_cast<int32>(UE_ARRAY_COUNT(GateSigCaves1130)); ++I) { if (B[I] != static_cast<uint8>(GateSigCaves1130[I])) { return false; } }') -ne 1 -or
+        (Count $cs 'const bool bCaves1130 = bGenB && GateCavesIs1130(CavesBytes);') -ne 1 -or
+        (Count $cs 'const int32 CavesN = bGenB ? (bCaves1130 ? static_cast<int32>(UE_ARRAY_COUNT(GateSigCaves1130)) : static_cast<int32>(UE_ARRAY_COUNT(GateSigCaves1063))) : static_cast<int32>(UE_ARRAY_COUNT(GateSigCaves));') -ne 1 -or
+        -not (Ordered $cs @('const uint8* const CavesBytes = reinterpret_cast<const uint8*>(::GetProcAddress(H, GateSymCaves));', 'const int16* const CavesSig = bGenB ? (bCaves1130 ?', 'Check(GateSymCaves, CavesSig, CavesN, TEXT("CarvedCaves"));'))) { $f += '(G9) the unlisted cave half must select the CarvedCaves form exactly as the cave bind does (full match of the 1130 array)' }
+    foreach ($k in @('cave', 'gate')) { foreach ($n in @(('CavesBytes' + '[3] =='), ('CavesBytes' + '[3] !='), ('B' + '[3] =='))) { if ($T[$k].Contains($n)) { $f += "(G9) the CarvedCaves form must not be selected by one byte ('$n' in $k)" } } }
+    $cg = Span $T.gate 'int32 NodeShuffleRwgGate::ClassifyCaveGenerations(' '// ---- bodies.'
+    if ((Count $cg 'const bool bB = B != nullptr && (Matches(B, SigGenB, NB) || (SigGenB2 != nullptr && Matches(B, SigGenB2, NB2)));') -ne 1 -or
+        (Count $cg 'One(GateSymCaves, GateSigCaves, UE_ARRAY_COUNT(GateSigCaves), GateSigCaves1063, UE_ARRAY_COUNT(GateSigCaves1063), GateSigCaves1130, UE_ARRAY_COUNT(GateSigCaves1130), TEXT("CarvedCaves"));') -ne 1 -or
+        (Count $cg 'GateSigAnyNear1063, UE_ARRAY_COUNT(GateSigAnyNear1063), nullptr, 0, TEXT("AnyNear"));') -ne 1 -or (Count $cg 'GateSigFloor1063, UE_ARRAY_COUNT(GateSigFloor1063), nullptr, 0, TEXT("FloorCmAt"));') -ne 1) { $f += '(G9) RWGGENERATION must label CarvedCaves B on either generation-B form (and only CarvedCaves has a second form)' }
+    $rd = @{ SigGetState1063 = '0x0F,0xB6,0x81,0xC0,0x17,0x00,0x00,0xC3'; SigContentSpawned1063 = '0x0F,0xB6,0x81,0x70,0x0F,0x00,0x00,0xC3'; SigGetState1130 = '0x0F,0xB6,0x81,0x88,0x19,0x00,0x00,0xC3'; SigContentSpawned1130 = '0x0F,0xB6,0x81,0x18,0x11,0x00,0x00,0xC3' }
+    foreach ($n in $rd.Keys) { $m = Mask $T.hapi $n; if (-not $m -or ($m -join ',') -ne $rd[$n]) { $f += "(G9) readiness form $n must be exactly its measured 8 bytes, fully pinned" } }
+    $rg = Span $T.hapi '    void TryBindReadyGetters(FRwgReadyGetters& R)' 'FString NodeShuffleMapMode::RwgReadinessFields('
+    if ((Count $rg 'const int16* const Sigs2[4] = { SigGetState1130, nullptr, nullptr, SigContentSpawned1130 };') -ne 1 -or
+        (Count $rg 'for (int32 K = 0; K < 8; ++K) { if (B[K] != static_cast<uint8>(Sigs2[I][K])) { Diff2 = K; break; } }') -ne 1 -or
+        (Count $rg 'if (Diff2 < 0) { Diff = -1; Form = TEXT("1130"); }') -ne 1) { $f += '(G9) the readiness bind must try the fully pinned 1130 form only when the 1063 form does not match' }
+    if ((Count $T.cave 'cavesMaskApplied=%s cavesDisp=%s optional=1;') -ne 1 -or (Count $T.cave '*A.Status, *Missing, *SigBad, bGenB ? TEXT("B") : TEXT("A"), CavesMask, *CavesDisp);') -ne 1 -or
+        (Count $T.gate "mismatchedList='%s' cavesMaskApplied=%s cavesDisp=%s (") -ne 1 -or (Count $T.gate 'Bad, *OutMissing, *OutMismatched, CavesMask, *CavesDisp);') -ne 1 -or
+        (Count $T.cave 'FString::Printf(TEXT("0x%02X"), static_cast<int32>(CavesBytes[3]))') -ne 1 -or (Count $T.gate 'FString::Printf(TEXT("0x%02X"), static_cast<int32>(CavesBytes[3]))') -ne 1 -or
+        (Count $rg 'TEXT("%s%s:%s@%d/form%s/disp0x%X"), Detail.IsEmpty() ? TEXT("") : TEXT(" "), Names[I], St, Diff, Form, Disp);') -ne 1) { $f += '(G9) RWGCAVEBIND, RWGGATE-CAVESIG and RWGGETTERS must print the form applied and the bytes read this run' }
+    $arr9 = [regex]::Match($T.mk, 'PacketMarkers\[\] = \{([\s\S]*?)\};')
+    $tags9 = @(if ($arr9.Success) { [regex]::Matches($arr9.Groups[1].Value, 'TEXT\("([\w-]+)"\)') | ForEach-Object { $_.Groups[1].Value } })
+    if ($tags9.Count -eq 0 -or $tags9[-1] -ne $marker021 -or @($tags9 | Where-Object { $_ -eq $marker021 }).Count -ne 1 -or (Count $T.nsmod ('packet marker (' + $marker021 + ')=====')) -ne 1) { $f += '(G9) marker rwg-0-2-1-1 must be the newest header entry, once, and once in NodeShuffle.cpp' }
+    foreach ($k in @('hapi', 'cave', 'gate', 'gateh', 'tool', 'doc')) { if ($T[$k].Contains($marker021)) { $f += "(G9) no rwg-0-2-1-1 marker literal in $k" } }
+    if (-not $T.lmcp.Contains("`$own = '2026-11-15-' + 'rwg-0-2-1-1'") -or -not $T.lsf.Contains("'2026-11-15-' + 'rwg-0-2-1-1'") -or -not $T.lsf.Contains('(S9) check_mcpcontract C4 must name rwg-0-2-1-1 as the newest') -or
+        -not $T.lrf.Contains("if (`$hdrTags.Count -eq 0 -or `$hdrTags -notcontains `$own -or `$hdrTags -notcontains `$prev)") -or $T.lrf.Contains('$hdrTags[-1]')) { $f += '(G9) mcpcontract C4 and scanfilter S9 must name rwg-0-2-1-1 as the newest, and rollfirst R9 must pin rollfirst-1 listed, not newest' }
+    if (-not $T.tool.Contains("('SigCaves1063', 'SigCaves1130')") -or -not $T.tool.Contains("'SigCaves1130': 'GateSigCaves1130'") -or -not $T.tool.Contains("('SigGetState1063', 'SigGetState1130')") -or -not $T.tool.Contains("('SigContentSpawned1063', 'SigContentSpawned1130')") -or -not $T.tool.Contains('def control_d(')) { $f += '(G9) the mask tool must mirror the two-form masks and run control (d)' }
+    if (-not $T.doc.Contains('`cavesMaskApplied`') -or -not $T.doc.Contains('`RWGGETTERS`') -or -not $T.doc.Contains('`cavesDisp`')) { $f += '(G9) docs/DIAGNOSTICS.md must describe cavesMaskApplied, cavesDisp and the RWGGETTERS form' }
     return $f
 }
 
@@ -173,6 +225,26 @@ $mutants = @(
     @{ Name = 'M33 marker line dropped from NodeShuffle.cpp'; Key = 'nsmod'; Expect = 'G6'; Find = ('packet marker (' + $marker + ')====='); Repl = 'packet marker (x)=====' }
     @{ Name = 'M34 mcpcontract lint drops the rwg-0-2-0-2 note'; Key = 'lmcp'; Expect = 'G8'; Find = '# rwg-0-2-0-2: no longer the newest; pinned present'; Repl = '' } # ns-rollchat-1 (2026-11-14): the newest marker moved on; the note replaces the old literal anchor
     @{ Name = 'M35 thoriumhalf lint pins newest again'; Key = 'lthh'; Expect = 'G8'; Find = '# rwg-0-2-0-1: no longer the newest; pinned present'; Repl = '' }
+    @{ Name = 'M36 (a) 0x40 form changed in the gate copy only'; Key = 'gate'; Expect = 'G9'; Find = 'GateSigCaves1130[] = { 0x48,0x8D,0x41,0x40,0xC3 };'; Repl = 'GateSigCaves1130[] = { 0x48,0x8D,0x41,0x48,0xC3 };' }
+    @{ Name = 'M37 (a) 0x40 form changed in the cave copy only'; Key = 'cave'; Expect = 'G9'; Find = 'SigCaves1130[] = { 0x48,0x8D,0x41,0x40,0xC3 };'; Repl = 'SigCaves1130[] = { 0x48,0x8D,0x41,0x48,0xC3 };' }
+    @{ Name = 'M38 (b) 1063 form dropped from the cave bind selection'; Key = 'cave'; Expect = 'G9'; Find = '(bCaves1130 ? SigCaves1130 : SigCaves1063) : SigCaves;'; Repl = 'SigCaves1130 : SigCaves;' }
+    @{ Name = 'M39 (b) 1063 form dropped from the gate selection'; Key = 'gate'; Expect = 'G9'; Find = '(bCaves1130 ? GateSigCaves1130 : GateSigCaves1063) : GateSigCaves;'; Repl = 'GateSigCaves1130 : GateSigCaves;' }
+    @{ Name = 'M40 (c) 1130 form wildcarded at @3 in both copies'; Key = 'cave'; Expect = 'G9'; Find = 'SigCaves1130[] = { 0x48,0x8D,0x41,0x40,0xC3 };'; Repl = 'SigCaves1130[] = { 0x48,0x8D,0x41,-1,0xC3 };'; Also = @{ Key = 'gate'; Find = 'GateSigCaves1130[] = { 0x48,0x8D,0x41,0x40,0xC3 };'; Repl = 'GateSigCaves1130[] = { 0x48,0x8D,0x41,-1,0xC3 };' } }
+    @{ Name = 'M41 (c) selection by one byte (any byte)'; Key = 'cave'; Expect = 'G9'; Find = 'bCaves1130 = CavesBytes[I] == static_cast<uint8>(SigCaves1130[I]);'; Repl = ('bCaves1130 = ' + 'CavesBytes[3] != ' + '0x38;') }
+    @{ Name = 'M42 (c) gate helper ignores byte 3'; Key = 'gate'; Expect = 'G9'; Find = 'if (B[I] != static_cast<uint8>(GateSigCaves1130[I])) { return false; }'; Repl = 'if (I != 3 && B[I] != static_cast<uint8>(GateSigCaves1130[I])) { return false; }' }
+    @{ Name = 'M43 (d) generation-A CarvedCaves touched in the gate copy'; Key = 'gate'; Expect = 'G4'; Find = 'GateSigCaves[] = { 0x48,0x8D,0x41,0x28,0xC3 };'; Repl = 'GateSigCaves[] = { 0x48,0x8D,0x41,0x40,0xC3 };' }
+    @{ Name = 'M44 (e) 1130 GetState form altered'; Key = 'hapi'; Expect = 'G9'; Find = 'SigGetState1130[] = { 0x0F,0xB6,0x81,0x88,0x19,0x00,0x00,0xC3 };'; Repl = 'SigGetState1130[] = { 0x0F,0xB6,0x81,-1,-1,0x00,0x00,0xC3 };' }
+    @{ Name = 'M45 (e) 1130 IsContentSpawned form altered'; Key = 'hapi'; Expect = 'G9'; Find = 'SigContentSpawned1130[] = { 0x0F,0xB6,0x81,0x18,0x11,0x00,0x00,0xC3 };'; Repl = 'SigContentSpawned1130[] = { 0x0F,0xB6,0x81,0x18,0x12,0x00,0x00,0xC3 };' }
+    @{ Name = 'M46 readiness second form not tried'; Key = 'hapi'; Expect = 'G9'; Find = '{ SigGetState1130, nullptr, nullptr, SigContentSpawned1130 };'; Repl = '{ nullptr, nullptr, nullptr, nullptr };' }
+    @{ Name = 'M47 RWGGENERATION labels the 1130 form none'; Key = 'gate'; Expect = 'G9'; Find = 'GateSigCaves1063, UE_ARRAY_COUNT(GateSigCaves1063), GateSigCaves1130, UE_ARRAY_COUNT(GateSigCaves1130), TEXT("CarvedCaves"));'; Repl = 'GateSigCaves1063, UE_ARRAY_COUNT(GateSigCaves1063), nullptr, 0, TEXT("CarvedCaves"));' }
+    @{ Name = 'M48 RWGGATE-CAVESIG drops cavesDisp'; Key = 'gate'; Expect = 'G9'; Find = "mismatchedList='%s' cavesMaskApplied=%s cavesDisp=%s ("; Repl = "mismatchedList='%s' cavesMaskApplied=%s (" }
+    @{ Name = 'M49 RWGGETTERS drops the form'; Key = 'hapi'; Expect = 'G9'; Find = 'TEXT("%s%s:%s@%d/form%s/disp0x%X"), Detail.IsEmpty() ? TEXT("") : TEXT(" "), Names[I], St, Diff, Form, Disp);'; Repl = 'TEXT("%s%s:%s@%d"), Detail.IsEmpty() ? TEXT("") : TEXT(" "), Names[I], St, Diff);' }
+    @{ Name = 'M50 marker rwg-0-2-1-1 dropped from the header'; Key = 'mk'; Expect = 'G9'; Find = ('        TEXT("' + $marker021 + '"),' + $N); Repl = '' }
+    @{ Name = 'M51 mcpcontract C4 not rotated'; Key = 'lmcp'; Expect = 'G9'; Find = "`$own = '2026-11-15-' + 'rwg-0-2-1-1'"; Repl = "`$own = '2026-11-14-' + 'rollfirst-1'" }
+    @{ Name = 'M52 scanfilter S9 not rotated'; Key = 'lsf'; Expect = 'G9'; Find = "'2026-11-15-' + 'rwg-0-2-1-1'"; Repl = "'2026-11-14-' + 'rollfirst-1'" }
+    @{ Name = 'M53 rollfirst R9 still pins newest'; Key = 'lrf'; Expect = 'G9'; Find = '$hdrTags -notcontains $own -or $hdrTags -notcontains $prev)'; Repl = '$hdrTags[-1] -ne $own -or $hdrTags -notcontains $prev)' }
+    @{ Name = 'M54 mask tool loses the 1130 cave form'; Key = 'tool'; Expect = 'G9'; Find = "('SigCaves1063', 'SigCaves1130')"; Repl = "'SigCaves1063'" }
+    @{ Name = 'M55 DIAGNOSTICS row dropped'; Key = 'doc'; Expect = 'G9'; Find = '`cavesMaskApplied`'; Repl = 'cavesMaskApplied' }
     @{ Name = 'M26 unlisted cave half checks generation A always'; Key = 'hapi'; Expect = 'G1'; Find = 'CheckCaveSignatures(H, A.Gen, CaveMissing, CaveBad);'; Repl = 'CheckCaveSignatures(H, 1, CaveMissing, CaveBad);' }
 )
 $mutantFails = @(); $caught = 0
@@ -183,6 +255,7 @@ foreach ($m in $mutants) {
     else {
         if (-not $mut[$m.Key].Contains($m.Find)) { $mutantFails += "FAIL(mutation): '$($m.Name)' cannot be applied -- anchor absent from '$($m.Key)' (a mutant that does not mutate is a vacuous pass)"; continue }
         $mut[$m.Key] = $mut[$m.Key].Replace($m.Find, $m.Repl)
+        if ($m.Also) { if (-not $mut[$m.Also.Key].Contains($m.Also.Find)) { $mutantFails += "FAIL(mutation): '$($m.Name)' second anchor absent from '$($m.Also.Key)'"; continue }; $mut[$m.Also.Key] = $mut[$m.Also.Key].Replace($m.Also.Find, $m.Also.Repl) } # rwg-0-2-1-1: a mutant that edits both copies
     }
     $res = Invoke-020Checks $mut $mo
     if ($res | Where-Object { $_ -like "*($($m.Expect))*" }) { $caught++ } else { $mutantFails += "FAIL(mutation): '$($m.Name)' was NOT caught by any $($m.Expect) pin" }
@@ -193,5 +266,5 @@ if ($all.Count -gt 0) {
     Write-Host "RWG020 LINT: FAIL -- $($all.Count) problem(s). Mutants caught $caught/$($mutants.Count)."
     exit 1
 }
-Write-Host "PASS: RWG020 lint -- G1..G8 hold across $($T.Count) pinned files + $($others.Count) scanned sources; mutants caught $caught/$($mutants.Count)."
+Write-Host "PASS: RWG020 lint -- G1..G9 hold across $($T.Count) pinned files + $($others.Count) scanned sources; mutants caught $caught/$($mutants.Count)."
 exit 0

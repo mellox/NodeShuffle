@@ -858,6 +858,11 @@ namespace
     const int16 SigWorldComplete1063[] = { 0x0F,0xB6,0x81,0x09,0x05,0x00,0x00,0xC3 };
     const int16 SigStartReady1063[] = { 0x0F,0xB6,0x81,0x08,0x05,0x00,0x00,0xC3 };
     const int16 SigContentSpawned1063[] = { 0x0F,0xB6,0x81,0x70,0x0F,0x00,0x00,0xC3 };
+    // rwg-0-2-1-1 (2026-11-15): the SECOND pinned form of the two getters whose displacement differs on RWG 0.2.1 build 1130
+    // (_team/test-logs/2026-11-15-rwg-0.2.1-export-diff.md Q3: GetState disp32 0x1988, IsContentSpawned 0x1118). Tried only when the 1063
+    // form does not match; still fully pinned, still log-only. IsWorldComplete / IsStartReady are byte-identical on 1130 (one form each).
+    const int16 SigGetState1130[] = { 0x0F,0xB6,0x81,0x88,0x19,0x00,0x00,0xC3 };
+    const int16 SigContentSpawned1130[] = { 0x0F,0xB6,0x81,0x18,0x11,0x00,0x00,0xC3 };
     using FnReadyU8 = uint8 (*)(const void* This);
     struct FRwgReadyGetters { bool bTried = false; FString Status = TEXT("notTried"); FnReadyU8 Fn[4] = { nullptr, nullptr, nullptr, nullptr }; };
     FRwgReadyGetters& ReadyGetters() { static FRwgReadyGetters R; return R; }
@@ -873,6 +878,7 @@ namespace
 #if PLATFORM_WINDOWS
         const char* const Syms[4] = { SymGetState, SymWorldComplete, SymStartReady, SymContentSpawned };
         const int16* const Sigs[4] = { SigGetState1063, SigWorldComplete1063, SigStartReady1063, SigContentSpawned1063 };
+        const int16* const Sigs2[4] = { SigGetState1130, nullptr, nullptr, SigContentSpawned1130 }; // rwg-0-2-1-1: second pinned form, nullptr = none
         const TCHAR* const Names[4] = { TEXT("GetState"), TEXT("IsWorldComplete"), TEXT("IsStartReady"), TEXT("IsContentSpawned") };
         FString Detail;
         int32 Bound = 0;
@@ -880,14 +886,24 @@ namespace
         {
             void* P = reinterpret_cast<void*>(::GetProcAddress(static_cast<HMODULE>(Hmod), Syms[I]));
             int32 Diff = -1;
+            const TCHAR* Form = TEXT("none"); // rwg-0-2-1-1: which pinned form matched (1063 | 1130 | none)
+            uint32 Disp = 0;                  // rwg-0-2-1-1: bytes 3..6 (the disp32) as read from the DLL in this run
             if (P)
             {
                 const uint8* B = static_cast<const uint8*>(P);
+                Disp = static_cast<uint32>(B[3]) | (static_cast<uint32>(B[4]) << 8) | (static_cast<uint32>(B[5]) << 16) | (static_cast<uint32>(B[6]) << 24);
                 for (int32 K = 0; K < 8; ++K) { if (B[K] != static_cast<uint8>(Sigs[I][K])) { Diff = K; break; } }
+                if (Diff < 0) { Form = TEXT("1063"); }
+                else if (Sigs2[I] != nullptr)
+                {
+                    int32 Diff2 = -1;
+                    for (int32 K = 0; K < 8; ++K) { if (B[K] != static_cast<uint8>(Sigs2[I][K])) { Diff2 = K; break; } }
+                    if (Diff2 < 0) { Diff = -1; Form = TEXT("1130"); } // a full match of the second form; Diff keeps the 1063 form's first difference otherwise
+                }
             }
             const TCHAR* St = !P ? TEXT("exportMissing") : (Diff >= 0 ? TEXT("signatureMismatch") : TEXT("bound"));
             if (P && Diff < 0) { R.Fn[I] = reinterpret_cast<FnReadyU8>(P); ++Bound; }
-            Detail += FString::Printf(TEXT("%s%s:%s@%d"), Detail.IsEmpty() ? TEXT("") : TEXT(" "), Names[I], St, Diff);
+            Detail += FString::Printf(TEXT("%s%s:%s@%d/form%s/disp0x%X"), Detail.IsEmpty() ? TEXT("") : TEXT(" "), Names[I], St, Diff, Form, Disp);
         }
         R.Status = Bound == 4 ? TEXT("bound") : (Bound == 0 ? TEXT("none") : TEXT("partial"));
         UE_LOG(LogNodeShuffle, Display, TEXT("RWGGETTERS: bind status=%s boundOf4=%d detail='%s' heightApiBindRanInThisCall=%d; log-only, an unbound getter prints -1 and gates nothing"), *R.Status, Bound, *Detail, bHeightBindRanHere ? 1 : 0);

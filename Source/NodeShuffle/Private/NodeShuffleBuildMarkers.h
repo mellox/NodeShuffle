@@ -37,6 +37,7 @@ namespace NodeShuffleBuildMarkers
         TEXT("2026-11-14-scanfilter-3"),
         TEXT("2026-11-14-scanfilter-4"),
         TEXT("2026-11-14-rollfirst-1"),
+        TEXT("2026-11-15-rwg-0-2-1-1"),
     };
     static constexpr int32 PacketMarkerCount = UE_ARRAY_COUNT(PacketMarkers);
 }

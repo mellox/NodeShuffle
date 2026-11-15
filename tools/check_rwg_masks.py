@@ -49,6 +49,9 @@ def load_sources():
 
 # Binding map: (lane, export, group, sym-file, sym-name, mask-file, A-mask, B-mask). B-mask None = shared by both generations;
 # A-mask None = generation B only (the edge getters). group: req | opt | cave | edge.
+# rwg-0-2-1-1 (2026-11-15): a B-mask may be a TUPLE of fully pinned forms (CarvedCaves 1063/1130, GetState and IsContentSpawned
+# 1063/1130). The row matches B when ANY form matches in full; 'form' names the one the source selects (Cave.cpp / GateNotice.cpp: the
+# 1130 CarvedCaves array only on a full match, else 1063; the readiness loop: 1063 first, then 1130).
 BINDS = [
     ('HeightApi', 'Get', 'req', 'hapi', 'SymGet', 'hapi', 'SigGet', None),
     ('HeightApi', 'GetField', 'req', 'hapi', 'SymGetField', 'hapi', 'SigField', None),
@@ -63,19 +66,20 @@ BINDS = [
     ('HeightApi', 'InSeaVolume', 'opt', 'hapi', 'SymInSea', 'hapi', 'SigInSea', 'SigInSea1063'),
     ('HeightApi', 'VoidAt', 'opt', 'hapi', 'SymVoidAt', 'hapi', 'SigVoidAt', None),
     ('HeightApi', 'GetKillboxTop', 'opt', 'hapi', 'SymKillboxTop', 'hapi', 'SigKillboxTop', None),
-    ('Cave', 'CarvedCaves', 'cave', 'cave', 'SymCaves', 'cave', 'SigCaves', 'SigCaves1063'),
+    ('Cave', 'CarvedCaves', 'cave', 'cave', 'SymCaves', 'cave', 'SigCaves', ('SigCaves1063', 'SigCaves1130')),
     ('Cave', 'Num', 'cave', 'cave', 'SymNum', 'cave', 'SigNum', None),
     ('Cave', 'AnyNear', 'cave', 'cave', 'SymAnyNear', 'cave', 'SigAnyNear', 'SigAnyNear1063'),
     ('Cave', 'FloorCmAt', 'cave', 'cave', 'SymFloor', 'cave', 'SigFloor', 'SigFloor1063'),
     ('Cave', 'IsInsideAt', 'cave', 'cave', 'SymInside', 'cave', 'SigInside', None),
     # rwg-0-2-0-2 item 4: readiness getters, LOG-ONLY group 'ready' -- never part of the verdict (RwgReadinessFields prints -1 when unbound).
-    ('Ready', 'GetState', 'ready', 'hapi', 'SymGetState', 'hapi', None, 'SigGetState1063'),
+    ('Ready', 'GetState', 'ready', 'hapi', 'SymGetState', 'hapi', None, ('SigGetState1063', 'SigGetState1130')),
     ('Ready', 'IsWorldComplete', 'ready', 'hapi', 'SymWorldComplete', 'hapi', None, 'SigWorldComplete1063'),
     ('Ready', 'IsStartReady', 'ready', 'hapi', 'SymStartReady', 'hapi', None, 'SigStartReady1063'),
-    ('Ready', 'IsContentSpawned', 'ready', 'hapi', 'SymContentSpawned', 'hapi', None, 'SigContentSpawned1063'),
+    ('Ready', 'IsContentSpawned', 'ready', 'hapi', 'SymContentSpawned', 'hapi', None, ('SigContentSpawned1063', 'SigContentSpawned1130')),
 ]
 GATE_COPY = {'SigCaves': 'GateSigCaves', 'SigNum': 'GateSigNum', 'SigAnyNear': 'GateSigAnyNear', 'SigFloor': 'GateSigFloor', 'SigInside': 'GateSigInside',
-             'SigCaves1063': 'GateSigCaves1063', 'SigAnyNear1063': 'GateSigAnyNear1063', 'SigFloor1063': 'GateSigFloor1063'}
+             'SigCaves1063': 'GateSigCaves1063', 'SigAnyNear1063': 'GateSigAnyNear1063', 'SigFloor1063': 'GateSigFloor1063',
+             'SigCaves1130': 'GateSigCaves1130'}  # rwg-0-2-1-1
 
 
 def pe_exports(data):
@@ -130,19 +134,35 @@ def wild_readback(data, fo, sig):
     return ' '.join(runs)
 
 
+def forms(sb):
+    return () if not sb else (sb if isinstance(sb, tuple) else (sb,))
+
+
+def select_form(data, fo, src, mf, lane, sb):
+    """rwg-0-2-1-1: the B form the source applies. Cave lane: the LAST form (1130) only on a full match, else the first (1063) --
+    as Cave.cpp / GateNotice.cpp select it. Ready lane: the first form that matches in full, else the first (its diff is reported)."""
+    fs = forms(sb)
+    if len(fs) == 1:
+        return fs[0]
+    if lane == 'Cave':
+        return fs[-1] if first_diff(data, fo, src[mf]['sigs'][fs[-1]]) == -1 else fs[0]
+    return next((f for f in fs if first_diff(data, fo, src[mf]['sigs'][f]) == -1), fs[0])
+
+
 def evaluate(data, exps, src, listed):
     """Per-export rows + the predicted verdict, mirroring TryBind (HeightApi.cpp) and TryBindCaves (Cave.cpp)."""
     rows = {}
     for lane, nm, grp, sf, sym, mf, sa, sb in BINDS:
         fo = exps.get(src[sf]['syms'][sym])
-        r = {'grp': grp, 'resolved': fo is not None, 'dA': None, 'dB': None, 'wild': ''}
+        r = {'grp': grp, 'resolved': fo is not None, 'dA': None, 'dB': None, 'wild': '', 'form': None}
         if fo is not None:
             if sa:
                 r['dA'] = first_diff(data, fo, src[mf]['sigs'][sa])
                 r['wild'] = wild_readback(data, fo, src[mf]['sigs'][sa])
             if sb:
-                r['dB'] = first_diff(data, fo, src[mf]['sigs'][sb])
-                r['wild'] += (' | B ' + wild_readback(data, fo, src[mf]['sigs'][sb])) if sa else wild_readback(data, fo, src[mf]['sigs'][sb])
+                r['form'] = select_form(data, fo, src, mf, lane, sb)
+                r['dB'] = first_diff(data, fo, src[mf]['sigs'][r['form']])
+                r['wild'] += (' | B ' + wild_readback(data, fo, src[mf]['sigs'][r['form']])) if sa else wild_readback(data, fo, src[mf]['sigs'][r['form']])
         mA, mB = r['dA'] == -1, r['dB'] == -1
         if not r['resolved']:
             r['gen'] = 'missing'
@@ -182,6 +202,50 @@ def evaluate(data, exps, src, listed):
     return rows, 'ACCEPTED %s generation=%s caveGroup=%s%s' % ('bound' if listed else 'signatureVerifiedUnlisted', gen, cave, dropped), gen
 
 
+def readiness(rows):
+    rd = [n for lane, n, g, *_ in BINDS if g == 'ready']
+    return ' '.join('%s=%s' % (n, ('bound/form%s' % rows[n]['form'][-4:]) if rows[n]['gen'] == 'B-only' else rows[n]['gen']) for n in rd)
+
+
+def control_d(data, exps, src, listed, rows, verdict, gen):
+    """rwg-0-2-1-1 CONTROL (d): for every export with two B forms, patch the bytes where the forms differ (values PARSED from the
+    masks) to each form in turn -- the row must match that form -- and then to a value in neither form -- the row must leave B. For
+    CarvedCaves the verdict must accept with caves bound on each form and change on the neither value; for the log-only readiness
+    getters the READINESS line must change (the verdict never does)."""
+    print('CONTROL(d) two-form exports, patched in memory:')
+    for lane, nm, grp, sf, sym, mf, sa, sb in BINDS:
+        fs = forms(sb)
+        fo = exps.get(src[sf]['syms'][sym])
+        if len(fs) < 2 or fo is None:
+            continue
+        masks = [src[mf]['sigs'][f] for f in fs]
+        pos = [i for i in range(len(masks[0])) if len(set(m[i] for m in masks)) > 1]
+        for f, m in zip(fs, masks):
+            mut = bytearray(data)
+            for i in pos:
+                mut[fo + i] = m[i]
+            mr, mv, _ = evaluate(bytes(mut), exps, src, listed)
+            print('    %-17s bytes %s -> form %s: generation=%s form=%s verdict: %s' % (nm, pos, f, mr[nm]['gen'], mr[nm]['form'], mv))
+            if mr[nm]['gen'] not in ('B', 'B-only') or mr[nm]['form'] != f or mr[nm]['dB'] != -1:
+                fail('control (d): %s patched to form %s did not match that form' % (nm, f))
+            if grp == 'cave' and 'caveGroup=bound' not in mv:
+                fail('control (d): %s on form %s but the cave group is not bound' % (nm, f))
+        mut = bytearray(data)
+        for i in pos:
+            v = masks[0][i] ^ 0xFF
+            if any(m[i] == v for m in masks):
+                fail('control (d): %s byte %d: the neither value collides with a form' % (nm, i))
+            mut[fo + i] = v
+        mr, mv, _ = evaluate(bytes(mut), exps, src, listed)
+        print('    %-17s bytes %s -> neither form: generation=%s verdict: %s readiness: %s' % (nm, pos, mr[nm]['gen'], mv, readiness(mr)))
+        if mr[nm]['gen'] in ('B', 'B-only', 'both'):
+            fail('control (d): %s patched to neither form still matches B' % nm)
+        if grp == 'cave' and mv == verdict:
+            fail('control (d): %s patched to neither form but the verdict did not change' % nm)
+        if grp == 'ready' and readiness(mr) == readiness(rows):
+            fail('control (d): %s patched to neither form but the READINESS line did not change' % nm)
+
+
 def static_asserts(src):
     h, c, g = src['hapi'], src['cave'], src['gate']
     for a, b in GATE_COPY.items():
@@ -193,13 +257,22 @@ def static_asserts(src):
     for lane, nm, grp, sf, sym, mf, sa, sb in BINDS:
         if sym not in src[sf]['syms']:
             fail('%s: %s not declared in %s' % (nm, sym, FILES[sf]))
-        for m in (sa, sb):
-            if m and m not in src[mf]['sigs']:
+        for m in ((sa,) if sa else ()) + forms(sb):
+            if m not in src[mf]['sigs']:
                 fail('%s: mask %s not declared in %s' % (nm, m, FILES[mf]))
-        if sa and sb:  # the two generations must be DISJOINT: some byte pinned in both with different values
-            A, B = src[mf]['sigs'][sa], src[mf]['sigs'][sb]
-            if not any(i < len(B) and A[i] >= 0 and B[i] >= 0 and A[i] != B[i] for i in range(len(A))):
-                fail('%s: generation A and B masks are not disjoint (one DLL could match both)' % nm)
+        disjoint = lambda A, B: any(i < len(B) and A[i] >= 0 and B[i] >= 0 and A[i] != B[i] for i in range(len(A)))
+        if sa and sb and sa in src[mf]['sigs']:  # the two generations must be DISJOINT: some byte pinned in both with different values
+            for fb in forms(sb):
+                if fb in src[mf]['sigs'] and not disjoint(src[mf]['sigs'][sa], src[mf]['sigs'][fb]):
+                    fail('%s: generation A and B (%s) masks are not disjoint (one DLL could match both)' % (nm, fb))
+        fs = [f for f in forms(sb) if f in src[mf]['sigs']]
+        for i in range(len(fs)):  # rwg-0-2-1-1: two forms of one export must differ at a pinned byte, carry no wildcard, and share a length
+            if len(fs) > 1 and any(v < 0 for v in src[mf]['sigs'][fs[i]]):
+                fail('%s: form %s carries a wildcard (each form is fully pinned)' % (nm, fs[i]))
+            for j in range(i + 1, len(fs)):
+                A, B = src[mf]['sigs'][fs[i]], src[mf]['sigs'][fs[j]]
+                if len(A) != len(B) or not disjoint(A, B):
+                    fail('%s: forms %s and %s are not distinct same-length masks' % (nm, fs[i], fs[j]))
     # (c) generation-A arrays byte-identical to their declaration text at the base commit (no 705/745/802 DLL exists here).
     for k, fn in FILES.items():
         try:
@@ -244,13 +317,13 @@ def main():
         print('  %-9s %-19s %-4s resolved=%d generation=%-7s firstDiffA=%-4s firstDiffB=%-4s wild[%s]' % (lane, nm, grp, int(r['resolved']), r['gen'], r['dA'], r['dB'], r['wild']))
     print('PREDICTED (listed=%d): %s' % (int(listed), verdict))
     rd = [n for lane, n, g, *_ in BINDS if g == 'ready']
-    print('READINESS getters (log-only): %s' % ' '.join('%s=%s' % (n, 'bound' if rows[n]['gen'] == 'B-only' else rows[n]['gen']) for n in rd))
+    print('READINESS getters (log-only): %s' % readiness(rows))
     print('PREDICTED (as unlisted): %s' % evaluate(data, exps, src, False)[1])
     # CONTROL (a): one pinned byte flipped per export, in memory; the export must leave its matched generation.
     print('CONTROL(a) one pinned byte flipped per export (in-memory copy):')
     for lane, nm, grp, sf, sym, mf, sa, sb in BINDS:
         fo = exps.get(src[sf]['syms'][sym])
-        mask = src[mf]['sigs'][sb if (sb and rows[nm]['gen'] in ('B', 'B-only')) else (sa or sb)]
+        mask = src[mf]['sigs'][rows[nm]['form'] if (sb and rows[nm]['gen'] in ('B', 'B-only')) else (sa or forms(sb)[0])]
         if fo is None:
             continue
         pos = next(i for i, s in enumerate(mask) if s >= 0)
@@ -276,6 +349,10 @@ def main():
             fail('control (b): a mixed-generation DLL was not refused as generationMixed')
     else:
         print('CONTROL(b) skipped: needs an accepted generation-B DLL')
+    if gen == 'B':
+        control_d(data, exps, src, listed, rows, verdict, gen)
+    else:
+        print('CONTROL(d) skipped: needs an accepted generation-B DLL')
     print('RESULT: %s (%d assertion failure(s))' % ('PASS' if not FAILS else 'FAIL', len(FAILS)))
     sys.exit(1 if FAILS else 0)
 
