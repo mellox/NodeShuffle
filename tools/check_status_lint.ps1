@@ -17,6 +17,8 @@
 #   T11 TEST COMMAND: display only -- no chat call, no stage/latch/chat/layout write; assigns only the test flag; '(test)' title; never
 #       reads the map mode; registered like NodeShuffle.DumpLayout.
 #   T12 SETTING: ShowStatusPanel default true in the mirror and the panel; read only by the panel file; tick period constant matches.
+#   T13 (cold review) the stage function shows nothing off RWG, past the cap, on a saved layout or after the latch; the first-roll flag
+#       waits for a roll that produced a layout.
 # Exit 0 = all hold; 1 = a rule or mutant fails; 2 = a pinned FILE is missing.
 
 $ErrorActionPreference = 'Stop'
@@ -135,6 +137,11 @@ function Invoke-StatusChecks($T, $all) {
     if ((Count $T.cfgh '    bool ShowStatusPanel{true};') -ne 1 -or (Count $T.cfg 'AddBool(TEXT("ShowStatusPanel"), true,') -ne 1) { $f += '(T12) ShowStatusPanel defaults ON in the mirror and the panel' }
     foreach ($k in $all.Keys) { $leaf = Split-Path -Leaf $k; if (@('NodeShuffleStatusPanel.cpp', 'NodeShuffleConfig.h') -notcontains $leaf -and $all[$k].Contains('.ShowStatus' + 'Panel')) { $f += "(T12) the panel setting is read in $leaf" } }
     if ((Count $T.sub 'constexpr float TickIntervalSeconds = 5.0f;') -ne 1 -or (Count $T.sth 'constexpr int32 StatusTickSeconds = 5;') -ne 1) { $f += '(T12) the status tick constant must match RefreshTick (5 s)' }
+    # T13 (cold review): the stage function shows nothing off RWG, past the cap, on a saved layout or after the readiness latch
+    $cs = Span $T.st 'uint8 ANodeShuffleSubsystem::StatusComputeStage(bool bEnabled)' "`n}`n"
+    if ($cs -eq '' -or (Count $cs 'if (!bEnabled || bStsDisplayEnded || GetMapMode() != ENodeShuffleMapMode::Rwg) { return static_cast<uint8>(EStage::None); }') -ne 1 -or (Count $cs 'if (bLayoutGenerated || !bStsGateNoted || bRwgReady) { return static_cast<uint8>(EStage::None); }') -ne 1 -or (Count $cs 'if (Now - StsFirstRollRealT >= DisplayCapSeconds) { bStsDisplayEnded = true; bStsCapReached = true;') -ne 1) { $f += '(T13) the stage function shows nothing off RWG, past the cap, on a saved layout or after the latch' }
+    $fr = Span $T.st 'void ANodeShuffleSubsystem::StatusNoteFirstRoll()' "`n}`n"
+    if (-not (Ordered $fr @('if (bStsFirstRollThisSession || GetMapMode() != ENodeShuffleMapMode::Rwg) { return; }', '    if (!bLayoutGenerated) { return; }', ('bStsFirstRollThisSession = ' + 'true;')))) { $f += '(T13) the first-roll flag waits for a roll that produced a layout' }
     return $f
 }
 
@@ -168,6 +175,10 @@ $mutants = @(
     @{ Name = 'U25 test writes a chat flag'; Key = 'pn'; Expect = 'T11'; Find = '    bStsTestActive = true;'; Repl = ("    bStsTestActive = true;`n    bStsChatS1Done = true;") }
     @{ Name = 'U26 test title not marked'; Key = 'pn'; Expect = 'T11'; Find = 'StatusWidget->Title = TEXT("Node Shuffle (test)");'; Repl = 'StatusWidget->Title = TEXT("Node Shuffle");' }
     @{ Name = 'U27 setting default off'; Key = 'cfg'; Expect = 'T12'; Find = 'AddBool(TEXT("ShowStatusPanel"), true,'; Repl = 'AddBool(TEXT("ShowStatusPanel"), false,' }
+    @{ Name = 'U29 saved layout shows the status'; Key = 'st'; Expect = 'T13'; Find = 'if (bLayoutGenerated || !bStsGateNoted || bRwgReady)'; Repl = 'if (!bStsGateNoted || bRwgReady)' }
+    @{ Name = 'U30 status on every map'; Key = 'st'; Expect = 'T13'; Find = 'if (!bEnabled || bStsDisplayEnded || GetMapMode() != ENodeShuffleMapMode::Rwg)'; Repl = 'if (!bEnabled || bStsDisplayEnded)' }
+    @{ Name = 'U31 no display cap'; Key = 'st'; Expect = 'T13'; Find = 'if (Now - StsFirstRollRealT >= DisplayCapSeconds)'; Repl = 'if (false)' }
+    @{ Name = 'U32 aborted roll sets the flag'; Key = 'st'; Expect = 'T13'; Find = '    if (!bLayoutGenerated) { return; }'; Repl = '' }
     @{ Name = 'U28 UMG made public'; Key = 'bcs'; Expect = 'T10'; Find = '"FactoryGame", "SML",'; Repl = '"FactoryGame", "SML", "UMG",' }
 )
 $mutantFails = @()
@@ -191,4 +202,4 @@ if ($out.Count -gt 0) {
     Write-Host "STATUS LINT: FAIL -- $($out.Count) problem(s). Mutants caught $caught/$($mutants.Count)."
     exit 1
 }
-Write-Host "PASS: STATUS lint -- T1..T12 hold across $($T.Count) pinned files + $($all.Count) scanned sources; mutants caught $caught/$($mutants.Count)."
+Write-Host "PASS: STATUS lint -- T1..T13 hold across $($T.Count) pinned files + $($all.Count) scanned sources; mutants caught $caught/$($mutants.Count)."

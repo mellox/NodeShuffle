@@ -57,7 +57,7 @@ void NodeShuffleStatus::StageText(EStage S, int32 N, int32 A, int32 B, FString& 
         OutDetail = TEXT("The full table is in chat.");
         break;
     case EStage::S4:
-        OutBody = FString::Printf(TEXT("Placing the nodes nearest the players: %d of %d resources ready."), A, B);
+        OutBody = FString::Printf(TEXT("Placing the nodes nearest the players: %d still to place."), A);
         break;
     case EStage::S5:
         OutBody = TEXT("Done.");
@@ -108,6 +108,7 @@ void ANodeShuffleSubsystem::StatusNoteFirstRoll()
     // The FIRST-SHUFFLE SESSION FLAG: set here, right after the first RollLayout of this session, on RWG only. bLayoutGenerated alone
     // cannot gate the display (it turns true at this roll and S3/S4/S5 still show); a save loaded with a layout never reaches this call.
     if (bStsFirstRollThisSession || GetMapMode() != ENodeShuffleMapMode::Rwg) { return; }
+    if (!bLayoutGenerated) { return; } // RollLayout returned without a layout (its "Roll aborted" branch): the flag waits for a roll that produced one
     bStsFirstRollThisSession = true;
     StsFirstRollRealT = FPlatformTime::Seconds();
     int32 Active = 0;
@@ -176,7 +177,7 @@ void ANodeShuffleSubsystem::StatusTick(bool bEnabled)
     }
     // Legend (prose only, docs/DIAGNOSTICS.md): the stage and every predicate that chose it, as read this tick; startReady prints -1 when
     // the getter was not read or is unbound; the two chat fields say whether each chat line's broadcast call returned true.
-    UE_LOG(LogNodeShuffle, Display, TEXT("NSSTATUS: stage=%s prev=%s stageReadable=%d stageReady=%d startReady=%d controlGate=%d stableSinceReady=%d/%d gatedBy=%s floorMet=%d unreadableWarned=%d readyLatched=%d layoutGenerated=%d firstRollThisSession=%d rfSeen=%d resourcesAtK=%d resources=%d rfLeft=%d doneLatched=%d capReached=%d chatS0Posted=%d chatS1Posted=%d netMode=%d localPC=%d widgetAdded=%d panelSetting=%d"),
+    UE_LOG(LogNodeShuffle, Display, TEXT("NSSTATUS: stage=%s prev=%s stageReadable=%d stageReady=%d startReady=%d s0Gate=%d stableSinceReady=%d/%d gatedBy=%s floorMet=%d unreadableWarned=%d readyLatched=%d layoutGenerated=%d firstRollThisSession=%d rfSeen=%d resourcesAtK=%d resources=%d rfLeft=%d doneLatched=%d capReached=%d chatS0Posted=%d chatS1Posted=%d netMode=%d localPC=%d widgetAdded=%d panelSetting=%d"),
         StageName(Next), StageName(Prev), bStsReadable ? 1 : 0, bStsStageReady ? 1 : 0, StsStartReady, bStsControlSeen ? 1 : 0,
         RwgStableSinceReady, NodeShuffleMapMode::RwgStableTicksRequired, StsGatedBy ? StsGatedBy : TEXT("none"), bStsFloor ? 1 : 0,
         bRwgUnreadableWarned ? 1 : 0, bRwgReady ? 1 : 0, bLayoutGenerated ? 1 : 0, bStsFirstRollThisSession ? 1 : 0, bStsRfSeen ? 1 : 0,

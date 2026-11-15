@@ -375,7 +375,10 @@ $mutants = @(
        Repl = 'Two states reach the same player outcome and set no failure flag: relocation switched off after a roll-time hide -- no'; Expect = 'H8' },
     @{ Name = 'M30 restore the false README Enabled claim'; Key = 'readme';
        Find = 'stops the mod rolling, moving or maintaining anything further';
-       Repl = 'stops the mod acting at all'; Expect = 'H4' }
+       Repl = 'stops the mod acting at all'; Expect = 'H4' },
+    @{ Name = 'M31 README figure drifts'; Key = 'readme';
+       Find = '18 settings plus two lists';
+       Repl = '17 settings plus two lists'; Expect = 'H4b' }
 )
 
 $mutantFails = @()

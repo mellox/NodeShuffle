@@ -23,14 +23,15 @@ int32 UNodeShuffleStatusWidget::NativePaint(const FPaintArgs& Args, const FGeome
 
     using namespace NodeShuffleStatus;
     const FVector2D Size = AllottedGeometry.GetLocalSize();
+    const float SizeX = static_cast<float>(Size.X), SizeY = static_cast<float>(Size.Y); // explicit: no implicit double -> float narrowing
     const float W = PanelWidthPx;
     const float H = Detail.IsEmpty() ? 64.f : 88.f;
     // Ternaries, not a switch on the constexpr position: a switch whose untaken cases the compiler proves dead risks C4702 here.
     const bool bRight = PanelPosition == EPanelPos::TopRight || PanelPosition == EPanelPos::BottomRight;
     const bool bBottom = PanelPosition == EPanelPos::BottomLeft || PanelPosition == EPanelPos::BottomRight;
     const bool bMiddle = PanelPosition == EPanelPos::MiddleLeft;
-    const float X = bRight ? (Size.X - W - PanelMarginPx) : PanelMarginPx;
-    const float Y = bMiddle ? (Size.Y - H) * 0.5f : (bBottom ? (Size.Y - H - PanelMarginPx) : PanelMarginPx);
+    const float X = bRight ? (SizeX - W - PanelMarginPx) : PanelMarginPx;
+    const float Y = bMiddle ? (SizeY - H) * 0.5f : (bBottom ? (SizeY - H - PanelMarginPx) : PanelMarginPx);
     const FPaintGeometry PG = AllottedGeometry.ToPaintGeometry();
     auto Line = [&](const FVector2D& A, const FVector2D& B, const FLinearColor& Col, float T, int32 L, bool bAa)
     {

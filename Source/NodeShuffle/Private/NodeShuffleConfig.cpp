@@ -206,7 +206,7 @@ void UNodeShuffleConfig::PostInitProperties()
     // Every claim in the tooltip is graded in the ns-status-1 handoff.
     AddBool(TEXT("ShowStatusPanel"), true,
         TEXT("Show Status Panel (Random World Generator)"),
-        TEXT("ON by default. Random World Generator worlds only: while the first shuffle of a new world waits, and for up to ten minutes after it, a small panel on the host's screen says what Node Shuffle is doing. It is hidden while a menu is open. Other players do not see the panel; they get the two chat lines only. OFF hides the panel; the chat lines still post."));
+        TEXT("ON by default. Random World Generator worlds only: while the first shuffle of a new world waits, and for up to ten minutes after it, a small panel on the host's screen says what Node Shuffle is doing. It is hidden while the mouse cursor is shown (menus). Other players do not see the panel. OFF hides the panel; the chat lines still post."));
 
     // ---------------------------------- OTHER MODS ----------------------------------------------------
     AddBool(TEXT("IncludeModdedNodes"), true,

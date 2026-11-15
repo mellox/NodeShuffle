@@ -67,7 +67,7 @@ void ANodeShuffleSubsystem::StatusApplyPanel(uint8 StageU8)
     if (!Config.ShowStatusPanel) { StatusRemovePanel(TEXT("settingOff")); return; }
     FString Body, Detail;
     const int32 N = (S == EStage::S1) ? RwgStableSinceReady * StatusTickSeconds : StsShuffledTotal;
-    StageText(S, N, StsRfAtK, StsRfResources, Body, Detail);
+    StageText(S, N, StsRfLeft, 0, Body, Detail); // S4: the measured picks-left count (review F2 option a)
     StatusEnsurePanel();
     if (!IsValid(StatusWidget)) { StatusWidget = nullptr; bStsWidgetAdded = false; return; }
     StatusWidget->Title = TEXT("Node Shuffle");
@@ -95,7 +95,7 @@ void ANodeShuffleSubsystem::StatusRunPanelTest(const FString& Arg)
         return;
     }
     FString Body, Detail;
-    StageText(S, S == EStage::S1 ? 35 : 1032, 4, 9, Body, Detail);
+    StageText(S, S == EStage::S1 ? 35 : 1032, 4, 0, Body, Detail);
     bStsTestActive = true;
     StatusEnsurePanel();
     if (StatusWidget)

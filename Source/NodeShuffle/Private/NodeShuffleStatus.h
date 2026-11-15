@@ -14,7 +14,7 @@ namespace NodeShuffleStatus
 
     const TCHAR* StageName(EStage S);
 
-    // THE text function. N: S1 seconds so far, S3 node total; A/B: S4 resources ready / resources. Empty body = show nothing.
+    // THE text function. N: S1 seconds so far, S3 node total; A: S4 picks still to place (roll-first Left); B: unused. Empty body = show nothing.
     // Never a cause for a pause, never an ETA, never a raw RWG stage name; the S1 seconds count up and reset, never down.
     void StageText(EStage S, int32 N, int32 A, int32 B, FString& OutBody, FString& OutDetail);
 

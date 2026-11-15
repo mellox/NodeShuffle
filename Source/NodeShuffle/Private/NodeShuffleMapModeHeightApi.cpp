@@ -910,7 +910,7 @@ namespace
             Detail += FString::Printf(TEXT("%s%s:%s@%d/form%s/disp0x%X"), Detail.IsEmpty() ? TEXT("") : TEXT(" "), Names[I], St, Diff, Form, Disp);
         }
         R.Status = Bound == 4 ? TEXT("bound") : (Bound == 0 ? TEXT("none") : TEXT("partial"));
-        UE_LOG(LogNodeShuffle, Display, TEXT("RWGGETTERS: bind status=%s boundOf4=%d detail='%s' heightApiBindRanInThisCall=%d; log-only, an unbound getter prints -1 and gates nothing"), *R.Status, Bound, *Detail, bHeightBindRanHere ? 1 : 0);
+        UE_LOG(LogNodeShuffle, Display, TEXT("RWGGETTERS: bind status=%s boundOf4=%d detail='%s' heightApiBindRanInThisCall=%d; log-only for the shuffle: an unbound getter prints -1, no getter feeds the roll, the readiness latch or the layout apply, and IsStartReady also decides when the first-shuffle status display may first show"), *R.Status, Bound, *Detail, bHeightBindRanHere ? 1 : 0);
 #else
         R.Status = TEXT("notWindows");
 #endif
