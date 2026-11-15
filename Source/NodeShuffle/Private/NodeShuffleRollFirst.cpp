@@ -191,6 +191,7 @@ void ANodeShuffleSubsystem::RwgRollFirstEmitPass(const TArray<int32>& Cands, int
     // and without an actor afterwards; setAside the priority entries left without an actor that the pick would now pass over (or whose
     // layout slot was replaced); resourcesAtK counts resources whose K picks all have an actor. The PASS line prints (with diagnostics on)
     // while a priority entry is left to load; DONE prints at most once per generation.
+    StatusNoteRollFirst(AtK, Left, RwgRollFirstResources); // ns-status-1: copies for the status display (S4/S5); writes no roll-first state
     if (Left > 0)
     {
         if (FNodeShuffleModule::AreDiagnosticsEnabled())

@@ -297,6 +297,7 @@ void ANodeShuffleSubsystem::RefreshTick()
             UE_LOG(LogNodeShuffle, Display, TEXT("NodeShuffle is disabled in config; doing nothing."));
             bLoggedDisabled = true;
         }
+        StatusTick(/*bEnabled=*/false); // ns-status-1: display only; disabled shows nothing
         return;
     }
     bLoggedDisabled = false;
@@ -309,6 +310,7 @@ void ANodeShuffleSubsystem::RefreshTick()
     if (GetMapMode() != ENodeShuffleMapMode::Vanilla)
     {
         RwgObserveTick();
+        StatusTick(/*bEnabled=*/true); // ns-status-1: display only (NodeShuffleStatus.cpp); reads, never writes, the readiness state
         if (!RwgPipelineMayRun()) { return; }
     }
 
@@ -341,6 +343,7 @@ void ANodeShuffleSubsystem::RefreshTick()
         const int32 Seed = Config.SeedOverride != 0 ? Config.SeedOverride
             : static_cast<int32>(FPlatformTime::Cycles());
         RollLayout(Seed, false);
+        StatusNoteFirstRoll(); // ns-status-1: the first-shuffle session flag (RWG only; display only)
         // A fresh FIRST roll supersedes any pending re-roll request (e.g. RerollNow left on for a new game).
         if (Config.RerollNow) { ClearRerollNowFlag(); }
     }

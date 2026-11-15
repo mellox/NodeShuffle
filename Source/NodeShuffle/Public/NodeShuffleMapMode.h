@@ -220,6 +220,9 @@ namespace NodeShuffleMapMode
     // " worldComplete=.. startReady=.. contentSpawnedApi=.. genStateRaw=.. readinessGetters=<status>"; an unbound getter prints -1. Feeds no decision;
     // its first call can trigger the height-API TryBind (review F1).
     FString RwgReadinessFields(UWorld* World);
+    // ns-status-1 (2026-11-15): IsStartReady read for the first-shuffle status DISPLAY only: -1 = not read (getters not yet bound by the
+    // RWGWAIT path, getter unbound, or no generator), else 0 or 1. Never runs the getter bind. Its one reader is NodeShuffleStatus.cpp.
+    int32 RwgStartReadyForStatus(UWorld* World);
     void RwgNoteNonFinite(const TCHAR* Site, double X, double Y, double Value); // rwg-0-2-0-2: RWGNANGUARD (NodeShuffleMapModeHeightApi.cpp)
     FString RwgKillboxBindStatus(); // RWG P2f: GetKillboxTop binding status (NodeShuffleMapModeHeightApi.cpp)
     void* RwgHeightApiBoundModule(); // RWG P5: the RWG module handle, non-null ONLY when the P2b gates passed (version, exports, signatures)

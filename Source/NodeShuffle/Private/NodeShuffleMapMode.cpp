@@ -118,7 +118,6 @@ namespace
         return !OutStage.IsEmpty();
     }
 }
-
 // Shared with NodeShuffleMapModeR1.cpp (declared in NodeShuffleMapMode.h).
 APawn* NodeShuffleMapMode::FirstPlayerPawn(UWorld* World)
 {
@@ -409,6 +408,7 @@ void ANodeShuffleSubsystem::RwgObserveTick()
         const bool bClauseImmediate = bLayoutGenerated && RwgLayoutVersion >= NodeShuffleMapMode::RwgLayoutVersionP2b
             && bStageReadable && bStageReady && bFloor;
         const bool bReadyNow = bClauseA || bClauseImmediate || bClauseB;
+        StatusNoteGate(bStageReadable, bStageReady, bFloor, GatedBy, Stage); // ns-status-1: display inputs only (NodeShuffleStatus.cpp); gates nothing
         if (!bReadyNow)
         {
             if ((RwgObserveTicks % NodeShuffleMapMode::RwgWaitEveryTicks) == 1)

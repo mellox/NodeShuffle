@@ -928,6 +928,17 @@ FString NodeShuffleMapMode::RwgReadinessFields(UWorld* World)
     return FString::Printf(TEXT(" worldComplete=%d startReady=%d contentSpawnedApi=%d genStateRaw=%d readinessGetters=%s"), V[1], V[2], V[3], V[0], *R.Status);
 }
 
+int32 NodeShuffleMapMode::RwgStartReadyForStatus(UWorld* World)
+{
+    // ns-status-1: the status display's S0 gate. Reads only what the RWGWAIT path already bound (R.bTried): it never calls
+    // TryBindReadyGetters, so the height-API bind time is unchanged. Same `this` as RwgReadinessFields.
+    FRwgReadyGetters& R = ReadyGetters();
+    if (!R.bTried || !R.Fn[2]) { return -1; }
+    FRwgHeightApi& A = Api();
+    void* Gen = (World && A.bUsable && A.Get) ? A.Get(World) : nullptr;
+    return Gen ? static_cast<int32>(R.Fn[2](Gen)) : -1;
+}
+
 void NodeShuffleMapMode::RwgNoteNonFinite(const TCHAR* Site, double X, double Y, double Value)
 {
     // rwg-0-2-0-2 (NaN audit): a decision site refused a non-finite value read from an RWG export. Counted per site for the process;

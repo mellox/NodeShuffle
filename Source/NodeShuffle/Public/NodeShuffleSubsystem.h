@@ -3606,6 +3606,37 @@ private:
     static constexpr float WellSelfOverlapFloorCm = 800.0f;
 
 public:
+    // ns-status-1 (2026-11-15, NodeShuffleStatus.cpp): what NodeShuffle is doing while the FIRST shuffle of an RWG world waits -- two
+    // once-per-session chat lines, the NSSTATUS log line. DISPLAY ONLY: no roll, latch or apply clause reads any member below.
+    void StatusNoteGate(bool bReadable, bool bStageReady, bool bFloor, const TCHAR* GatedBy, const FString& Stage); // RwgObserveTick, pre-latch
+    void StatusNoteFirstRoll();                               // RefreshTick, right after the first RollLayout of this session
+    void StatusNoteRollFirst(int32 AtK, int32 Left, int32 Resources); // RwgRollFirstEmitPass, before its Left gate
+    void StatusTick(bool bEnabled);                           // RefreshTick (map mode not vanilla, or the disabled branch)
+private:
+    uint8 StatusComputeStage(bool bEnabled);                  // NodeShuffleStatus::EStage as uint8
+    void StatusChatStep(UWorld* World);
+    bool bStsGateNoted = false, bStsReadable = false, bStsStageReady = false, bStsFloor = false;
+    const TCHAR* StsGatedBy = nullptr;                        // a string literal from RwgObserveTick's GatedBy
+    bool bStsControlSeen = false;                             // S0 gate latch: IsStartReady read 1, or the stage read LoadingTerrain
+    int32 StsStartReady = -1;
+    bool bStsFirstRollThisSession = false;                    // the FIRST-SHUFFLE SESSION FLAG (StatusNoteFirstRoll, RWG only)
+    double StsFirstRollRealT = -1.0;
+    int32 StsShuffledTotal = 0;                               // active layout entries right after the first roll (the ROLLCHAT Total population)
+    bool bStsRfSeen = false;
+    int32 StsRfAtK = 0, StsRfLeft = 0, StsRfResources = 0;    // copies of the roll-first per-pass locals
+    bool bStsDoneLatched = false;                             // S5 ONE-SHOT latch: the first Left == 0 of any generation; never reset
+    double StsDoneRealT = -1.0;
+    bool bStsDisplayEnded = false, bStsCapReached = false;
+    uint8 StsStageNow = 0;
+    bool bStsStatusLogged = false;
+    bool bStsChatS0Wanted = false, bStsChatS1Wanted = false;  // the stage was entered
+    bool bStsChatS0Done = false, bStsChatS1Done = false;      // ONCE-ONLY chat flags: posted, abandoned or dropped; never reset
+    bool bStsChatS0Posted = false, bStsChatS1Posted = false;  // the broadcast call returned true
+    int32 StsChatHold = -1, StsChatAttempts = 0;
+    bool bStsChatHeldLogged = false;
+    bool bStsWidgetAdded = false;                             // ns-status-1 panel (later commit); 0 until then
+    int32 StsPanelSetting = -1;                               // the Show status panel setting as read (-1 = not read)
+public:
     // RWG cave navigation (2026-10-18, NodeShuffleNearestCave.cpp): `NodeShuffle.NearestCave` -- nearest carved-cave mouth from the
     // per-world cave file + nearest dealt bRwgCave entry, with distance / dZ / turn bearing. Log-only; one line and return off RWG.
     // Appended after the private tail with its own access specifier because the console lambda in NodeShuffle.cpp calls it.

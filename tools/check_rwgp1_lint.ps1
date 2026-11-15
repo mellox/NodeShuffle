@@ -111,8 +111,9 @@ if (-not $tick) { $fails += 'R2: RefreshTick body not found' } else {
     elseif ($cap -lt 0 -or $roll -lt 0) { $fails += 'R2: RefreshTick lost the starter capture or the roll gate (pins cannot order what is missing)' }
     elseif (-not ($guard -lt $obs -and $obs -lt $cap -and $cap -lt $roll)) { $fails += 'R2: the observe branch must precede the starter capture and the IsWorldReadyForRoll gate' }
     else {
-        $after = $tick.Substring($obs, 80)
-        if ($after -notmatch ('^RwgObserveTick\(\);\s*if \(!RwgPipeline' + 'MayRun\(\)\) \{ return; \}')) { $fails += 'R2: RwgObserveTick() must be followed immediately by the RwgPipelineMayRun return gate' }
+        $after = $tick.Substring($obs, [Math]::Min(300, $tick.Length - $obs))
+        # ns-status-1 (2026-11-15): the ONE line allowed between them is the display-only status tick (NodeShuffleStatus.cpp).
+        if ($after -notmatch ('^RwgObserveTick\(\);\s*(?:StatusTick\(/\*bEnabled=\*/true\);[^\n]*\n\s*)?if \(!RwgPipeline' + 'MayRun\(\)\) \{ return; \}')) { $fails += 'R2: RwgObserveTick() must be followed immediately by the RwgPipelineMayRun return gate' }
     }
 }
 
