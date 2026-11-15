@@ -3630,7 +3630,7 @@ private:
     bool bStsChatS0Posted = false, bStsChatS1Posted = false;  // the broadcast call returned true
     int32 StsChatHold = -1, StsChatAttempts = 0;
     bool bStsChatHeldLogged = false;
-    bool bStsWidgetAdded = false;                             // ns-status-1 panel (later commit); 0 until then
+    bool bStsWidgetAdded = false;                             // AddToViewport called on a live panel widget and not yet removed
     int32 StsPanelSetting = -1;                               // the Show status panel setting as read (-1 = not read)
 private:
     // H0 measured minimum inter-satellite distance 1818.8 cm over 401 pairs, against the 800 cm

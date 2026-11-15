@@ -25,16 +25,12 @@ int32 UNodeShuffleStatusWidget::NativePaint(const FPaintArgs& Args, const FGeome
     const FVector2D Size = AllottedGeometry.GetLocalSize();
     const float W = PanelWidthPx;
     const float H = Detail.IsEmpty() ? 64.f : 88.f;
-    float X = PanelMarginPx;
-    float Y = PanelMarginPx;
-    switch (PanelPosition)
-    {
-    case EPanelPos::TopRight: X = Size.X - W - PanelMarginPx; break;
-    case EPanelPos::BottomLeft: Y = Size.Y - H - PanelMarginPx; break;
-    case EPanelPos::BottomRight: X = Size.X - W - PanelMarginPx; Y = Size.Y - H - PanelMarginPx; break;
-    case EPanelPos::MiddleLeft: Y = (Size.Y - H) * 0.5f; break;
-    default: break;
-    }
+    // Ternaries, not a switch on the constexpr position: a switch whose untaken cases the compiler proves dead risks C4702 here.
+    const bool bRight = PanelPosition == EPanelPos::TopRight || PanelPosition == EPanelPos::BottomRight;
+    const bool bBottom = PanelPosition == EPanelPos::BottomLeft || PanelPosition == EPanelPos::BottomRight;
+    const bool bMiddle = PanelPosition == EPanelPos::MiddleLeft;
+    const float X = bRight ? (Size.X - W - PanelMarginPx) : PanelMarginPx;
+    const float Y = bMiddle ? (Size.Y - H) * 0.5f : (bBottom ? (Size.Y - H - PanelMarginPx) : PanelMarginPx);
     const FPaintGeometry PG = AllottedGeometry.ToPaintGeometry();
     auto Line = [&](const FVector2D& A, const FVector2D& B, const FLinearColor& Col, float T, int32 L, bool bAa)
     {
