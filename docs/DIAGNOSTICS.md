@@ -1,10 +1,10 @@
 # NodeShuffle — Diagnostics Catalog (troubleshooting reference)
 
-NodeShuffle prints a small fixed set of lines in every session: the build marker, every warning and error, and one summary line per
-session or per operation (roll, deal, readiness, status stage). Everything else is diagnostic and OFF by default. Ticking *Enable Diagnostic
+NodeShuffle prints a fixed set of lines in every session: the build marker, every warning and error, one summary line per session or per
+operation (roll, deal, readiness, status stage), and a few per-node or per-pass lines that existing source pins keep unguarded (class ALWAYS with an R0 rule in `tools/quietlog-sites.tsv`). Everything else is diagnostic and OFF by default. Ticking *Enable Diagnostic
 Logging* (Mods → Node Shuffle, default OFF) turns it on; lines logged at Verbose level also need `LogNodeShuffle=Verbose` under `[Core.Log]` in
 Engine.ini. To turn on single topics without that checkbox, add `[NodeShuffle.Diagnostics]` with `Topics=<names>` to Engine.ini; the `NSDIAG:`
-line at startup prints what was read. Then reproduce the issue and read `%LOCALAPPDATA%\FactoryGame\Saved\Logs\FactoryGame.log`.
+line at startup prints what was read. Then reproduce the issue and read `%LOCALAPPDATA%\FactoryGame\Saved\Logs\FactoryGame.log`. If you tick the box during play, load your save again first; lines that print once per session may already have been used up.
 
 **Topics (ns-quietlog-1, read once at module startup, comma-separated, case-insensitive, `All` = every topic):** `Void`, `Status`, `Placement`,
 `Gates`, `Spawn`, `Rocks`, `Visuals`, `Wells`, `Hide`, `Scanner`, `Hologram`, `Veto`, `Roll`. Example, in
@@ -16,7 +16,7 @@ Topics=Void,Status,Placement
 ```
 
 A topic switches on only the lines tagged with it in `tools/quietlog-sites.tsv` (class TOPIC or TOPICGATE); lines of class MASTER print with
-with the checkbox (`ROLLDENSITY-CELL` also prints at Verbose level without it). Always on (class ALWAYS in that table): the build marker, warnings and errors, `NSDIAG` / `NSDIAG-MASTER`, `NSCONSUMER`
+the checkbox (`ROLLDENSITY-CELL` also prints at Verbose level without it). Always on (class ALWAYS in that table): the build marker, warnings and errors, `NSDIAG` / `NSDIAG-MASTER`, `NSCONSUMER`
 (only when a count changed), `RWGVOIDCHECK-SAMPLES`, `NSSTATUS-ROLLSEEN`, and the once-per-session or per-operation censuses. A few lines
 that print with the checkbox OR under their own condition still print under that condition with the checkbox off. Lines reached only from a
 typed `NodeShuffle.*` command or an MCP call print when that command runs.

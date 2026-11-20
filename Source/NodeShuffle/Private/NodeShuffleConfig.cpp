@@ -556,7 +556,7 @@ void UNodeShuffleConfig::PostInitProperties()
     // box, reload, send me the log" succeeds far more often than a console instruction.
     AddBool(TEXT("EnableDiagnostics"), false,
         TEXT("Enable Diagnostic Logging"),
-        TEXT("OFF by default. Turn ON when sending a log for a bug report: the mod then writes its detailed placement and node diagnostics to FactoryGame.log. With it OFF the log keeps a short summary."));
+        TEXT("OFF by default. Turn ON when sending a log for a bug report, then load your save again before reproducing the problem: the mod then writes its detailed placement and node diagnostics to FactoryGame.log. With it OFF the log keeps a short summary."));
 
 
     RootSection = Root;
