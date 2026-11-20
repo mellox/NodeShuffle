@@ -107,7 +107,7 @@ void ANodeShuffleSubsystem::RwgSpawnPass(float SpawnRadiusCm, bool& bChangedWorl
     }
     if (RwgPcSpawned > 0 || RwgPcProvSpawned > 0 || RwgPcProvSettled > 0 || (RwgPcPasses % 12) == 1) // rwg-farspawn-1c C3: provisional passes print too. bounded: a pass that spawned, else once a minute. unplaceableNew counts first-trace unplaceable spots (wet or cliff with no spiral land)
     {
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("PLACECENSUS: pass=%d attempted=%d spawned=%d notSpawned=%d deferredSettle=%d unplaceableNew=%d apiRedealCalls=%d budgetSkipped=%d farNoAttempt=%d liveReasserted=%d spawnTraceHit=%d spawnTraceMiss=%d spawnTraceFar=%d farTerrain=%d farCanopy=%d farWater=%d farOther=%d farSolid=%d rejectedRock=%d settledOnTerrain=%d noTerrainDefer=%d spawnSettlesWithAnySkip=%d terrainOnlyCapHitsAllCallers=%d fallbackNoApi=%d attemptRadiusM=%.0f spawnRadiusM=%.0f layoutEntries=%d caveSettleTried=%d caveSettled=%d caveDeferred=%d caveEscaped=%d caveFar=%d caveSolid=%d caveWater=%d caveRedealCave=%d caveRedealSurface=%d insideCaveChecked=%d settledInsideCave=%d settledInsideCaveSurfaceEntry=%d steepRing=%d steepMapwide=%d steepOccludedMapwide=%d steepOccludedRing=%d settledOnSolidTop=%d solidTopAcceptedProbes=%d solidTopRejectedGuardOrAbove=%d solidTopRejectedNormal=%d solidTopRejectedFootprint=%d provisionalSpawned=%d provisionalSettled=%d"),
             RwgPcPasses, RwgPcAttempted, RwgPcSpawned, RwgPcAttempted - RwgPcSpawned, DeferredThisPass - DeferredBefore,
             WaterLockedThisSession.Num() - WaterLockedBefore, RwgPcRedealApi, RwgPcBudgetSkipped, RwgPcFarNoAttempt, RwgPcLive,
@@ -115,7 +115,7 @@ void ANodeShuffleSubsystem::RwgSpawnPass(float SpawnRadiusCm, bool& bChangedWorl
             RwgPcSettledTerrain, RwgPcNoTerrainDefer, RwgPcSkippedToTerrain, RwgProbeCapHits,
             RwgPcFallback, AttemptRadiusCm / 100.f, SpawnRadiusCm / 100.f, Layout.Num(), RwgPcCaveSettleTried, RwgPcCaveSettled, RwgPcCaveDeferred, RwgPcCaveEscaped,
             RwgPcCaveFar, RwgPcCaveSolid, RwgPcCaveWater, RwgPcCaveRedealCave, RwgPcCaveRedealSurface, RwgPcInsideCaveChecked, RwgPcSettledInsideCave, RwgPcSettledInsideCaveSurfaceEntry,
-            RwgPcSteepRing, RwgPcSteepMapwide, RwgPcSteepOccluded, RwgPcSteepOccludedRing, RwgPcSettledOnSolidTop, RwgPcSolidTopAccepted, RwgPcSolidTopRejStartInside, RwgPcSolidTopRejNormal, RwgPcSolidTopRejFootprint, RwgPcProvSpawned, RwgPcProvSettled);
+            RwgPcSteepRing, RwgPcSteepMapwide, RwgPcSteepOccluded, RwgPcSteepOccludedRing, RwgPcSettledOnSolidTop, RwgPcSolidTopAccepted, RwgPcSolidTopRejStartInside, RwgPcSolidTopRejNormal, RwgPcSolidTopRejFootprint, RwgPcProvSpawned, RwgPcProvSettled); }
         RwgRocksEmitCensus(); // ns-rocks-1 C: ROCKFIRSTHIT / ROCKSIZE / ROCKMOVE / ROCKSUNKEN-CENSUS session totals, on the PLACECENSUS cadence
         RwgEmitDzCensus(); // RWG P2c: session apiToTerrainDz distribution by band, emitted with PLACECENSUS
     }
@@ -147,10 +147,10 @@ void ANodeShuffleSubsystem::RwgEmitPlaceCensus()
             if (bLinked) { ++RwgRockLinked; }
             if (RecordedPaths.Contains(KV.Key)) { ++RecChecked; if (bLinked) { ++RecLinked; } }
         }
-        UE_LOG(LogNodeShuffle, Display, TEXT("PLACECENSUS: rockLinkedAll=%d of %d cached non-ours nodes (deposits, fracking and modded included; engine link only, RWG proximity pairing is RWGROCKCACHE)"),
-            RwgRockLinked, RwgRockChecked);
-        UE_LOG(LogNodeShuffle, Display, TEXT("PLACECENSUS: rockLinkedRecorded=%d of %d cached nodes whose path is in the hide records; records=%d"),
-            RecLinked, RecChecked, OriginalNodeRecord.Num());
+        if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display, TEXT("PLACECENSUS: rockLinkedAll=%d of %d cached non-ours nodes (deposits, fracking and modded included; engine link only, RWG proximity pairing is RWGROCKCACHE)"),
+            RwgRockLinked, RwgRockChecked); }
+        if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display, TEXT("PLACECENSUS: rockLinkedRecorded=%d of %d cached nodes whose path is in the hide records; records=%d"),
+            RecLinked, RecChecked, OriginalNodeRecord.Num()); }
         if (RwgRockChecked == 0) { RwgRockChecked = -1; } // empty cache: do not rescan every pass
     }
     RwgPcAttempted = RwgPcSpawned = RwgPcBudgetSkipped = RwgPcFarNoAttempt = RwgPcLive = 0;
