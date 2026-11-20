@@ -109,7 +109,7 @@ void ANodeShuffleSubsystem::StatusNoteFirstRoll()
     // cannot gate the display (it turns true at this roll and S3/S4/S5 still show); a save loaded with a layout never reaches this call.
     if (bStsFirstRollThisSession || GetMapMode() != ENodeShuffleMapMode::Rwg) { return; }
     if (!bLayoutGenerated) { return; } // RollLayout returned without a layout (its "Roll aborted" branch): the flag waits for a roll that produced one
-    bStsFirstRollThisSession = true;
+    bStsFirstRollThisSession = true; UE_LOG(LogNodeShuffle, Display, TEXT("NSSTATUS-ROLLSEEN: observeTick=%d stageAtRoll=%s"), RwgObserveTicks, NodeShuffleStatus::StageName(static_cast<NodeShuffleStatus::EStage>(StsStageNow))); // ns-quietlog-1: always on, once per session
     StsFirstRollRealT = FPlatformTime::Seconds();
     int32 Active = 0;
     for (const FNodeShuffleEntry& E : Layout) { if (E.bActive) { ++Active; } } // the same population as the ROLLCHAT table's Total row
@@ -127,31 +127,36 @@ void ANodeShuffleSubsystem::StatusNoteRollFirst(int32 AtK, int32 Left, int32 Res
     if (Left == 0) { bStsDoneLatched = true; StsDoneRealT = FPlatformTime::Seconds(); }
 }
 
+// ns-quietlog-1: the word for the return StatusComputeStage took on its last call (printed as NSSTATUS branch=). For a return whose
+// condition ORs operands, the word is written just before that test and names the FIRST operand that reads true (when the test is not
+// taken, a later return overwrites it); the operands are read again, the condition is unchanged.
+static const TCHAR* GStsBranch = TEXT("none");
+
 uint8 ANodeShuffleSubsystem::StatusComputeStage(bool bEnabled)
 {
     using namespace NodeShuffleStatus;
     const double Now = FPlatformTime::Seconds();
-    if (!bEnabled || bStsDisplayEnded || GetMapMode() != ENodeShuffleMapMode::Rwg) { return static_cast<uint8>(EStage::None); }
+    GStsBranch = !bEnabled ? TEXT("off") : (bStsDisplayEnded ? TEXT("displayEnded") : TEXT("notRwg")); if (!bEnabled || bStsDisplayEnded || GetMapMode() != ENodeShuffleMapMode::Rwg) { return static_cast<uint8>(EStage::None); }
     if (bStsFirstRollThisSession)
     {
         if (bStsDoneLatched)
         {
-            if (Now - StsDoneRealT < DoneHoldSeconds) { return static_cast<uint8>(EStage::S5); }
-            bStsDisplayEnded = true;
+            if (Now - StsDoneRealT < DoneHoldSeconds) { GStsBranch = TEXT("doneHold"); return static_cast<uint8>(EStage::S5); }
+            bStsDisplayEnded = true; GStsBranch = TEXT("doneEnded");
             return static_cast<uint8>(EStage::None);
         }
-        if (Now - StsFirstRollRealT >= DisplayCapSeconds) { bStsDisplayEnded = true; bStsCapReached = true; return static_cast<uint8>(EStage::None); }
-        return static_cast<uint8>((bStsRfSeen && StsRfLeft > 0) ? EStage::S4 : EStage::S3);
+        if (Now - StsFirstRollRealT >= DisplayCapSeconds) { bStsDisplayEnded = true; bStsCapReached = true; GStsBranch = TEXT("capReached"); return static_cast<uint8>(EStage::None); }
+        GStsBranch = TEXT("postRoll"); return static_cast<uint8>((bStsRfSeen && StsRfLeft > 0) ? EStage::S4 : EStage::S3);
     }
     // Before the first roll: only a world with no layout, only before the readiness latch (the latch tick rolls in the same RefreshTick).
-    if (bLayoutGenerated || !bStsGateNoted || bRwgReady) { return static_cast<uint8>(EStage::None); }
-    if (!bStsReadable) { return static_cast<uint8>(bRwgUnreadableWarned ? EStage::S0x : (bStsControlSeen ? EStage::S0 : EStage::None)); }
-    if (!bStsStageReady) { return static_cast<uint8>(bStsControlSeen ? EStage::S0 : EStage::None); }
-    if (StsGatedBy && FCString::Strcmp(StsGatedBy, TEXT("floor")) == 0) { return static_cast<uint8>(EStage::S1floor); }
+    GStsBranch = bLayoutGenerated ? TEXT("preRollLayoutExists") : (!bStsGateNoted ? TEXT("preRollGateNotNoted") : TEXT("preRollReadyLatched")); if (bLayoutGenerated || !bStsGateNoted || bRwgReady) { return static_cast<uint8>(EStage::None); }
+    if (!bStsReadable) { GStsBranch = TEXT("unreadable"); return static_cast<uint8>(bRwgUnreadableWarned ? EStage::S0x : (bStsControlSeen ? EStage::S0 : EStage::None)); }
+    if (!bStsStageReady) { GStsBranch = TEXT("stageNotReady"); return static_cast<uint8>(bStsControlSeen ? EStage::S0 : EStage::None); }
+    if (StsGatedBy && FCString::Strcmp(StsGatedBy, TEXT("floor")) == 0) { GStsBranch = TEXT("floor"); return static_cast<uint8>(EStage::S1floor); }
     // Soon: one stable sample left. The next tick that reads Ready with an unchanged node count sets the count to the required value,
     // latches and rolls in that same tick; a changed count resets it to 0 (back to S1).
-    if (bStsFloor && RwgStableSinceReady == NodeShuffleMapMode::RwgStableTicksRequired - 1) { return static_cast<uint8>(EStage::Soon); }
-    return static_cast<uint8>(EStage::S1);
+    if (bStsFloor && RwgStableSinceReady == NodeShuffleMapMode::RwgStableTicksRequired - 1) { GStsBranch = TEXT("soon"); return static_cast<uint8>(EStage::Soon); }
+    GStsBranch = TEXT("s1"); return static_cast<uint8>(EStage::S1);
 }
 
 void ANodeShuffleSubsystem::StatusTick(bool bEnabled)
@@ -176,13 +181,14 @@ void ANodeShuffleSubsystem::StatusTick(bool bEnabled)
         if (Pc && Pc->IsLocalController()) { bLocalPc = true; break; }
     }
     // Legend (prose only, docs/DIAGNOSTICS.md): the stage and every predicate that chose it, as read this tick; startReady prints -1 when
-    // the getter was not read or is unbound; the two chat fields say whether each chat line's broadcast call returned true.
-    UE_LOG(LogNodeShuffle, Display, TEXT("NSSTATUS: stage=%s prev=%s stageReadable=%d stageReady=%d startReady=%d s0Gate=%d stableSinceReady=%d/%d gatedBy=%s floorMet=%d unreadableWarned=%d readyLatched=%d layoutGenerated=%d firstRollThisSession=%d rfSeen=%d resourcesAtK=%d resources=%d rfLeft=%d doneLatched=%d capReached=%d chatS0Posted=%d chatS1Posted=%d netMode=%d localPC=%d widgetAdded=%d panelSetting=%d"),
+    // the getter was not read or is unbound; the two chat fields say whether each chat line's broadcast call returned true; observeTick is
+    // the RWG observe-tick counter; branch names the return the stage computation took (GStsBranch above).
+    UE_LOG(LogNodeShuffle, Display, TEXT("NSSTATUS: stage=%s prev=%s stageReadable=%d stageReady=%d startReady=%d s0Gate=%d stableSinceReady=%d/%d gatedBy=%s floorMet=%d unreadableWarned=%d readyLatched=%d layoutGenerated=%d firstRollThisSession=%d rfSeen=%d resourcesAtK=%d resources=%d rfLeft=%d doneLatched=%d capReached=%d chatS0Posted=%d chatS1Posted=%d netMode=%d localPC=%d widgetAdded=%d panelSetting=%d observeTick=%d branch=%s"),
         StageName(Next), StageName(Prev), bStsReadable ? 1 : 0, bStsStageReady ? 1 : 0, StsStartReady, bStsControlSeen ? 1 : 0,
         RwgStableSinceReady, NodeShuffleMapMode::RwgStableTicksRequired, StsGatedBy ? StsGatedBy : TEXT("none"), bStsFloor ? 1 : 0,
         bRwgUnreadableWarned ? 1 : 0, bRwgReady ? 1 : 0, bLayoutGenerated ? 1 : 0, bStsFirstRollThisSession ? 1 : 0, bStsRfSeen ? 1 : 0,
         StsRfAtK, StsRfResources, StsRfLeft, bStsDoneLatched ? 1 : 0, bStsCapReached ? 1 : 0, bStsChatS0Posted ? 1 : 0,
-        bStsChatS1Posted ? 1 : 0, static_cast<int32>(World->GetNetMode()), bLocalPc ? 1 : 0, bStsWidgetAdded ? 1 : 0, StsPanelSetting);
+        bStsChatS1Posted ? 1 : 0, static_cast<int32>(World->GetNetMode()), bLocalPc ? 1 : 0, bStsWidgetAdded ? 1 : 0, StsPanelSetting, RwgObserveTicks, GStsBranch);
 }
 
 void ANodeShuffleSubsystem::StatusChatStep(UWorld* World)

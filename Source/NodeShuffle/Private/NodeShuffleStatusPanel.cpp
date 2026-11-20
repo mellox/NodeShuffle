@@ -40,7 +40,7 @@ void ANodeShuffleSubsystem::StatusEnsurePanel()
         StatusWidget->AddToViewport(NodeShuffleStatus::PanelZOrder);
         bStsWidgetAdded = true;
     }
-    UE_LOG(LogNodeShuffle, Display, TEXT("NSSTATUS-PANEL: created=%d addToViewportCalled=%d zOrder=%d"), StatusWidget ? 1 : 0, bStsWidgetAdded ? 1 : 0, NodeShuffleStatus::PanelZOrder);
+    UE_LOG(LogNodeShuffle, Display, TEXT("NSSTATUS-PANEL: created=%d addToViewportCalled=%d zOrder=%d stage=%s observeTick=%d"), StatusWidget ? 1 : 0, bStsWidgetAdded ? 1 : 0, NodeShuffleStatus::PanelZOrder, NodeShuffleStatus::StageName(static_cast<NodeShuffleStatus::EStage>(StsStageNow)), RwgObserveTicks);
 }
 
 void ANodeShuffleSubsystem::StatusRemovePanel(const TCHAR* Why)
@@ -49,7 +49,7 @@ void ANodeShuffleSubsystem::StatusRemovePanel(const TCHAR* Why)
     StatusWidget->RemoveFromParent();
     StatusWidget = nullptr;
     bStsWidgetAdded = false;
-    UE_LOG(LogNodeShuffle, Display, TEXT("NSSTATUS-PANEL: removed reason=%s"), Why);
+    UE_LOG(LogNodeShuffle, Display, TEXT("NSSTATUS-PANEL: removed reason=%s stage=%s observeTick=%d"), Why, NodeShuffleStatus::StageName(static_cast<NodeShuffleStatus::EStage>(StsStageNow)), RwgObserveTicks);
 }
 
 void ANodeShuffleSubsystem::StatusApplyPanel(uint8 StageU8)

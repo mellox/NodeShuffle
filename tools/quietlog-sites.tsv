@@ -1018,3 +1018,9 @@ NodeShuffleVetoKBFL.cpp|Display|veto: armed on %d asset(s) — des|1	ALWAYS		Dis
 NodeShuffleVetoKBFL.cpp|Display|veto: armed, 0 node-destroyer as|1	ALWAYS		Display	NodeShuffleVetoKBFL.cpp	391	NodeShuffleVetoArmForWorld	none	0	216	R4-once-per-session-or-operation
 NodeShuffleVetoKBFL.cpp|Warning|veto: armed with a null world — |1	ALWAYS		Warning	NodeShuffleVetoKBFL.cpp	417	NodeShuffleVetoArmForWorld	none	0	0	R1-warn-error
 NodeShuffleVetoKBFL.cpp|Display|veto: NodeShuffleVetoKBFL module|1	ALWAYS		Display	NodeShuffleVetoKBFL.cpp	447	StartupModule	none	0	135	R4-once-per-session-or-operation
+NodeShuffleConsumerCensus.cpp|Display|NSCONSUMER|1	ALWAYS		Display	NodeShuffleConsumerCensus.cpp	34	-	none	0	0	NEW-ns-quietlog-1 (always on, measured values only)
+NodeShuffleDiag.cpp|Display|NSDIAG|1	ALWAYS		Display	NodeShuffleDiag.cpp	53	-	none	0	0	NEW-ns-quietlog-1 (always on, measured values only)
+NodeShuffleDiag.cpp|Display|NSDIAG-MASTER|1	ALWAYS		Display	NodeShuffleDiag.cpp	63	-	none	0	0	NEW-ns-quietlog-1 (always on, measured values only)
+NodeShuffleMapModeVoid.cpp|Display|RWGVOIDCHECK-POINT|1	TOPIC	Void	Display	NodeShuffleMapModeVoid.cpp	214	-	none	0	0	NEW-ns-quietlog-1 (topic Void, at most 8 per grading)
+NodeShuffleMapModeVoid.cpp|Display|RWGVOIDCHECK-SAMPLES|1	ALWAYS		Display	NodeShuffleMapModeVoid.cpp	254	-	none	0	0	NEW-ns-quietlog-1 (always on, measured values only)
+NodeShuffleStatus.cpp|Display|NSSTATUS-ROLLSEEN|1	ALWAYS		Display	NodeShuffleStatus.cpp	112	-	none	0	0	NEW-ns-quietlog-1 (always on, measured values only)

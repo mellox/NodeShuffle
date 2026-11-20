@@ -139,12 +139,12 @@ bool ANodeShuffleSubsystem::EvaluateInsideShadowGate(const FVector& At, const cl
     // The full reading, through the ONE emitter. Printed only for a POSITIVE, which is what keeps this
     // affordable per placement: a negative contributes its counts to the census and nothing else. The
     // wording is the instrument's, not this file's.
-    LogTotallyInsideReading(
+    if (NsDiag(ENsDiag::Gates)) { LogTotallyInsideReading(
         TEXT("INSIDEGATE"),
         FString::Printf(TEXT("the final accepted placement spot of %s"), *Who),
         R,
         Subject ? Subject->GetName() : FString(TEXT("<none: no live actor was handed as the subject>")),
-        /*bGateRefuses=*/false, /*Blocked=*/0, /*Total=*/0, /*Threshold=*/-1);
+        /*bGateRefuses=*/false, /*Blocked=*/0, /*Total=*/0, /*Threshold=*/-1); } // ns-quietlog-1: the helper's only automatic caller; its return value is not read here
 
     if (NsDiag(ENsDiag::Gates)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("INSIDEGATE-WOULDREFUSE %s at %s: the containment instrument reports every one of %d probed ")

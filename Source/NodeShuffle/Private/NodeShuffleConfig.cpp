@@ -556,7 +556,7 @@ void UNodeShuffleConfig::PostInitProperties()
     // box, reload, send me the log" succeeds far more often than a console instruction.
     AddBool(TEXT("EnableDiagnostics"), false,
         TEXT("Enable Diagnostic Logging"),
-        TEXT("OFF by default. Turn ON only when troubleshooting (e.g. to capture why a miner won't place): the mod writes verbose placement / node diagnostics to FactoryGame.log. Leave OFF for normal play — it keeps your log clean and avoids any overhead. The mod's actual fixes are always active whether this is on or off."));
+        TEXT("OFF by default. Turn ON when sending a log for a bug report: the mod then writes its detailed placement and node diagnostics to FactoryGame.log. With it OFF the log keeps a short summary."));
 
 
     RootSection = Root;

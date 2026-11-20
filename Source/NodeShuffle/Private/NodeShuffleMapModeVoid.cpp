@@ -193,17 +193,26 @@ bool ANodeShuffleSubsystem::RwgEnsureVoidCheck(const NodeShuffleMapMode::FRwgGro
     const double H = Q.HalfExtent();
     const int32 PerClass = NodeShuffleMapMode::RwgVoidCheckPerClass;
     int32 Draws = 0, VoidTrueDraws = 0, AN = 0, AT = 0, CN = 0, CT = 0;
+    int32 DrawsTried = 0, DrawsOutside = 0, PlateauSeen = 0, PlateauSeaExcluded = 0, PlateauCapped = 0, PointsLogged = 0; // ns-quietlog-1: written here, read only by RWGVOIDCHECK-SAMPLES / -POINT
     TMap<int64, int32> ZCount;
     for (int32 I = 0; I < NodeShuffleMapMode::RwgSeaCheckMaxDraws; ++I)
     {
         const double X = Rng.FRandRange(-H, H), Y = Rng.FRandRange(-H, H);
-        if (Q.Outside(X, Y)) { continue; }
+        ++DrawsTried;
+        if (Q.Outside(X, Y)) { ++DrawsOutside; continue; }
         ++Draws;
         const double Z = Q.SurfaceZ(X, Y);
         const bool bVoid = Q.VoidAt(X, Y);
         const bool bSea = FMath::IsFinite(Z) && Q.InSea(X, Y, Z); // raw: the grade gates the TERM, not this measurement
         VoidTrueDraws += bVoid ? 1 : 0;
         if (!FMath::IsFinite(Q.WaterLevelZ(X, Y)) && FMath::IsFinite(Z)) { ZCount.FindOrAdd(FMath::RoundToInt64(Z))++; }
+        const bool bOnPlateau = FMath::Abs(Z - NodeShuffleMapMode::RwgVoidPlateauCm) <= 1.0; // ns-quietlog-1: counters only; the class (a) test below is unchanged
+        if (bOnPlateau) { ++PlateauSeen; if (bSea) { ++PlateauSeaExcluded; } else if (AN >= PerClass) { ++PlateauCapped; } }
+        if (bOnPlateau && PointsLogged < 8)
+        {
+            ++PointsLogged; // first 8 plateau draws of this grading, sea or not
+            if (NsDiag(ENsDiag::Void)) { UE_LOG(LogNodeShuffle, Display, TEXT("RWGVOIDCHECK-POINT: i=%d x=%.0f y=%.0f surfaceZ=%.0f voidAt=%d inSea=%d class=plateau"), I, X, Y, Z, bVoid ? 1 : 0, bSea ? 1 : 0); }
+        }
         if (FMath::Abs(Z - NodeShuffleMapMode::RwgVoidPlateauCm) <= 1.0 && !bSea && AN < PerClass) { ++AN; AT += bVoid ? 1 : 0; }
         else if (Z > 0.0 && CN < PerClass) { ++CN; CT += bVoid ? 1 : 0; }
         if (AN >= PerClass && CN >= PerClass && Draws >= 2048) { break; }
@@ -239,9 +248,17 @@ bool ANodeShuffleSubsystem::RwgEnsureVoidCheck(const NodeShuffleMapMode::FRwgGro
         bVoidOk ? 1 : 0, bDryOk ? 1 : 0, RwgNodes.Num(), Pawn ? 1 : 0, PP.X, PP.Y, PP.Z, PawnSurfaceZ, bPawnVoid ? 1 : 0, bPawnSea ? 1 : 0,
         static_cast<long long>(M1Z), M1N, static_cast<long long>(M2Z), M2N, bRwgKillboxKnown ? 1 : 0,
         bRwgKillboxKnown ? RwgKillboxTopZ : std::numeric_limits<double>::quiet_NaN(), (FPlatformTime::Seconds() - T0) * 1000.0);
+    // ns-quietlog-1: always on, once per grading. Draw-loop counts: tried = loop iterations, outside = draws the query reported outside the
+    // world, inside = draws measured; plateauSeen = measured draws whose API surface was within 1 cm of the plateau height, split into those
+    // the raw sea test excluded and those that arrived after the plateau class was full; halfExtentCm = the query's half extent.
+    UE_LOG(LogNodeShuffle, Display, TEXT("RWGVOIDCHECK-SAMPLES: drawsTried=%d drawsOutside=%d drawsInside=%d plateauSeen=%d plateauSeaExcluded=%d plateauCapped=%d halfExtentCm=%.0f plateauZ=%.0f"),
+        DrawsTried, DrawsOutside, Draws, PlateauSeen, PlateauSeaExcluded, PlateauCapped, H, NodeShuffleMapMode::RwgVoidPlateauCm);
     if (!bRwgVoidUsable)
     {
-        UE_LOG(LogNodeShuffle, Warning, TEXT("RWGVOIDCHECK-FAIL: voidPass=%d dryPass=%d plateauN=%d; the void term is off this session"), bVoidOk ? 1 : 0, bDryOk ? 1 : 0, AN);
+        // ns-quietlog-1: each class word is read from the grade's own inputs: notGradedTooFewSamples when n < 8, else gradedBelowPct or gradedPass.
+        const auto GradeWord = [](int32 N, int32 Hit) { return N < 8 ? TEXT("notGradedTooFewSamples") : (Hit * 100 >= N * 95 ? TEXT("gradedPass") : TEXT("gradedBelowPct")); };
+        UE_LOG(LogNodeShuffle, Warning, TEXT("RWGVOIDCHECK-FAIL: voidClass=%s dryClass=%s plateauN=%d plateauTrue=%d dryN=%d dryFalse=%d minN=8 minPct=95; the void term is off this session"),
+            GradeWord(AN, AT), GradeWord(DryN, DryFalse), AN, AT, DryN, DryFalse);
     }
     return bRwgVoidUsable;
 }

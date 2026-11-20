@@ -322,8 +322,8 @@ void ANodeShuffleSubsystem::RwgObserveTick()
     {
         bRwgLayoutNoticeLogged = true;
         UE_LOG(LogNodeShuffle, Display,
-            TEXT("RWGLAYOUT: save holds a layout; entries=%d hideRecords=%d rwgLayoutVersion=%d mapRwg=%d; it is applied only after an apply clause latches and RWGREADY prints"),
-            Layout.Num(), OriginalNodeRecord.Num(), RwgLayoutVersion, GetMapMode() == ENodeShuffleMapMode::Rwg ? 1 : 0);
+            TEXT("RWGLAYOUT: first observe tick with a layout present; layoutGenerated=1 firstRollThisSession=%d entries=%d hideRecords=%d rwgLayoutVersion=%d mapRwg=%d"),
+            bStsFirstRollThisSession ? 1 : 0, Layout.Num(), OriginalNodeRecord.Num(), RwgLayoutVersion, GetMapMode() == ENodeShuffleMapMode::Rwg ? 1 : 0);
     }
     APawn* Pawn = NodeShuffleMapMode::FirstPlayerPawn(World);
     if (Pawn && !bRwgPawnFirstSet)
