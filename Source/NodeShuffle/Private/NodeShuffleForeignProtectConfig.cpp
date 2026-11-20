@@ -563,14 +563,14 @@ static void NodeShuffleSortForeignResourceRows(UConfigPropertyArray* Rows, const
     // about the RENDERED panel -- SML's row widget is Blueprint and C++ cannot see it (runtime test
     // step 2). Count these by anchoring on "T68ROWSORT:".
     // Arity hand-counted: 5 format specifiers, 5 arguments.
-    if (NsDiag(ENsDiag::Veto)) { UE_LOG(LogNodeShuffle, Display,
+    UE_LOG(LogNodeShuffle, Display,
         TEXT("T68ROWSORT: callSite %s rowsInArray %d rowsChangedPosition %d rowsUnreadable %d ")
         TEXT("rowsWithBlankPath %d -- sorted by the content the resource comes from, then by the ")
         TEXT("resource name, both derived from each row's own stored path. The path stays the key ")
         TEXT("everywhere it is read, so position carries no meaning; only the order of entries inside ")
         TEXT("NodeShuffle.cfg changes on the next save. The changed-position count is a LOWER BOUND: two ")
         TEXT("rows carrying the same key that swap with each other cannot be told apart by it."),
-        CallSite, Rows->Values.Num(), Moved, Unreadable, BlankPath); }
+        CallSite, Rows->Values.Num(), Moved, Unreadable, BlankPath);
 }
 
 // ---- ns-scanfilter-4: the three entry points the scanner side uses on this same list. ------------------------------------

@@ -162,9 +162,9 @@ void ANodeShuffleSubsystem::EmitRepClassStaleCensusOnce()
     TArray<FString> Parts;
     for (const FString& K : Keys) { Parts.Add(FString::Printf(TEXT("%s:%d"), *K, ByClass.FindChecked(K))); }
 
-    if (NsDiag(ENsDiag::Visuals)) { UE_LOG(LogNodeShuffle, Display,
+    UE_LOG(LogNodeShuffle, Display,
         TEXT("REPCLASS-STALE count=%d pinned=%d spawned=%d modded=%d unresolved=%d byClass=[%s]"),
-        Stale, StalePinned, Spawned, Modded, Unresolved, *FString::Join(Parts, TEXT(";"))); }
+        Stale, StalePinned, Spawned, Modded, Unresolved, *FString::Join(Parts, TEXT(";")));
 }
 
 // rwg-thoriumclass-2 (2026-11-01): DRESS-NATIVE. Diagnostics-gated like its DRESS-SKIP siblings; once per entry (NativeDressLogged)
