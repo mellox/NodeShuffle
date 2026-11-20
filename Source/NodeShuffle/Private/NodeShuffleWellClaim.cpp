@@ -189,7 +189,7 @@ bool ANodeShuffleSubsystem::ClearAbandonedWellPlacement(FNodeShuffleWellEntry& E
     // expire the NEXT claim this entry makes the moment it is committed.
     WellClaimMidAssemblyPasses.Remove(E.CorePath);
 
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("WELLH2-ABANDON core='%s' (%s): dropped this entry's claim on its committed placement -- ")
         TEXT("core was %s, %d satellite coordinate(s) cleared, claimLive 1 -> 0 (relocate=%d failed=%d ")
         TEXT("placed=%d). Until this existed the stale claim made the orphan sweep report any actor ")
@@ -199,7 +199,7 @@ bool ANodeShuffleSubsystem::ClearAbandonedWellPlacement(FNodeShuffleWellEntry& E
         TEXT("mis-classified vanilla well (ns-review-h2-r3 F-2)."),
         *WellShort(E.CorePath), Why, *WasCore.ToCompactString(), SatsCleared,
         E.bRelocate ? 1 : 0, E.bRelocationFailed ? 1 : 0, E.bGroupPlaced ? 1 : 0,
-        AbandonedWellClaimCoords.Num());
+        AbandonedWellClaimCoords.Num()); }
     return true;
 }
 
@@ -295,7 +295,7 @@ int32 ANodeShuffleSubsystem::ValidateWellClaimInvariant(const TCHAR* Where)
     if (Violations == 0 && !bWellClaimInvariantOkLogged)
     {
         bWellClaimInvariantOkLogged = true;
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH2-CLAIM [%s]: INVARIANT A3 HOLDS -- %d layout entry(ies) checked (cores AND ")
             TEXT("bCaptured satellites since ns-review-h2-r4 F-7), 0 violations. This line proves the ")
             TEXT("check RAN; its absence means it did not, and every ownership number below is then only ")
@@ -303,7 +303,7 @@ int32 ANodeShuffleSubsystem::ValidateWellClaimInvariant(const TCHAR* Where)
             TEXT("nothing (ns-review-h2-r4 F-10). Said once per session; a violation is logged EVERY ")
             TEXT("time, and the [%s] tag names whichever call site got there first -- 'post-roll ")
             TEXT("pre-reconcile' and 'settled' are both valid."),
-            Where, WellLayout.Num(), Where);
+            Where, WellLayout.Num(), Where); }
     }
     else if (Violations > 0)
     {
@@ -346,14 +346,14 @@ int32 ANodeShuffleSubsystem::MigratePreA3PlacementClaimsOnce()
 {
     if (WellClaimMigrationVersion >= WellClaimMigrationCurrentVersion)
     {
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH2-CLAIM [backfill]: SKIPPED -- this save is already at claim-migration version %d ")
             TEXT("(current %d), %d layout entry(ies). THE PRE-A3 MIGRATION IS THE OLD ")
             TEXT("`Placed*-non-zero-means-ownership` DERIVATION and it is deliberately allowed to run ")
             TEXT("AT MOST ONCE PER SAVE (ns-review-h2-r4 D-1); from here on, a claim that goes missing ")
             TEXT("across a save round-trip shows up as *** CLAIM INVARIANT VIOLATED *** instead of being ")
             TEXT("silently asserted back. This line proves the gate RAN."),
-            WellClaimMigrationVersion, WellClaimMigrationCurrentVersion, WellLayout.Num());
+            WellClaimMigrationVersion, WellClaimMigrationCurrentVersion, WellLayout.Num()); }
         return 0;
     }
 
@@ -368,7 +368,7 @@ int32 ANodeShuffleSubsystem::MigratePreA3PlacementClaimsOnce()
     }
     WellClaimMigrationVersion = WellClaimMigrationCurrentVersion;
 
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("WELLH2-CLAIM [backfill]: checked %d entry(ies), %d were BACKFILLED to claimLive=1 from a ")
         TEXT("non-zero PlacedCoreLocation; migration version %d -> %d. THIS LINE PROVES THE MIGRATION ")
         TEXT("RAN, and it is printed even when the count is 0 (ns-review-h2-r4 F-3) precisely so that ")
@@ -377,7 +377,7 @@ int32 ANodeShuffleSubsystem::MigratePreA3PlacementClaimsOnce()
         TEXT("already loaded by an A3 build would have meant the claim is being lost across the save ")
         TEXT("round-trip -- that scenario is now caught by *** CLAIM INVARIANT VIOLATED *** instead, ")
         TEXT("because this migration can no longer run twice on the same save."),
-        WellLayout.Num(), Backfilled, FromVersion, WellClaimMigrationCurrentVersion);
+        WellLayout.Num(), Backfilled, FromVersion, WellClaimMigrationCurrentVersion); }
     return Backfilled;
 }
 
@@ -561,7 +561,7 @@ int32 ANodeShuffleSubsystem::ReconcileAbandonedWellClaims(const TCHAR* Why)
     // Warning below is reserved for a withdrawal actually happening.
     if (MidAssembly > 0)
     {
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH2-CLAIM [%s]: MID-ASSEMBLY CENSUS -- %d entry(ies) hold a live claim while still ")
             TEXT("assembling. Tick reasons this pass: %d OFF, %d AWAY, %d RETRY, %d UNKNOWN. Highest ")
             TEXT("counter: %d of %d passes on core='%s', why=%s. (ns-review-h2-r4 round 9 R-1: this ")
@@ -570,7 +570,7 @@ int32 ANodeShuffleSubsystem::ReconcileAbandonedWellClaims(const TCHAR* Why)
             TEXT("number that MOVES is the measurement; an absence is not.)"),
             Why, MidAssembly, TickOff, TickAway, TickRetry, TickUnknown,
             MaxPasses, WellClaimMidAssemblyMaxPasses,
-            MaxPath.IsEmpty() ? TEXT("<none>") : *WellShort(MaxPath), MaxWhy);
+            MaxPath.IsEmpty() ? TEXT("<none>") : *WellShort(MaxPath), MaxWhy); }
     }
 
     if (Expired > 0 || Repaired > 0)

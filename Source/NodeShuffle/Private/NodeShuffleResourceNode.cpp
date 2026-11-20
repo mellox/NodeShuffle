@@ -267,7 +267,7 @@ void ANodeShuffleResourceNode::LogRenderState(const TCHAR* Phase) const
     // root, so the log CONFIRMS rock worldLoc X/Y == node X/Y (NOT 0,0). The redesign-6 bug showed
     // rock worldLoc=(0,0,-40) while node=(-267337,66938,-1356) — rock was the root, offset teleported it.
     const bool bRockIsRoot = (Root == RockMesh);
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Visuals)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("RENDERDIAG[%s] node='%s' actorHidden=%d beingDestroyed=%d nodeLoc=%s | RockMesh: valid=%d isRoot=%d attachOK=%d registered=%d visible=%d hiddenInGame=%d mesh='%s' boundsR=%.0f rockWorldLoc=%s | engineMeshActor=%s%s"),
         Phase, *GetName(),
         IsHidden() ? 1 : 0, IsActorBeingDestroyed() ? 1 : 0, *NodeLoc.ToCompactString(),
@@ -281,5 +281,5 @@ void ANodeShuffleResourceNode::LogRenderState(const TCHAR* Phase) const
         bHaveRock ? RockMesh->Bounds.SphereRadius : 0.f,
         bHaveRock ? *RockLoc.ToCompactString() : TEXT("<n/a>"),
         Mesh ? *Mesh->GetName() : TEXT("<none>"),
-        Mesh ? (Mesh->IsHidden() ? TEXT(" (engineMeshActor HIDDEN)") : TEXT(" (engineMeshActor visible)")) : TEXT(""));
+        Mesh ? (Mesh->IsHidden() ? TEXT(" (engineMeshActor HIDDEN)") : TEXT(" (engineMeshActor visible)")) : TEXT("")); }
 }

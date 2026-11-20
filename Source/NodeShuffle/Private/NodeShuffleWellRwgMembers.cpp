@@ -102,10 +102,10 @@ void ANodeShuffleSubsystem::RwgFillWellMembersFromClaims(FNodeShuffleWellCensus&
     // WELLROLL reads the LAST call of the roll (RollWellRelocation's), which is the census its capture gate reads.
     RwgWrMembersFromClaimWells = WellsFilled;
     RwgWrMembersFromClaimSats = SatsAdded;
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("WELLCLAIMMEMBERS: caller=%s claimedBoundCores=%d censusShortWells=%d wellsFilled=%d satsAdded=%d satsAlreadyMember=%d satsSentinel=%d satsNoLiveActor=%d satsOurCopy=%d satsLinkedToOtherCore=%d satsNonFinite=%d liveSatActors=%d satsLivePurityDiffersFromRecord=%d wellsUnclaimedNearby=%d satsUnclaimedNearby=%d"),
         Caller, ByCore.Num(), WellsShort, WellsFilled, SatsAdded, SatsAlready, SatsSentinel, SatsNoLive, SatsOurs, SatsOtherCore,
-        SatsNonFinite, LiveByPath.Num(), SatsPurityDiffers, WellsUnclaimedNearby, SatsUnclaimedNearby);
+        SatsNonFinite, LiveByPath.Num(), SatsPurityDiffers, WellsUnclaimedNearby, SatsUnclaimedNearby); }
 }
 
 void ANodeShuffleSubsystem::RwgNoteWellAuthoredSource(FNodeShuffleWellEntry& E, bool bLiveCoreRead, const TArray<FNodeShuffleWellMember>& Members)

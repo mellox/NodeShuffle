@@ -330,12 +330,12 @@ namespace NodeShuffleRwgSeedGas
     {
         int32 Overridden = 0;
         for (const FRowResult& R : S.Rows) { if (FCString::Strcmp(R.Action, TEXT("override")) == 0) { ++Overridden; } }
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Roll)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("MODQUOTA-CFG enabled=%d mapIsRwg=%d rowsTreeFound=%d rowsRead=%d rowsMalformed=%d vanillaOreOriginals=%d baseMapSolidNodes=%d vanillaOreScale=%.3f overridden=%d seeded=%d puritySrc=%d puritySrcImpure=%d puritySrcNormal=%d puritySrcPure=%d"),
             S.bEnabled ? 1 : 0, S.bMapIsRwg ? 1 : 0, S.bTreeFound ? 1 : 0,
             static_cast<int32>(Algo::CountIf(S.Rows, [](const FRowResult& R) { return R.bHasRow; })), S.RowsMalformed,
             S.VanillaOreOriginals, RwgBaseSolidNodes, S.VanillaOreScale, Overridden, S.SeededKinds.Num(),
-            S.PuritySrc, S.PuritySrcBins[0], S.PuritySrcBins[1], S.PuritySrcBins[2]);
+            S.PuritySrc, S.PuritySrcBins[0], S.PuritySrcBins[1], S.PuritySrcBins[2]); }
         for (const FRowResult& R : S.Rows)
         {
             const FString& Res = R.Row.Resource;
@@ -349,18 +349,18 @@ namespace NodeShuffleRwgSeedGas
                 Branch = S.PurityFromGameSolid.Contains(Res) ? TEXT("gameSolidOriginals")
                     : (Purity.ByClass.Contains(Res) ? TEXT("perResource") : (Purity.MapSource.Num() > 0 ? TEXT("mapwide") : TEXT("noSource")));
             }
-            UE_LOG(LogNodeShuffle, Display,
+            if (NsDiag(ENsDiag::Roll)) { UE_LOG(LogNodeShuffle, Display,
                 TEXT("MODQUOTA resource=%s form=%s mapIsRwg=%d capturedOriginals=%d vanillaCount=%d vanillaOreOriginals=%d baseMapSolidNodes=%d vanillaOreScale=%.3f target=%d action=%s classResolvedBy=%s pinnedOrCarried=%d quota=%d deckCards=%d purityDeck=%s skipped=%s"),
                 *Short(Res), *R.Form, S.bMapIsRwg ? 1 : 0, R.CapturedOriginals, R.Row.VanillaCount, S.VanillaOreOriginals,
                 RwgBaseSolidNodes, S.VanillaOreScale, R.Target, R.Action, R.ResolvedBy, PinnedPerResource.FindRef(Res), // occupied + carried
-                Quota.FindRef(Res), Cards, Branch, R.Skipped);
+                Quota.FindRef(Res), Cards, Branch, R.Skipped); }
             if (FCString::Strcmp(R.ResolvedBy, TEXT("n/a")) != 0)
             {
-                UE_LOG(LogNodeShuffle, Display,
+                if (NsDiag(ENsDiag::Roll)) { UE_LOG(LogNodeShuffle, Display,
                     TEXT("MODQUOTA-CLASS resource=%s configPath=%s configLoaded=%d configNode=%d configAbstract=%d configRefused=%d configOwnMount=%d configCdoResource=%s registryMountFiltered=%d registryMatched=%s chosen=%s"),
                     *Short(Res), *Short(R.Row.NodeClassPath), R.bCfgLoaded ? 1 : 0, R.bCfgNode ? 1 : 0, R.bCfgAbstract ? 1 : 0,
                     R.bCfgRefused ? 1 : 0, R.bCfgOwnMount ? 1 : 0, *R.CfgCdoResource, R.RegistryMountFiltered, *R.RegistryMatched,
-                    *Short(R.ResolvedClass));
+                    *Short(R.ResolvedClass)); }
             }
         }
     }
@@ -398,8 +398,8 @@ namespace NodeShuffleRwgSeedGas
             const FString Sig = FString::Printf(TEXT("%d/%d/%d/%d/%s"), Entries, Ok, Failed, Parked, *Guid8);
             if (const FString* Prev = LastSig.Find(Row.Resource)) { if (*Prev == Sig) { continue; } }
             LastSig.Add(Row.Resource, Sig);
-            UE_LOG(LogNodeShuffle, Display, TEXT("SEEDGASSPAWN resource=%s entries=%d spawnedOk=%d spawnFailed=%d parked=%d guids=%s"),
-                *Short(Row.Resource), Entries, Ok, Failed, Parked, *Guid8);
+            if (NsDiag(ENsDiag::Roll)) { UE_LOG(LogNodeShuffle, Display, TEXT("SEEDGASSPAWN resource=%s entries=%d spawnedOk=%d spawnFailed=%d parked=%d guids=%s"),
+                *Short(Row.Resource), Entries, Ok, Failed, Parked, *Guid8); }
         }
     }
 }

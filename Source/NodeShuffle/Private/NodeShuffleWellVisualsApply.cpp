@@ -72,7 +72,7 @@ namespace
                 static_cast<int32>(P->GetCollisionResponseToChannel(ECC_Pawn)),
                 P->IsVisible() ? 1 : 0);
         }
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH2B-COLLISION [%s] actor='%s' class='%s' at %s actorCollision=%d hidden=%d ")
             TEXT("dressedPieces=%d :: %s")
             TEXT("(response codes: 0=Ignore 1=Overlap 2=Block. The build gun aims on ECC_GameTraceChannel5 -- ")
@@ -84,7 +84,7 @@ namespace
             TEXT("actor had no visual to apply on the pass that produced this line.)"),
             Tag, *Actor->GetName(), *Actor->GetClass()->GetName(),
             *Actor->GetActorLocation().ToCompactString(),
-            Actor->GetActorEnableCollision() ? 1 : 0, Actor->IsHidden() ? 1 : 0, PiecesThisPass, *Desc);
+            Actor->GetActorEnableCollision() ? 1 : 0, Actor->IsHidden() ? 1 : 0, PiecesThisPass, *Desc); }
     }
 }
 
@@ -230,7 +230,7 @@ void ANodeShuffleSubsystem::ApplyWellGroupVisuals(FNodeShuffleWellEntry& E)
     if (Members > 0 && !WellVisualLogged.Contains(Key))
     {
         WellVisualLogged.Add(Key);
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH2B-APPLY core='%s' at %s: dressed %d relocated member(s) with %d mesh piece(s) ")
             TEXT("(%d component(s) created this pass); %d member(s) fell back to the SESSION TEMPLATE ")
             TEXT("(their own origin never streamed -- the look may be the wrong biome variant), %d ")
@@ -238,6 +238,6 @@ void ANodeShuffleSubsystem::ApplyWellGroupVisuals(FNodeShuffleWellEntry& E)
             TEXT("blocks ECC_GameTraceChannel5 (BuildGun), which is what a Pressurizer/Well Extractor ")
             TEXT("hologram traces on -- see WELLH2B-COLLISION for the per-component proof."),
             *WellShort(E.CorePath), *E.PlacedCoreLocation.ToCompactString(), Members, Pieces, Created,
-            FromTemplate, NoVisual);
+            FromTemplate, NoVisual); }
     }
 }

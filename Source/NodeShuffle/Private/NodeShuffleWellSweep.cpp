@@ -319,7 +319,7 @@ void ANodeShuffleSubsystem::SweepOrphanedWellActors(const TCHAR* Phase, bool bRe
         // destroyed") was accurate about the whole sweep, and that accuracy WAS the F-B bug: a line
         // reading as healthy over an actor nobody reclaimed is the failure this packet is parked on.
         bWellSweepGatedLogged = true;
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH2-ORPHAN [%s]: PASS B (the world-scan backstop) SKIPPED -- relocationOn=%d, ")
             TEXT("placedGroups=%d (layout entries %d, core handles %d, satellite handles %d). BOTH gates ")
             TEXT("must hold before a WORLD SCAN may run: ungated with an empty layout it destroyed every ")
@@ -329,7 +329,7 @@ void ANodeShuffleSubsystem::SweepOrphanedWellActors(const TCHAR* Phase, bool bRe
             TEXT("Said once."),
             Phase, bRelocationOn ? 1 : 0, PlacedGroups, WellLayout.Num(),
             SpawnedWellCores.Num(), SpawnedWellSatellites.Num(),
-            HandleOrphans, Destroyed, Reconciled);
+            HandleOrphans, Destroyed, Reconciled); }
     }
 
     if (HandleOrphans == 0 && AlreadyGone == 0 && Reconciled == 0
@@ -338,7 +338,7 @@ void ANodeShuffleSubsystem::SweepOrphanedWellActors(const TCHAR* Phase, bool bRe
         return;
     }
 
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("WELLH2-ORPHAN [%s]: pass A ran (ALWAYS -- never gated, ns-review-h2-r2 F-B); pass B gates ")
         TEXT("relocationOn=%d placedGroups=%d -> %s. A3 claim state: %d invariant violation(s) (cores ")
         TEXT("AND bCaptured satellites since ns-review-h2-r4 F-7 -- MUST be 0; any other value is ")
@@ -352,7 +352,7 @@ void ANodeShuffleSubsystem::SweepOrphanedWellActors(const TCHAR* Phase, bool bRe
         ClaimViolations, Reconciled,
         HandleOrphans, Destroyed, WellSweepMaxDestroysPerPass, CapDeferred, RefusedInUse, AlreadyGone,
         Retrying, BackstopSeen, BackstopUnaccounted,
-        InUseDetail.IsEmpty() ? TEXT("") : TEXT(" In use:"), *InUseDetail);
+        InUseDetail.IsEmpty() ? TEXT("") : TEXT(" In use:"), *InUseDetail); }
 
     // ns-review-h5 F-4: throttled. "Orphaned but in use" is a state a player creates and only a player
     // clears, so an unthrottled Warning on a ~60 s cadence is a permanent drip -- the exact shape F7
@@ -425,12 +425,12 @@ void ANodeShuffleSubsystem::FinishWellRollTeardown()
     // the only gate that can refuse pass B.
     constexpr bool bSweepOn = FNodeShuffleConfigStruct::bWellShuffleHardWiredOn
                            && FNodeShuffleConfigStruct::bWellRelocationHardWiredOn;
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("WELLH2-ROLL: withdrew the placement claim of %d of %d entry(ies) here at the tail -- each ")
         TEXT("refused by one of the roll's ten branches (h5 F2). The ELEVENTH abandonment route, ")
         TEXT("RE-ENROLMENT, is withdrawn inside the enrolment loop instead and is NOT in this count ")
         TEXT("(ns-review-h2-r2 F-A) -- grep WELLH2-ABANDON with reason 're-enrolled by a new roll' for ")
         TEXT("those. Post-roll sweep gate wellShuffle&&relocate=%d; pass A runs regardless (F-B)."),
-        ClaimsWithdrawn, WellLayout.Num(), bSweepOn ? 1 : 0);
+        ClaimsWithdrawn, WellLayout.Num(), bSweepOn ? 1 : 0); }
     SweepOrphanedWellActors(TEXT("post-roll"), bSweepOn);
 }

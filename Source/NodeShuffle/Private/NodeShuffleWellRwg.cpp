@@ -177,11 +177,11 @@ void ANodeShuffleSubsystem::RwgRebindWellClaimsOnce(const TCHAR* Caller)
         }
     }
     const int32 Claimed = Rebound + Unchanged;
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("WELLCLAIM: caller=%s savedClaims=%d claimed=%d rebound=%d pathUnchanged=%d unmatched=%d unmatchedSaved=%d ambiguous=%d unmatchedLive=%d liveCores=%d satsRebound=%d satsUnmatched=%d satsViaCoreList=%d satsViaCoreLink=%d legacyNoClaim=%d durationMs=%d"),
         Caller, Saved, Claimed, Rebound, Unchanged, UnmatchedSaved + Ambiguous, UnmatchedSaved, Ambiguous,
         Live.Num() - UsedLive.Num(), Live.Num(), SatsRebound, SatsUnmatched, ViaList, ViaLink, Legacy,
-        static_cast<int32>((FPlatformTime::Seconds() - T0) * 1000.0));
+        static_cast<int32>((FPlatformTime::Seconds() - T0) * 1000.0)); }
     if (UnmatchedSaved + Ambiguous + SatsUnmatched > 0)
     {
         UE_LOG(LogNodeShuffle, Warning,
@@ -302,9 +302,9 @@ void ANodeShuffleSubsystem::RwgRetryUnboundWellSatellites()
                 if (!WellSuppressLogged.Contains(OldPath + TEXT("|retry-collision")))
                 {
                     WellSuppressLogged.Add(OldPath + TEXT("|retry-collision"));
-                    UE_LOG(LogNodeShuffle, Display,
+                    if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
                         TEXT("WELLCLAIM-RETRY-COLLISION: core='%s' sentinel='%s' livePath='%s'; a spawned copy is already keyed by the live path, bind skipped (said once per satellite)"),
-                        *E.CorePath, *OldPath, *NewPath);
+                        *E.CorePath, *OldPath, *NewPath); }
                 }
                 continue;
             }
@@ -344,10 +344,10 @@ void ANodeShuffleSubsystem::RwgRetryUnboundWellSatellites()
     const bool bQuietNow = (Pending == 0);
     if (BoundNow > 0 || (Pending > 0 && (RwgWellRetryPasses % 12) == 1) || (bQuietNow && !bRwgWellRetryQuiet))
     {
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLCLAIM-RETRY: pass=%d groupsPending=%d satsBoundNow=%d satsStillUnbound=%d groupsNowComplete=%d suppressCallsNow=%d claimsTriedThisPass=%d viaCoreList=%d viaLocation=%d looseCandidates=%d ourCopyRekeyed=%d rekeyCollision=%d satsAmbiguousRefused=%d maxBindDistCm=%.0f"),
             RwgWellRetryPasses, Pending, BoundNow, StillUnbound, NowComplete, SuppressedNow, N, ViaList, ViaLocation, Loose.Num(),
-            RekeyMoved, RekeyCollision, SatsAmbiguous, FMath::Sqrt(MaxBindSq));
+            RekeyMoved, RekeyCollision, SatsAmbiguous, FMath::Sqrt(MaxBindSq)); }
     }
     bRwgWellRetryQuiet = bQuietNow;
 }
@@ -451,10 +451,10 @@ void ANodeShuffleSubsystem::RwgEmitWellPlace(int32 Searching, int32 PlacedNow, i
             else if (E.bDestDealt && !E.bRelocationFailed) { ++Dealt; }
             if (E.bRelocationFailed) { ++Failed; }
         }
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLPLACE: pass=%d searching=%d placedNow=%d deferred=%d farNoAttempt=%d dealtUnplaced=%d placedTotal=%d relocationFailed=%d rejectedRock=%d attemptRadiusM=%.0f claimedOriginals=%d"),
             RwgWpPasses, Searching, PlacedNow, Deferred, RwgWpFar, Dealt, Placed, Failed, RwgWpRejectedRock,
-            NodeShuffleMapMode::RwgAttemptRadiusCm / 100.f, RwgClaimedOriginals.Num());
+            NodeShuffleMapMode::RwgAttemptRadiusCm / 100.f, RwgClaimedOriginals.Num()); }
     }
     RwgWpFar = 0;
     RwgWpRejectedRock = 0; // RWG P2d: per pass

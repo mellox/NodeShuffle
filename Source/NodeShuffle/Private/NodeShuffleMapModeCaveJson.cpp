@@ -188,8 +188,8 @@ bool ANodeShuffleSubsystem::RwgVerifyCaveCandidate(const NodeShuffleMapMode::FRw
     if (RwgCaveDealSamples < 8)
     {
         ++RwgCaveDealSamples;
-        UE_LOG(LogNodeShuffle, Display, TEXT("RWGCAVEDEAL: sample=%d source=%s spot=(%.0f,%.0f) floorHintZ=%.0f floorZ=%.0f floorMinusHintCm=%.0f surfaceMinusFloorCm=%.0f anyNearCallsThisSpot=%d candidateIndex=%d"),
-            RwgCaveDealSamples, Source, X, Y, Hint, Floor, Floor - Hint, SurfZ - Floor, AnyNearCalls, Index);
+        if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display, TEXT("RWGCAVEDEAL: sample=%d source=%s spot=(%.0f,%.0f) floorHintZ=%.0f floorZ=%.0f floorMinusHintCm=%.0f surfaceMinusFloorCm=%.0f anyNearCallsThisSpot=%d candidateIndex=%d"),
+            RwgCaveDealSamples, Source, X, Y, Hint, Floor, Floor - Hint, SurfZ - Floor, AnyNearCalls, Index); }
     }
     return true;
 }

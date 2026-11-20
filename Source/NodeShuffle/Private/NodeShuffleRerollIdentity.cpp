@@ -185,9 +185,9 @@ namespace NodeShuffleRerollIdentity
             ++Count;
             if (Count <= LineCap)
             {
-                UE_LOG(LogNodeShuffle, Display, TEXT("REROLLPOOL-NORECORD path='%s' res='%s' guid=%s trueLoc=%s carried=%d pinnedNow=%d"),
+                if (NsDiag(ENsDiag::Roll)) { UE_LOG(LogNodeShuffle, Display, TEXT("REROLLPOOL-NORECORD path='%s' res='%s' guid=%s trueLoc=%s carried=%d pinnedNow=%d"),
                     *E.VanillaNodePath, *ShortName(E.OriginalResourceClassPath), *E.EntryGuid.ToString(),
-                    *E.OriginalTrueLocation.ToCompactString(), bCarried ? 1 : 0, E.bPinned ? 1 : 0);
+                    *E.OriginalTrueLocation.ToCompactString(), bCarried ? 1 : 0, E.bPinned ? 1 : 0); }
             }
         };
         for (const FNodeShuffleEntry& E : Pool) { if (!E.bIsNewNode) { Visit(E, false); } }
@@ -220,8 +220,8 @@ namespace NodeShuffleRerollIdentity
         for (const FString& Slot : Slots)
         {
             const TPair<FString, int32>& Row = Census.BySlotClass.FindChecked(Slot);
-            UE_LOG(LogNodeShuffle, Display, TEXT("REPCLASS-VANRESTAMP role=%s slotClass=%s to=%s restamped=%d"),
-                Role, *ShortName(Slot), *ShortName(Row.Key), Row.Value);
+            if (NsDiag(ENsDiag::Visuals)) { UE_LOG(LogNodeShuffle, Display, TEXT("REPCLASS-VANRESTAMP role=%s slotClass=%s to=%s restamped=%d"),
+                Role, *ShortName(Slot), *ShortName(Row.Key), Row.Value); }
         }
         UE_LOG(LogNodeShuffle, Display, TEXT("REPCLASS-VANRESTAMP-END role=%s restamped=%d repNotGeneric=%d slotClasses=%d"),
             Role, Census.Restamped, Census.RepNotGeneric, Slots.Num());

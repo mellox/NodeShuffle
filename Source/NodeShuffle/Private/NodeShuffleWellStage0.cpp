@@ -280,7 +280,7 @@ void ANodeShuffleSubsystem::EmitWellDeferralCensus()
     if (!bDiag && Key == WellDeferCensusLastKey) { return; }
     WellDeferCensusLastKey = Key;
 
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("WELLH2-DEFERCENSUS pass %d: layout holds %d well entry/entries, of which %d have been ")
         TEXT("dealt a destination. Of those %d dealt: %d placed and %d dealt-but-unplaced (%d of the ")
         TEXT("unplaced are permanently relocation-failed, %d are still live). Waiting distribution over ")
@@ -305,7 +305,7 @@ void ANodeShuffleSubsystem::EmitWellDeferralCensus()
         TEXT("this pass; no reason for any of them is stated, because none was tested."),
         WellAuditPasses, Entries, Dealt, Dealt, Placed, UnplacedDealt, UnplacedFailed, UnplacedLive,
         WaitingSample.Num(), WaitingWithoutSample, WMin, WMed, WMax,
-        PlacedWithSample, PlacedWithoutSample, PMin, PMed, PMax);
+        PlacedWithSample, PlacedWithoutSample, PMin, PMed, PMax); }
 }
 
 // ------------------------------------------------------------------------------------------------

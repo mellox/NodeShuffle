@@ -398,7 +398,7 @@ bool ANodeShuffleSubsystem::RwgTryCaveRedeal(const NodeShuffleMapMode::FRwgGroun
         Entry.bRayCasted = false;
         Entry.bRwgCave = true;
         ++RwgPcCaveRedealCave;
-        UE_LOG(LogNodeShuffle, Verbose, TEXT("RWGCAVEREDEAL: entry %s wasCave=%d -> cave floor %s"), *Entry.EntryGuid.ToString(), bWasCave ? 1 : 0, *C.ToCompactString());
+        if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Verbose, TEXT("RWGCAVEREDEAL: entry %s wasCave=%d -> cave floor %s"), *Entry.EntryGuid.ToString(), bWasCave ? 1 : 0, *C.ToCompactString()); }
         return true;
     }
     if (bWasCave) { ++RwgPcCaveRedealSurface; }
@@ -467,8 +467,8 @@ bool ANodeShuffleSubsystem::RwgResolveCaveAtSpawn(const NodeShuffleMapMode::FRwg
     if (RwgCaveSettleSamples < 8)
     {
         ++RwgCaveSettleSamples;
-        UE_LOG(LogNodeShuffle, Display, TEXT("RWGCAVESETTLE: sample=%d entry=%s floorZ=%.0f traceFromZ=%.0f traceToZ=%.0f hitClass=%d hitZ=%.0f skipped=%d outcome=%s"),
-            RwgCaveSettleSamples, *Entry.EntryGuid.ToString(), FloorZ, S.Z, En.Z, Cls, Cls >= 0 ? Hit.ImpactPoint.Z : RwgNaN(), Skipped, Outcome);
+        if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display, TEXT("RWGCAVESETTLE: sample=%d entry=%s floorZ=%.0f traceFromZ=%.0f traceToZ=%.0f hitClass=%d hitZ=%.0f skipped=%d outcome=%s"),
+            RwgCaveSettleSamples, *Entry.EntryGuid.ToString(), FloorZ, S.Z, En.Z, Cls, Cls >= 0 ? Hit.ImpactPoint.Z : RwgNaN(), Skipped, Outcome); }
     }
     return bSettled;
 }

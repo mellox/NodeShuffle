@@ -111,7 +111,7 @@ void ANodeShuffleSubsystem::EmitWellImmediateHideCensus()
     if (Key == WellImmediateCensusLastKey) { return; }
     WellImmediateCensusLastKey = Key;
 
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("WELLH2-IMMEDIATE pass %d: %d unplaced well entr(ies) were marked as moving by the roll and ")
         TEXT("therefore eligible for an immediate origin hide on THIS pass (an entry already carrying a ")
         TEXT("suppression record is not among them -- it is re-asserted instead and counted on the ")
@@ -141,7 +141,7 @@ void ANodeShuffleSubsystem::EmitWellImmediateHideCensus()
         WellImmediateCaptureIncompleteThisPass,
         WellImmediateSatelliteRecordsHiddenThisPass,
         WellImmediateUncapturedHiddenThisPass,
-        WellImmediateDisableRestoreArmedThisPass);
+        WellImmediateDisableRestoreArmedThisPass); }
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -231,7 +231,7 @@ void ANodeShuffleSubsystem::EmitWellImmediateHideTestPair(bool bRelocationOnThis
     if (Key == WellImmediateTestLastKey) { return; }
     WellImmediateTestLastKey = Key;
 
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("[NodeShuffle][TEST] T54-A %s | T54-B %s -- population: %d unplaced well entr(ies) that the ")
         TEXT("roll marked as moving (relocating, offsets captured, a destination dealt, not terminally ")
         TEXT("failed; well relocation is hard-wired ON since T71, so this pair is measured on every ")
@@ -252,5 +252,5 @@ void ANodeShuffleSubsystem::EmitWellImmediateHideTestPair(bool bRelocationOnThis
         TEXT("supposed to make impossible (%s). Before immediate hide landed T54-A was the DELIBERATELY ")
         TEXT("RED one; after it lands they swap."),
         VerdictA, VerdictB, Candidates, Suppressed, Blocked, Eligible, StillStanding, TookNothing,
-        Unexplained, UnexplainedNames.IsEmpty() ? TEXT("none named") : *UnexplainedNames);
+        Unexplained, UnexplainedNames.IsEmpty() ? TEXT("none named") : *UnexplainedNames); }
 }

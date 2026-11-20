@@ -253,12 +253,12 @@ void FNodeShuffleModule::NoteForeignResourceSighting(const FString& ResourceClas
     // below, i.e. once per distinct resource per session, not per evaluation. It reports the two
     // strings and the branch taken; it does not say why a parse failed, only that it did.
     // Arity hand-counted: 5 format specifiers, 5 arguments.
-    UE_LOG(LogNodeShuffle, Verbose,
+    if (NsDiag(ENsDiag::Veto)) { UE_LOG(LogNodeShuffle, Verbose,
         TEXT("T65LABEL new-resource: path '%s' rendered as label '%s' (mount-and-name parse succeeded ")
         TEXT("%d). Derivations for newly seen resources this session %d, of which fell back to the ")
         TEXT("full path %d."),
         *ResourceClassPath, *Row.DisplayName, bLabelParsed ? 1 : 0,
-        GNodeShuffleLabelsDerivedThisSession, GNodeShuffleLabelFallbacksThisSession);
+        GNodeShuffleLabelsDerivedThisSession, GNodeShuffleLabelFallbacksThisSession); }
 }
 
 bool FNodeShuffleModule::IsForeignResourceProtectedByConfig(const FString& ResourceClassPath)
@@ -563,14 +563,14 @@ static void NodeShuffleSortForeignResourceRows(UConfigPropertyArray* Rows, const
     // about the RENDERED panel -- SML's row widget is Blueprint and C++ cannot see it (runtime test
     // step 2). Count these by anchoring on "T68ROWSORT:".
     // Arity hand-counted: 5 format specifiers, 5 arguments.
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Veto)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("T68ROWSORT: callSite %s rowsInArray %d rowsChangedPosition %d rowsUnreadable %d ")
         TEXT("rowsWithBlankPath %d -- sorted by the content the resource comes from, then by the ")
         TEXT("resource name, both derived from each row's own stored path. The path stays the key ")
         TEXT("everywhere it is read, so position carries no meaning; only the order of entries inside ")
         TEXT("NodeShuffle.cfg changes on the next save. The changed-position count is a LOWER BOUND: two ")
         TEXT("rows carrying the same key that swap with each other cannot be told apart by it."),
-        CallSite, Rows->Values.Num(), Moved, Unreadable, BlankPath);
+        CallSite, Rows->Values.Num(), Moved, Unreadable, BlankPath); }
 }
 
 // ---- ns-scanfilter-4: the three entry points the scanner side uses on this same list. ------------------------------------
@@ -790,11 +790,11 @@ void FNodeShuffleModule::SyncForeignResourceRowsToConfig(UObject* WorldContext)
             Listing += FString::Printf(TEXT("\n    [%d] %s"), i, *FirstSyncLabels[i]);
         }
         // Arity hand-counted: 4 format specifiers, 4 arguments.
-        UE_LOG(LogNodeShuffle, Verbose,
+        if (NsDiag(ENsDiag::Veto)) { UE_LOG(LogNodeShuffle, Verbose,
             TEXT("T65LABEL first-sync listing: showing %d of %d derived row label(s); %d of them fell ")
             TEXT("back to the full path because the mount-and-name parse failed.%s"),
             FMath::Min(FirstSyncLabels.Num(), MaxListedLabels), FirstSyncLabels.Num(),
-            LabelFallbacksThisPass, *Listing);
+            LabelFallbacksThisPass, *Listing); }
     }
 
     // COLD REVIEW F9: A HARD CAP, because nothing prunes. A row whose mod is later uninstalled is KEPT
@@ -851,8 +851,8 @@ void FNodeShuffleModule::SyncForeignResourceRowsToConfig(UObject* WorldContext)
         const bool bShowWritten = ShowProp != nullptr && ShowProp != TemplateShow;
         if (bShowWritten) { ShowProp->Value = NodeShuffleScanFilter::AutoShowValue(WorldContext, Pair.Key, &ShowBasis, nullptr); }
         // Arity hand-counted: 4 format specifiers, 4 arguments.
-        UE_LOG(LogNodeShuffle, Display, TEXT("SCANFILTER-PROTROW resource=%s showFieldWritten=%d showStartsOn=%d startBasis=%s"),
-            *Pair.Key, bShowWritten ? 1 : 0, (bShowWritten && ShowProp->Value) ? 1 : 0, ShowBasis);
+        if (NsDiag(ENsDiag::Scanner)) { UE_LOG(LogNodeShuffle, Display, TEXT("SCANFILTER-PROTROW resource=%s showFieldWritten=%d showStartsOn=%d startBasis=%s"),
+            *Pair.Key, bShowWritten ? 1 : 0, (bShowWritten && ShowProp->Value) ? 1 : 0, ShowBasis); }
         if (UConfigPropertySection* Section = Cast<UConfigPropertySection>(NewElement))
         {
             // T65: the stored key (Pair.Key, the full path) is what the tooltip carries; the trimmed
@@ -861,11 +861,11 @@ void FNodeShuffleModule::SyncForeignResourceRowsToConfig(UObject* WorldContext)
         }
         ++AddedThisPass;
 
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Veto)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("T60: added a protection row for resource '%s' (label '%s', first seen on node class ")
             TEXT("'%s', %d sighting(s) so far). It starts PROTECTED; untick it in the mod settings and ")
             TEXT("reload the save to hand this resource back to the other mod's cleanup."),
-            *Pair.Key, *Pair.Value.DisplayName, *Pair.Value.FirstNodeClassName, Pair.Value.Sightings);
+            *Pair.Key, *Pair.Value.DisplayName, *Pair.Value.FirstNodeClassName, Pair.Value.Sightings); }
 
         // T61 (ns-t61-observe-always): TELL THE PLAYER, once. The queue point is HERE and not at the
         // sighting on purpose -- reaching this line means the row was actually written, so the notice's
@@ -969,10 +969,10 @@ void FNodeShuffleModule::SyncForeignResourceRowsToConfig(UObject* WorldContext)
     {
         // Not a problem -- the designed S1 filter firing. Reported so a reader can tell "the filter
         // saw nothing" from "the filter never ran", which a bare zero above cannot.
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Veto)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("T60: %d distinct resource(s) reached the veto on a VANILLA node class and were kept ")
             TEXT("out of the list (%d sighting(s)) -- those are resource wells NodeShuffle itself ")
             TEXT("retyped, not another mod's resources."),
-            GNodeShuffleS1SuppressedPaths.Num(), GNodeShuffleS1SuppressedSightings);
+            GNodeShuffleS1SuppressedPaths.Num(), GNodeShuffleS1SuppressedSightings); }
     }
 }

@@ -267,9 +267,9 @@ void ANodeShuffleSubsystem::RwgLogProbe()
     UObject* Gen = RwgGenerator.Get();
     if (!IsValid(Gen))
     {
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("RWGPROBE: class='<none found>' props=0 [] classLookup='%s' fallbackActorScans=%d"),
-            GeneratorClassPath, RwgFallbackScans);
+            GeneratorClassPath, RwgFallbackScans); }
         return;
     }
     FString Dump;
@@ -294,8 +294,8 @@ void ANodeShuffleSubsystem::RwgLogProbe()
             ++Listed;
         }
     }
-    UE_LOG(LogNodeShuffle, Display, TEXT("RWGPROBE: class='%s' props=%d listed=%d [%s]"),
-        *RwgGeneratorClassPath, Props, Listed, *Dump);
+    if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display, TEXT("RWGPROBE: class='%s' props=%d listed=%d [%s]"),
+        *RwgGeneratorClassPath, Props, Listed, *Dump); }
 }
 
 void ANodeShuffleSubsystem::RwgObserveTick()
@@ -491,10 +491,10 @@ void ANodeShuffleSubsystem::RwgObserveTick()
     if ((SinceReady % NodeShuffleMapMode::RwgObserveEveryTicks) != 0) { return; }
     int32 Nodes = 0, Fracking = 0, Deposits = 0;
     RwgCountNodes(Nodes, Fracking, Deposits);
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("RWGOBSERVE: t=%.0fs realT=%.0fs nodes=%d fracking=%d deposits=%d changeSinceReady=%d genState='%s' progressStage='%s' contentSpawned=%d fillPct=%d sessionWaterCells=%d sessionCaveCells=%d"),
         T, RealT, Nodes, Fracking, Deposits, Nodes - RwgReadyNodeCount, *GenShown, *StageShown,
-        ContentSpawned, FillPct, WaterGrid.Num(), CaveFloors.Num());
+        ContentSpawned, FillPct, WaterGrid.Num(), CaveFloors.Num()); }
     RwgLogCollision(/*bEmitWater=*/false);
     if (SinceReady > 0 && SinceReady <= NodeShuffleMapMode::RwgReprobeWindowTicks) { RwgLogReprobes(/*bFull=*/false); }
 }

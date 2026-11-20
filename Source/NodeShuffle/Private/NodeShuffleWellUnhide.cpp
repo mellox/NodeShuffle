@@ -229,7 +229,7 @@ bool ANodeShuffleSubsystem::UnhideWellMember(const FString& Path, FNodeShuffleWe
     if (!WellUnhideLogged.Contains(Key))
     {
         WellUnhideLogged.Add(Key);
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH2-UNHIDE core='%s' %s='%s' (%s): restored %d of the %d indexed mesh piece(s) ")
             TEXT("recorded for this member, %d of them to ")
             TEXT("the documented default because no pre-suppression state for that piece exists in this ")
@@ -240,7 +240,7 @@ bool ANodeShuffleSubsystem::UnhideWellMember(const FString& Path, FNodeShuffleWe
             TEXT("RemoveResourceNodeScan_Local has no inverse called here."),
             *CoreLabel, Kind, *WellShort(Path), Why, Restored, IndexedForMember, Guessed,
             bRestoredHidden ? 1 : 0, bRestoredNoCollision ? 1 : 0,
-            bWasDeregistered ? 1 : 0, bReRegistered ? 1 : 0);
+            bWasDeregistered ? 1 : 0, bReRegistered ? 1 : 0); }
     }
     return true;
 }
@@ -280,13 +280,13 @@ bool ANodeShuffleSubsystem::TryUnhideWellGroup(FNodeShuffleWellEntry& E, const T
     if (!WellUnhideLogged.Contains(Key))
     {
         WellUnhideLogged.Add(Key);
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH2-UNHIDE core='%s' (%s): %d of %d member(s) owed a restore at the start of this ")
             TEXT("attempt; %d of %d member(s) are now discharged (a member owing nothing counts as ")
             TEXT("discharged). Intent still pending: %d. A member that is not discharged is one whose ")
             TEXT("original path did not resolve to a live actor on this pass; the intent is persisted and ")
             TEXT("re-attempted every apply pass."),
-            *CoreLabel, Why, Owed, Members, Discharged, Members, bComplete ? 0 : 1);
+            *CoreLabel, Why, Owed, Members, Discharged, Members, bComplete ? 0 : 1); }
     }
     return bComplete;
 }
@@ -498,7 +498,7 @@ void ANodeShuffleSubsystem::EmitWellStrandedCensus()
     if (bPictureChanged)
     {
         WellStrandedCensusLastKey = Key;
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH2-STRANDED pass %d: %d well entr(ies) in the layout, %d of them placed. We hold a ")
             TEXT("suppression record on %d of them; %d of those are placed (correctly suppressed) and %d ")
             TEXT("are NOT placed -- for those the player has no well at either end right now. SINCE T54 ")
@@ -523,7 +523,7 @@ void ANodeShuffleSubsystem::EmitWellStrandedCensus()
             WellAuditPasses, TotalEntries, TotalPlaced, TotalSuppressed, SuppressedAndPlaced,
             SuppressedUnplaced, Failed, NotWorked, StuckAssembling, NoDestination, DeferredNoPlayer,
             VoidProbing, Searching, UnhidePending,
-            WorstPasses, WorstCore.IsEmpty() ? TEXT("<none>") : *WorstCore);
+            WorstPasses, WorstCore.IsEmpty() ? TEXT("<none>") : *WorstCore); }
     }
 
     // THE WARNING BUCKET. Must read zero in a healthy save. Re-printed when the picture changes and, if

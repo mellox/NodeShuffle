@@ -1,0 +1,1020 @@
+# ns-quietlog-1 DRAFT site classification. Generated 2026-11-20 from NodeShuffle Source @ f32bb1c by an enumeration script
+# (comment- and string-aware scan for the UE_LOG + LogNodeShuffle needle). One row per site. key = file|verbosity|tag-or-format32|ordinal.
+# line = line at f32bb1c (informative only; the lint keys on `key`). oldgate = heuristic scan of today's EnableDiagnostics gating
+# (block/prefix/earlyret/caller = gated by scope scan; dual = an OR/negated condition; mention = gate token elsewhere in function, scope unproven).
+# b19/b16 = bytes this site wrote in the 2026-11-19 / 2026-11-16 logs (format-regex attribution, 100% of NS bytes matched).
+key	class	topic	verb	file	line	function	oldgate	b19	b16	rule
+NodeShuffle.cpp|Display|HERE|1	ONDEMAND		Display	NodeShuffle.cpp	49	CONSOLE:NodeShuffle.Here	none	0	0	R2-typed-command
+NodeShuffle.cpp|Display|CHATPROBE|1	ONDEMAND		Display	NodeShuffle.cpp	65	CONSOLE:NodeShuffle.ChatProbe	none	0	0	R2-typed-command
+NodeShuffle.cpp|Display|NEARESTCAVE|1	ONDEMAND		Display	NodeShuffle.cpp	82	CONSOLE:NodeShuffle.NearestCave	none	0	0	R2-typed-command
+NodeShuffle.cpp|Display|SEEDHERE|1	ONDEMAND		Display	NodeShuffle.cpp	98	CONSOLE:NodeShuffle.SeedHere	none	0	0	R2-typed-command
+NodeShuffle.cpp|Display|T68VETOGATE|1	ALWAYS		Display	NodeShuffle.cpp	325	ArmDestroyerVetoIfEnabled	none	453	906	R4-once-per-session-or-operation
+NodeShuffle.cpp|Display|veto: KBFL is not installed — th|1	ALWAYS		Display	NodeShuffle.cpp	341	ArmDestroyerVetoIfEnabled	none	201	0	R4-once-per-session-or-operation
+NodeShuffle.cpp|Display|veto: KBFL module present|1	ALWAYS		Display	NodeShuffle.cpp	346	ArmDestroyerVetoIfEnabled	none	0	164	R4-once-per-session-or-operation
+NodeShuffle.cpp|Warning|veto: NodeShuffleVetoKBFL module|1	ALWAYS		Warning	NodeShuffle.cpp	355	ArmDestroyerVetoIfEnabled	none	0	0	R1-warn-error
+NodeShuffle.cpp|Display|HOLOGRAMHOOK|1	MASTER	Hologram	Display	NodeShuffle.cpp	371	LogCompCollision	caller	0	85	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffle.cpp|Display|HOLOGRAMHOOK|2	MASTER	Hologram	Display	NodeShuffle.cpp	377	LogCompCollision	caller	0	13480	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffle.cpp|Display|HOLOGRAMHOOK|3	MASTER	Hologram	Display	NodeShuffle.cpp	404	DbgLogAcceptance	earlyret	0	2605	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffle.cpp|Display|HOLOGRAMHOOK|4	MASTER	Hologram	Display	NodeShuffle.cpp	413	DbgLogAcceptance	earlyret	0	3141	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffle.cpp|Display|HOLOGRAMHOOK|5	MASTER	Hologram	Display	NodeShuffle.cpp	440	DbgLogAcceptance	earlyret	0	4448	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffle.cpp|Display|HOLOGRAMHOOK|6	MASTER	Hologram	Display	NodeShuffle.cpp	451	DbgLogAcceptance	earlyret	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffle.cpp|Log|NodeShuffle module loaded|1	ALWAYS		Log	NodeShuffle.cpp	600	StartupModule	none	73	73	R4-once-per-session-or-operation
+NodeShuffle.cpp|Display|===== NodeShuffle 1.4.0 LOADED (|1	ALWAYS		Display	NodeShuffle.cpp	606	StartupModule	none	121	121	R4-once-per-session-or-operation
+NodeShuffle.cpp|Display|===== NodeShuffle packet marker |1	ALWAYS		Display	NodeShuffle.cpp	607	StartupModule	none	123	123	R4-once-per-session-or-operation
+NodeShuffle.cpp|Display|===== NodeShuffle packet marker |2	ALWAYS		Display	NodeShuffle.cpp	608	StartupModule	none	121	121	R4-once-per-session-or-operation
+NodeShuffle.cpp|Display|===== NodeShuffle packet marker |3	ALWAYS		Display	NodeShuffle.cpp	609	StartupModule	none	122	122	R4-once-per-session-or-operation
+NodeShuffle.cpp|Display|===== NodeShuffle packet marker |4	ALWAYS		Display	NodeShuffle.cpp	610	StartupModule	none	124	124	R4-once-per-session-or-operation
+NodeShuffle.cpp|Display|===== NodeShuffle packet marker |5	ALWAYS		Display	NodeShuffle.cpp	611	StartupModule	none	120	120	R4-once-per-session-or-operation
+NodeShuffle.cpp|Display|===== NodeShuffle packet marker |6	ALWAYS		Display	NodeShuffle.cpp	612	StartupModule	none	125	125	R4-once-per-session-or-operation
+NodeShuffle.cpp|Display|===== NodeShuffle packet marker |7	ALWAYS		Display	NodeShuffle.cpp	613	StartupModule	none	122	122	R4-once-per-session-or-operation
+NodeShuffle.cpp|Display|===== NodeShuffle packet marker |8	ALWAYS		Display	NodeShuffle.cpp	614	StartupModule	none	125	125	R4-once-per-session-or-operation
+NodeShuffle.cpp|Display|===== NodeShuffle packet marker |9	ALWAYS		Display	NodeShuffle.cpp	615	StartupModule	none	121	121	R4-once-per-session-or-operation
+NodeShuffle.cpp|Display|===== NodeShuffle packet marker |10	ALWAYS		Display	NodeShuffle.cpp	616	StartupModule	none	121	121	R4-once-per-session-or-operation
+NodeShuffle.cpp|Display|===== NodeShuffle packet marker |11	ALWAYS		Display	NodeShuffle.cpp	617	StartupModule	none	120	120	R4-once-per-session-or-operation
+NodeShuffle.cpp|Display|===== NodeShuffle packet marker |12	ALWAYS		Display	NodeShuffle.cpp	618	StartupModule	none	121	121	R4-once-per-session-or-operation
+NodeShuffle.cpp|Display|===== NodeShuffle packet marker |13	ALWAYS		Display	NodeShuffle.cpp	619	StartupModule	none	121	121	R4-once-per-session-or-operation
+NodeShuffle.cpp|Display|===== NodeShuffle packet marker |14	ALWAYS		Display	NodeShuffle.cpp	620	StartupModule	none	118	118	R4-once-per-session-or-operation
+NodeShuffle.cpp|Display|===== NodeShuffle packet marker |15	ALWAYS		Display	NodeShuffle.cpp	621	StartupModule	none	118	118	R4-once-per-session-or-operation
+NodeShuffle.cpp|Display|===== NodeShuffle packet marker |16	ALWAYS		Display	NodeShuffle.cpp	622	StartupModule	none	117	117	R4-once-per-session-or-operation
+NodeShuffle.cpp|Display|===== NodeShuffle packet marker |17	ALWAYS		Display	NodeShuffle.cpp	623	StartupModule	none	114	114	R4-once-per-session-or-operation
+NodeShuffle.cpp|Display|===== NodeShuffle packet marker |18	ALWAYS		Display	NodeShuffle.cpp	624	StartupModule	none	118	118	R4-once-per-session-or-operation
+NodeShuffle.cpp|Display|===== NodeShuffle packet marker |19	ALWAYS		Display	NodeShuffle.cpp	625	StartupModule	none	119	119	R4-once-per-session-or-operation
+NodeShuffle.cpp|Display|===== NodeShuffle packet marker |20	ALWAYS		Display	NodeShuffle.cpp	626	StartupModule	none	119	119	R4-once-per-session-or-operation
+NodeShuffle.cpp|Display|===== NodeShuffle packet marker |21	ALWAYS		Display	NodeShuffle.cpp	627	StartupModule	none	119	119	R4-once-per-session-or-operation
+NodeShuffle.cpp|Display|===== NodeShuffle packet marker |22	ALWAYS		Display	NodeShuffle.cpp	628	StartupModule	none	119	119	R4-once-per-session-or-operation
+NodeShuffle.cpp|Display|===== NodeShuffle packet marker |23	ALWAYS		Display	NodeShuffle.cpp	629	StartupModule	none	118	118	R4-once-per-session-or-operation
+NodeShuffle.cpp|Display|===== NodeShuffle packet marker |24	ALWAYS		Display	NodeShuffle.cpp	630	StartupModule	none	118	118	R4-once-per-session-or-operation
+NodeShuffle.cpp|Display|===== NodeShuffle packet marker |25	ALWAYS		Display	NodeShuffle.cpp	631	StartupModule	none	115	115	R4-once-per-session-or-operation
+NodeShuffle.cpp|Display|===== NodeShuffle packet marker |26	ALWAYS		Display	NodeShuffle.cpp	632	StartupModule	none	117	0	R4-once-per-session-or-operation
+NodeShuffle.cpp|Display|HOLOGRAMHOOK|7	MASTER	Hologram	Display	NodeShuffle.cpp	664	StartupModule	earlyret	0	10606	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffle.cpp|Display|HOLOGRAMHOOK|8	MASTER	Hologram	Display	NodeShuffle.cpp	689	StartupModule	earlyret	0	3433	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffle.cpp|Display|HOLOGRAMHOOK|9	MASTER	Hologram	Display	NodeShuffle.cpp	707	StartupModule	earlyret	0	7407	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffle.cpp|Display|HOLOGRAMHOOK|10	MASTER	Hologram	Display	NodeShuffle.cpp	745	StartupModule	earlyret	0	11659	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffle.cpp|Display|HOLOGRAMHOOK|11	MASTER	Hologram	Display	NodeShuffle.cpp	786	StartupModule	earlyret	0	9229	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffle.cpp|Display|HOLOGRAMHOOK|12	MASTER	Hologram	Display	NodeShuffle.cpp	802	StartupModule	earlyret	0	3424	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffle.cpp|Display|HOLOGRAMHOOK|13	MASTER	Hologram	Display	NodeShuffle.cpp	826	StartupModule	earlyret	0	8028	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffle.cpp|Display|ISOURNODE|1	MASTER	Hologram	Display	NodeShuffle.cpp	875	StartupModule	block	0	39204	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffle.cpp|Display|HOLOGRAMHOOK|14	MASTER	Hologram	Display	NodeShuffle.cpp	921	StartupModule	block	0	3629	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffle.cpp|Display|HOLOGRAMHOOK|15	MASTER	Hologram	Display	NodeShuffle.cpp	959	StartupModule	block	0	4048	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffle.cpp|Display|SCANDIAG|1	ALWAYS		Display	NodeShuffle.cpp	1018	StartupModule	dual	246	10209	R8d-own-condition-OR-master: prints with the master off when its own condition holds; left byte-identical (rules said TOPIC Scanner)
+NodeShuffle.cpp|Display|SCANFILTER-HOOK|1	ALWAYS		Display	NodeShuffle.cpp	1035	StartupModule	mention	141	141	R4-once-per-session-or-operation VERIFY-gate-token-earlier-in-function
+NodeShuffle.cpp|Display|SCANFILTER-PICKHOOK|1	ALWAYS		Display	NodeShuffle.cpp	1047	StartupModule	mention	139	139	R4-once-per-session-or-operation VERIFY-gate-token-earlier-in-function
+NodeShuffle.cpp|Display|SCANDIAG|2	ALWAYS		Display	NodeShuffle.cpp	1098	StartupModule	dual	0	0	R8d-own-condition-OR-master: prints with the master off when its own condition holds; left byte-identical (rules said TOPIC Scanner)
+NodeShuffle.cpp|Display|SCANDIAG|3	MASTER	Scanner	Display	NodeShuffle.cpp	1115	StartupModule	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffle.cpp|Display|SCANDIAG|4	MASTER	Scanner	Display	NodeShuffle.cpp	1132	StartupModule	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffle.cpp|Display|PORTABLE-SURFACE|1	MASTER	Hologram	Display	NodeShuffle.cpp	1177	StartupModule	block	1421	4715	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleAdoptAudit.cpp|Display|ADOPTMISS|1	ALWAYS		Display	NodeShuffleAdoptAudit.cpp	98	AdoptAuditEmit	none	0	0	R0-pinned-ungated adopt A2 (rules said TOPIC Spawn: NAMED DECISION)
+NodeShuffleAdoptAudit.cpp|Display|ADOPTCENSUS|1	ALWAYS		Display	NodeShuffleAdoptAudit.cpp	121	AdoptAuditEmit	none	356	718	R0-pinned-ungated adopt A2 (agrees)
+NodeShuffleAdoptAudit.cpp|Display|ADOPTCLASS|1	ALWAYS		Display	NodeShuffleAdoptAudit.cpp	147	AdoptAuditEmit	none	174	12663	R0-pinned-ungated rerolldup2 V10 (agrees)
+NodeShuffleAuditPlacements.cpp|Display|AUDITPLACEMENTS|1	ONDEMAND		Display	NodeShuffleAuditPlacements.cpp	119	CONSOLE:NodeShuffle.AuditPlacements	none	0	0	R2-typed-command
+NodeShuffleAuditPlacements.cpp|Display|AUDITPLACEMENTS|2	ONDEMAND		Display	NodeShuffleAuditPlacements.cpp	129	CONSOLE:NodeShuffle.AuditPlacements	none	0	0	R2-typed-command
+NodeShuffleAuditPlacements.cpp|Display|AUDITPLACEMENTS|3	ONDEMAND		Display	NodeShuffleAuditPlacements.cpp	139	StartPlacementAudit	none	0	0	R2-typed-command
+NodeShuffleAuditPlacements.cpp|Display|AUDITPLACEMENTS|4	ONDEMAND		Display	NodeShuffleAuditPlacements.cpp	145	StartPlacementAudit	none	0	0	R2-typed-command
+NodeShuffleAuditPlacements.cpp|Display|===== AUDITPLACEMENTS BEGIN ====|1	ONDEMAND		Display	NodeShuffleAuditPlacements.cpp	161	StartPlacementAudit	none	0	0	R2-typed-command
+NodeShuffleAuditPlacements.cpp|Display|AUDITCENSUS|1	ONDEMAND		Display	NodeShuffleAuditPlacements.cpp	327	PlacementAuditTick	none	0	0	R2-typed-command
+NodeShuffleAuditPlacements.cpp|Display|AUDITPLACEMENTS|5	ONDEMAND		Display	NodeShuffleAuditPlacements.cpp	381	PlacementAuditTick	none	0	0	R2-typed-command
+NodeShuffleAuditPlacements.cpp|Display|===== AUDITPLACEMENTS COMPLETE =|1	ONDEMAND		Display	NodeShuffleAuditPlacements.cpp	389	PlacementAuditTick	none	0	0	R2-typed-command
+NodeShuffleAutoAllowExtractors.cpp|Display|AUTOALLOW|1	ALWAYS		Display	NodeShuffleAutoAllowExtractors.cpp	291	LogAutoAllowExtractorsState	none	429	429	R4-once-per-session-or-operation
+NodeShuffleAutoAllowExtractors.cpp|Error|AUTOALLOW|1	ALWAYS		Error	NodeShuffleAutoAllowExtractors.cpp	319	RunAutoAllowExtractorsIfEnabled	none	0	0	R1-warn-error
+NodeShuffleAutoAllowExtractors.cpp|Warning|AUTOALLOW|1	ALWAYS		Warning	NodeShuffleAutoAllowExtractors.cpp	332	RunAutoAllowExtractorsIfEnabled	none	0	0	R1-warn-error
+NodeShuffleAutoAllowExtractors.cpp|Warning|AUTOALLOW|2	ALWAYS		Warning	NodeShuffleAutoAllowExtractors.cpp	361	RunAutoAllowExtractorsIfEnabled	none	0	0	R1-warn-error
+NodeShuffleAutoAllowExtractors.cpp|Verbose|AUTOALLOW|1	ALWAYS		Verbose	NodeShuffleAutoAllowExtractors.cpp	370	RunAutoAllowExtractorsIfEnabled	none	0	0	R4-once-per-session-or-operation
+NodeShuffleAutoAllowExtractors.cpp|Display|AUTOALLOW|2	ALWAYS		Display	NodeShuffleAutoAllowExtractors.cpp	391	RunAutoAllowExtractorsIfEnabled	none	381	358	R4-once-per-session-or-operation
+NodeShuffleAutoAllowExtractors.cpp|Verbose|AUTOALLOW|2	ALWAYS		Verbose	NodeShuffleAutoAllowExtractors.cpp	400	RunAutoAllowExtractorsIfEnabled	none	0	155	R4-once-per-session-or-operation
+NodeShuffleAutoAllowExtractors.cpp|Display|AUTOALLOW|3	ALWAYS		Display	NodeShuffleAutoAllowExtractors.cpp	420	RunAutoAllowExtractorsIfEnabled	none	0	0	R4-once-per-session-or-operation
+NodeShuffleAutoAllowExtractors.cpp|Verbose|AUTOALLOW|3	ALWAYS		Verbose	NodeShuffleAutoAllowExtractors.cpp	427	RunAutoAllowExtractorsIfEnabled	none	0	0	R4-once-per-session-or-operation
+NodeShuffleAutoAllowExtractors.cpp|Display|AUTOALLOW|4	ALWAYS		Display	NodeShuffleAutoAllowExtractors.cpp	438	RunAutoAllowExtractorsIfEnabled	none	0	0	R4-once-per-session-or-operation
+NodeShuffleAutoAllowExtractors.cpp|Display|AUTOALLOW|5	ALWAYS		Display	NodeShuffleAutoAllowExtractors.cpp	445	RunAutoAllowExtractorsIfEnabled	none	154	308	R4-once-per-session-or-operation
+NodeShuffleAutoAllowExtractors.cpp|Display|AUTOALLOW|6	ALWAYS		Display	NodeShuffleAutoAllowExtractors.cpp	461	RunAutoAllowExtractorsIfEnabled	none	0	0	R4-once-per-session-or-operation
+NodeShuffleAutoAllowExtractors.cpp|Display|AUTOALLOW|7	ALWAYS		Display	NodeShuffleAutoAllowExtractors.cpp	486	RunAutoAllowExtractorsIfEnabled	none	0	0	R4-once-per-session-or-operation
+NodeShuffleAutoAllowExtractors.cpp|Warning|AUTOALLOW|3	ALWAYS		Warning	NodeShuffleAutoAllowExtractors.cpp	506	RunAutoAllowExtractorsIfEnabled	none	0	0	R1-warn-error
+NodeShuffleAutoAllowExtractors.cpp|Warning|AUTOALLOW|4	ALWAYS		Warning	NodeShuffleAutoAllowExtractors.cpp	535	RunAutoAllowExtractorsIfEnabled	none	0	0	R1-warn-error
+NodeShuffleAutoAllowExtractors.cpp|Display|AUTOALLOW|8	ALWAYS		Display	NodeShuffleAutoAllowExtractors.cpp	754	RunAutoAllowExtractorsIfEnabled	none	0	0	R4-once-per-session-or-operation
+NodeShuffleAutoAllowExtractors.cpp|Display|AUTOALLOW|9	ALWAYS		Display	NodeShuffleAutoAllowExtractors.cpp	795	RunAutoAllowExtractorsIfEnabled	none	0	0	R4-once-per-session-or-operation
+NodeShuffleAutoAllowExtractors.cpp|Display|AUTOALLOW|10	ALWAYS		Display	NodeShuffleAutoAllowExtractors.cpp	831	RunAutoAllowExtractorsIfEnabled	none	0	0	R4-once-per-session-or-operation
+NodeShuffleAutoAllowExtractors.cpp|Warning|AUTOALLOW|5	ALWAYS		Warning	NodeShuffleAutoAllowExtractors.cpp	893	RunAutoAllowExtractorsIfEnabled	none	0	0	R1-warn-error
+NodeShuffleAutoAllowExtractors.cpp|Warning|PENDINGNOTICE|1	ALWAYS		Warning	NodeShuffleAutoAllowExtractors.cpp	903	RunAutoAllowExtractorsIfEnabled	none	0	0	R1-warn-error
+NodeShuffleAutoAllowExtractors.cpp|Error|AUTOALLOW|2	ALWAYS		Error	NodeShuffleAutoAllowExtractors.cpp	911	RunAutoAllowExtractorsIfEnabled	none	0	0	R1-warn-error
+NodeShuffleAutoAllowExtractors.cpp|Display|AUTOALLOW|11	ALWAYS		Display	NodeShuffleAutoAllowExtractors.cpp	980	RunAutoAllowExtractorsIfEnabled	none	0	0	R4-once-per-session-or-operation
+NodeShuffleAutoAllowExtractors.cpp|Display|AUTOALLOW|12	ALWAYS		Display	NodeShuffleAutoAllowExtractors.cpp	998	RunAutoAllowExtractorsIfEnabled	none	0	0	R4-once-per-session-or-operation
+NodeShuffleAutoAllowExtractors.cpp|Error|AUTOALLOW|3	ALWAYS		Error	NodeShuffleAutoAllowExtractors.cpp	1008	RunAutoAllowExtractorsIfEnabled	none	0	0	R1-warn-error
+NodeShuffleAutoAllowExtractors.cpp|Error|AUTOALLOW|4	ALWAYS		Error	NodeShuffleAutoAllowExtractors.cpp	1036	RunAutoAllowExtractorsIfEnabled	none	0	0	R1-warn-error
+NodeShuffleAutoAllowExtractors.cpp|Error|AUTOALLOW|5	ALWAYS		Error	NodeShuffleAutoAllowExtractors.cpp	1074	RunAutoAllowExtractorsIfEnabled	none	0	0	R1-warn-error
+NodeShuffleAutoAllowExtractors.cpp|Display|AUTOALLOW|13	ALWAYS		Display	NodeShuffleAutoAllowExtractors.cpp	1139	RunAutoAllowExtractorsIfEnabled	none	0	0	R4-once-per-session-or-operation
+NodeShuffleAutoAllowExtractors.cpp|Error|AUTOALLOW|6	ALWAYS		Error	NodeShuffleAutoAllowExtractors.cpp	1158	RunAutoAllowExtractorsIfEnabled	none	0	0	R1-warn-error
+NodeShuffleAutoAllowExtractors.cpp|Display|AUTOALLOW|14	ALWAYS		Display	NodeShuffleAutoAllowExtractors.cpp	1175	RunAutoAllowExtractorsIfEnabled	none	0	0	R4-once-per-session-or-operation
+NodeShuffleAutoAllowExtractors.cpp|Display|AUTOALLOW|15	ALWAYS		Display	NodeShuffleAutoAllowExtractors.cpp	1232	RunAutoAllowExtractorsIfEnabled	none	0	0	R4-once-per-session-or-operation
+NodeShuffleAutoAllowExtractors.cpp|Display|PENDINGNOTICE|1	ALWAYS		Display	NodeShuffleAutoAllowExtractors.cpp	1254	RunAutoAllowExtractorsIfEnabled	none	0	0	R10-may-run-before-BeginPlay (master unknown there; keeps EnableDiagnostics=true parity) VERIFY-timing
+NodeShuffleAutoAllowExtractors.cpp|Display|PENDINGNOTICE|2	ALWAYS		Display	NodeShuffleAutoAllowExtractors.cpp	1270	RunAutoAllowExtractorsIfEnabled	none	0	0	R10-may-run-before-BeginPlay (master unknown there; keeps EnableDiagnostics=true parity) VERIFY-timing
+NodeShuffleAutoAllowExtractors.cpp|Display|PENDINGNOTICE|3	ALWAYS		Display	NodeShuffleAutoAllowExtractors.cpp	1276	RunAutoAllowExtractorsIfEnabled	none	0	0	R10-may-run-before-BeginPlay (master unknown there; keeps EnableDiagnostics=true parity) VERIFY-timing
+NodeShuffleAutoAllowExtractors.cpp|Warning|PENDINGNOTICE|2	ALWAYS		Warning	NodeShuffleAutoAllowExtractors.cpp	1289	RunAutoAllowExtractorsIfEnabled	none	0	0	R1-warn-error
+NodeShuffleCentreContainment.cpp|Verbose|CENTRESHADOW|1	TOPIC	Gates	Verbose	NodeShuffleCentreContainment.cpp	494	IsPointInsideSolidShadowForDiag	none	0	0	R5-topic-by-tag
+NodeShuffleCentreShadowLog.cpp|Display|%s: %s -- SHADOW centre-containm|1	INHERIT		Display	NodeShuffleCentreShadowLog.cpp	25	LogCentreShadowReading	none	0	0	R3-shared-helper
+NodeShuffleCentreShadowLog.cpp|Display|%s: %s -- shadow trust, exclusio|1	INHERIT		Display	NodeShuffleCentreShadowLog.cpp	66	LogCentreShadowReading	none	0	0	R3-shared-helper
+NodeShuffleCentreShadowLog.cpp|Display|%s: %s -- SHADOWCROSS: a per-hit|1	INHERIT		Display	NodeShuffleCentreShadowLog.cpp	134	LogCentreShadowReading	none	0	0	R3-shared-helper
+NodeShuffleCentreShadowLog.cpp|Display|%s: %s -- SHADOWCROSS legend. Th|1	INHERIT		Display	NodeShuffleCentreShadowLog.cpp	144	LogCentreShadowReading	none	0	0	R3-shared-helper
+NodeShuffleCentreShadowLog.cpp|Display|%s: %s -- %s|1	INHERIT		Display	NodeShuffleCentreShadowLog.cpp	182	LogCentreShadowReading	none	1324	4322	R3-shared-helper
+NodeShuffleCentreShadowLog.cpp|Display|%s: %s -- SHADOWCROSS summary, a|1	INHERIT		Display	NodeShuffleCentreShadowLog.cpp	192	LogCentreShadowReading	none	0	0	R3-shared-helper
+NodeShuffleChatProbe.cpp|Display|CHATPROBE|1	ONDEMAND		Display	NodeShuffleChatProbe.cpp	26	RunChatProbe	none	0	0	R2-typed-command
+NodeShuffleChatProbe.cpp|Display|CHATPROBE-LIMITS|1	ONDEMAND		Display	NodeShuffleChatProbe.cpp	49	RunChatProbe	none	0	0	R2-typed-command
+NodeShuffleChatProbe.cpp|Display|CHATPROBE|2	ONDEMAND		Display	NodeShuffleChatProbe.cpp	53	RunChatProbe	none	0	0	R2-typed-command
+NodeShuffleChatProbe.cpp|Display|CHATPROBE|3	ONDEMAND		Display	NodeShuffleChatProbe.cpp	63	ChatProbeStep	none	0	0	R2-typed-command
+NodeShuffleChatProbe.cpp|Display|CHATPROBE[%d]: variant=%s type=%|1	ONDEMAND		Display	NodeShuffleChatProbe.cpp	91	ChatProbeStep	none	0	0	R2-typed-command
+NodeShuffleExtractorDump.cpp|Display|DUMPEXTRACTORS|1	ONDEMAND		Display	NodeShuffleExtractorDump.cpp	95	CollectExtractorClasses	none	0	0	R2-typed-command
+NodeShuffleExtractorDump.cpp|Warning|DUMPEXTRACTORS|1	ALWAYS		Warning	NodeShuffleExtractorDump.cpp	118	CollectExtractorClasses	none	0	0	R1-warn-error
+NodeShuffleExtractorDump.cpp|Display|DUMPEXTRACTORS|2	ONDEMAND		Display	NodeShuffleExtractorDump.cpp	137	CONSOLE:NodeShuffle.DumpExtractors	none	0	0	R2-typed-command
+NodeShuffleExtractorDump.cpp|Display|===== DUMPEXTRACTORS BEGIN =====|1	ONDEMAND		Display	NodeShuffleExtractorDump.cpp	141	CONSOLE:NodeShuffle.DumpExtractors	none	0	0	R2-typed-command
+NodeShuffleExtractorDump.cpp|Display|DUMPEXTRACTORS|3	ONDEMAND		Display	NodeShuffleExtractorDump.cpp	151	CONSOLE:NodeShuffle.DumpExtractors	none	0	0	R2-typed-command
+NodeShuffleExtractorDump.cpp|Warning|DUMPEXTRACTORS|2	ALWAYS		Warning	NodeShuffleExtractorDump.cpp	157	CONSOLE:NodeShuffle.DumpExtractors	none	0	0	R1-warn-error
+NodeShuffleExtractorDump.cpp|Display|DUMPEXTRACTORS|4	ONDEMAND		Display	NodeShuffleExtractorDump.cpp	164	CONSOLE:NodeShuffle.DumpExtractors	none	0	0	R2-typed-command
+NodeShuffleExtractorDump.cpp|Display|DUMPEXTRACTORS|5	ONDEMAND		Display	NodeShuffleExtractorDump.cpp	179	CONSOLE:NodeShuffle.DumpExtractors	none	0	0	R2-typed-command
+NodeShuffleExtractorDump.cpp|Display|DUMPEXTRACTORS|6	ONDEMAND		Display	NodeShuffleExtractorDump.cpp	184	CONSOLE:NodeShuffle.DumpExtractors	none	0	0	R2-typed-command
+NodeShuffleExtractorDump.cpp|Warning|DUMPEXTRACTORS|3	ALWAYS		Warning	NodeShuffleExtractorDump.cpp	199	CONSOLE:NodeShuffle.DumpExtractors	none	0	0	R1-warn-error
+NodeShuffleExtractorDump.cpp|Display|EXTRACTOR|1	ONDEMAND		Display	NodeShuffleExtractorDump.cpp	214	CONSOLE:NodeShuffle.DumpExtractors	none	0	0	R2-typed-command
+NodeShuffleExtractorDump.cpp|Display|===== LIQUID-CAPABLE EXTRACTORS |1	ONDEMAND		Display	NodeShuffleExtractorDump.cpp	231	CONSOLE:NodeShuffle.DumpExtractors	none	0	0	R2-typed-command
+NodeShuffleExtractorDump.cpp|Display|LIQUID-CAPABLE|1	ONDEMAND		Display	NodeShuffleExtractorDump.cpp	236	CONSOLE:NodeShuffle.DumpExtractors	none	0	0	R2-typed-command
+NodeShuffleExtractorDump.cpp|Display|DUMPEXTRACTORS|7	ONDEMAND		Display	NodeShuffleExtractorDump.cpp	245	CONSOLE:NodeShuffle.DumpExtractors	none	0	0	R2-typed-command
+NodeShuffleExtractorDump.cpp|Display|NODE|1	ONDEMAND		Display	NodeShuffleExtractorDump.cpp	253	CONSOLE:NodeShuffle.DumpExtractors	none	0	0	R2-typed-command
+NodeShuffleExtractorDump.cpp|Display|===== LIQUID NODE GROUPS (form=L|1	ONDEMAND		Display	NodeShuffleExtractorDump.cpp	259	CONSOLE:NodeShuffle.DumpExtractors	none	0	0	R2-typed-command
+NodeShuffleExtractorDump.cpp|Display|===== MATCH MATRIX: %d extractor|1	ONDEMAND		Display	NodeShuffleExtractorDump.cpp	266	CONSOLE:NodeShuffle.DumpExtractors	none	0	0	R2-typed-command
+NodeShuffleExtractorDump.cpp|Display|MATCHMATRIX|1	ONDEMAND		Display	NodeShuffleExtractorDump.cpp	279	CONSOLE:NodeShuffle.DumpExtractors	none	0	0	R2-typed-command
+NodeShuffleExtractorDump.cpp|Display|===== DUMPEXTRACTORS END =====|1	ONDEMAND		Display	NodeShuffleExtractorDump.cpp	293	CONSOLE:NodeShuffle.DumpExtractors	none	0	0	R2-typed-command
+NodeShuffleForeignProtectConfig.cpp|Verbose|T65LABEL|1	TOPIC	Veto	Verbose	NodeShuffleForeignProtectConfig.cpp	256	NoteForeignResourceSighting	none	0	0	R5-topic-by-tag
+NodeShuffleForeignProtectConfig.cpp|Warning|T60|1	ALWAYS		Warning	NodeShuffleForeignProtectConfig.cpp	409	LatchForeignResourceOptOutsFromConfig	none	0	0	R1-warn-error
+NodeShuffleForeignProtectConfig.cpp|Display|T60CENSUS|1	ALWAYS		Display	NodeShuffleForeignProtectConfig.cpp	442	LatchForeignResourceOptOutsFromConfig	none	158	316	R4-once-per-session-or-operation
+NodeShuffleForeignProtectConfig.cpp|Display|T68ROWSORT|1	TOPIC	Veto	Display	NodeShuffleForeignProtectConfig.cpp	566	NodeShuffleSortForeignResourceRows	none	1139	1710	R5-topic-by-tag
+NodeShuffleForeignProtectConfig.cpp|Warning|T67MENUSTAMP|1	ALWAYS		Warning	NodeShuffleForeignProtectConfig.cpp	606	StampForeignResourceRowLabelsFromConfig	none	0	0	R1-warn-error
+NodeShuffleForeignProtectConfig.cpp|Display|T67MENUSTAMP|1	ALWAYS		Display	NodeShuffleForeignProtectConfig.cpp	643	StampForeignResourceRowLabelsFromConfig	none	163	163	R10-may-run-before-BeginPlay (master unknown there; keeps EnableDiagnostics=true parity) VERIFY-timing
+NodeShuffleForeignProtectConfig.cpp|Warning|T60|2	ALWAYS		Warning	NodeShuffleForeignProtectConfig.cpp	670	SyncForeignResourceRowsToConfig	none	0	0	R1-warn-error
+NodeShuffleForeignProtectConfig.cpp|Display|T65ROUNDTRIP|1	ALWAYS		Display	NodeShuffleForeignProtectConfig.cpp	775	SyncForeignResourceRowsToConfig	none	240	480	R4-once-per-session-or-operation
+NodeShuffleForeignProtectConfig.cpp|Verbose|T65LABEL|2	TOPIC	Veto	Verbose	NodeShuffleForeignProtectConfig.cpp	793	SyncForeignResourceRowsToConfig	none	201	402	R5-topic-by-tag
+NodeShuffleForeignProtectConfig.cpp|Warning|T60|3	ALWAYS		Warning	NodeShuffleForeignProtectConfig.cpp	823	SyncForeignResourceRowsToConfig	none	0	0	R1-warn-error
+NodeShuffleForeignProtectConfig.cpp|Display|SCANFILTER-PROTROW|1	TOPIC	Scanner	Display	NodeShuffleForeignProtectConfig.cpp	854	SyncForeignResourceRowsToConfig	none	0	0	R5-topic-by-tag
+NodeShuffleForeignProtectConfig.cpp|Display|T60|1	TOPIC	Veto	Display	NodeShuffleForeignProtectConfig.cpp	864	SyncForeignResourceRowsToConfig	none	0	0	R5-topic-by-tag
+NodeShuffleForeignProtectConfig.cpp|Error|T60|1	ALWAYS		Error	NodeShuffleForeignProtectConfig.cpp	896	SyncForeignResourceRowsToConfig	none	0	0	R1-warn-error
+NodeShuffleForeignProtectConfig.cpp|Warning|T60|4	ALWAYS		Warning	NodeShuffleForeignProtectConfig.cpp	906	SyncForeignResourceRowsToConfig	none	0	0	R1-warn-error
+NodeShuffleForeignProtectConfig.cpp|Display|T60CENSUS|2	ALWAYS		Display	NodeShuffleForeignProtectConfig.cpp	948	SyncForeignResourceRowsToConfig	none	260	520	R4-once-per-session-or-operation
+NodeShuffleForeignProtectConfig.cpp|Warning|T60|5	ALWAYS		Warning	NodeShuffleForeignProtectConfig.cpp	964	SyncForeignResourceRowsToConfig	none	0	0	R1-warn-error
+NodeShuffleForeignProtectConfig.cpp|Display|T60|2	TOPIC	Veto	Display	NodeShuffleForeignProtectConfig.cpp	972	SyncForeignResourceRowsToConfig	none	0	0	R5-topic-by-tag
+NodeShuffleGroundIdentity.cpp|Display|%s: GROUND-TRACE HIT IDENTITY fo|1	INHERIT		Display	NodeShuffleGroundIdentity.cpp	18	LogGroundTraceHitIdentity	none	0	0	R3-shared-helper
+NodeShuffleGroundIdentity.cpp|Display|%s: GROUND-TRACE HIT IDENTITY fo|2	INHERIT		Display	NodeShuffleGroundIdentity.cpp	37	LogGroundTraceHitIdentity	none	0	0	R3-shared-helper
+NodeShuffleGroundIdentity.cpp|Display|%s: CAVE-STORE READING for %s: %|1	INHERIT		Display	NodeShuffleGroundIdentity.cpp	129	LogCaveStoreReading	none	0	0	R3-shared-helper
+NodeShuffleGroundIdentity.cpp|Display|%s: group '%s' cave-store summar|1	ONDEMAND		Display	NodeShuffleGroundIdentity.cpp	151	LogCaveStoreGroupSummary	none	0	0	R2-typed-command
+NodeShuffleHereUnspawned.cpp|Display|HERE-NEAREST-UNSPAWNED|1	ONDEMAND		Display	NodeShuffleHereUnspawned.cpp	29	LogHereUnspawned	none	0	0	R2-typed-command
+NodeShuffleHereUnspawned.cpp|Display|HERE-NEAREST-UNSPAWNED|2	ONDEMAND		Display	NodeShuffleHereUnspawned.cpp	69	LogHereUnspawned	none	0	0	R2-typed-command
+NodeShuffleHereUnspawned.cpp|Display|HERE-NEAREST-UNSPAWNED|3	ONDEMAND		Display	NodeShuffleHereUnspawned.cpp	76	LogHereUnspawned	none	0	0	R2-typed-command
+NodeShuffleHereUnspawned.cpp|Display|HERE-UNSPAWNED-BANDS|1	ONDEMAND		Display	NodeShuffleHereUnspawned.cpp	81	LogHereUnspawned	none	0	0	R2-typed-command
+NodeShuffleInsideGate.cpp|Display|INSIDEGATE-WOULDREFUSE|1	TOPIC	Gates	Display	NodeShuffleInsideGate.cpp	149	EvaluateInsideShadowGate	none	1201	2398	R5-topic-by-tag
+NodeShuffleInsideGate.cpp|Display|INSIDEGATE|1	TOPIC	Gates	Display	NodeShuffleInsideGate.cpp	193	EmitInsideShadowGateCensus	none	71824	134655	R5-topic-by-tag
+NodeShuffleLateNodes.cpp|Warning|LATE-NODES|1	ALWAYS		Warning	NodeShuffleLateNodes.cpp	21	MaybeCaptureLateOriginalNodes	none	0	0	R1-warn-error
+NodeShuffleLateNodes.cpp|Display|LATE-CAPTURE|1	TOPIC	Placement	Display	NodeShuffleLateNodes.cpp	46	MaybeCaptureLateOriginalNodes	none	0	0	R5-topic-by-tag
+NodeShuffleLateNodes.cpp|Display|LATE-NODES|1	TOPIC	Placement	Display	NodeShuffleLateNodes.cpp	49	MaybeCaptureLateOriginalNodes	none	3252	27859	R5-topic-by-tag
+NodeShuffleLateNodes.cpp|Display|LATE-NODES|2	TOPIC	Placement	Display	NodeShuffleLateNodes.cpp	172	CaptureLateOriginalNodes	none	2259	15220	R5-topic-by-tag
+NodeShuffleLateNodes.cpp|Warning|LATE-NODES|2	ALWAYS		Warning	NodeShuffleLateNodes.cpp	237	CaptureLateOriginalNodes	none	0	0	R1-warn-error
+NodeShuffleLateNodes.cpp|Warning|LATE-NODES|3	ALWAYS		Warning	NodeShuffleLateNodes.cpp	283	CaptureLateOriginalNodes	none	0	0	R1-warn-error
+NodeShuffleLateNodes.cpp|Display|LATE-NODES|3	TOPIC	Placement	Display	NodeShuffleLateNodes.cpp	324	CaptureLateOriginalNodes	none	0	0	R5-topic-by-tag
+NodeShuffleLateNodes.cpp|Display|LATE-NODES|4	TOPIC	Placement	Display	NodeShuffleLateNodes.cpp	335	CaptureLateOriginalNodes	none	0	0	R5-topic-by-tag
+NodeShuffleLateNodes.cpp|Display|LATE-CAPTURE|2	TOPIC	Placement	Display	NodeShuffleLateNodes.cpp	347	LogLateCapture	none	0	0	R5-topic-by-tag
+NodeShuffleLateNodes.cpp|Display|REHIDE-VISIBLE|1	TOPIC	Hide	Display	NodeShuffleLateNodes.cpp	400	RehideVisibleOriginalsPre	none	0	0	R5-topic-by-tag
+NodeShuffleLateNodes.cpp|Display|REHIDE-VISIBLE|2	TOPIC	Hide	Display	NodeShuffleLateNodes.cpp	406	RehideVisibleOriginalsPre	none	0	0	R5-topic-by-tag
+NodeShuffleLateNodes.cpp|Display|REHIDE-CENSUS|1	TOPIC	Hide	Display	NodeShuffleLateNodes.cpp	422	RehideVisibleOriginalsPost	none	4240	35529	R5-topic-by-tag
+NodeShuffleLayoutDump.cpp|Display|LAYOUTDUMP-SKIP|1	ONDEMAND		Display	NodeShuffleLayoutDump.cpp	63	CONSOLE:NodeShuffle.DumpLayout	none	0	0	R2-typed-command
+NodeShuffleLayoutDump.cpp|Display|LAYOUTDUMP-SKIP|2	ONDEMAND		Display	NodeShuffleLayoutDump.cpp	71	CONSOLE:NodeShuffle.DumpLayout	none	0	0	R2-typed-command
+NodeShuffleLayoutDump.cpp|Display|LAYOUTDUMP-SKIP|3	ONDEMAND		Display	NodeShuffleLayoutDump.cpp	79	DumpLayout	none	0	0	R2-typed-command
+NodeShuffleLayoutDump.cpp|Display|LAYOUTDUMP-BEGIN|1	ONDEMAND		Display	NodeShuffleLayoutDump.cpp	108	DumpLayout	none	0	0	R2-typed-command
+NodeShuffleLayoutDump.cpp|Display|LAYOUTDUMP-LEGEND|1	ONDEMAND		Display	NodeShuffleLayoutDump.cpp	110	DumpLayout	none	0	0	R2-typed-command
+NodeShuffleLayoutDump.cpp|Display|LAYOUTDUMP-LEGEND|2	ONDEMAND		Display	NodeShuffleLayoutDump.cpp	111	DumpLayout	none	0	0	R2-typed-command
+NodeShuffleLayoutDump.cpp|Display|LAYOUTDUMP-LEGEND|3	ONDEMAND		Display	NodeShuffleLayoutDump.cpp	112	DumpLayout	none	0	0	R2-typed-command
+NodeShuffleLayoutDump.cpp|Display|LAYOUTDUMP-LEGEND|4	ONDEMAND		Display	NodeShuffleLayoutDump.cpp	113	DumpLayout	none	0	0	R2-typed-command
+NodeShuffleLayoutDump.cpp|Display|LAYOUTDUMP-LEGEND|5	ONDEMAND		Display	NodeShuffleLayoutDump.cpp	114	DumpLayout	none	0	0	R2-typed-command
+NodeShuffleLayoutDump.cpp|Display|LAYOUTDUMP-LEGEND|6	ONDEMAND		Display	NodeShuffleLayoutDump.cpp	115	DumpLayout	none	0	0	R2-typed-command
+NodeShuffleLayoutDump.cpp|Display|LAYOUTDUMP-E|1	ONDEMAND		Display	NodeShuffleLayoutDump.cpp	125	DumpLayout	none	0	0	R2-typed-command
+NodeShuffleLayoutDump.cpp|Display|LAYOUTDUMP-W|1	ONDEMAND		Display	NodeShuffleLayoutDump.cpp	142	DumpLayout	none	0	0	R2-typed-command
+NodeShuffleLayoutDump.cpp|Display|LAYOUTDUMP-O|1	ONDEMAND		Display	NodeShuffleLayoutDump.cpp	162	DumpLayout	none	0	0	R2-typed-command
+NodeShuffleLayoutDump.cpp|Display|LAYOUTDUMP-G|1	ONDEMAND		Display	NodeShuffleLayoutDump.cpp	194	DumpLayout	none	0	0	R2-typed-command
+NodeShuffleLayoutDump.cpp|Display|LAYOUTDUMP-END|1	ONDEMAND		Display	NodeShuffleLayoutDump.cpp	204	DumpLayout	none	0	0	R2-typed-command
+NodeShuffleLayoutDump.cpp|Display|LAYOUTDUMP-CHAT|1	ONDEMAND		Display	NodeShuffleLayoutDump.cpp	212	DumpLayout	none	0	0	R2-typed-command
+NodeShuffleLayoutDump.cpp|Display|LAYOUTDUMP-TWINS|1	ONDEMAND		Display	NodeShuffleLayoutDump.cpp	236	DumpLayout	none	0	0	R2-typed-command
+NodeShuffleLayoutDump.cpp|Display|LAYOUTDUMP-TWIN|1	ONDEMAND		Display	NodeShuffleLayoutDump.cpp	249	DumpLayout	none	0	0	R2-typed-command
+NodeShuffleLayoutDump.cpp|Display|LAYOUTDUMP-IDTWINS|1	ONDEMAND		Display	NodeShuffleLayoutDump.cpp	256	DumpLayout	none	0	0	R2-typed-command
+NodeShuffleMapMode.cpp|Display|MAPMODE|1	ALWAYS		Display	NodeShuffleMapMode.cpp	170	LogMapModeOnce	none	256	512	R4-once-per-session-or-operation
+NodeShuffleMapMode.cpp|Display|RWGGEN|1	ALWAYS		Display	NodeShuffleMapMode.cpp	240	RwgDiscoverGenerator	none	0	0	R4-once-per-session-or-operation
+NodeShuffleMapMode.cpp|Display|RWGGEN|2	ALWAYS		Display	NodeShuffleMapMode.cpp	248	RwgDiscoverGenerator	none	230	460	R4-once-per-session-or-operation
+NodeShuffleMapMode.cpp|Display|RWGPROBE|1	TOPIC	Placement	Display	NodeShuffleMapMode.cpp	270	RwgLogProbe	none	0	0	R5-topic-by-tag
+NodeShuffleMapMode.cpp|Display|RWGPROBE|2	TOPIC	Placement	Display	NodeShuffleMapMode.cpp	297	RwgLogProbe	none	1893	3783	R5-topic-by-tag
+NodeShuffleMapMode.cpp|Warning|MAPMODE|1	ALWAYS		Warning	NodeShuffleMapMode.cpp	311	RwgObserveTick	none	0	0	R1-warn-error
+NodeShuffleMapMode.cpp|Display|RWGLAYOUT|1	ALWAYS		Display	NodeShuffleMapMode.cpp	324	RwgObserveTick	none	214	428	R4-once-per-session-or-operation
+NodeShuffleMapMode.cpp|Display|RWGWAIT|1	ALWAYS		Display	NodeShuffleMapMode.cpp	377	RwgObserveTick	none	0	0	R4-once-per-session-or-operation
+NodeShuffleMapMode.cpp|Warning|RWGWAIT|1	ALWAYS		Warning	NodeShuffleMapMode.cpp	386	RwgObserveTick	none	0	0	R1-warn-error
+NodeShuffleMapMode.cpp|Display|RWGWAIT|2	ALWAYS		Display	NodeShuffleMapMode.cpp	416	RwgObserveTick	none	9892	9936	R4-once-per-session-or-operation
+NodeShuffleMapMode.cpp|Warning|RWGWAIT|2	ALWAYS		Warning	NodeShuffleMapMode.cpp	427	RwgObserveTick	none	0	0	R1-warn-error
+NodeShuffleMapMode.cpp|Display|RWGLAYOUT|2	ALWAYS		Display	NodeShuffleMapMode.cpp	438	RwgObserveTick	none	0	197	R4-once-per-session-or-operation
+NodeShuffleMapMode.cpp|Display|RWGREADY|1	ALWAYS		Display	NodeShuffleMapMode.cpp	479	RwgObserveTick	none	512	1026	R4-once-per-session-or-operation
+NodeShuffleMapMode.cpp|Display|RWGOBSERVE|1	TOPIC	Placement	Display	NodeShuffleMapMode.cpp	494	RwgObserveTick	none	4020	35284	R5-topic-by-tag
+NodeShuffleMapModeCave.cpp|Display|RWGCAVEBIND|1	ALWAYS		Display	NodeShuffleMapModeCave.cpp	113	TryBindCaves	none	235	235	R4-once-per-session-or-operation
+NodeShuffleMapModeCave.cpp|Warning|RWGCAVEBIND-OFF|1	ALWAYS		Warning	NodeShuffleMapModeCave.cpp	115	TryBindCaves	none	0	0	R1-warn-error
+NodeShuffleMapModeCave.cpp|Display|RWGCAVECHECK|1	ALWAYS		Display	NodeShuffleMapModeCave.cpp	171	RwgEnsureCaveCheck	none	0	0	R4-once-per-session-or-operation
+NodeShuffleMapModeCave.cpp|Display|RWGCAVECHECK|2	ALWAYS		Display	NodeShuffleMapModeCave.cpp	201	RwgEnsureCaveCheck	none	0	0	R4-once-per-session-or-operation
+NodeShuffleMapModeCave.cpp|Display|RWGCAVECHECK|3	ALWAYS		Display	NodeShuffleMapModeCave.cpp	264	RwgEnsureCaveCheck	none	0	0	R4-once-per-session-or-operation
+NodeShuffleMapModeCave.cpp|Display|RWGCAVECHECK|4	ALWAYS		Display	NodeShuffleMapModeCave.cpp	284	RwgEnsureCaveCheck	none	3309	6618	R4-once-per-session-or-operation
+NodeShuffleMapModeCave.cpp|Display|RWGCAVECHECK|5	ALWAYS		Display	NodeShuffleMapModeCave.cpp	327	RwgEnsureCaveCheck	none	731	1462	R4-once-per-session-or-operation
+NodeShuffleMapModeCave.cpp|Warning|RWGCAVECHECK-OFF|1	ALWAYS		Warning	NodeShuffleMapModeCave.cpp	333	RwgEnsureCaveCheck	none	0	0	R1-warn-error
+NodeShuffleMapModeCave.cpp|Display|RWGCAVECHECK|6	ALWAYS		Display	NodeShuffleMapModeCave.cpp	334	RwgEnsureCaveCheck	none	0	0	R4-once-per-session-or-operation
+NodeShuffleMapModeCave.cpp|Display|RWGCAVECHECK|7	ALWAYS		Display	NodeShuffleMapModeCave.cpp	335	RwgEnsureCaveCheck	none	0	0	R4-once-per-session-or-operation
+NodeShuffleMapModeCave.cpp|Verbose|RWGCAVEREDEAL|1	TOPIC	Placement	Verbose	NodeShuffleMapModeCave.cpp	401	RwgTryCaveRedeal	none	0	0	R5-topic-by-tag
+NodeShuffleMapModeCave.cpp|Display|RWGCAVESETTLE|1	TOPIC	Placement	Display	NodeShuffleMapModeCave.cpp	470	RwgResolveCaveAtSpawn	none	1672	3344	R5-topic-by-tag
+NodeShuffleMapModeCaveJson.cpp|Display|RWGCAVEDEAL|1	TOPIC	Placement	Display	NodeShuffleMapModeCaveJson.cpp	191	RwgVerifyCaveCandidate	none	1798	1801	R5-topic-by-tag
+NodeShuffleMapModeCliffTop.cpp|Display|RWGCLIFFTOP|1	TOPICGATE	Placement	Display	NodeShuffleMapModeCliffTop.cpp	110	RwgSolidTopTryAccept	block	20307	209280	N2-master-gate-switched-to-topic-guard (enclosing if header) [hand-set ns-quietlog-1; draft: R5-topic-by-tag + R8-existing-master-gate-kept]
+NodeShuffleMapModeDensity.cpp|Display|RWGDENSITY-SKIP|1	TOPIC	Roll	Display	NodeShuffleMapModeDensity.cpp	103	RwgEmitDensityCensus	none	0	0	R5-topic-by-tag
+NodeShuffleMapModeDensity.cpp|Display|RWGDENSITY-ROW|1	TOPIC	Roll	Display	NodeShuffleMapModeDensity.cpp	160	RwgEmitDensityCensus	none	2111	4262	R5-topic-by-tag
+NodeShuffleMapModeDensity.cpp|Display|RWGDENSITY|1	ALWAYS		Display	NodeShuffleMapModeDensity.cpp	165	RwgEmitDensityCensus	none	479	962	R4-once-per-session-or-operation
+NodeShuffleMapModeDensity.cpp|Display|RWGSTUCK|1	TOPIC	Placement	Display	NodeShuffleMapModeDensity.cpp	200	RwgEmitStuckCensus	none	3237	27202	R5-topic-by-tag
+NodeShuffleMapModeDensity.cpp|Display|RWGSTUCK-ENTRY|1	TOPIC	Placement	Display	NodeShuffleMapModeDensity.cpp	220	RwgEmitStuckCensus	none	6032	81649	R5-topic-by-tag
+NodeShuffleMapModeDensity.cpp|Display|HERE-DENSITY|1	ONDEMAND		Display	NodeShuffleMapModeDensity.cpp	250	LogHereDensity	none	0	0	R2-typed-command
+NodeShuffleMapModeDensity.cpp|Display|HERE-LAND|1	ONDEMAND		Display	NodeShuffleMapModeDensity.cpp	258	LogHereDensity	none	0	0	R2-typed-command
+NodeShuffleMapModeHeightApi.cpp|Warning|RWGHEIGHTAPI-REFUSED|1	ALWAYS		Warning	NodeShuffleMapModeHeightApi.cpp	182	TryBind	none	0	0	R1-warn-error
+NodeShuffleMapModeHeightApi.cpp|Warning|RWGHEIGHTAPI-REFUSED|2	ALWAYS		Warning	NodeShuffleMapModeHeightApi.cpp	194	TryBind	none	0	0	R1-warn-error
+NodeShuffleMapModeHeightApi.cpp|Warning|RWGHEIGHTAPI-UNLISTED|1	ALWAYS		Warning	NodeShuffleMapModeHeightApi.cpp	226	TryBind	none	395	0	R1-warn-error
+NodeShuffleMapModeHeightApi.cpp|Warning|RWGHEIGHTAPI-REFUSED|3	ALWAYS		Warning	NodeShuffleMapModeHeightApi.cpp	227	TryBind	none	0	0	R1-warn-error
+NodeShuffleMapModeHeightApi.cpp|Warning|RWGSIGREFUSED|1	ALWAYS		Warning	NodeShuffleMapModeHeightApi.cpp	283	TryBind	none	0	0	R1-warn-error
+NodeShuffleMapModeHeightApi.cpp|Warning|RWGHEIGHTAPI-REFUSED|4	ALWAYS		Warning	NodeShuffleMapModeHeightApi.cpp	316	TryBind	none	0	0	R1-warn-error
+NodeShuffleMapModeHeightApi.cpp|Display|RWGHEIGHTAPI|1	TOPIC	Placement	Display	NodeShuffleMapModeHeightApi.cpp	333	TryBind	none	551	559	R5-topic-by-tag
+NodeShuffleMapModeHeightApi.cpp|Display|RWGGENERATION|1	ALWAYS		Display	NodeShuffleMapModeHeightApi.cpp	337	TryBind	none	0	0	R4-once-per-session-or-operation
+NodeShuffleMapModeHeightApi.cpp|Warning|RWGHEIGHTAPI-REFUSED|5	ALWAYS		Warning	NodeShuffleMapModeHeightApi.cpp	340	TryBind	none	0	0	R1-warn-error
+NodeShuffleMapModeHeightApi.cpp|Display|RWGSEABIND|1	ALWAYS		Display	NodeShuffleMapModeHeightApi.cpp	357	TryBind	none	193	193	R4-once-per-session-or-operation
+NodeShuffleMapModeHeightApi.cpp|Warning|RWGSEABIND-OFF|1	ALWAYS		Warning	NodeShuffleMapModeHeightApi.cpp	358	TryBind	none	0	0	R1-warn-error
+NodeShuffleMapModeHeightApi.cpp|Display|RWGVOIDBIND|1	ALWAYS		Display	NodeShuffleMapModeHeightApi.cpp	388	TryBind	none	278	278	R4-once-per-session-or-operation
+NodeShuffleMapModeHeightApi.cpp|Warning|RWGVOIDBIND-OFF|1	ALWAYS		Warning	NodeShuffleMapModeHeightApi.cpp	390	TryBind	none	0	0	R1-warn-error
+NodeShuffleMapModeHeightApi.cpp|Display|RWGGENERATION|2	ALWAYS		Display	NodeShuffleMapModeHeightApi.cpp	401	TryBind	none	436	436	R4-once-per-session-or-operation
+NodeShuffleMapModeHeightApi.cpp|Warning|RWGHEIGHTAPI-REFUSED|6	ALWAYS		Warning	NodeShuffleMapModeHeightApi.cpp	406	TryBind	none	0	0	R1-warn-error
+NodeShuffleMapModeHeightApi.cpp|Warning|RWGHEIGHTAPI-REFUSED|7	ALWAYS		Warning	NodeShuffleMapModeHeightApi.cpp	435	TryBind	none	0	0	R1-warn-error
+NodeShuffleMapModeHeightApi.cpp|Warning|RWGHEIGHTAPI-UNLISTED|2	ALWAYS		Warning	NodeShuffleMapModeHeightApi.cpp	440	TryBind	none	316	0	R1-warn-error
+NodeShuffleMapModeHeightApi.cpp|Warning|RWGHEIGHTAPI-REFUSED|8	ALWAYS		Warning	NodeShuffleMapModeHeightApi.cpp	469	RwgEdgeGuardRead	none	0	0	R1-warn-error
+NodeShuffleMapModeHeightApi.cpp|Display|RWGEDGESTRIP|1	ALWAYS		Display	NodeShuffleMapModeHeightApi.cpp	485	RwgEdgeGuardRead	none	350	350	R4-once-per-session-or-operation
+NodeShuffleMapModeHeightApi.cpp|Display|RWGHEIGHTAPI|2	TOPIC	Placement	Display	NodeShuffleMapModeHeightApi.cpp	524	RwgLogHeightApi	none	512	1000	R5-topic-by-tag
+NodeShuffleMapModeHeightApi.cpp|Display|RWGHEIGHTAPI|3	TOPIC	Placement	Display	NodeShuffleMapModeHeightApi.cpp	533	RwgLogHeightApi	none	0	0	R5-topic-by-tag
+NodeShuffleMapModeHeightApi.cpp|Display|RWGHEIGHTAPI|4	TOPIC	Placement	Display	NodeShuffleMapModeHeightApi.cpp	538	RwgLogHeightApi	none	0	0	R5-topic-by-tag
+NodeShuffleMapModeHeightApi.cpp|Display|RWGHEIGHTAPI|5	TOPIC	Placement	Display	NodeShuffleMapModeHeightApi.cpp	543	RwgLogHeightApi	none	0	0	R5-topic-by-tag
+NodeShuffleMapModeHeightApi.cpp|Display|RWGHEIGHTAPI|6	TOPIC	Placement	Display	NodeShuffleMapModeHeightApi.cpp	552	RwgLogHeightApi	none	0	0	R5-topic-by-tag
+NodeShuffleMapModeHeightApi.cpp|Display|RWGHEIGHTAPI|7	TOPIC	Placement	Display	NodeShuffleMapModeHeightApi.cpp	557	RwgLogHeightApi	none	0	0	R5-topic-by-tag
+NodeShuffleMapModeHeightApi.cpp|Display|RWGEDGEGUARD|1	TOPIC	Placement	Display	NodeShuffleMapModeHeightApi.cpp	560	RwgLogHeightApi	none	2653	4842	R5-topic-by-tag
+NodeShuffleMapModeHeightApi.cpp|Display|RWGHEIGHTAPI|8	TOPIC	Placement	Display	NodeShuffleMapModeHeightApi.cpp	573	RwgLogHeightApi	none	0	0	R5-topic-by-tag
+NodeShuffleMapModeHeightApi.cpp|Display|RWGHEIGHTAPI|9	TOPIC	Placement	Display	NodeShuffleMapModeHeightApi.cpp	623	RwgLogHeightApi	none	74482	141899	R5-topic-by-tag
+NodeShuffleMapModeHeightApi.cpp|Display|RWGHEIGHTAPI|10	TOPIC	Placement	Display	NodeShuffleMapModeHeightApi.cpp	635	RwgLogHeightApi	none	6769	12281	R5-topic-by-tag
+NodeShuffleMapModeHeightApi.cpp|Display|RWGHEIGHTAPI|11	TOPIC	Placement	Display	NodeShuffleMapModeHeightApi.cpp	658	RwgLogHeightApi	none	350	700	R5-topic-by-tag
+NodeShuffleMapModeHeightApi.cpp|Display|RWGEDGESTRIP-SAMPLE|1	TOPIC	Placement	Display	NodeShuffleMapModeHeightApi.cpp	686	RwgLogHeightApi	none	628	1256	R5-topic-by-tag
+NodeShuffleMapModeHeightApi.cpp|Display|RWGEDGEGUARD|2	TOPIC	Placement	Display	NodeShuffleMapModeHeightApi.cpp	747	~FRwgGroundQuery	none	258	769	R5-topic-by-tag
+NodeShuffleMapModeHeightApi.cpp|Display|RWGGETTERS|1	ALWAYS		Display	NodeShuffleMapModeHeightApi.cpp	913	TryBindReadyGetters	none	510	510	R4-once-per-session-or-operation
+NodeShuffleMapModeHeightApi.cpp|Warning|RWGNANGUARD|1	ALWAYS		Warning	NodeShuffleMapModeHeightApi.cpp	951	RwgNoteNonFinite	none	0	0	R1-warn-error
+NodeShuffleMapModePlace.cpp|Display|RWGLAYOUT|1	ALWAYS		Display	NodeShuffleMapModePlace.cpp	59	RwgPipelineMayRun	none	122	122	R4-once-per-session-or-operation
+NodeShuffleMapModePlace.cpp|Display|RWGLAYOUT|2	ALWAYS		Display	NodeShuffleMapModePlace.cpp	67	RwgPipelineMayRun	none	0	261	R4-once-per-session-or-operation
+NodeShuffleMapModePlace.cpp|Display|RWGLAYOUT|3	ALWAYS		Display	NodeShuffleMapModePlace.cpp	95	RwgPipelineMayRun	none	0	0	R4-once-per-session-or-operation
+NodeShuffleMapModePlace.cpp|Display|RWGLAYOUT|4	ALWAYS		Display	NodeShuffleMapModePlace.cpp	102	RwgPipelineMayRun	none	0	0	R4-once-per-session-or-operation
+NodeShuffleMapModePlace.cpp|Display|RWGWATERCACHE|1	TOPIC	Placement	Display	NodeShuffleMapModePlace.cpp	114	RwgBuildWaterVolumeCache	none	450	540	R5-topic-by-tag
+NodeShuffleMapModePlace.cpp|Display|RWGWATERSAMPLE|1	TOPIC	Placement	Display	NodeShuffleMapModePlace.cpp	144	RwgNoteWaterSample	none	1509	1501	R5-topic-by-tag
+NodeShuffleMapModePlace.cpp|Display|RWGDEALTBELOWZ0SAMPLE|1	TOPIC	Roll	Display	NodeShuffleMapModePlace.cpp	149	RwgNoteWaterSample	none	1553	1557	R5-topic-by-tag
+NodeShuffleMapModePlace.cpp|Display|ROLLCENSUS|1	ALWAYS		Display	NodeShuffleMapModePlace.cpp	195	GenerateRwgLocations	none	0	0	R4-once-per-session-or-operation
+NodeShuffleMapModePlace.cpp|Display|ROLLCENSUS|2	ALWAYS		Display	NodeShuffleMapModePlace.cpp	254	GenerateRwgLocations	none	2034	2035	R4-once-per-session-or-operation
+NodeShuffleMapModePlace.cpp|Verbose|RWG-REDEAL|1	TOPIC	Placement	Verbose	NodeShuffleMapModePlace.cpp	297	TryRedealRwgEntry	none	0	0	R5-topic-by-tag
+NodeShuffleMapModePlace.cpp|Display|RWGKILLBOXSETTLE|1	TOPIC	Void	Display	NodeShuffleMapModePlace.cpp	361	RwgResolveAtSpawn	none	0	0	R5-topic-by-tag
+NodeShuffleMapModePlace.cpp|Display|RWGSKIP|1	ALWAYS		Display	NodeShuffleMapModePlace.cpp	381	RwgLogSkipOnce	none	180	660	R4-once-per-session-or-operation
+NodeShuffleMapModeProvisional.cpp|Display|PROVSETTLE|1	TOPIC	Placement	Display	NodeShuffleMapModeProvisional.cpp	146	RwgProvisionalPinWins	none	0	0	R5-topic-by-tag
+NodeShuffleMapModeProvisional.cpp|Display|PROVSETTLE|2	TOPIC	Placement	Display	NodeShuffleMapModeProvisional.cpp	274	RwgSettleProvisional	none	86970	1132140	R5-topic-by-tag
+NodeShuffleMapModeProvisional.cpp|Display|PROVSPAWN|1	TOPIC	Placement	Display	NodeShuffleMapModeProvisional.cpp	366	RwgProvisionalSpawnPass	none	745	933	R5-topic-by-tag
+NodeShuffleMapModeProvisional.cpp|Display|PROVSPAWN|2	TOPIC	Placement	Display	NodeShuffleMapModeProvisional.cpp	392	RwgProvisionalSpawnPass	none	45150	60724	R5-topic-by-tag
+NodeShuffleMapModeProvisional.cpp|Display|PROVCENSUS|1	TOPIC	Placement	Display	NodeShuffleMapModeProvisional.cpp	430	RwgProvisionalEmitCensus	none	9137	77111	R5-topic-by-tag
+NodeShuffleMapModeProvisionalMove.cpp|Display|PROVMOVE|1	ALWAYS		Display	NodeShuffleMapModeProvisionalMove.cpp	65	RwgProvisionalMoveInPlace	none	0	0	R0-pinned-ungated farspawn F23 (rules said TOPIC Placement: NAMED DECISION)
+NodeShuffleMapModeProvisionalMove.cpp|Display|PROVMOVE|2	TOPIC	Placement	Display	NodeShuffleMapModeProvisionalMove.cpp	87	RwgProvisionalMoveInPlace	none	0	0	R5-topic-by-tag
+NodeShuffleMapModeProvisionalMove.cpp|Display|PROVMOVE|3	ALWAYS		Display	NodeShuffleMapModeProvisionalMove.cpp	102	RwgProvisionalMoveInPlace	none	0	0	R0-pinned-ungated farspawn F30 / mutant X109 (missed by the design draft; kept ALWAYS under orchestrator decision N1) [hand-set ns-quietlog-1; draft: R5-topic-by-tag]
+NodeShuffleMapModeProvisionalMove.cpp|Display|PROVMOVE|4	TOPICGATE	Placement	Display	NodeShuffleMapModeProvisionalMove.cpp	141	RwgProvisionalMoveInPlace	block	2509	36312	N2-master-gate-switched-to-topic-guard (enclosing if header) [hand-set ns-quietlog-1; draft: R5-topic-by-tag + R8-existing-master-gate-kept]
+NodeShuffleMapModeProvisionalMove.cpp|Display|PROVINSIDE|1	TOPIC	Placement	Display	NodeShuffleMapModeProvisionalMove.cpp	167	RwgProvisionalInsideRedeal	none	0	0	R5-topic-by-tag
+NodeShuffleMapModeProvisionalMove.cpp|Display|PROVINSIDE|2	TOPIC	Placement	Display	NodeShuffleMapModeProvisionalMove.cpp	176	RwgProvisionalInsideRedeal	none	0	481	R5-topic-by-tag
+NodeShuffleMapModeProvisionalMove.cpp|Display|PROVSPAWN|1	TOPIC	Placement	Display	NodeShuffleMapModeProvisionalMove.cpp	189	RwgProvisionalLogRefusal	none	0	520	R5-topic-by-tag
+NodeShuffleMapModeR1.cpp|Display|RWGSTAGE|1	ALWAYS		Display	NodeShuffleMapModeR1.cpp	93	RwgNoteStage	none	1874	2472	R4-once-per-session-or-operation
+NodeShuffleMapModeR1.cpp|Display|RWGCOLLISION|1	TOPIC	Placement	Display	NodeShuffleMapModeR1.cpp	124	RwgLogCollision	none	0	0	R5-topic-by-tag
+NodeShuffleMapModeR1.cpp|Display|RWGCOLLISION|2	TOPIC	Placement	Display	NodeShuffleMapModeR1.cpp	174	RwgLogCollision	none	9320	78577	R5-topic-by-tag
+NodeShuffleMapModeR1.cpp|Display|RWGWATER|1	TOPIC	Placement	Display	NodeShuffleMapModeR1.cpp	187	RwgLogCollision	none	216	928	R5-topic-by-tag
+NodeShuffleMapModeR1.cpp|Display|RWGWATER2|1	TOPIC	Placement	Display	NodeShuffleMapModeR1.cpp	198	RwgLogWater2	none	0	0	R5-topic-by-tag
+NodeShuffleMapModeR1.cpp|Display|RWGWATER2|2	TOPIC	Placement	Display	NodeShuffleMapModeR1.cpp	270	RwgLogWater2	none	5149	9406	R5-topic-by-tag
+NodeShuffleMapModeR1.cpp|Display|RWGROCK2|1	TOPIC	Rocks	Display	NodeShuffleMapModeR1.cpp	350	RwgLogRock	none	12083	24185	R5-topic-by-tag
+NodeShuffleMapModeR1.cpp|Display|RWGROCK2|2	TOPIC	Rocks	Display	NodeShuffleMapModeR1.cpp	359	RwgLogRock	none	3373	6140	R5-topic-by-tag
+NodeShuffleMapModeResettle.cpp|Display|RWGHITCLASS|1	TOPIC	Placement	Display	NodeShuffleMapModeResettle.cpp	107	RwgNoteHitClass	none	5283	13885	R5-topic-by-tag
+NodeShuffleMapModeResettle.cpp|Display|RWGTERRAINSKIP|1	TOPIC	Placement	Display	NodeShuffleMapModeResettle.cpp	128	RwgNoteSkippedHit	none	967	1896	R5-topic-by-tag
+NodeShuffleMapModeResettle.cpp|Display|PLACEDZ|1	TOPIC	Placement	Display	NodeShuffleMapModeResettle.cpp	167	RwgEmitDzCensus	none	62375	200359	R5-topic-by-tag
+NodeShuffleMapModeResettle.cpp|Display|RESETTLE-REFUSED|1	TOPIC	Placement	Display	NodeShuffleMapModeResettle.cpp	272	RwgResettlePass	mention	0	0	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleMapModeResettle.cpp|Display|RESETTLE-MOVE|1	TOPICGATE	Placement	Display	NodeShuffleMapModeResettle.cpp	284	RwgResettlePass	block	0	0	N2-master-gate-switched-to-topic-guard (enclosing if header) [hand-set ns-quietlog-1; draft: R5-topic-by-tag + R8-existing-master-gate-kept]
+NodeShuffleMapModeResettle.cpp|Display|RESETTLE|1	TOPIC	Placement	Display	NodeShuffleMapModeResettle.cpp	292	RwgResettlePass	mention	6720	56535	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleMapModeRock.cpp|Display|RWG-ROCK-REDEAL|1	MASTER	Rocks	Display	NodeShuffleMapModeRock.cpp	98	RwgRedealLiveEntry	block	0	271	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleMapModeRock.cpp|Display|RESETTLE-ROCK-HIT|1	MASTER	Rocks	Display	NodeShuffleMapModeRock.cpp	151	RwgRockOcclusionPass	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleMapModeRock.cpp|Display|RESETTLE-ROCK|1	TOPIC	Rocks	Display	NodeShuffleMapModeRock.cpp	158	RwgRockOcclusionPass	mention	227	1585	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleMapModeRock.cpp|Warning|RESETTLE-WELL-REFUSED|1	ALWAYS		Warning	NodeShuffleMapModeRock.cpp	177	RwgRedealWellGroup	none	0	0	R1-warn-error
+NodeShuffleMapModeRock.cpp|Display|RESETTLE-WELL-REDEAL|1	TOPIC	Wells	Display	NodeShuffleMapModeRock.cpp	204	RwgRedealWellGroup	none	0	0	R5-topic-by-tag
+NodeShuffleMapModeRock.cpp|Display|RESETTLE-WELL-GAVEUP|1	TOPIC	Wells	Display	NodeShuffleMapModeRock.cpp	272	RwgResettleWells	none	0	0	R5-topic-by-tag
+NodeShuffleMapModeRock.cpp|Display|RESETTLE-WELL|1	TOPIC	Wells	Display	NodeShuffleMapModeRock.cpp	281	RwgResettleWells	none	0	230	R5-topic-by-tag
+NodeShuffleMapModeRocks.cpp|Display|ROCKTOP|1	TOPIC	Rocks	Display	NodeShuffleMapModeRocks.cpp	229	RwgRocksSunkenVerdict	mention	17809	211281	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleMapModeRocks.cpp|Display|ROCKFIRSTHIT|1	TOPIC	Rocks	Display	NodeShuffleMapModeRocks.cpp	242	RwgRocksEmitCensus	none	26148	84946	R5-topic-by-tag
+NodeShuffleMapModeRocks.cpp|Display|ROCKSIZE|1	TOPIC	Rocks	Display	NodeShuffleMapModeRocks.cpp	250	RwgRocksEmitCensus	none	52112	137239	R5-topic-by-tag
+NodeShuffleMapModeRocks.cpp|Display|ROCKSIZE-MESH|1	TOPIC	Rocks	Display	NodeShuffleMapModeRocks.cpp	264	RwgRocksEmitCensus	none	23919	98342	R5-topic-by-tag
+NodeShuffleMapModeRocks.cpp|Display|ROCKMOVE|1	TOPIC	Rocks	Display	NodeShuffleMapModeRocks.cpp	268	RwgRocksEmitCensus	none	40041	129921	R5-topic-by-tag
+NodeShuffleMapModeRocks.cpp|Display|ROCKSUNKEN-CENSUS|1	TOPIC	Placement	Display	NodeShuffleMapModeRocks.cpp	272	RwgRocksEmitCensus	none	108555	352962	R5-topic-by-tag
+NodeShuffleMapModeRocks.cpp|Display|ROCKDEFER|1	TOPIC	Rocks	Display	NodeShuffleMapModeRocks.cpp	283	RwgRocksEmitCensus	none	33164	107865	R5-topic-by-tag
+NodeShuffleMapModeRocks.cpp|Display|ROCKCAND|1	TOPIC	Rocks	Display	NodeShuffleMapModeRocks.cpp	291	RwgRocksEmitCensus	none	59345	191950	R5-topic-by-tag
+NodeShuffleMapModeRocks.cpp|Display|ROCKSETTLEDZ|1	TOPIC	Rocks	Display	NodeShuffleMapModeRocks.cpp	298	RwgRocksEmitCensus	none	54880	177290	R5-topic-by-tag
+NodeShuffleMapModeRocks.cpp|Display|ROCKSETTLE|1	MASTER	Rocks	Display	NodeShuffleMapModeRocks.cpp	346	RwgRocksEmitSettleLine	earlyret	10126	52531	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleMapModeSea.cpp|Display|RWGSEACHECK|1	ALWAYS		Display	NodeShuffleMapModeSea.cpp	41	RwgEnsureSeaCheck	none	0	0	R4-once-per-session-or-operation
+NodeShuffleMapModeSea.cpp|Display|RWGSEACHECK|2	ALWAYS		Display	NodeShuffleMapModeSea.cpp	55	RwgEnsureSeaCheck	none	0	0	R4-once-per-session-or-operation
+NodeShuffleMapModeSea.cpp|Display|RWGSEACHECK|3	ALWAYS		Display	NodeShuffleMapModeSea.cpp	140	RwgEnsureSeaCheck	none	445	890	R4-once-per-session-or-operation
+NodeShuffleMapModeSea.cpp|Warning|RWGSEACHECK-FAIL|1	ALWAYS		Warning	NodeShuffleMapModeSea.cpp	145	RwgEnsureSeaCheck	none	0	0	R1-warn-error
+NodeShuffleMapModeSea.cpp|Display|RWGSEACHECK|4	ALWAYS		Display	NodeShuffleMapModeSea.cpp	146	RwgEnsureSeaCheck	none	362	724	R4-once-per-session-or-operation
+NodeShuffleMapModeSea.cpp|Display|RWGSEAREDEAL|1	TOPIC	Placement	Display	NodeShuffleMapModeSea.cpp	197	RwgSeaRedealPass	none	0	0	R5-topic-by-tag
+NodeShuffleMapModeSea.cpp|Display|RWGSEAREDEAL-ENTRY|1	TOPICGATE	Placement	Display	NodeShuffleMapModeSea.cpp	248	RwgSeaRedealPass	block	0	0	N2-master-gate-switched-to-topic-guard (enclosing if header) [hand-set ns-quietlog-1; draft: R5-topic-by-tag + R8-existing-master-gate-kept]
+NodeShuffleMapModeSea.cpp|Display|RWGSEAREDEAL-WELL|1	TOPIC	Placement	Display	NodeShuffleMapModeSea.cpp	285	RwgSeaRedealPass	mention	0	0	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleMapModeSea.cpp|Display|RWGSEAREDEAL|2	TOPIC	Placement	Display	NodeShuffleMapModeSea.cpp	291	RwgSeaRedealPass	mention	2784	4177	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleMapModeSpawnPass.cpp|Display|RWGHIDECHECK|1	TOPIC	Placement	Display	NodeShuffleMapModeSpawnPass.cpp	104	RwgSpawnPass	none	2624	22037	R5-topic-by-tag
+NodeShuffleMapModeSpawnPass.cpp|Display|PLACECENSUS|1	TOPIC	Placement	Display	NodeShuffleMapModeSpawnPass.cpp	110	RwgSpawnPass	none	101979	329800	R5-topic-by-tag
+NodeShuffleMapModeSpawnPass.cpp|Display|PLACECENSUS|2	TOPIC	Placement	Display	NodeShuffleMapModeSpawnPass.cpp	150	RwgEmitPlaceCensus	none	214	429	R5-topic-by-tag
+NodeShuffleMapModeSpawnPass.cpp|Display|PLACECENSUS|3	TOPIC	Placement	Display	NodeShuffleMapModeSpawnPass.cpp	152	RwgEmitPlaceCensus	none	159	318	R5-topic-by-tag
+NodeShuffleMapModeSteep.cpp|Display|RWGSTEEP|1	TOPICGATE	Placement	Display	NodeShuffleMapModeSteep.cpp	129	RwgSteepTryRing	block	0	353	N2-master-gate-switched-to-topic-guard (enclosing if header) [hand-set ns-quietlog-1; draft: R5-topic-by-tag + R8-existing-master-gate-kept]
+NodeShuffleMapModeSteep.cpp|Display|RWGSTEEPSUM|1	ALWAYS		Display	NodeShuffleMapModeSteep.cpp	200	RwgSteepEmitSession	none	327	982	R4-once-per-session-or-operation
+NodeShuffleMapModeVoid.cpp|Display|RWGKILLBOX|1	ALWAYS		Display	NodeShuffleMapModeVoid.cpp	137	RwgEnsureKillboxTop	none	0	0	R4-once-per-session-or-operation
+NodeShuffleMapModeVoid.cpp|Display|RWGKILLBOX|2	ALWAYS		Display	NodeShuffleMapModeVoid.cpp	143	RwgEnsureKillboxTop	none	719	1438	R4-once-per-session-or-operation
+NodeShuffleMapModeVoid.cpp|Warning|RWGKILLBOX-DISAGREE|1	ALWAYS		Warning	NodeShuffleMapModeVoid.cpp	152	RwgEnsureKillboxTop	none	0	0	R1-warn-error
+NodeShuffleMapModeVoid.cpp|Warning|RWGKILLBOX-OFF|1	ALWAYS		Warning	NodeShuffleMapModeVoid.cpp	155	RwgEnsureKillboxTop	none	0	0	R1-warn-error
+NodeShuffleMapModeVoid.cpp|Display|RWGVOIDCHECK|1	ALWAYS		Display	NodeShuffleMapModeVoid.cpp	165	RwgEnsureVoidCheck	none	0	0	R4-once-per-session-or-operation
+NodeShuffleMapModeVoid.cpp|Display|RWGVOIDCHECK|2	ALWAYS		Display	NodeShuffleMapModeVoid.cpp	184	RwgEnsureVoidCheck	none	0	0	R4-once-per-session-or-operation
+NodeShuffleMapModeVoid.cpp|Display|RWGVOIDCHECK|3	ALWAYS		Display	NodeShuffleMapModeVoid.cpp	236	RwgEnsureVoidCheck	none	454	907	R4-once-per-session-or-operation
+NodeShuffleMapModeVoid.cpp|Warning|RWGVOIDCHECK-FAIL|1	ALWAYS		Warning	NodeShuffleMapModeVoid.cpp	244	RwgEnsureVoidCheck	none	142	284	R1-warn-error
+NodeShuffleMapModeVoid.cpp|Display|RESETTLE-KILLBOX-ENTRY|1	TOPIC	Void	Display	NodeShuffleMapModeVoid.cpp	286	RwgKillboxResettlePass	none	0	0	R5-topic-by-tag
+NodeShuffleMapModeVoid.cpp|Display|RESETTLE-KILLBOX|1	TOPIC	Void	Display	NodeShuffleMapModeVoid.cpp	294	RwgKillboxResettlePass	none	1069	7785	R5-topic-by-tag
+NodeShuffleMcpDescribe.cpp|Verbose|MCPDESCRIBE|1	ONDEMAND		Verbose	NodeShuffleMcpDescribe.cpp	205	McpDescribe	none	0	0	R2-typed-command
+NodeShuffleMcpSnapshot.cpp|Verbose|MCPSNAPSHOT|1	ONDEMAND		Verbose	NodeShuffleMcpSnapshot.cpp	444	McpSnapshot	none	0	0	R2-typed-command
+NodeShuffleNearestCave.cpp|Display|NEARESTCAVE|1	ONDEMAND		Display	NodeShuffleNearestCave.cpp	79	LogNearestCave	none	0	0	R2-typed-command
+NodeShuffleNearestCave.cpp|Display|NEARESTCAVE|2	ONDEMAND		Display	NodeShuffleNearestCave.cpp	88	LogNearestCave	none	0	0	R2-typed-command
+NodeShuffleNearestCave.cpp|Display|NEARESTCAVE|3	ONDEMAND		Display	NodeShuffleNearestCave.cpp	98	LogNearestCave	none	0	0	R2-typed-command
+NodeShuffleNearestCave.cpp|Display|NEARESTCAVE|4	ONDEMAND		Display	NodeShuffleNearestCave.cpp	116	LogNearestCave	none	0	0	R2-typed-command
+NodeShuffleNearestCave.cpp|Display|NEARESTCAVE|5	ONDEMAND		Display	NodeShuffleNearestCave.cpp	145	LogNearestCave	none	0	0	R2-typed-command
+NodeShuffleNearestCave.cpp|Display|NEARESTCAVE|6	ONDEMAND		Display	NodeShuffleNearestCave.cpp	149	LogNearestCave	none	0	0	R2-typed-command
+NodeShuffleNearestCave.cpp|Display|NEARESTCAVE|7	ONDEMAND		Display	NodeShuffleNearestCave.cpp	175	LogNearestCave	none	0	0	R2-typed-command
+NodeShuffleNearestCave.cpp|Display|NEARESTCAVE|8	ONDEMAND		Display	NodeShuffleNearestCave.cpp	179	LogNearestCave	none	0	0	R2-typed-command
+NodeShuffleNearestCave.cpp|Display|NEARESTCAVE|9	ONDEMAND		Display	NodeShuffleNearestCave.cpp	184	LogNearestCave	none	0	0	R2-typed-command
+NodeShuffleNodeComponent.cpp|Warning|WELLH2C-IDENTITY|1	ALWAYS		Warning	NodeShuffleNodeComponent.cpp	63	AttachIdentityOnly	none	0	0	R1-warn-error
+NodeShuffleNodeComponent.cpp|Warning|WELLH2C-IDENTITY|2	ALWAYS		Warning	NodeShuffleNodeComponent.cpp	91	AttachIdentityOnly	none	0	0	R1-warn-error
+NodeShuffleNodeComponent.cpp|Display|WELLH2C-IDENTITY|1	TOPIC	Wells	Display	NodeShuffleNodeComponent.cpp	105	AttachIdentityOnly	none	0	4810	R5-topic-by-tag
+NodeShuffleNodeComponent.cpp|Display|RENDERDIAG[%s] node='%s' class='|1	TOPIC	Visuals	Display	NodeShuffleNodeComponent.cpp	294	LogRenderState	none	3520	10270	R5-topic-by-tag
+NodeShuffleNodeGateCensus.cpp|Display|NODEGATECENSUS|1	MASTER	Gates	Display	NodeShuffleNodeGateCensus.cpp	67	EmitNodeGateCensus	earlyret	556567	3652690	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleNodeProbe.cpp|Display|NODEPROBE|1	ONDEMAND		Display	NodeShuffleNodeProbe.cpp	55	CONSOLE:NodeShuffle.ProbeNearestNode	none	0	0	R2-typed-command
+NodeShuffleNodeProbe.cpp|Display|NODEPROBE|2	ONDEMAND		Display	NodeShuffleNodeProbe.cpp	65	LogNearestNodeProbe	none	0	0	R2-typed-command
+NodeShuffleNodeProbe.cpp|Display|NODEPROBE|3	ONDEMAND		Display	NodeShuffleNodeProbe.cpp	83	LogNearestNodeProbe	none	0	0	R2-typed-command
+NodeShuffleNodeProbe.cpp|Display|NODEPROBE|4	ONDEMAND		Display	NodeShuffleNodeProbe.cpp	114	LogNearestNodeProbe	none	0	0	R2-typed-command
+NodeShuffleNodeProbe.cpp|Display|NODEPROBE|5	ONDEMAND		Display	NodeShuffleNodeProbe.cpp	137	LogNearestNodeProbe	none	0	0	R2-typed-command
+NodeShuffleNodeProbe.cpp|Display|NODEPROBE|6	ONDEMAND		Display	NodeShuffleNodeProbe.cpp	169	LogNearestNodeProbe	none	0	0	R2-typed-command
+NodeShuffleNodeProbe.cpp|Display|NODEPROBE|7	ONDEMAND		Display	NodeShuffleNodeProbe.cpp	192	LogNearestNodeProbe	none	0	0	R2-typed-command
+NodeShuffleObserveNotice.cpp|Warning|CHATNOTICE[%s]: AFGChatManager::|1	ALWAYS		Warning	NodeShuffleObserveNotice.cpp	77	PostChatNotice	none	0	0	R1-warn-error
+NodeShuffleObserveNotice.cpp|Display|CHATNOTICE[%s]: EMITTED via AFGC|1	TOPIC	Status	Display	NodeShuffleObserveNotice.cpp	108	PostChatNotice	none	1113	1783	R5-topic-by-tag
+NodeShuffleObserveNotice.cpp|Display|CHATNOTICE[%s] ROUTE: BroadcastC|1	TOPIC	Status	Display	NodeShuffleObserveNotice.cpp	115	PostChatNotice	none	1204	1928	R5-topic-by-tag
+NodeShuffleObserveNotice.cpp|Display|T61NOTICE|1	TOPIC	Status	Display	NodeShuffleObserveNotice.cpp	148	NoteUnlistedForeignResourceForNotice	none	0	0	R5-topic-by-tag
+NodeShuffleObserveNotice.cpp|Display|T61NOTICE|2	TOPIC	Status	Display	NodeShuffleObserveNotice.cpp	303	TickForeignNoticeEmitter	none	0	0	R5-topic-by-tag
+NodeShuffleObserveNotice.cpp|Display|T61NOTICE|3	TOPIC	Status	Display	NodeShuffleObserveNotice.cpp	333	TickForeignNoticeEmitter	none	0	0	R5-topic-by-tag
+NodeShuffleObserveNotice.cpp|Verbose|T61NOTICE|1	TOPIC	Status	Verbose	NodeShuffleObserveNotice.cpp	347	TickForeignNoticeEmitter	none	0	0	R5-topic-by-tag
+NodeShuffleObserveNotice.cpp|Display|T61NOTICE|4	TOPIC	Status	Display	NodeShuffleObserveNotice.cpp	357	TickForeignNoticeEmitter	none	0	0	R5-topic-by-tag
+NodeShuffleObserveNotice.cpp|Display|T61NOTICE|5	TOPIC	Status	Display	NodeShuffleObserveNotice.cpp	364	TickForeignNoticeEmitter	none	0	0	R5-topic-by-tag
+NodeShuffleObserveNotice.cpp|Error|T61NOTICE|1	ALWAYS		Error	NodeShuffleObserveNotice.cpp	388	TickForeignNoticeEmitter	none	0	0	R1-warn-error
+NodeShufflePendingNotice.cpp|Display|PENDINGNOTICE|1	TOPIC	Status	Display	NodeShufflePendingNotice.cpp	230	BuildPendingNotice	none	0	0	R5-topic-by-tag
+NodeShufflePendingNotice.cpp|Warning|PENDINGNOTICE|1	ALWAYS		Warning	NodeShufflePendingNotice.cpp	241	BuildPendingNotice	none	0	0	R1-warn-error
+NodeShufflePendingNotice.cpp|Display|PENDINGNOTICE|2	TOPIC	Status	Display	NodeShufflePendingNotice.cpp	246	BuildPendingNotice	none	0	0	R5-topic-by-tag
+NodeShufflePendingNotice.cpp|Display|PENDINGNOTICE|3	TOPIC	Status	Display	NodeShufflePendingNotice.cpp	291	EmitPendingNotice	none	0	0	R5-topic-by-tag
+NodeShufflePendingNotice.cpp|Warning|PENDINGNOTICE|2	ALWAYS		Warning	NodeShufflePendingNotice.cpp	299	EmitPendingNotice	none	0	0	R1-warn-error
+NodeShufflePendingNoticeEmit.cpp|Display|PENDINGNOTICE|1	TOPIC	Status	Display	NodeShufflePendingNoticeEmit.cpp	52	EmitPendingNoticeIfReady	none	0	0	R5-topic-by-tag
+NodeShufflePendingNoticeEmit.cpp|Display|PENDINGNOTICE|2	TOPIC	Status	Display	NodeShufflePendingNoticeEmit.cpp	80	EmitPendingNoticeIfReady	none	0	0	R5-topic-by-tag
+NodeShufflePendingNoticeEmit.cpp|Verbose|PENDINGNOTICE|1	TOPIC	Status	Verbose	NodeShufflePendingNoticeEmit.cpp	99	EmitPendingNoticeIfReady	none	0	0	R5-topic-by-tag
+NodeShufflePendingNoticeEmit.cpp|Display|PENDINGNOTICE|3	TOPIC	Status	Display	NodeShufflePendingNoticeEmit.cpp	109	EmitPendingNoticeIfReady	none	0	0	R5-topic-by-tag
+NodeShufflePendingNoticeEmit.cpp|Display|PENDINGNOTICE|4	TOPIC	Status	Display	NodeShufflePendingNoticeEmit.cpp	116	EmitPendingNoticeIfReady	none	0	0	R5-topic-by-tag
+NodeShufflePendingNoticeEmit.cpp|Error|PENDINGNOTICE|1	ALWAYS		Error	NodeShufflePendingNoticeEmit.cpp	140	EmitPendingNoticeIfReady	none	0	0	R1-warn-error
+NodeShufflePinnedHeal.cpp|Display|PINNEDHEAL-ENTRY|1	ALWAYS		Display	NodeShufflePinnedHeal.cpp	65	HealDeactivatedPinnedEntriesOnce	none	0	0	R0-pinned-ungated pinnedspawn S3 (rules said TOPIC Spawn: NAMED DECISION)
+NodeShufflePinnedHeal.cpp|Display|PINNEDHEAL|1	ALWAYS		Display	NodeShufflePinnedHeal.cpp	70	HealDeactivatedPinnedEntriesOnce	none	165	330	R0-pinned-ungated pinnedspawn S3 (agrees)
+NodeShufflePointAtHere.cpp|Display|POINTAT|1	ONDEMAND		Display	NodeShufflePointAtHere.cpp	79	CONSOLE:NodeShuffle.PointAtHere	none	0	0	R2-typed-command
+NodeShufflePointAtHere.cpp|Display|POINTAT|2	ONDEMAND		Display	NodeShufflePointAtHere.cpp	89	LogPointAtHereCensus	none	0	0	R2-typed-command
+NodeShufflePointAtHere.cpp|Display|POINTAT|3	ONDEMAND		Display	NodeShufflePointAtHere.cpp	97	LogPointAtHereCensus	none	0	0	R2-typed-command
+NodeShufflePointAtHere.cpp|Display|POINTAT|4	ONDEMAND		Display	NodeShufflePointAtHere.cpp	130	LogPointAtHereCensus	none	0	0	R2-typed-command
+NodeShufflePointAtHere.cpp|Display|POINTAT|5	ONDEMAND		Display	NodeShufflePointAtHere.cpp	145	LogPointAtHereCensus	none	0	0	R2-typed-command
+NodeShufflePointAtHere.cpp|Display|POINTAT|6	ONDEMAND		Display	NodeShufflePointAtHere.cpp	156	LogPointAtHereCensus	none	0	0	R2-typed-command
+NodeShufflePointAtHere.cpp|Display|POINTAT|7	ONDEMAND		Display	NodeShufflePointAtHere.cpp	166	LogPointAtHereCensus	none	0	0	R2-typed-command
+NodeShufflePointAtHere.cpp|Display|POINTAT|8	ONDEMAND		Display	NodeShufflePointAtHere.cpp	173	LogPointAtHereCensus	none	0	0	R2-typed-command
+NodeShufflePointAtHere.cpp|Display|POINTAT|9	ONDEMAND		Display	NodeShufflePointAtHere.cpp	188	LogPointAtHereCensus	none	0	0	R2-typed-command
+NodeShufflePointAtHere.cpp|Display|POINTAT|10	ONDEMAND		Display	NodeShufflePointAtHere.cpp	203	LogPointAtHereCensus	none	0	0	R2-typed-command
+NodeShufflePointAtHere.cpp|Display|POINTAT|11	ONDEMAND		Display	NodeShufflePointAtHere.cpp	227	LogPointAtHereCensus	none	0	0	R2-typed-command
+NodeShufflePointAtHere.cpp|Display|POINTAT|12	ONDEMAND		Display	NodeShufflePointAtHere.cpp	241	LogPointAtHereCensus	none	0	0	R2-typed-command
+NodeShufflePointAtHere.cpp|Display|POINTAT|13	ONDEMAND		Display	NodeShufflePointAtHere.cpp	255	LogPointAtHereCensus	none	0	0	R2-typed-command
+NodeShufflePointAtHere.cpp|Display|POINTAT|14	ONDEMAND		Display	NodeShufflePointAtHere.cpp	263	LogPointAtHereCensus	none	0	0	R2-typed-command
+NodeShufflePointAtHere.cpp|Display|POINTAT|15	ONDEMAND		Display	NodeShufflePointAtHere.cpp	357	LogPointAtHereCensus	none	0	0	R2-typed-command
+NodeShufflePointAtHere.cpp|Display|POINTAT|16	ONDEMAND		Display	NodeShufflePointAtHere.cpp	371	LogPointAtHereCensus	none	0	0	R2-typed-command
+NodeShuffleRepClassDiag.cpp|Display|REPCLASS-CLEARANCE|1	TOPIC	Visuals	Display	NodeShuffleRepClassDiag.cpp	105	EmitRepClassClearanceLine	none	226	11870	R5-topic-by-tag
+NodeShuffleRepClassDiag.cpp|Display|REPCLASS-STALE|1	TOPIC	Visuals	Display	NodeShuffleRepClassDiag.cpp	165	EmitRepClassStaleCensusOnce	none	0	136	R5-topic-by-tag
+NodeShuffleRepClassDiag.cpp|Display|DRESS-NATIVE|1	MASTER	Visuals	Display	NodeShuffleRepClassDiag.cpp	194	EmitDressNativeOnce	earlyret	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleRerollIdentity.cpp|Display|REROLLPOOL-NORECORD|1	TOPIC	Roll	Display	NodeShuffleRerollIdentity.cpp	188	ReportPathsWithoutPriorRecord	none	0	0	R5-topic-by-tag
+NodeShuffleRerollIdentity.cpp|Display|REPCLASS-VANRESTAMP|1	TOPIC	Visuals	Display	NodeShuffleRerollIdentity.cpp	223	EmitVanillaRestampCensus	none	0	4741	R5-topic-by-tag
+NodeShuffleRerollIdentity.cpp|Display|REPCLASS-VANRESTAMP-END|1	ALWAYS		Display	NodeShuffleRerollIdentity.cpp	226	EmitVanillaRestampCensus	none	138	140	R4-once-per-session-or-operation
+NodeShuffleRerollIdentity.cpp|Display|LAYOUTDUMP-IDTWIN|1	ONDEMAND		Display	NodeShuffleRerollIdentity.cpp	260	ReportIdentityTwins	none	0	0	R2-typed-command (reached from DumpLayout)
+NodeShuffleRerollWipe.cpp|Display|REROLLWIPE-NODE|1	MASTER	Roll	Display	NodeShuffleRerollWipe.cpp	65	RerollWipeTeardownRegistrations	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleRerollWipe.cpp|Display|REROLLWIPE|1	ALWAYS		Display	NodeShuffleRerollWipe.cpp	107	RerollWipeEmitCensus	none	0	0	R0-pinned-ungated rerollwipe R5 (agrees)
+NodeShuffleRerollWipe.cpp|Display|REROLLAUDIT|1	ALWAYS		Display	NodeShuffleRerollWipe.cpp	134	RerollWipeEmitListAudit	none	0	0	R0-pinned-ungated rerollwipe R11 (agrees)
+NodeShuffleRerollWipe.cpp|Display|REROLLAUDIT|2	ALWAYS		Display	NodeShuffleRerollWipe.cpp	141	RerollWipeEmitListAudit	none	197	197	R0-pinned-ungated rerollwipe R11 (agrees)
+NodeShuffleResourceNode.cpp|Display|ROCKDIAG|1	MASTER	Rocks	Display	NodeShuffleResourceNode.cpp	174	DressRock	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleResourceNode.cpp|Display|ROCKDIAG|2	MASTER	Rocks	Display	NodeShuffleResourceNode.cpp	182	DressRock	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleResourceNode.cpp|Display|RENDERDIAG[%s] node='%s' actorHi|1	TOPIC	Visuals	Display	NodeShuffleResourceNode.cpp	270	LogRenderState	none	0	0	R5-topic-by-tag
+NodeShuffleRockStreamInHide.cpp|Verbose|ROCKSTREAMHIDE|1	MASTER	Rocks	Verbose	NodeShuffleRockStreamInHide.cpp	113	TryHideStreamedRockForSteadyOriginal	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleRollChat.cpp|Warning|ROLLCHAT-DONE|1	ALWAYS		Warning	NodeShuffleRollChat.cpp	160	RollChatClear	none	0	0	R1-warn-error
+NodeShuffleRollChat.cpp|Display|ROLLCHAT-QUEUED|1	ALWAYS		Display	NodeShuffleRollChat.cpp	242	RollChatQueueBreakdown	none	302	302	R4-once-per-session-or-operation
+NodeShuffleRollChat.cpp|Warning|ROLLCHAT-QUEUED|1	ALWAYS		Warning	NodeShuffleRollChat.cpp	245	RollChatQueueBreakdown	none	0	0	R1-warn-error
+NodeShuffleRollChat.cpp|Verbose|ROLLCHAT|1	TOPIC	Status	Verbose	NodeShuffleRollChat.cpp	261	TickRollChatEmitter	none	0	0	R5-topic-by-tag
+NodeShuffleRollChat.cpp|Display|ROLLCHAT|1	TOPIC	Status	Display	NodeShuffleRollChat.cpp	268	TickRollChatEmitter	none	122	122	R5-topic-by-tag
+NodeShuffleRollChat.cpp|Verbose|ROLLCHAT|2	TOPIC	Status	Verbose	NodeShuffleRollChat.cpp	279	TickRollChatEmitter	none	130	130	R5-topic-by-tag
+NodeShuffleRollChat.cpp|Verbose|ROLLCHAT|3	TOPIC	Status	Verbose	NodeShuffleRollChat.cpp	301	RollChatDrainStep	none	0	0	R5-topic-by-tag
+NodeShuffleRollChat.cpp|Display|ROLLCHAT-LINE|1	TOPIC	Status	Display	NodeShuffleRollChat.cpp	312	RollChatDrainStep	none	1622	6202	R5-topic-by-tag
+NodeShuffleRollChat.cpp|Display|ROLLCHAT-DONE|1	ALWAYS		Display	NodeShuffleRollChat.cpp	327	RollChatDrainStep	none	372	372	R4-once-per-session-or-operation
+NodeShuffleRollChat.cpp|Verbose|ROLLCHAT|4	TOPIC	Status	Verbose	NodeShuffleRollChat.cpp	341	RollChatNoteFirstApply	none	125	250	R5-topic-by-tag
+NodeShuffleRollFirst.cpp|Display|ROLLFIRST-BUILD|1	ALWAYS		Display	NodeShuffleRollFirst.cpp	141	RwgRollFirstReorder	dual	4332	36352	R8d-own-condition-OR-master: prints with the master off when its own condition holds; left byte-identical (rules said TOPIC Status)
+NodeShuffleRollFirst.cpp|Display|ROLLFIRST-PASS|1	TOPICGATE	Status	Display	NodeShuffleRollFirst.cpp	199	RwgRollFirstEmitPass	block	858	7196	N2-master-gate-switched-to-topic-guard (enclosing if header) [hand-set ns-quietlog-1; draft: R5-topic-by-tag + R8-existing-master-gate-kept]
+NodeShuffleRollFirst.cpp|Display|ROLLFIRST-DONE|1	ALWAYS		Display	NodeShuffleRollFirst.cpp	206	RwgRollFirstEmitPass	mention	209	627	R4-once-per-session-or-operation VERIFY-gate-token-earlier-in-function
+NodeShuffleRollFirst.cpp|Display|SCANCOVER|1	TOPIC	Status	Display	NodeShuffleRollFirst.cpp	246	EmitScanCover	none	532	35316	R5-topic-by-tag
+NodeShuffleRootInstance.cpp|Display|T67MENUSTAMP|1	ALWAYS		Display	NodeShuffleRootInstance.cpp	30	DispatchLifecycleEvent	none	236	236	R10-may-run-before-BeginPlay (master unknown there; keeps EnableDiagnostics=true parity) VERIFY-timing
+NodeShuffleRwgDeal.cpp|Display|PURITYCENSUS|1	ALWAYS		Display	NodeShuffleRwgDeal.cpp	89	LogPurityCensus	none	3457	14080	R4-once-per-session-or-operation
+NodeShuffleRwgDeal.cpp|Display|RWGDEAL|1	ALWAYS		Display	NodeShuffleRwgDeal.cpp	226	Deal	none	245	247	R4-once-per-session-or-operation
+NodeShuffleRwgDeal.cpp|Display|RWGDEAL-SLOTS|1	ALWAYS		Display	NodeShuffleRwgDeal.cpp	230	Deal	none	163	163	R4-once-per-session-or-operation
+NodeShuffleRwgDeal.cpp|Display|RWGDEAL-RES|1	ALWAYS		Display	NodeShuffleRwgDeal.cpp	240	Deal	none	1597	7002	R4-once-per-session-or-operation
+NodeShuffleRwgDensityBudget.cpp|Display|ROLLDENSITY-CALL|1	MASTER	Roll	Display	NodeShuffleRwgDensityBudget.cpp	145	EndCall	none	542	544	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleRwgDensityBudget.cpp|Display|ROLLDENSITY|1	ALWAYS		Display	NodeShuffleRwgDensityBudget.cpp	212	RwgDensityBudgetEnd	none	600	602	R4-once-per-session-or-operation
+NodeShuffleRwgDensityBudget.cpp|Display|ROLLDENSITY-LEGEND|1	MASTER	Roll	Display	NodeShuffleRwgDensityBudget.cpp	229	RwgDensityBudgetEnd	none	1411	1411	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleRwgDensityBudget.cpp|Display|%s|1	MASTER	Roll	Display	NodeShuffleRwgDensityBudget.cpp	238	RwgDensityBudgetEnd	block	0	0	R6-override ROLLDENSITY-CELL pass-through + R8-existing-master-gate-kept
+NodeShuffleRwgDensityBudget.cpp|Verbose|%s|1	MASTER	Roll	Verbose	NodeShuffleRwgDensityBudget.cpp	238	RwgDensityBudgetEnd	mention	17959	18093	R6-override ROLLDENSITY-CELL pass-through + R8-existing-master-gate-kept
+NodeShuffleRwgGateNotice.cpp|Display|RWGGATENOTICE|1	ALWAYS		Display	NodeShuffleRwgGateNotice.cpp	74	Queue	none	221	0	R4-once-per-session-or-operation
+NodeShuffleRwgGateNotice.cpp|Display|RWGGATE-CAVESIG|1	ALWAYS		Display	NodeShuffleRwgGateNotice.cpp	122	CheckCaveSignatures	none	320	0	R4-once-per-session-or-operation
+NodeShuffleRwgGateNotice.cpp|Display|RWGGATENOTICE|2	ALWAYS		Display	NodeShuffleRwgGateNotice.cpp	206	TickNotice	none	0	0	R4-once-per-session-or-operation
+NodeShuffleRwgGateNotice.cpp|Display|RWGGATENOTICE|3	ALWAYS		Display	NodeShuffleRwgGateNotice.cpp	212	TickNotice	none	151	0	R4-once-per-session-or-operation
+NodeShuffleRwgGateNotice.cpp|Warning|RWGGATENOTICE|1	ALWAYS		Warning	NodeShuffleRwgGateNotice.cpp	219	TickNotice	none	284	0	R1-warn-error
+NodeShuffleRwgGateNotice.cpp|Error|RWGGATENOTICE|1	ALWAYS		Error	NodeShuffleRwgGateNotice.cpp	226	TickNotice	none	0	0	R1-warn-error
+NodeShuffleRwgRockCache.cpp|Display|ROCKPAIR|1	MASTER	Rocks	Display	NodeShuffleRwgRockCache.cpp	271	RebuildRwgRockCache	block	4034	8020	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleRwgRockCache.cpp|Display|ROCKPAIR-NOCAND|1	MASTER	Rocks	Display	NodeShuffleRwgRockCache.cpp	283	RebuildRwgRockCache	block	4781	54458	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleRwgRockCache.cpp|Display|ROCKPAIR-UNPAIRED|1	MASTER	Rocks	Display	NodeShuffleRwgRockCache.cpp	293	RebuildRwgRockCache	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleRwgRockCache.cpp|Display|ROCKPAIR-CAP|1	MASTER	Rocks	Display	NodeShuffleRwgRockCache.cpp	303	RebuildRwgRockCache	block	0	185	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleRwgRockCache.cpp|Display|RWGROCKCACHE|1	ALWAYS		Display	NodeShuffleRwgRockCache.cpp	311	RebuildRwgRockCache	mention	431	867	R4-once-per-session-or-operation VERIFY-gate-token-earlier-in-function
+NodeShuffleRwgSeedGas.cpp|Error|MODQUOTA-REGISTER|1	ALWAYS		Error	NodeShuffleRwgSeedGas.cpp	132	RegisterConfigRows	none	0	0	R1-warn-error
+NodeShuffleRwgSeedGas.cpp|Display|MODQUOTA-REGISTER|1	ALWAYS		Display	NodeShuffleRwgSeedGas.cpp	142	RegisterConfigRows	none	115	115	R4-once-per-session-or-operation
+NodeShuffleRwgSeedGas.cpp|Display|MODQUOTA-CFG|1	TOPIC	Roll	Display	NodeShuffleRwgSeedGas.cpp	333	LogRoll	none	291	291	R5-topic-by-tag
+NodeShuffleRwgSeedGas.cpp|Display|MODQUOTA|1	TOPIC	Roll	Display	NodeShuffleRwgSeedGas.cpp	352	LogRoll	none	1003	12448	R5-topic-by-tag
+NodeShuffleRwgSeedGas.cpp|Display|MODQUOTA-CLASS|1	TOPIC	Roll	Display	NodeShuffleRwgSeedGas.cpp	359	LogRoll	none	0	312	R5-topic-by-tag
+NodeShuffleRwgSeedGas.cpp|Display|SEEDGASSPAWN|1	TOPIC	Roll	Display	NodeShuffleRwgSeedGas.cpp	401	EmitSpawnCensus	none	0	3306	R5-topic-by-tag
+NodeShuffleRwgTraceDiag.cpp|Display|RWGTRACECTRL|1	TOPIC	Placement	Display	NodeShuffleRwgTraceDiag.cpp	280	NoteFirstTrace	none	1428	21645	R5-topic-by-tag
+NodeShuffleRwgTraceDiag.cpp|Display|RWGTRACEMISS|1	TOPIC	Placement	Display	NodeShuffleRwgTraceDiag.cpp	324	NoteFirstTrace	none	13819	100088	R5-topic-by-tag
+NodeShuffleRwgTraceDiag.cpp|Display|RWGTRACECENSUS|1	TOPIC	Placement	Display	NodeShuffleRwgTraceDiag.cpp	349	EmitPassCensus	none	56514	585502	R5-topic-by-tag
+NodeShuffleScanDiag.cpp|Display|SCANPING|1	MASTER	Scanner	Display	NodeShuffleScanDiag.cpp	123	EmitScanPing	caller	810	53501	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleScanDiag.cpp|Display|COMPASSWARN|1	MASTER	Scanner	Display	NodeShuffleScanDiag.cpp	154	EmitCompassWarnCensus	caller	14238	34689	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleScanFilter.cpp|Display|SCANFILTER-CALL|1	TOPIC	Scanner	Display	NodeShuffleScanFilter.cpp	61	EmitCallLine	none	4891	36622	R5-topic-by-tag
+NodeShuffleScanFilter.cpp|Display|SCANFILTER-CALL|2	TOPIC	Scanner	Display	NodeShuffleScanFilter.cpp	70	EmitAddedSetChanged	none	0	0	R5-topic-by-tag
+NodeShuffleScanFilter.cpp|Display|SCANFILTER-CALL|3	TOPIC	Scanner	Display	NodeShuffleScanFilter.cpp	79	EmitCallCensus	none	930	16819	R5-topic-by-tag
+NodeShuffleScanFilter.cpp|Display|SCANFILTER-PICK|1	TOPIC	Scanner	Display	NodeShuffleScanFilter.cpp	236	EmitPickLine	none	390	26184	R5-topic-by-tag
+NodeShuffleScanFilterRows.cpp|Display|SCANFILTER-CARRY|1	ALWAYS		Display	NodeShuffleScanFilterRows.cpp	164	RunCarryOverOnce	none	185	370	R4-once-per-session-or-operation
+NodeShuffleScanFilterRows.cpp|Display|SCANFILTER-CARRY|2	ALWAYS		Display	NodeShuffleScanFilterRows.cpp	208	RunCarryOverOnce	none	0	0	R4-once-per-session-or-operation
+NodeShuffleScanFilterRows.cpp|Display|SCANFILTER-ROWS|1	ALWAYS		Display	NodeShuffleScanFilterRows.cpp	244	Tick	mention	0	0	R4-once-per-session-or-operation VERIFY-gate-token-earlier-in-function
+NodeShuffleScanFilterRows.cpp|Warning|SCANFILTER-ROWS|1	ALWAYS		Warning	NodeShuffleScanFilterRows.cpp	259	Tick	mention	0	0	R1-warn-error VERIFY-gate-token-earlier-in-function
+NodeShuffleScanFilterRows.cpp|Warning|SCANFILTER-ROWS|2	ALWAYS		Warning	NodeShuffleScanFilterRows.cpp	269	Tick	mention	0	0	R1-warn-error VERIFY-gate-token-earlier-in-function
+NodeShuffleScanFilterRows.cpp|Display|SCANFILTER-CARRY|3	ALWAYS		Display	NodeShuffleScanFilterRows.cpp	282	Tick	mention	0	0	R4-once-per-session-or-operation VERIFY-gate-token-earlier-in-function
+NodeShuffleScanFilterRows.cpp|Display|SCANFILTER-ROWS|2	ALWAYS		Display	NodeShuffleScanFilterRows.cpp	331	Tick	mention	0	0	R4-once-per-session-or-operation VERIFY-gate-token-earlier-in-function
+NodeShuffleScanFilterRows.cpp|Display|SCANFILTER-ROWADD|1	TOPIC	Scanner	Display	NodeShuffleScanFilterRows.cpp	346	Tick	mention	0	0	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleScanFilterRows.cpp|Warning|SCANFILTER-ROWS|3	ALWAYS		Warning	NodeShuffleScanFilterRows.cpp	373	Tick	mention	0	0	R1-warn-error VERIFY-gate-token-earlier-in-function
+NodeShuffleScanFilterRows.cpp|Display|SCANFILTER-ROWS|3	ALWAYS		Display	NodeShuffleScanFilterRows.cpp	422	Tick	mention	1288	1370	R4-once-per-session-or-operation VERIFY-gate-token-earlier-in-function
+NodeShuffleScanFilterState.cpp|Display|SCANFILTER-STATE|1	ALWAYS		Display	NodeShuffleScanFilterState.cpp	50	DetectTouches	none	0	0	R4-once-per-session-or-operation
+NodeShuffleScanFilterState.cpp|Display|SCANFILTER-STATE|2	ALWAYS		Display	NodeShuffleScanFilterState.cpp	73	MirrorAutoRows	none	0	0	R4-once-per-session-or-operation
+NodeShuffleScanFilterState.cpp|Display|SCANFILTER-STATE|3	ALWAYS		Display	NodeShuffleScanFilterState.cpp	88	EnsureRowStateRecordLoaded	none	0	0	R4-once-per-session-or-operation
+NodeShuffleScanFilterState.cpp|Warning|SCANFILTER-STATE|1	ALWAYS		Warning	NodeShuffleScanFilterState.cpp	97	EnsureRowStateRecordLoaded	none	0	0	R1-warn-error
+NodeShuffleScanFilterState.cpp|Warning|SCANFILTER-STATE|2	ALWAYS		Warning	NodeShuffleScanFilterState.cpp	115	EnsureRowStateRecordLoaded	none	0	0	R1-warn-error
+NodeShuffleScanFilterState.cpp|Display|SCANFILTER-STATE|4	ALWAYS		Display	NodeShuffleScanFilterState.cpp	122	EnsureRowStateRecordLoaded	none	185	185	R4-once-per-session-or-operation
+NodeShuffleScanFilterState.cpp|Display|SCANFILTER-STATE|5	ALWAYS		Display	NodeShuffleScanFilterState.cpp	143	ApplyPendingRowStateForgets	none	0	0	R4-once-per-session-or-operation
+NodeShuffleScanFilterState.cpp|Display|SCANFILTER-STATE|6	ALWAYS		Display	NodeShuffleScanFilterState.cpp	164	ResolveMissingRecordOnce	none	0	0	R4-once-per-session-or-operation
+NodeShuffleScanFilterState.cpp|Warning|SCANFILTER-STATE|3	ALWAYS		Warning	NodeShuffleScanFilterState.cpp	180	ResolveMissingRecordOnce	none	0	0	R1-warn-error
+NodeShuffleScanFilterState.cpp|Display|SCANFILTER-STATE|7	ALWAYS		Display	NodeShuffleScanFilterState.cpp	210	DropRecordsWithoutRows	none	0	0	R4-once-per-session-or-operation
+NodeShuffleScanFilterState.cpp|Warning|SCANFILTER-STATE|4	ALWAYS		Warning	NodeShuffleScanFilterState.cpp	247	FlushRowStateRecordIfDirty	none	0	0	R1-warn-error
+NodeShuffleScanFilterState.cpp|Display|SCANFILTER-STATE|8	ALWAYS		Display	NodeShuffleScanFilterState.cpp	253	FlushRowStateRecordIfDirty	none	0	0	R4-once-per-session-or-operation
+NodeShuffleSettledRestore.cpp|Display|ADOPTWORLD|1	ALWAYS		Display	NodeShuffleSettledRestore.cpp	111	EmitAdoptWorldCensus	none	338	24763	R0-pinned-ungated leadrestore L7 (agrees)
+NodeShuffleSettledRestore.cpp|Display|SETTLEDRESTORE-SKIPPED|1	TOPIC	Spawn	Display	NodeShuffleSettledRestore.cpp	141	RunSettledRestoreOnce	none	0	0	R5-topic-by-tag
+NodeShuffleSettledRestore.cpp|Display|SETTLEDRESTORE-SPAWNED|1	ALWAYS		Display	NodeShuffleSettledRestore.cpp	215	RunSettledRestoreOnce	none	0	0	R0-pinned-ungated leadrestore L7 (rules said TOPIC Spawn: NAMED DECISION)
+NodeShuffleSettledRestore.cpp|Display|SETTLEDRESTORE-HELD|1	ALWAYS		Display	NodeShuffleSettledRestore.cpp	235	RunSettledRestoreOnce	none	0	0	R0-pinned-ungated leadrestore L7 (rules said TOPIC Spawn: NAMED DECISION)
+NodeShuffleSettledRestore.cpp|Display|SETTLEDRESTORE|1	ALWAYS		Display	NodeShuffleSettledRestore.cpp	248	RunSettledRestoreOnce	none	752	1504	R0-pinned-ungated leadrestore L7 (agrees)
+NodeShuffleStatus.cpp|Display|NSSTATUS|1	ALWAYS		Display	NodeShuffleStatus.cpp	180	StatusTick	none	2882	2883	R4-once-per-session-or-operation
+NodeShuffleStatus.cpp|Display|NSSTATUS-CHAT|1	ALWAYS		Display	NodeShuffleStatus.cpp	194	StatusChatStep	none	0	0	R4-once-per-session-or-operation
+NodeShuffleStatus.cpp|Display|NSSTATUS-CHAT|2	ALWAYS		Display	NodeShuffleStatus.cpp	195	StatusChatStep	none	0	0	R4-once-per-session-or-operation
+NodeShuffleStatus.cpp|Display|NSSTATUS-CHAT|3	ALWAYS		Display	NodeShuffleStatus.cpp	199	StatusChatStep	none	0	0	R4-once-per-session-or-operation
+NodeShuffleStatus.cpp|Display|NSSTATUS-CHAT|4	ALWAYS		Display	NodeShuffleStatus.cpp	209	StatusChatStep	none	0	0	R4-once-per-session-or-operation
+NodeShuffleStatus.cpp|Display|NSSTATUS-CHAT|5	ALWAYS		Display	NodeShuffleStatus.cpp	212	StatusChatStep	none	202	202	R4-once-per-session-or-operation
+NodeShuffleStatus.cpp|Display|NSSTATUS-CHAT|6	ALWAYS		Display	NodeShuffleStatus.cpp	218	StatusChatStep	none	206	206	R4-once-per-session-or-operation
+NodeShuffleStatusPanel.cpp|Display|NSSTATUS-PANEL|1	ALWAYS		Display	NodeShuffleStatusPanel.cpp	33	StatusEnsurePanel	none	0	0	R4-once-per-session-or-operation
+NodeShuffleStatusPanel.cpp|Display|NSSTATUS-PANEL|2	ALWAYS		Display	NodeShuffleStatusPanel.cpp	43	StatusEnsurePanel	none	228	228	R4-once-per-session-or-operation
+NodeShuffleStatusPanel.cpp|Display|NSSTATUS-PANEL|3	ALWAYS		Display	NodeShuffleStatusPanel.cpp	52	StatusRemovePanel	none	197	197	R4-once-per-session-or-operation
+NodeShuffleStatusPanel.cpp|Display|NSSTATUS-TEST|1	ONDEMAND		Display	NodeShuffleStatusPanel.cpp	87	StatusRunPanelTest	none	0	0	R2-typed-command
+NodeShuffleStatusPanel.cpp|Display|NSSTATUS-TEST|2	ONDEMAND		Display	NodeShuffleStatusPanel.cpp	94	StatusRunPanelTest	none	0	0	R2-typed-command
+NodeShuffleStatusPanel.cpp|Display|NSSTATUS-TEST|3	ONDEMAND		Display	NodeShuffleStatusPanel.cpp	107	StatusRunPanelTest	none	0	0	R2-typed-command
+NodeShuffleStatusPanel.cpp|Display|NSSTATUS-TEST|4	ONDEMAND		Display	NodeShuffleStatusPanel.cpp	120	CONSOLE:NodeShuffle.StatusPanelTest	none	0	0	R2-typed-command
+NodeShuffleStatusPanel.cpp|Display|NSSTATUS-TEST|5	ONDEMAND		Display	NodeShuffleStatusPanel.cpp	128	CONSOLE:NodeShuffle.StatusPanelTest	none	0	0	R2-typed-command
+NodeShuffleSubsystem.cpp|Display|NodeShuffle is disabled in confi|1	ALWAYS		Display	NodeShuffleSubsystem.cpp	298	RefreshTick	none	0	0	R4-once-per-session-or-operation
+NodeShuffleSubsystem.cpp|Display|Captured player start location %|1	ALWAYS		Display	NodeShuffleSubsystem.cpp	331	RefreshTick	none	145	145	R4-once-per-session-or-operation
+NodeShuffleSubsystem.cpp|Display|Re-roll triggered (Re-roll toggl|1	ALWAYS		Display	NodeShuffleSubsystem.cpp	362	RefreshTick	none	0	0	R4-once-per-session-or-operation
+NodeShuffleSubsystem.cpp|Display|Re-roll done; Re-roll toggle cle|1	ALWAYS		Display	NodeShuffleSubsystem.cpp	367	RefreshTick	none	0	0	R4-once-per-session-or-operation
+NodeShuffleSubsystem.cpp|Verbose|ROLLCHAT|1	TOPIC	Status	Verbose	NodeShuffleSubsystem.cpp	455	RefreshTick	none	0	0	R5-topic-by-tag
+NodeShuffleSubsystem.cpp|Display|SCANREGEN|1	MASTER	Scanner	Display	NodeShuffleSubsystem.cpp	473	RefreshTick	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|SCANREGEN|2	MASTER	Scanner	Display	NodeShuffleSubsystem.cpp	483	RefreshTick	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|Re-roll restore: un-hid %d suppr|1	ALWAYS		Display	NodeShuffleSubsystem.cpp	603	RestoreOriginalsForReroll	none	0	0	R4-once-per-session-or-operation
+NodeShuffleSubsystem.cpp|Display|Layout migration: saved layout v|1	ALWAYS		Display	NodeShuffleSubsystem.cpp	653	PostLoadGame_Implementation	none	0	0	R4-once-per-session-or-operation
+NodeShuffleSubsystem.cpp|Display|REROLLPOOL-IDENTITY|1	ALWAYS		Display	NodeShuffleSubsystem.cpp	770	RollLayout	none	0	0	R0-pinned-ungated rerolldup2 V1 (rules said TOPIC Roll: NAMED DECISION)
+NodeShuffleSubsystem.cpp|Display|REROLLPOOL-PATHDUPE|1	TOPIC	Roll	Display	NodeShuffleSubsystem.cpp	934	RollLayout	none	0	0	R5-topic-by-tag
+NodeShuffleSubsystem.cpp|Display|REROLLPOOL-IDENTITYDUPE|1	TOPIC	Roll	Display	NodeShuffleSubsystem.cpp	945	RollLayout	none	0	0	R5-topic-by-tag
+NodeShuffleSubsystem.cpp|Display|Re-roll ZOMBIE-GC: dropping un-a|1	TOPIC	Roll	Display	NodeShuffleSubsystem.cpp	982	RollLayout	none	0	0	R5-topic-by-tag
+NodeShuffleSubsystem.cpp|Display|Re-roll pool (redesign-6): rebui|1	ALWAYS		Display	NodeShuffleSubsystem.cpp	1063	RollLayout	none	0	0	R4-once-per-session-or-operation
+NodeShuffleSubsystem.cpp|Display|RWGDEAL-REROLL|1	TOPIC	Roll	Display	NodeShuffleSubsystem.cpp	1069	RollLayout	none	0	0	R5-topic-by-tag
+NodeShuffleSubsystem.cpp|Display|Non-solid augment: added %d live|1	ALWAYS		Display	NodeShuffleSubsystem.cpp	1169	RollLayout	none	0	0	R4-once-per-session-or-operation
+NodeShuffleSubsystem.cpp|Display|Full re-scan augment: added %d u|1	ALWAYS		Display	NodeShuffleSubsystem.cpp	1255	RollLayout	none	0	0	R4-once-per-session-or-operation
+NodeShuffleSubsystem.cpp|Display|UPSTREAM-SCAN|1	TOPIC	Hide	Display	NodeShuffleSubsystem.cpp	1296	RollLayout	none	6025	16254	R5-topic-by-tag
+NodeShuffleSubsystem.cpp|Warning|Roll aborted: no eligible vanill|1	ALWAYS		Warning	NodeShuffleSubsystem.cpp	1371	RollLayout	none	0	0	R1-warn-error
+NodeShuffleSubsystem.cpp|Display|REPCLASS-REGISTRY-QUERY|1	ALWAYS		Display	NodeShuffleSubsystem.cpp	1632	RollLayout	dual	0	146	R8d-own-condition-OR-master: prints with the master off when its own condition holds; left byte-identical (rules said TOPIC Visuals)
+NodeShuffleSubsystem.cpp|Display|REPCLASS-REGISTRY-CONTROL|1	MASTER	Visuals	Display	NodeShuffleSubsystem.cpp	1637	RollLayout	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|REPCLASS-REGISTRY|1	ALWAYS		Display	NodeShuffleSubsystem.cpp	1655	RollLayout	dual	0	196	R8d-own-condition-OR-master: prints with the master off when its own condition holds; left byte-identical (rules said TOPIC Visuals)
+NodeShuffleSubsystem.cpp|Display|REPCLASS|1	TOPIC	Visuals	Display	NodeShuffleSubsystem.cpp	1681	RollLayout	mention	0	9268	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleSubsystem.cpp|Display|FIX|1	TOPIC	Spawn	Display	NodeShuffleSubsystem.cpp	1926	RollLayout	mention	195	195	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleSubsystem.cpp|Display|FIX|2	TOPIC	Spawn	Display	NodeShuffleSubsystem.cpp	1932	RollLayout	mention	0	0	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleSubsystem.cpp|Display|rep-class: solid='%s' vanilla=%d|1	ALWAYS		Display	NodeShuffleSubsystem.cpp	2002	RollLayout	mention	432	432	R4-once-per-session-or-operation VERIFY-gate-token-earlier-in-function
+NodeShuffleSubsystem.cpp|Display|RESTAMP|1	MASTER	Roll	Display	NodeShuffleSubsystem.cpp	2100	RollLayout	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|Hide & Replace conversion: %d un|1	ALWAYS		Display	NodeShuffleSubsystem.cpp	2137	RollLayout	mention	216	216	R4-once-per-session-or-operation VERIFY-gate-token-earlier-in-function
+NodeShuffleSubsystem.cpp|Display|REPCLASS-CONVERT|1	ALWAYS		Display	NodeShuffleSubsystem.cpp	2140	RollLayout	mention	148	152	R4-once-per-session-or-operation VERIFY-gate-token-earlier-in-function
+NodeShuffleSubsystem.cpp|Display|RWGDEAL-STAMP|1	ALWAYS		Display	NodeShuffleSubsystem.cpp	2145	RollLayout	mention	159	161	R4-once-per-session-or-operation VERIFY-gate-token-earlier-in-function
+NodeShuffleSubsystem.cpp|Display|REPCLASS-CONVERT-RES|1	TOPIC	Visuals	Display	NodeShuffleSubsystem.cpp	2155	RollLayout	mention	0	4218	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleSubsystem.cpp|Display|REPCLASS-VANRESTAMP-LIVEKEPT|1	TOPIC	Visuals	Display	NodeShuffleSubsystem.cpp	2220	RollLayout	mention	0	0	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleSubsystem.cpp|Display|REROLLPOOL-CARRY|1	ALWAYS		Display	NodeShuffleSubsystem.cpp	2329	RollLayout	mention	0	0	R0-pinned-ungated rerolldup U6 (rules said TOPIC Roll: NAMED DECISION) VERIFY-gate-token-earlier-in-function
+NodeShuffleSubsystem.cpp|Display|Rolled layout: seed %d, pool %d |1	ALWAYS		Display	NodeShuffleSubsystem.cpp	2336	RollLayout	mention	142	143	R4-once-per-session-or-operation VERIFY-gate-token-earlier-in-function
+NodeShuffleSubsystem.cpp|Display|ROLLCENSUS|1	ALWAYS		Display	NodeShuffleSubsystem.cpp	2439	EmitRollCensus	none	2232	3037	R4-once-per-session-or-operation
+NodeShuffleSubsystem.cpp|Warning|ROLLCENSUS|1	ALWAYS		Warning	NodeShuffleSubsystem.cpp	2478	EmitRollCensus	none	0	0	R1-warn-error
+NodeShuffleSubsystem.cpp|Warning|Map-wide spread: degenerate node|1	ALWAYS		Warning	NodeShuffleSubsystem.cpp	2561	GenerateNewLocations	none	0	0	R1-warn-error
+NodeShuffleSubsystem.cpp|Display|Map-wide spread: %d of the locat|1	ALWAYS		Display	NodeShuffleSubsystem.cpp	2641	GenerateNewLocations	none	0	0	R4-once-per-session-or-operation
+NodeShuffleSubsystem.cpp|Display|Map-wide spread: distributed %d/|1	ALWAYS		Display	NodeShuffleSubsystem.cpp	2646	GenerateNewLocations	none	0	0	R4-once-per-session-or-operation
+NodeShuffleSubsystem.cpp|Warning|NodeShuffle_CustomNodes.json exi|1	ALWAYS		Warning	NodeShuffleSubsystem.cpp	2664	ReadCustomLocationsJson	none	0	0	R1-warn-error
+NodeShuffleSubsystem.cpp|Display|Using %d custom node locations f|1	ALWAYS		Display	NodeShuffleSubsystem.cpp	2684	ReadCustomLocationsJson	none	0	0	R4-once-per-session-or-operation
+NodeShuffleSubsystem.cpp|Display|GENERATEDNODES|1	ALWAYS		Display	NodeShuffleSubsystem.cpp	2693	WriteGeneratedLocationsJson	none	157	157	R4-once-per-session-or-operation
+NodeShuffleSubsystem.cpp|Display|CACHE-REFRESH|1	MASTER	Spawn	Display	NodeShuffleSubsystem.cpp	2759	ApplyLayout	block	3620	40772	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|Pinned occupied spawned node %s |1	TOPIC	Spawn	Display	NodeShuffleSubsystem.cpp	2827	ApplyLayout	mention	277	5165	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleSubsystem.cpp|Verbose|Spawned-node visuals (this pass)|1	TOPIC	Visuals	Verbose	NodeShuffleSubsystem.cpp	2920	ApplyLayout	mention	14959	33978	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleSubsystem.cpp|Display|THORIUMHALF|1	ALWAYS		Display	NodeShuffleSubsystem.cpp	2937	ApplyLayout	mention	230	4593	R0-pinned-ungated thoriumhalf T5 (agrees) VERIFY-gate-token-earlier-in-function
+NodeShuffleSubsystem.cpp|Verbose|Deferral summary: %d entries def|1	TOPIC	Spawn	Verbose	NodeShuffleSubsystem.cpp	2950	ApplyLayout	mention	3874	26075	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleSubsystem.cpp|Display|coexistence: %d shuffled nodes d|1	TOPIC	Veto	Display	NodeShuffleSubsystem.cpp	2965	ApplyLayout	mention	0	0	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleSubsystem.cpp|Verbose|pass: 0 changes (steady: %d live|1	MASTER	Spawn	Verbose	NodeShuffleSubsystem.cpp	2976	ApplyLayout	block	14832	200016	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Verbose|Removed mismatched deposit %s (%|1	TOPIC	Roll	Verbose	NodeShuffleSubsystem.cpp	3021	SweepMismatchedDeposits	none	0	0	R5-topic-by-tag
+NodeShuffleSubsystem.cpp|Display|Deposit sweep: removed %d mismat|1	TOPIC	Roll	Display	NodeShuffleSubsystem.cpp	3032	SweepMismatchedDeposits	none	0	0	R5-topic-by-tag
+NodeShuffleSubsystem.cpp|Verbose|T72RESOLVE|1	MASTER	Visuals	Verbose	NodeShuffleSubsystem.cpp	3076	ResolveNodeMeshForKey	block	81782	152338	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Verbose|T72RESOLVE|2	MASTER	Visuals	Verbose	NodeShuffleSubsystem.cpp	3087	ResolveNodeMeshForKey	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|T72RESOLVE|1	TOPIC	Visuals	Display	NodeShuffleSubsystem.cpp	3101	ResolveNodeMeshForKey	mention	0	0	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleSubsystem.cpp|Display|T72RESOLVE|2	TOPIC	Visuals	Display	NodeShuffleSubsystem.cpp	3119	ResolveNodeMeshForKey	mention	0	0	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleSubsystem.cpp|Verbose|T72RESOLVE|3	MASTER	Visuals	Verbose	NodeShuffleSubsystem.cpp	3137	ResolveNodeMeshForKey	block	2269	5334	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Verbose|T72RESOLVE|4	MASTER	Visuals	Verbose	NodeShuffleSubsystem.cpp	3147	ResolveNodeMeshForKey	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|T72RESOLVE|3	TOPIC	Visuals	Display	NodeShuffleSubsystem.cpp	3159	ResolveNodeMeshForKey	mention	0	0	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleSubsystem.cpp|Verbose|T72RESOLVE|5	MASTER	Visuals	Verbose	NodeShuffleSubsystem.cpp	3222	ResolveNodeMaterialsForKey	block	78888	89811	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|T72RESOLVE|4	TOPIC	Visuals	Display	NodeShuffleSubsystem.cpp	3252	ResolveNodeMaterialsForKey	mention	0	0	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleSubsystem.cpp|Display|T72RESOLVE|5	TOPIC	Visuals	Display	NodeShuffleSubsystem.cpp	3266	ResolveNodeMaterialsForKey	mention	0	0	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleSubsystem.cpp|Verbose|T72RESOLVE|6	MASTER	Visuals	Verbose	NodeShuffleSubsystem.cpp	3294	ResolveNodeMaterialsForKey	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Verbose|T72RESOLVE|7	MASTER	Visuals	Verbose	NodeShuffleSubsystem.cpp	3305	ResolveNodeMaterialsForKey	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Verbose|T72RESOLVE|8	MASTER	Visuals	Verbose	NodeShuffleSubsystem.cpp	3316	ResolveNodeMaterialsForKey	block	2190	4818	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|T72RESOLVE|6	TOPIC	Visuals	Display	NodeShuffleSubsystem.cpp	3328	ResolveNodeMaterialsForKey	mention	0	0	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleSubsystem.cpp|Display|T72DRESS|1	TOPIC	Visuals	Display	NodeShuffleSubsystem.cpp	3357	EmitT72DressCensus	none	77061	170834	R5-topic-by-tag
+NodeShuffleSubsystem.cpp|Display|T72RESOLVE|7	TOPIC	Visuals	Display	NodeShuffleSubsystem.cpp	3433	ResolveCapturedVisual	none	0	0	R5-topic-by-tag
+NodeShuffleSubsystem.cpp|Warning|CAPTURE|1	ALWAYS		Warning	NodeShuffleSubsystem.cpp	3465	ResolveCapturedVisual	none	0	0	R1-warn-error
+NodeShuffleSubsystem.cpp|Display|CAPTURE-CHAIN|1	MASTER	Visuals	Display	NodeShuffleSubsystem.cpp	3519	CaptureOriginalVisualIfNeeded	block	0	191	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|CAPTURE-CHAIN|2	MASTER	Visuals	Display	NodeShuffleSubsystem.cpp	3533	CaptureOriginalVisualIfNeeded	block	212	15053	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|RWGROCKCACHE-CAPTURE-SKIP|1	TOPIC	Rocks	Display	NodeShuffleSubsystem.cpp	3550	CaptureOriginalVisualIfNeeded	mention	0	0	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleSubsystem.cpp|Verbose|CAPTURE-CHAIN|1	MASTER	Visuals	Verbose	NodeShuffleSubsystem.cpp	3562	CaptureOriginalVisualIfNeeded	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Verbose|CAPTURE-CHAIN|2	MASTER	Visuals	Verbose	NodeShuffleSubsystem.cpp	3568	CaptureOriginalVisualIfNeeded	block	170	12074	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Verbose|CAPTURE-CHAIN|3	MASTER	Visuals	Verbose	NodeShuffleSubsystem.cpp	3620	CaptureOriginalVisualIfNeeded	block	0	14198	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|CAPTURE-CHAIN|3	MASTER	Visuals	Display	NodeShuffleSubsystem.cpp	3664	CaptureOriginalVisualIfNeeded	block	228	15502	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|CAPTURE|1	TOPIC	Visuals	Display	NodeShuffleSubsystem.cpp	3715	CaptureOriginalVisualIfNeeded	mention	0	295	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleSubsystem.cpp|Display|CAPTURE-SRC|1	MASTER	Visuals	Display	NodeShuffleSubsystem.cpp	3743	CaptureOriginalVisualIfNeeded	block	0	214	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|CAPTURE-MAT|1	MASTER	Visuals	Display	NodeShuffleSubsystem.cpp	3750	CaptureOriginalVisualIfNeeded	block	0	546	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|DRESS-SKIP|1	MASTER	Visuals	Display	NodeShuffleSubsystem.cpp	3788	RedressSpawnedOfResource	block	0	75643	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|CAPTURE|2	TOPIC	Visuals	Display	NodeShuffleSubsystem.cpp	3800	RedressSpawnedOfResource	mention	0	0	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleSubsystem.cpp|Warning|SpawnVisualRockForNode: no mesh |1	ALWAYS		Warning	NodeShuffleSubsystem.cpp	3869	SpawnVisualRockForNode	none	0	0	R1-warn-error
+NodeShuffleSubsystem.cpp|Warning|THORIUMHALF-ROWMISS|1	ALWAYS		Warning	NodeShuffleSubsystem.cpp	3898	SpawnVisualRockForNode	none	0	0	R1-warn-error
+NodeShuffleSubsystem.cpp|Display|THORIUMHALF-DRESS|1	MASTER	Visuals	Display	NodeShuffleSubsystem.cpp	3988	SpawnVisualRockForNode	block	0	5301	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|ROCK-CENTER|1	MASTER	Rocks	Display	NodeShuffleSubsystem.cpp	4002	SpawnVisualRockForNode	block	102731	120293	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|DRESS-MAT|1	MASTER	Visuals	Display	NodeShuffleSubsystem.cpp	4019	SpawnVisualRockForNode	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Verbose|dressed %s rock (node subobject)|1	MASTER	Rocks	Verbose	NodeShuffleSubsystem.cpp	4032	SpawnVisualRockForNode	block	68825	80247	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|Starter nodes: placed 5 near %s |1	ALWAYS		Display	NodeShuffleSubsystem.cpp	4154	AppendStarterNodes	none	189	189	R4-once-per-session-or-operation
+NodeShuffleSubsystem.cpp|Display|veto: pre-registered %d restored|1	ALWAYS		Display	NodeShuffleSubsystem.cpp	4222	PreRegisterRestoredNodesForVeto	none	0	107	R4-once-per-session-or-operation
+NodeShuffleSubsystem.cpp|Verbose|veto: pre-registered 0 restored |1	ALWAYS		Verbose	NodeShuffleSubsystem.cpp	4226	PreRegisterRestoredNodesForVeto	none	140	140	R4-once-per-session-or-operation
+NodeShuffleSubsystem.cpp|Display|Adopt-on-load (real-class): adop|1	ALWAYS		Display	NodeShuffleSubsystem.cpp	4325	AdoptRestoredSpawnedNodes	none	271	548	R4-once-per-session-or-operation
+NodeShuffleSubsystem.cpp|Display|REPCLASS-PURITY|1	MASTER	Visuals	Display	NodeShuffleSubsystem.cpp	4355	FinalizeAdoptedNode	block	0	42126	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Verbose|visfix: hid native mesh '%s' on |1	MASTER	Visuals	Verbose	NodeShuffleSubsystem.cpp	4459	HideNativeNodeMesh	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|USEBOX-RISE|1	MASTER	Gates	Display	NodeShuffleSubsystem.cpp	4557	EnsureNodeUseBox	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|USEBOX-RISE|2	MASTER	Gates	Display	NodeShuffleSubsystem.cpp	4574	EnsureNodeUseBox	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|SNAPDIAG|1	TOPIC	Hologram	Display	NodeShuffleSubsystem.cpp	4611	LogNodeSnapState	none	419	838	R5-topic-by-tag
+NodeShuffleSubsystem.cpp|Display|SNAPDIAG|2	TOPIC	Hologram	Display	NodeShuffleSubsystem.cpp	4622	LogNodeSnapState	none	709	1948	R5-topic-by-tag
+NodeShuffleSubsystem.cpp|Display|SNAPDIAG|3	TOPIC	Hologram	Display	NodeShuffleSubsystem.cpp	4670	DiagnoseSnapState	none	0	0	R5-topic-by-tag
+NodeShuffleSubsystem.cpp|Display|REGDIAG|1	MASTER	Hologram	Display	NodeShuffleSubsystem.cpp	4725	RegisterNodeWithManager	block	214	428	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|VALIDDIAG|1	TOPIC	Hologram	Display	NodeShuffleSubsystem.cpp	4741	LogNodeValidationState	none	609	1226	R5-topic-by-tag
+NodeShuffleSubsystem.cpp|Display|COLLDIAG|1	TOPIC	Hologram	Display	NodeShuffleSubsystem.cpp	4765	LogNodeCollisionFull	none	399	798	R5-topic-by-tag
+NodeShuffleSubsystem.cpp|Display|COLLDIAG|2	TOPIC	Hologram	Display	NodeShuffleSubsystem.cpp	4773	LogNodeCollisionFull	none	1120	3048	R5-topic-by-tag
+NodeShuffleSubsystem.cpp|Display|VALIDDIAG|2	TOPIC	Hologram	Display	NodeShuffleSubsystem.cpp	4822	DiagnoseValidationGate	none	0	0	R5-topic-by-tag
+NodeShuffleSubsystem.cpp|Display|OIL-REP|1	MASTER	Visuals	Display	NodeShuffleSubsystem.cpp	4856	DeregisterNodeFromManager	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|EXTDESTROY-SNAP|1	MASTER	Hologram	Display	NodeShuffleSubsystem.cpp	4900	EnsureNewNodeSpawned	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|coexistence: occupied node %s (%|1	TOPIC	Veto	Display	NodeShuffleSubsystem.cpp	4918	EnsureNewNodeSpawned	mention	0	0	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleSubsystem.cpp|Verbose|coexistence: occupied node %s (%|1	MASTER	Veto	Verbose	NodeShuffleSubsystem.cpp	4924	EnsureNewNodeSpawned	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Verbose|coexistence: spawned node %s (%s|1	MASTER	Veto	Verbose	NodeShuffleSubsystem.cpp	4934	EnsureNewNodeSpawned	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Verbose|coexistence: entry %s (%s) tombs|1	MASTER	Veto	Verbose	NodeShuffleSubsystem.cpp	4953	EnsureNewNodeSpawned	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Verbose|SLOPEFIT|1	MASTER	Gates	Verbose	NodeShuffleSubsystem.cpp	5032	EnsureNewNodeSpawned	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|DRESS-SKIP|2	MASTER	Visuals	Display	NodeShuffleSubsystem.cpp	5081	EnsureNewNodeSpawned	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|DRESS-NOSKIP|1	MASTER	Visuals	Display	NodeShuffleSubsystem.cpp	5086	EnsureNewNodeSpawned	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Verbose|CAVE-DEAL|1	TOPIC	Roll	Verbose	NodeShuffleSubsystem.cpp	5202	EnsureNewNodeSpawned	mention	0	0	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleSubsystem.cpp|Verbose|Spawn-on-discovery: deferred %s |1	MASTER	Spawn	Verbose	NodeShuffleSubsystem.cpp	5215	EnsureNewNodeSpawned	block	813	1018	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|OVERLAPGATE-PINNED|1	ALWAYS		Display	NodeShuffleSubsystem.cpp	5393	EnsureNewNodeSpawned	mention	0	0	R0-pinned-ungated pinnedspawn S1 (rules said TOPIC Gates: NAMED DECISION) VERIFY-gate-token-earlier-in-function
+NodeShuffleSubsystem.cpp|Display|OVERLAPGATE-PINNEDHOLD|1	TOPIC	Gates	Display	NodeShuffleSubsystem.cpp	5407	EnsureNewNodeSpawned	mention	0	0	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleSubsystem.cpp|Display|ENCLOSURE|1	MASTER	Gates	Display	NodeShuffleSubsystem.cpp	5429	EnsureNewNodeSpawned	block	0	382	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Verbose|Overlap nudge: relocated %s node|1	TOPIC	Gates	Verbose	NodeShuffleSubsystem.cpp	5459	EnsureNewNodeSpawned	mention	0	0	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleSubsystem.cpp|Display|OVERLAPGATE|1	ALWAYS		Display	NodeShuffleSubsystem.cpp	5470	EnsureNewNodeSpawned	none	0	554	R0-pinned-ungated pinnedspawn S2 (rules said TOPIC Gates: NAMED DECISION)
+NodeShuffleSubsystem.cpp|Display|Overlap guard: resolved %s node |1	TOPIC	Gates	Display	NodeShuffleSubsystem.cpp	5488	EnsureNewNodeSpawned	mention	0	0	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleSubsystem.cpp|Display|INSIDEGATE-PINNED|1	TOPIC	Gates	Display	NodeShuffleSubsystem.cpp	5553	EnsureNewNodeSpawned	mention	0	0	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleSubsystem.cpp|Display|INSIDEGATE|1	TOPIC	Gates	Display	NodeShuffleSubsystem.cpp	5583	EnsureNewNodeSpawned	mention	0	0	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleSubsystem.cpp|Warning|Failed to spawn new node (%s) at|1	ALWAYS		Warning	NodeShuffleSubsystem.cpp	5623	EnsureNewNodeSpawned	mention	0	0	R1-warn-error VERIFY-gate-token-earlier-in-function
+NodeShuffleSubsystem.cpp|Display|spawn: class '%s' flags: abstrac|1	MASTER	Spawn	Display	NodeShuffleSubsystem.cpp	5632	EnsureNewNodeSpawned	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|spawn: giving up on %s at %s for|1	TOPIC	Spawn	Display	NodeShuffleSubsystem.cpp	5647	EnsureNewNodeSpawned	mention	0	0	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleSubsystem.cpp|Verbose|scanner: registered spawned node|1	MASTER	Scanner	Verbose	NodeShuffleSubsystem.cpp	5697	EnsureNewNodeSpawned	block	77182	120332	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Verbose|spawned LIQUID node %s (oil deca|1	MASTER	Spawn	Verbose	NodeShuffleSubsystem.cpp	5739	EnsureNewNodeSpawned	block	10395	7980	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|DRESS-SKIP|3	MASTER	Visuals	Display	NodeShuffleSubsystem.cpp	5763	EnsureNewNodeSpawned	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|DRESS-NOSKIP|2	MASTER	Visuals	Display	NodeShuffleSubsystem.cpp	5768	EnsureNewNodeSpawned	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Verbose|spawned MODDED-CLASS node %s as |1	MASTER	Spawn	Verbose	NodeShuffleSubsystem.cpp	5782	EnsureNewNodeSpawned	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Verbose|spawned MODDED node %s as real c|1	MASTER	Spawn	Verbose	NodeShuffleSubsystem.cpp	5797	EnsureNewNodeSpawned	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Verbose|Spawn-on-discovery: materialized|1	MASTER	Spawn	Verbose	NodeShuffleSubsystem.cpp	5815	EnsureNewNodeSpawned	block	71530	111572	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Verbose|[route=%s] MESHHIDE-LATENCY reco|1	MASTER	Visuals	Verbose	NodeShuffleSubsystem.cpp	6047	SuppressOriginalNodes	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|REHIDE|1	TOPIC	Hide	Display	NodeShuffleSubsystem.cpp	6105	SuppressOriginalNodes	mention	0	0	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleSubsystem.cpp|Verbose|REHIDE|1	MASTER	Hide	Verbose	NodeShuffleSubsystem.cpp	6125	SuppressOriginalNodes	block	0	160	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|REHIDE-UNHIDDEN|1	TOPIC	Hide	Display	NodeShuffleSubsystem.cpp	6155	SuppressOriginalNodes	mention	0	0	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleSubsystem.cpp|Verbose|RADFIX|1	MASTER	Hide	Verbose	NodeShuffleSubsystem.cpp	6279	SuppressOriginalNodes	block	305	8542	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Verbose|scanner: DEREGISTERED hidden ori|1	MASTER	Scanner	Verbose	NodeShuffleSubsystem.cpp	6289	SuppressOriginalNodes	block	46426	218006	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|CAPTURE|3	TOPIC	Visuals	Display	NodeShuffleSubsystem.cpp	6353	SuppressOriginalNodes	mention	0	0	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleSubsystem.cpp|Verbose|Hide originals: hid %d original |1	TOPIC	Hide	Verbose	NodeShuffleSubsystem.cpp	6509	SuppressOriginalNodes	mention	217	5188	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleSubsystem.cpp|Display|Hide-originals funnel (first pas|1	ALWAYS		Display	NodeShuffleSubsystem.cpp	6526	SuppressOriginalNodes	mention	214	429	R4-once-per-session-or-operation VERIFY-gate-token-earlier-in-function
+NodeShuffleSubsystem.cpp|Display|MESHHIDE-LATENCY|1	ALWAYS		Display	NodeShuffleSubsystem.cpp	6553	SuppressOriginalNodes	mention	1974	3954	R4-once-per-session-or-operation VERIFY-gate-token-earlier-in-function
+NodeShuffleSubsystem.cpp|Display|ROCKHIDE-CENSUS|1	TOPIC	Rocks	Display	NodeShuffleSubsystem.cpp	6613	SuppressOriginalNodes	mention	3546	85170	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleSubsystem.cpp|Display|RWGROCKHIDE|1	TOPIC	Rocks	Display	NodeShuffleSubsystem.cpp	6663	SuppressOriginalNodes	mention	529	12718	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleSubsystem.cpp|Display|HIDEDIAG|1	ALWAYS		Display	NodeShuffleSubsystem.cpp	6684	SuppressOriginalNodes	dual	374	749	R8d-own-condition-OR-master: prints with the master off when its own condition holds; left byte-identical (rules said TOPIC Hide)
+NodeShuffleSubsystem.cpp|Display|REHIDE|2	MASTER	Hide	Display	NodeShuffleSubsystem.cpp	6840	TryRematchStaleRecord	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|REHIDE|3	MASTER	Hide	Display	NodeShuffleSubsystem.cpp	6847	TryRematchStaleRecord	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Verbose|REHIDE|2	MASTER	Hide	Verbose	NodeShuffleSubsystem.cpp	6856	TryRematchStaleRecord	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|REHIDE|4	MASTER	Hide	Display	NodeShuffleSubsystem.cpp	6894	TryRematchStaleRecord	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|REHIDE|5	MASTER	Hide	Display	NodeShuffleSubsystem.cpp	6901	TryRematchStaleRecord	block	0	17034	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Warning|WATERGRID|1	ALWAYS		Warning	NodeShuffleSubsystem.cpp	6918	MergeWaterGridFromContent	none	0	0	R1-warn-error
+NodeShuffleSubsystem.cpp|Display|WATERGRID|1	TOPIC	Gates	Display	NodeShuffleSubsystem.cpp	6966	EnsureWaterGridLoaded	none	262	524	R5-topic-by-tag
+NodeShuffleSubsystem.cpp|Display|WATERGRID|2	TOPIC	Gates	Display	NodeShuffleSubsystem.cpp	6985	EnsureWaterGridLoaded	none	0	0	R5-topic-by-tag
+NodeShuffleSubsystem.cpp|Display|WATERGRID|3	TOPIC	Gates	Display	NodeShuffleSubsystem.cpp	7001	FlushWaterGridIfDirty	none	199	397	R5-topic-by-tag
+NodeShuffleSubsystem.cpp|Verbose|WATERGRID|1	TOPIC	Gates	Verbose	NodeShuffleSubsystem.cpp	7032	FlushWaterGridIfDirty	none	0	0	R5-topic-by-tag
+NodeShuffleSubsystem.cpp|Warning|WATERGRID|2	ALWAYS		Warning	NodeShuffleSubsystem.cpp	7038	FlushWaterGridIfDirty	none	0	0	R1-warn-error
+NodeShuffleSubsystem.cpp|Warning|CAVESTORE|1	ALWAYS		Warning	NodeShuffleSubsystem.cpp	7136	MergeCaveStoreFromContent	none	0	0	R1-warn-error
+NodeShuffleSubsystem.cpp|Display|CAVESTORE|1	TOPIC	Roll	Display	NodeShuffleSubsystem.cpp	7198	EnsureCaveStoreLoaded	none	0	0	R5-topic-by-tag
+NodeShuffleSubsystem.cpp|Display|CAVESTORE|2	TOPIC	Roll	Display	NodeShuffleSubsystem.cpp	7221	EnsureCaveStoreLoaded	none	0	0	R5-topic-by-tag
+NodeShuffleSubsystem.cpp|Display|CAVESTORE|3	TOPIC	Roll	Display	NodeShuffleSubsystem.cpp	7235	FlushCaveStoreIfDirty	none	0	0	R5-topic-by-tag
+NodeShuffleSubsystem.cpp|Verbose|CAVESTORE|1	TOPIC	Roll	Verbose	NodeShuffleSubsystem.cpp	7264	FlushCaveStoreIfDirty	none	0	0	R5-topic-by-tag
+NodeShuffleSubsystem.cpp|Warning|CAVESTORE|2	ALWAYS		Warning	NodeShuffleSubsystem.cpp	7271	FlushCaveStoreIfDirty	none	0	0	R1-warn-error
+NodeShuffleSubsystem.cpp|Verbose|CAVEDISCOVER|1	TOPIC	Roll	Verbose	NodeShuffleSubsystem.cpp	7343	ClassifyOriginalUnderground	none	0	0	R5-topic-by-tag
+NodeShuffleSubsystem.cpp|Verbose|CAVEDISCOVER|2	TOPIC	Roll	Verbose	NodeShuffleSubsystem.cpp	7452	ExpandCaveFloorsBudgeted	none	0	0	R5-topic-by-tag
+NodeShuffleSubsystem.cpp|Display|SEEDHERE|1	ONDEMAND		Display	NodeShuffleSubsystem.cpp	7520	SeedCaveCellAtPlayer	none	0	0	R2-typed-command
+NodeShuffleSubsystem.cpp|Display|SEEDHERE|2	ONDEMAND		Display	NodeShuffleSubsystem.cpp	7531	SeedCaveCellAtPlayer	none	0	0	R2-typed-command
+NodeShuffleSubsystem.cpp|Display|SEEDHERE|3	ONDEMAND		Display	NodeShuffleSubsystem.cpp	7539	SeedCaveCellAtPlayer	none	0	0	R2-typed-command
+NodeShuffleSubsystem.cpp|Display|SEEDHERE|4	ONDEMAND		Display	NodeShuffleSubsystem.cpp	7548	SeedCaveCellAtPlayer	none	0	0	R2-typed-command
+NodeShuffleSubsystem.cpp|Display|SEEDHERE|5	ONDEMAND		Display	NodeShuffleSubsystem.cpp	7554	SeedCaveCellAtPlayer	none	0	0	R2-typed-command
+NodeShuffleSubsystem.cpp|Display|CAVEDISCOVER|1	ONDEMAND		Display	NodeShuffleSubsystem.cpp	7577	SeedCaveCellAtPlayer	none	0	0	R2-typed-command
+NodeShuffleSubsystem.cpp|Verbose|DEPTHGUARD|1	MASTER	Gates	Verbose	NodeShuffleSubsystem.cpp	7803	RaycastGroundAt	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Verbose|Land-check: relocated %s off %s |1	TOPIC	Gates	Verbose	NodeShuffleSubsystem.cpp	7933	RaycastSettle	none	854	6490	R5-topic-by-tag
+NodeShuffleSubsystem.cpp|Display|ROCKNEAR|1	TOPIC	Rocks	Display	NodeShuffleSubsystem.cpp	7942	RaycastSettle	none	907	6335	R5-topic-by-tag
+NodeShuffleSubsystem.cpp|Verbose|Land-check: deferred %s (no plac|1	TOPIC	Gates	Verbose	NodeShuffleSubsystem.cpp	7960	RaycastSettle	none	0	0	R5-topic-by-tag
+NodeShuffleSubsystem.cpp|Verbose|WATER-REDEAL|1	TOPIC	Gates	Verbose	NodeShuffleSubsystem.cpp	8012	TryRedealWaterLockedEntry	none	0	0	R5-topic-by-tag
+NodeShuffleSubsystem.cpp|Verbose|WATER-REDEAL|2	TOPIC	Gates	Verbose	NodeShuffleSubsystem.cpp	8046	TryRedealWaterLockedEntry	none	0	0	R5-topic-by-tag
+NodeShuffleSubsystem.cpp|Verbose|deck-substitute: %s -> <none> (s|1	MASTER	Roll	Verbose	NodeShuffleSubsystem.cpp	8233	PickSubstituteClass	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Verbose|deck-substitute: %s -> <none> (s|2	MASTER	Roll	Verbose	NodeShuffleSubsystem.cpp	8256	PickSubstituteClass	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Verbose|deck-substitute: %s -> %s (sourc|1	MASTER	Roll	Verbose	NodeShuffleSubsystem.cpp	8277	PickSubstituteClass	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Verbose|deck-substitute: %s -> %s (sourc|2	MASTER	Roll	Verbose	NodeShuffleSubsystem.cpp	8296	PickSubstituteClass	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Verbose|deck-substitute: %s -> %s (sourc|3	MASTER	Roll	Verbose	NodeShuffleSubsystem.cpp	8315	PickSubstituteClass	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Verbose|deck-substitute: %s -> <none> (s|3	MASTER	Roll	Verbose	NodeShuffleSubsystem.cpp	8326	PickSubstituteClass	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|deck: eviction cap %d reached — |1	TOPIC	Roll	Display	NodeShuffleSubsystem.cpp	8348	EvictSpawnRefusingClass	none	0	0	R5-topic-by-tag
+NodeShuffleSubsystem.cpp|Verbose|deck-rebind: entry %s (%s) %s ->|1	MASTER	Roll	Verbose	NodeShuffleSubsystem.cpp	8382	EvictSpawnRefusingClass	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|deck: evicted %s after give-up, |1	TOPIC	Roll	Display	NodeShuffleSubsystem.cpp	8392	EvictSpawnRefusingClass	mention	0	0	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleSubsystem.cpp|Display|deck: no viable substitute for %|1	TOPIC	Roll	Display	NodeShuffleSubsystem.cpp	8404	EvictSpawnRefusingClass	mention	0	0	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleSubsystem.cpp|Display|HERE|1	ONDEMAND		Display	NodeShuffleSubsystem.cpp	8428	LogHereCensus	none	0	0	R2-typed-command
+NodeShuffleSubsystem.cpp|Display|HERE|2	ONDEMAND		Display	NodeShuffleSubsystem.cpp	8432	LogHereCensus	none	0	0	R2-typed-command
+NodeShuffleSubsystem.cpp|Display|HERE|3	ONDEMAND		Display	NodeShuffleSubsystem.cpp	8444	LogHereCensus	none	0	0	R2-typed-command
+NodeShuffleSubsystem.cpp|Display|HERE|4	ONDEMAND		Display	NodeShuffleSubsystem.cpp	8474	LogHereCensus	none	0	0	R2-typed-command
+NodeShuffleSubsystem.cpp|Display|HERE|5	ONDEMAND		Display	NodeShuffleSubsystem.cpp	8522	LogHereCensus	none	0	0	R2-typed-command
+NodeShuffleSubsystem.cpp|Display|HERE|6	ONDEMAND		Display	NodeShuffleSubsystem.cpp	8552	LogHereCensus	none	0	0	R2-typed-command
+NodeShuffleSubsystem.cpp|Display|HERE|7	ONDEMAND		Display	NodeShuffleSubsystem.cpp	8566	LogHereCensus	none	0	0	R2-typed-command
+NodeShuffleSubsystem.cpp|Display|HERE|8	ONDEMAND		Display	NodeShuffleSubsystem.cpp	8579	LogHereCensus	none	0	0	R2-typed-command
+NodeShuffleSubsystem.cpp|Display|HERE|9	ONDEMAND		Display	NodeShuffleSubsystem.cpp	8586	LogHereCensus	none	0	0	R2-typed-command
+NodeShuffleSubsystem.cpp|Display|HERE|10	ONDEMAND		Display	NodeShuffleSubsystem.cpp	8723	LogHereCensus	none	0	0	R2-typed-command
+NodeShuffleSubsystem.cpp|Display|HERE|11	ONDEMAND		Display	NodeShuffleSubsystem.cpp	8747	LogHereCensus	none	0	0	R2-typed-command
+NodeShuffleSubsystem.cpp|Display|HERE|12	ONDEMAND		Display	NodeShuffleSubsystem.cpp	8773	LogHereCensus	none	0	0	R2-typed-command
+NodeShuffleSubsystem.cpp|Display|HERE|13	ONDEMAND		Display	NodeShuffleSubsystem.cpp	8789	LogHereCensus	none	0	0	R2-typed-command
+NodeShuffleSubsystem.cpp|Display|HERE|14	ONDEMAND		Display	NodeShuffleSubsystem.cpp	8807	LogHereCensus	none	0	0	R2-typed-command
+NodeShuffleSubsystem.cpp|Display|extractor %s: bound=%s res=%s no|1	MASTER	Spawn	Display	NodeShuffleSubsystem.cpp	8903	ReassociateOrphanedExtractors	block	0	3085	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|relink: refreshed resource bindi|1	TOPIC	Spawn	Display	NodeShuffleSubsystem.cpp	8935	ReassociateOrphanedExtractors	mention	0	0	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleSubsystem.cpp|Verbose|Re-associated extractor %s with |1	TOPIC	Spawn	Verbose	NodeShuffleSubsystem.cpp	8949	ReassociateOrphanedExtractors	mention	0	0	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleSubsystem.cpp|Display|EXTRACTOR-RELINK-LINK|1	TOPIC	Spawn	Display	NodeShuffleSubsystem.cpp	8956	ReassociateOrphanedExtractors	mention	0	0	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleSubsystem.cpp|Display|EXTRACTOR-UNBOUND-NOSPAWNEDNODE|1	TOPIC	Spawn	Display	NodeShuffleSubsystem.cpp	8969	ReassociateOrphanedExtractors	mention	0	0	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleSubsystem.cpp|Display|EXTRACTOR-RELINK|1	TOPIC	Spawn	Display	NodeShuffleSubsystem.cpp	8984	ReassociateOrphanedExtractors	mention	229	4617	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleSubsystem.cpp|Display|SCANREGEN|3	MASTER	Scanner	Display	NodeShuffleSubsystem.cpp	9052	RefreshScannersAndRadarTowers	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|SCANREGEN|4	MASTER	Scanner	Display	NodeShuffleSubsystem.cpp	9083	RefreshScannersAndRadarTowers	block	13365	32535	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Verbose|knowledge: unlock subsystem not |1	MASTER	Scanner	Verbose	NodeShuffleSubsystem.cpp	9153	UnlockModdedScannerKnowledge	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Verbose|knowledge: %s withheld — no KAPI|1	MASTER	Scanner	Verbose	NodeShuffleSubsystem.cpp	9192	UnlockModdedScannerKnowledge	block	0	10072	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Verbose|knowledge: %s already scanner-kn|1	MASTER	Scanner	Verbose	NodeShuffleSubsystem.cpp	9201	UnlockModdedScannerKnowledge	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Verbose|knowledge: scanner-unlocked %s (|1	TOPIC	Scanner	Verbose	NodeShuffleSubsystem.cpp	9218	UnlockModdedScannerKnowledge	block	0	0	R7-gated-today-stays-gated
+NodeShuffleSubsystem.cpp|Display|knowledge: scanner-unlocked %d m|1	ALWAYS		Display	NodeShuffleSubsystem.cpp	9226	UnlockModdedScannerKnowledge	mention	0	0	R4-once-per-session-or-operation VERIFY-gate-token-earlier-in-function
+NodeShuffleSubsystem.cpp|Display|SCANREGEN|5	MASTER	Scanner	Display	NodeShuffleSubsystem.cpp	9243	UnlockModdedScannerKnowledge	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Warning|minerinfo: KAPI present but mMin|1	ALWAYS		Warning	NodeShuffleSubsystem.cpp	9316	ProvideKAPIMinerInfo	mention	0	0	R1-warn-error VERIFY-gate-token-earlier-in-function
+NodeShuffleSubsystem.cpp|Verbose|minerinfo: KAPI mMinerMapping em|1	MASTER	Spawn	Verbose	NodeShuffleSubsystem.cpp	9331	ProvideKAPIMinerInfo	block	0	6174	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Warning|minerinfo: KAPI mMinerMapping st|1	ALWAYS		Warning	NodeShuffleSubsystem.cpp	9336	ProvideKAPIMinerInfo	mention	0	396	R1-warn-error VERIFY-gate-token-earlier-in-function
+NodeShuffleSubsystem.cpp|Warning|minerinfo: no usable template en|1	ALWAYS		Warning	NodeShuffleSubsystem.cpp	9369	ProvideKAPIMinerInfo	mention	0	0	R1-warn-error VERIFY-gate-token-earlier-in-function
+NodeShuffleSubsystem.cpp|Warning|minerinfo: KAPI description refl|1	ALWAYS		Warning	NodeShuffleSubsystem.cpp	9386	ProvideKAPIMinerInfo	mention	0	0	R1-warn-error VERIFY-gate-token-earlier-in-function
+NodeShuffleSubsystem.cpp|Warning|minerinfo: could not create the |1	ALWAYS		Warning	NodeShuffleSubsystem.cpp	9398	ProvideKAPIMinerInfo	mention	0	0	R1-warn-error VERIFY-gate-token-earlier-in-function
+NodeShuffleSubsystem.cpp|Verbose|minerinfo: %s already has a KAPI|1	MASTER	Spawn	Verbose	NodeShuffleSubsystem.cpp	9417	ProvideKAPIMinerInfo	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Warning|minerinfo: %s is not an item des|1	ALWAYS		Warning	NodeShuffleSubsystem.cpp	9425	ProvideKAPIMinerInfo	mention	0	0	R1-warn-error VERIFY-gate-token-earlier-in-function
+NodeShuffleSubsystem.cpp|Warning|minerinfo: clone creation failed|1	ALWAYS		Warning	NodeShuffleSubsystem.cpp	9442	ProvideKAPIMinerInfo	mention	0	0	R1-warn-error VERIFY-gate-token-earlier-in-function
+NodeShuffleSubsystem.cpp|Verbose|minerinfo: provided description |1	MASTER	Spawn	Verbose	NodeShuffleSubsystem.cpp	9466	ProvideKAPIMinerInfo	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|minerinfo: provided %d KAPI mine|1	ALWAYS		Display	NodeShuffleSubsystem.cpp	9473	ProvideKAPIMinerInfo	mention	0	0	R4-once-per-session-or-operation VERIFY-gate-token-earlier-in-function
+NodeShuffleSubsystem.cpp|Display|ESC-HIERARCHY|1	TOPIC	Hologram	Display	NodeShuffleSubsystem.cpp	9634	DiagnoseEscClassHierarchy	none	0	3833	R5-topic-by-tag
+NodeShuffleSubsystem.cpp|Display|ESC-HIERARCHY|2	TOPIC	Hologram	Display	NodeShuffleSubsystem.cpp	9641	DiagnoseEscClassHierarchy	none	152	0	R5-topic-by-tag
+NodeShuffleSubsystem.cpp|Display|Modded-node eligibility: nodeCla|1	TOPIC	Hologram	Display	NodeShuffleSubsystem.cpp	9671	DiagnoseModdedNodeEligibility	none	0	11568	R5-topic-by-tag
+NodeShuffleSubsystem.cpp|Verbose|Mesh-actor cache: %d paired (%d |1	MASTER	Visuals	Verbose	NodeShuffleSubsystem.cpp	9843	RebuildMeshActorCache	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|MESHTYPE-CENSUS|1	MASTER	Visuals	Display	NodeShuffleSubsystem.cpp	9922	RebuildMeshActorCache	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|Layout active: %d vanilla kept, |1	ALWAYS		Display	NodeShuffleSubsystem.cpp	9986	LogLayoutSummary	none	173	346	R4-once-per-session-or-operation
+NodeShuffleSubsystem.cpp|Display| %s: %d active nodes|1	ALWAYS		Display	NodeShuffleSubsystem.cpp	9991	LogLayoutSummary	none	992	8762	R4-once-per-session-or-operation
+NodeShuffleSubsystem.cpp|Verbose|ORPHANDIAG|1	MASTER	Spawn	Verbose	NodeShuffleSubsystem.cpp	10154	OrphanRockCleanup	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Verbose|ORPHANDIAG|2	MASTER	Spawn	Verbose	NodeShuffleSubsystem.cpp	10174	OrphanRockCleanup	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Verbose|ORPHANDIAG|3	MASTER	Spawn	Verbose	NodeShuffleSubsystem.cpp	10189	OrphanRockCleanup	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Display|Orphan cleanup: hid %d node-rock|1	TOPIC	Hide	Display	NodeShuffleSubsystem.cpp	10198	OrphanRockCleanup	mention	0	0	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleSubsystem.cpp|Verbose|ROCKDIAG|1	MASTER	Rocks	Verbose	NodeShuffleSubsystem.cpp	10288	DiagnoseRocksNearPlayers	earlyret	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleSubsystem.cpp|Verbose|ROCKDIAG|2	MASTER	Rocks	Verbose	NodeShuffleSubsystem.cpp	10294	DiagnoseRocksNearPlayers	earlyret	250	8205	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleTotallyInsideLog.cpp|Display|%s: %s -- TOTALLYINSIDE verdict |1	INHERIT		Display	NodeShuffleTotallyInsideLog.cpp	56	LogTotallyInsideReading	none	0	0	R3-shared-helper
+NodeShuffleTotallyInsideLog.cpp|Display|%s: %s -- TOTALLYINSIDE against |1	INHERIT		Display	NodeShuffleTotallyInsideLog.cpp	63	LogTotallyInsideReading	none	0	0	R3-shared-helper
+NodeShuffleTotallyInsideLog.cpp|Display|%s: %s -- TOTALLYINSIDE verdict |2	INHERIT		Display	NodeShuffleTotallyInsideLog.cpp	83	LogTotallyInsideReading	none	2000	3996	R3-shared-helper
+NodeShuffleTotallyInsideLog.cpp|Display|%s: %s -- TOTALLYINSIDE ray lege|1	INHERIT		Display	NodeShuffleTotallyInsideLog.cpp	110	LogTotallyInsideReading	none	2106	4211	R3-shared-helper
+NodeShuffleTotallyInsideLog.cpp|Display|%s: %s -- TOTALLYINSIDE directio|1	INHERIT		Display	NodeShuffleTotallyInsideLog.cpp	175	LogTotallyInsideReading	none	20151	39266	R3-shared-helper
+NodeShuffleTotallyInsideLog.cpp|Display|%s: %s -- TOTALLYINSIDE instrume|1	INHERIT		Display	NodeShuffleTotallyInsideLog.cpp	187	LogTotallyInsideReading	none	1696	3391	R3-shared-helper
+NodeShuffleTotallyInsideLog.cpp|Display|%s: %s -- TOTALLYINSIDE against |2	INHERIT		Display	NodeShuffleTotallyInsideLog.cpp	216	LogTotallyInsideReading	none	813	1625	R3-shared-helper
+NodeShuffleWellAudit.cpp|Display|WELL|1	TOPIC	Wells	Display	NodeShuffleWellAudit.cpp	303	AuditOneWellGroup	none	0	13573	R5-topic-by-tag
+NodeShuffleWellAudit.cpp|Warning|WELL|1	ALWAYS		Warning	NodeShuffleWellAudit.cpp	323	AuditOneWellGroup	none	0	0	R1-warn-error
+NodeShuffleWellAudit.cpp|Warning|WELL|2	ALWAYS		Warning	NodeShuffleWellAudit.cpp	329	AuditOneWellGroup	none	0	0	R1-warn-error
+NodeShuffleWellAudit.cpp|Warning|WELL|3	ALWAYS		Warning	NodeShuffleWellAudit.cpp	335	AuditOneWellGroup	none	0	0	R1-warn-error
+NodeShuffleWellAudit.cpp|Warning|WELL|4	ALWAYS		Warning	NodeShuffleWellAudit.cpp	345	AuditOneWellGroup	none	0	0	R1-warn-error
+NodeShuffleWellAudit.cpp|Display|WELL|2	TOPIC	Wells	Display	NodeShuffleWellAudit.cpp	374	AuditOneWellGroup	none	0	0	R5-topic-by-tag
+NodeShuffleWellAudit.cpp|Warning|WELL|5	ALWAYS		Warning	NodeShuffleWellAudit.cpp	400	AuditOneWellGroup	none	0	0	R1-warn-error
+NodeShuffleWellAudit.cpp|Display|WELLH2-AUDIT|1	TOPIC	Wells	Display	NodeShuffleWellAudit.cpp	455	AuditWellGroupLinks	none	0	48575	R5-topic-by-tag
+NodeShuffleWellAudit.cpp|Warning|WELLH2-AUDIT|1	ALWAYS		Warning	NodeShuffleWellAudit.cpp	489	AuditWellGroupLinks	none	0	0	R1-warn-error
+NodeShuffleWellBackstop.cpp|Warning|WELLH2-ORPHAN|1	ALWAYS		Warning	NodeShuffleWellBackstop.cpp	123	RunWellLocationBackstop	none	0	0	R1-warn-error
+NodeShuffleWellBackstop.cpp|Display|WELLH2-BACKSTOP|1	TOPIC	Wells	Display	NodeShuffleWellBackstop.cpp	387	RunWellLocationBackstop	none	0	0	R5-topic-by-tag
+NodeShuffleWellBackstop.cpp|Warning|WELLH2-BACKSTOP|1	ALWAYS		Warning	NodeShuffleWellBackstop.cpp	421	RunWellLocationBackstop	none	0	0	R1-warn-error
+NodeShuffleWellBackstop.cpp|Warning|WELLH2-ORPHAN|2	ALWAYS		Warning	NodeShuffleWellBackstop.cpp	432	RunWellLocationBackstop	none	0	0	R1-warn-error
+NodeShuffleWellBackstop.cpp|Display|WELLH2-ORPHAN|1	TOPIC	Wells	Display	NodeShuffleWellBackstop.cpp	452	RunWellLocationBackstop	none	0	0	R5-topic-by-tag
+NodeShuffleWellClaim.cpp|Warning|WELLH2-ABANDON|1	ALWAYS		Warning	NodeShuffleWellClaim.cpp	81	ClearAbandonedWellPlacement	none	0	0	R1-warn-error
+NodeShuffleWellClaim.cpp|Warning|WELLH2-CLAIM|1	ALWAYS		Warning	NodeShuffleWellClaim.cpp	115	ClearAbandonedWellPlacement	none	0	0	R1-warn-error
+NodeShuffleWellClaim.cpp|Warning|WELLH2-CLAIM|2	ALWAYS		Warning	NodeShuffleWellClaim.cpp	163	ClearAbandonedWellPlacement	none	0	0	R1-warn-error
+NodeShuffleWellClaim.cpp|Display|WELLH2-ABANDON|1	TOPIC	Wells	Display	NodeShuffleWellClaim.cpp	192	ClearAbandonedWellPlacement	none	0	0	R5-topic-by-tag
+NodeShuffleWellClaim.cpp|Warning|WELLH2-CLAIM|3	ALWAYS		Warning	NodeShuffleWellClaim.cpp	245	ValidateWellClaimInvariant	none	0	0	R1-warn-error
+NodeShuffleWellClaim.cpp|Warning|WELLH2-CLAIM|4	ALWAYS		Warning	NodeShuffleWellClaim.cpp	281	ValidateWellClaimInvariant	none	0	0	R1-warn-error
+NodeShuffleWellClaim.cpp|Display|WELLH2-CLAIM|1	TOPIC	Wells	Display	NodeShuffleWellClaim.cpp	298	ValidateWellClaimInvariant	none	643	1254	R5-topic-by-tag
+NodeShuffleWellClaim.cpp|Warning|WELLH2-CLAIM|5	ALWAYS		Warning	NodeShuffleWellClaim.cpp	310	ValidateWellClaimInvariant	none	0	0	R1-warn-error
+NodeShuffleWellClaim.cpp|Display|WELLH2-CLAIM|2	TOPIC	Wells	Display	NodeShuffleWellClaim.cpp	349	MigratePreA3PlacementClaimsOnce	none	0	520	R5-topic-by-tag
+NodeShuffleWellClaim.cpp|Display|WELLH2-CLAIM|3	TOPIC	Wells	Display	NodeShuffleWellClaim.cpp	371	MigratePreA3PlacementClaimsOnce	none	729	729	R5-topic-by-tag
+NodeShuffleWellClaim.cpp|Warning|WELLH2-CLAIM|6	ALWAYS		Warning	NodeShuffleWellClaim.cpp	526	ReconcileAbandonedWellClaims	none	0	0	R1-warn-error
+NodeShuffleWellClaim.cpp|Display|WELLH2-CLAIM|4	TOPIC	Wells	Display	NodeShuffleWellClaim.cpp	564	ReconcileAbandonedWellClaims	none	0	0	R5-topic-by-tag
+NodeShuffleWellClaim.cpp|Warning|WELLH2-CLAIM|7	ALWAYS		Warning	NodeShuffleWellClaim.cpp	578	ReconcileAbandonedWellClaims	none	0	0	R1-warn-error
+NodeShuffleWellDespawn.cpp|Display|WELLDESPAWN-SNAP|1	MASTER	Wells	Display	NodeShuffleWellDespawn.cpp	125	DestroyWellMemberIfUnused	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleWellDespawn.cpp|Display|WELLH2-DESPAWN|1	TOPIC	Wells	Display	NodeShuffleWellDespawn.cpp	187	DespawnWellGroup	none	0	0	R5-topic-by-tag
+NodeShuffleWellDespawn.cpp|Warning|WELLH2-DESPAWN|1	ALWAYS		Warning	NodeShuffleWellDespawn.cpp	199	DespawnWellGroup	none	0	0	R1-warn-error
+NodeShuffleWellDespawn.cpp|Warning|WELLH2-DESPAWN|2	ALWAYS		Warning	NodeShuffleWellDespawn.cpp	245	DespawnStaleWellMembers	none	0	0	R1-warn-error
+NodeShuffleWellDespawn.cpp|Warning|WELLH2-STALE|1	ALWAYS		Warning	NodeShuffleWellDespawn.cpp	303	DespawnStaleWellMembers	none	0	0	R1-warn-error
+NodeShuffleWellDespawn.cpp|Warning|WELLH2-STALE|2	ALWAYS		Warning	NodeShuffleWellDespawn.cpp	321	DespawnStaleWellMembers	none	0	0	R1-warn-error
+NodeShuffleWellDespawn.cpp|Warning|WELLH2-STALE|3	ALWAYS		Warning	NodeShuffleWellDespawn.cpp	347	DespawnStaleWellMembers	none	0	0	R1-warn-error
+NodeShuffleWellDump.cpp|Display|DUMPWELLS|1	ONDEMAND		Display	NodeShuffleWellDump.cpp	72	CONSOLE:NodeShuffle.DumpWells	none	0	0	R2-typed-command
+NodeShuffleWellDump.cpp|Display|===== DUMPWELLS BEGIN =====|1	ONDEMAND		Display	NodeShuffleWellDump.cpp	75	CONSOLE:NodeShuffle.DumpWells	none	0	0	R2-typed-command
+NodeShuffleWellDump.cpp|Warning|DUMPWELLS|1	ALWAYS		Warning	NodeShuffleWellDump.cpp	85	CONSOLE:NodeShuffle.DumpWells	none	0	0	R1-warn-error
+NodeShuffleWellDump.cpp|Warning|DUMPWELLS|2	ALWAYS		Warning	NodeShuffleWellDump.cpp	90	CONSOLE:NodeShuffle.DumpWells	none	0	0	R1-warn-error
+NodeShuffleWellDump.cpp|Warning|DUMPWELLS|3	ALWAYS		Warning	NodeShuffleWellDump.cpp	95	CONSOLE:NodeShuffle.DumpWells	none	0	0	R1-warn-error
+NodeShuffleWellDump.cpp|Warning|DUMPWELLS|4	ALWAYS		Warning	NodeShuffleWellDump.cpp	101	CONSOLE:NodeShuffle.DumpWells	none	0	0	R1-warn-error
+NodeShuffleWellDump.cpp|Display|DUMPWELLS|2	ONDEMAND		Display	NodeShuffleWellDump.cpp	107	CONSOLE:NodeShuffle.DumpWells	none	0	0	R2-typed-command
+NodeShuffleWellDump.cpp|Display|WELL|1	ONDEMAND		Display	NodeShuffleWellDump.cpp	143	CONSOLE:NodeShuffle.DumpWells	none	0	0	R2-typed-command
+NodeShuffleWellDump.cpp|Warning|WELLEMPTY|1	ALWAYS		Warning	NodeShuffleWellDump.cpp	158	CONSOLE:NodeShuffle.DumpWells	none	0	0	R1-warn-error
+NodeShuffleWellDump.cpp|Warning|DUMPWELLS|5	ALWAYS		Warning	NodeShuffleWellDump.cpp	175	CONSOLE:NodeShuffle.DumpWells	none	0	0	R1-warn-error
+NodeShuffleWellDump.cpp|Display|WELLSAT|1	ONDEMAND		Display	NodeShuffleWellDump.cpp	191	CONSOLE:NodeShuffle.DumpWells	none	0	0	R2-typed-command
+NodeShuffleWellDump.cpp|Warning|WELLRES|1	ALWAYS		Warning	NodeShuffleWellDump.cpp	204	CONSOLE:NodeShuffle.DumpWells	none	0	0	R1-warn-error
+NodeShuffleWellDump.cpp|Display|WELLRES|1	ONDEMAND		Display	NodeShuffleWellDump.cpp	208	CONSOLE:NodeShuffle.DumpWells	none	0	0	R2-typed-command
+NodeShuffleWellDump.cpp|Warning|WELLRES|2	ALWAYS		Warning	NodeShuffleWellDump.cpp	214	CONSOLE:NodeShuffle.DumpWells	none	0	0	R1-warn-error
+NodeShuffleWellDump.cpp|Warning|WELLGEOM|1	ALWAYS		Warning	NodeShuffleWellDump.cpp	226	CONSOLE:NodeShuffle.DumpWells	none	0	0	R1-warn-error
+NodeShuffleWellDump.cpp|Display|WELLFOOT|1	ONDEMAND		Display	NodeShuffleWellDump.cpp	234	CONSOLE:NodeShuffle.DumpWells	none	0	0	R2-typed-command
+NodeShuffleWellDump.cpp|Warning|WELLFOOT|1	ALWAYS		Warning	NodeShuffleWellDump.cpp	245	CONSOLE:NodeShuffle.DumpWells	none	0	0	R1-warn-error
+NodeShuffleWellDump.cpp|Display|WELLGAPS|1	ONDEMAND		Display	NodeShuffleWellDump.cpp	256	CONSOLE:NodeShuffle.DumpWells	none	0	0	R2-typed-command
+NodeShuffleWellDump.cpp|Display|WELLGAPS|2	ONDEMAND		Display	NodeShuffleWellDump.cpp	263	CONSOLE:NodeShuffle.DumpWells	none	0	0	R2-typed-command
+NodeShuffleWellDump.cpp|Warning|WELLGAPS|1	ALWAYS		Warning	NodeShuffleWellDump.cpp	271	CONSOLE:NodeShuffle.DumpWells	none	0	0	R1-warn-error
+NodeShuffleWellDump.cpp|Display|WELLDIST|1	ONDEMAND		Display	NodeShuffleWellDump.cpp	290	CONSOLE:NodeShuffle.DumpWells	none	0	0	R2-typed-command
+NodeShuffleWellDump.cpp|Display|===== DUMPWELLS LINK AGREEMENT (|1	ONDEMAND		Display	NodeShuffleWellDump.cpp	301	CONSOLE:NodeShuffle.DumpWells	none	0	0	R2-typed-command
+NodeShuffleWellDump.cpp|Warning|WELLRECON|1	ALWAYS		Warning	NodeShuffleWellDump.cpp	305	CONSOLE:NodeShuffle.DumpWells	none	0	0	R1-warn-error
+NodeShuffleWellDump.cpp|Warning|WELLRECON|2	ALWAYS		Warning	NodeShuffleWellDump.cpp	310	CONSOLE:NodeShuffle.DumpWells	none	0	0	R1-warn-error
+NodeShuffleWellDump.cpp|Warning|LINK|1	ALWAYS		Warning	NodeShuffleWellDump.cpp	318	CONSOLE:NodeShuffle.DumpWells	none	0	0	R1-warn-error
+NodeShuffleWellDump.cpp|Display|LINK|1	ONDEMAND		Display	NodeShuffleWellDump.cpp	323	CONSOLE:NodeShuffle.DumpWells	none	0	0	R2-typed-command
+NodeShuffleWellDump.cpp|Warning|LINK|2	ALWAYS		Warning	NodeShuffleWellDump.cpp	332	CONSOLE:NodeShuffle.DumpWells	none	0	0	R1-warn-error
+NodeShuffleWellDump.cpp|Warning|WELLRECON|3	ALWAYS		Warning	NodeShuffleWellDump.cpp	343	CONSOLE:NodeShuffle.DumpWells	none	0	0	R1-warn-error
+NodeShuffleWellDump.cpp|Display|<MACRO:NS_WELLS_COMPLETENESS_FMT|1	ONDEMAND		Display	NodeShuffleWellDump.cpp	362	CONSOLE:NodeShuffle.DumpWells	none	0	0	R2-typed-command
+NodeShuffleWellDump.cpp|Warning|<MACRO:NS_WELLS_COMPLETENESS_FMT|1	ALWAYS		Warning	NodeShuffleWellDump.cpp	363	CONSOLE:NodeShuffle.DumpWells	none	0	0	R1-warn-error
+NodeShuffleWellDump.cpp|Warning|DUMPWELLS|6	ALWAYS		Warning	NodeShuffleWellDump.cpp	369	CONSOLE:NodeShuffle.DumpWells	none	0	0	R1-warn-error
+NodeShuffleWellDump.cpp|Warning|***** DUMPWELLS WARNING: GLOBAL |1	ALWAYS		Warning	NodeShuffleWellDump.cpp	376	CONSOLE:NodeShuffle.DumpWells	none	0	0	R1-warn-error
+NodeShuffleWellDump.cpp|Display|DUMPWELLS|3	ONDEMAND		Display	NodeShuffleWellDump.cpp	386	CONSOLE:NodeShuffle.DumpWells	none	0	0	R2-typed-command
+NodeShuffleWellDump.cpp|Display|DUMPWELLS|4	ONDEMAND		Display	NodeShuffleWellDump.cpp	391	CONSOLE:NodeShuffle.DumpWells	none	0	0	R2-typed-command
+NodeShuffleWellDump.cpp|Display|WELLCLEARANCE|1	ONDEMAND		Display	NodeShuffleWellDump.cpp	405	CONSOLE:NodeShuffle.DumpWells	none	0	0	R2-typed-command
+NodeShuffleWellDump.cpp|Warning|WELLCLEARANCE|1	ALWAYS		Warning	NodeShuffleWellDump.cpp	417	CONSOLE:NodeShuffle.DumpWells	none	0	0	R1-warn-error
+NodeShuffleWellDump.cpp|Warning|WELLCLEARANCE|2	ALWAYS		Warning	NodeShuffleWellDump.cpp	421	CONSOLE:NodeShuffle.DumpWells	none	0	0	R1-warn-error
+NodeShuffleWellDump.cpp|Display|WELLCLEARANCE|2	ONDEMAND		Display	NodeShuffleWellDump.cpp	430	CONSOLE:NodeShuffle.DumpWells	none	0	0	R2-typed-command
+NodeShuffleWellDump.cpp|Warning|WELLCLEARANCE|3	ALWAYS		Warning	NodeShuffleWellDump.cpp	439	CONSOLE:NodeShuffle.DumpWells	none	0	0	R1-warn-error
+NodeShuffleWellDump.cpp|Display|WELLCLEARANCE|3	ONDEMAND		Display	NodeShuffleWellDump.cpp	448	CONSOLE:NodeShuffle.DumpWells	none	0	0	R2-typed-command
+NodeShuffleWellDump.cpp|Display|===== DUMPWELLS TOTALS: wells=%d|1	ONDEMAND		Display	NodeShuffleWellDump.cpp	458	CONSOLE:NodeShuffle.DumpWells	none	0	0	R2-typed-command
+NodeShuffleWellDump.cpp|Warning|DUMPWELLS|7	ALWAYS		Warning	NodeShuffleWellDump.cpp	465	CONSOLE:NodeShuffle.DumpWells	none	0	0	R1-warn-error
+NodeShuffleWellDump.cpp|Display|WELLRESCOUNT|1	ONDEMAND		Display	NodeShuffleWellDump.cpp	475	CONSOLE:NodeShuffle.DumpWells	none	0	0	R2-typed-command
+NodeShuffleWellDump.cpp|Display|WELLPURITYHIST|1	ONDEMAND		Display	NodeShuffleWellDump.cpp	478	CONSOLE:NodeShuffle.DumpWells	none	0	0	R2-typed-command
+NodeShuffleWellDump.cpp|Display|===== DUMPWELLS END =====|1	ONDEMAND		Display	NodeShuffleWellDump.cpp	484	CONSOLE:NodeShuffle.DumpWells	none	0	0	R2-typed-command
+NodeShuffleWellEscalate.cpp|Display|WELLH2-VOID|1	TOPIC	Void	Display	NodeShuffleWellEscalate.cpp	57	NoteWellVoidDefer	mention	0	370	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleWellEscalate.cpp|Display|WELLH2-VOID|2	TOPIC	Void	Display	NodeShuffleWellEscalate.cpp	65	NoteWellVoidDefer	mention	0	0	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleWellEscalate.cpp|Verbose|WELLH2-SEARCH|1	MASTER	Wells	Verbose	NodeShuffleWellEscalate.cpp	75	NoteWellVoidDefer	block	0	8766	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleWellEscalate.cpp|Display|WELLH2-STUCK|1	TOPIC	Wells	Display	NodeShuffleWellEscalate.cpp	134	NoteWellIncompleteSpawn	none	0	0	R5-topic-by-tag
+NodeShuffleWellEscalate.cpp|Warning|WELLH2-STUCK|1	ALWAYS		Warning	NodeShuffleWellEscalate.cpp	144	NoteWellIncompleteSpawn	none	0	0	R1-warn-error
+NodeShuffleWellEscalate.cpp|Display|WELLH2-SEARCH|1	TOPIC	Wells	Display	NodeShuffleWellEscalate.cpp	198	EscalateWellPlacement	none	2259	2233	R5-topic-by-tag
+NodeShuffleWellEscalate.cpp|Display|WELLRWG-REDEAL|1	TOPIC	Wells	Display	NodeShuffleWellEscalate.cpp	240	EscalateWellPlacement	none	137	137	R5-topic-by-tag
+NodeShuffleWellEscalate.cpp|Display|WELLH2-SEARCH|2	TOPIC	Wells	Display	NodeShuffleWellEscalate.cpp	253	EscalateWellPlacement	none	229	230	R5-topic-by-tag
+NodeShuffleWellEscalate.cpp|Display|WELLH2-SEARCH|3	TOPIC	Wells	Display	NodeShuffleWellEscalate.cpp	290	EscalateWellPlacement	none	0	0	R5-topic-by-tag
+NodeShuffleWellFootprint.cpp|Verbose|WELLH2-NODESCAN|1	TOPIC	Wells	Verbose	NodeShuffleWellFootprint.cpp	298	BuildWellNodeScanCache	none	2652	443	R5-topic-by-tag
+NodeShuffleWellImmediateHide.cpp|Display|WELLH2-IMMEDIATE|1	TOPIC	Wells	Display	NodeShuffleWellImmediateHide.cpp	114	EmitWellImmediateHideCensus	none	1310	1310	R5-topic-by-tag
+NodeShuffleWellImmediateHide.cpp|Display|[NodeShuffle][TEST] T54-A %s / T|1	TOPIC	Wells	Display	NodeShuffleWellImmediateHide.cpp	234	EmitWellImmediateHideTestPair	none	0	0	R5-topic-by-tag
+NodeShuffleWellLink.cpp|Warning|WELLH2-LINK|1	ALWAYS		Warning	NodeShuffleWellLink.cpp	116	EnsureSatelliteLinked	none	0	0	R1-warn-error
+NodeShuffleWellLink.cpp|Verbose|WELLH2-LINK|1	MASTER	Wells	Verbose	NodeShuffleWellLink.cpp	125	EnsureSatelliteLinked	block	0	2186394	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleWellLink.cpp|Display|WELLH2-ADOPT|1	TOPIC	Wells	Display	NodeShuffleWellLink.cpp	354	AdoptRestoredWellGroups	none	0	719	R5-topic-by-tag
+NodeShuffleWellMemberProbe.cpp|Display|WELLPROBE|1	ONDEMAND		Display	NodeShuffleWellMemberProbe.cpp	92	CONSOLE:NodeShuffle.WellProbe	none	0	0	R2-typed-command
+NodeShuffleWellMemberProbe.cpp|Display|WELLPROBE|2	ONDEMAND		Display	NodeShuffleWellMemberProbe.cpp	139	LogWellMemberProbeCensus	none	0	0	R2-typed-command
+NodeShuffleWellMemberProbe.cpp|Display|WELLPROBE|3	ONDEMAND		Display	NodeShuffleWellMemberProbe.cpp	148	LogWellMemberProbeCensus	none	0	0	R2-typed-command
+NodeShuffleWellMemberProbe.cpp|Display|WELLPROBE|4	ONDEMAND		Display	NodeShuffleWellMemberProbe.cpp	164	LogWellMemberProbeCensus	none	0	0	R2-typed-command
+NodeShuffleWellMemberProbe.cpp|Display|WELLPROBE|5	ONDEMAND		Display	NodeShuffleWellMemberProbe.cpp	180	LogWellMemberProbeCensus	none	0	0	R2-typed-command
+NodeShuffleWellMemberProbe.cpp|Display|WELLPROBE|6	ONDEMAND		Display	NodeShuffleWellMemberProbe.cpp	299	LogWellMemberProbeCensus	none	0	0	R2-typed-command
+NodeShuffleWellMemberProbe.cpp|Display|WELLPROBE|7	ONDEMAND		Display	NodeShuffleWellMemberProbe.cpp	315	LogWellMemberProbeCensus	none	0	0	R2-typed-command
+NodeShuffleWellMemberProbe.cpp|Display|WELLPROBE|8	ONDEMAND		Display	NodeShuffleWellMemberProbe.cpp	338	LogWellMemberProbeCensus	none	0	0	R2-typed-command
+NodeShuffleWellMemberProbe.cpp|Display|WELLPROBE|9	ONDEMAND		Display	NodeShuffleWellMemberProbe.cpp	378	LogWellMemberProbeCensus	none	0	0	R2-typed-command
+NodeShuffleWellMemberProbe.cpp|Display|WELLPROBE|10	ONDEMAND		Display	NodeShuffleWellMemberProbe.cpp	386	LogWellMemberProbeCensus	none	0	0	R2-typed-command
+NodeShuffleWellMemberProbe.cpp|Display|WELLPROBE|11	ONDEMAND		Display	NodeShuffleWellMemberProbe.cpp	539	LogWellMemberProbeCensus	none	0	0	R2-typed-command
+NodeShuffleWellMemberProbe.cpp|Display|WELLPROBE|12	ONDEMAND		Display	NodeShuffleWellMemberProbe.cpp	552	LogWellMemberProbeCensus	none	0	0	R2-typed-command
+NodeShuffleWellMemberProbe.cpp|Display|WELLPROBE|13	ONDEMAND		Display	NodeShuffleWellMemberProbe.cpp	563	LogWellMemberProbeCensus	none	0	0	R2-typed-command
+NodeShuffleWellMemberProbe.cpp|Display|WELLPROBE|14	ONDEMAND		Display	NodeShuffleWellMemberProbe.cpp	581	LogWellMemberProbeCensus	none	0	0	R2-typed-command
+NodeShuffleWellMemberProbe.cpp|Display|WELLPROBE|15	ONDEMAND		Display	NodeShuffleWellMemberProbe.cpp	600	LogWellMemberProbeCensus	none	0	0	R2-typed-command
+NodeShuffleWellMemberProbe.cpp|Display|WELLPROBE|16	ONDEMAND		Display	NodeShuffleWellMemberProbe.cpp	622	LogWellMemberProbeCensus	none	0	0	R2-typed-command
+NodeShuffleWellMeshIndex.cpp|Display|WELLH2B-INDEX|1	MASTER	Wells	Display	NodeShuffleWellMeshIndex.cpp	345	RebuildWellMeshIndex	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleWellMeshIndex.cpp|Display|WELLH2B-INDEX|2	MASTER	Wells	Display	NodeShuffleWellMeshIndex.cpp	388	RebuildWellMeshIndex	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleWellMeshIndex.cpp|Display|WELLH2B-INDEX|3	MASTER	Wells	Display	NodeShuffleWellMeshIndex.cpp	418	RebuildWellMeshIndex	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleWellMeshIndex.cpp|Display|WELLH2B-INDEX|4	TOPIC	Wells	Display	NodeShuffleWellMeshIndex.cpp	455	RebuildWellMeshIndex	mention	629724	5299469	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleWellMeshIndexDump.cpp|Verbose|WELLH2B-INDEX|1	MASTER	Wells	Verbose	NodeShuffleWellMeshIndexDump.cpp	97	FlushWellIndexSpatialDump	caller	54525	461180	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleWellMeshIndexDump.cpp|Verbose|WELLH2B-INDEX|2	MASTER	Wells	Verbose	NodeShuffleWellMeshIndexDump.cpp	110	FlushWellIndexSpatialDump	caller	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleWellMeshIndexDump.cpp|Verbose|WELLH2B-INDEX|3	MASTER	Wells	Verbose	NodeShuffleWellMeshIndexDump.cpp	123	FlushWellIndexSpatialDump	caller	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleWellMoveLog.cpp|Display|WELLMOVE|1	TOPIC	Wells	Display	NodeShuffleWellMoveLog.cpp	28	WellMoveLog	none	6734	7484	R5-topic-by-tag
+NodeShuffleWellRelocateApply.cpp|Verbose|WELLH2-SEARCH|1	TOPIC	Wells	Verbose	NodeShuffleWellRelocateApply.cpp	220	TryPlaceWellGroup	mention	1472	1680	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleWellRelocateApply.cpp|Verbose|WELLH2-SATDRAW|1	MASTER	Wells	Verbose	NodeShuffleWellRelocateApply.cpp	454	TryPlaceWellGroup	block	0	2604	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleWellRelocateApply.cpp|Verbose|WELLH2-SATDRAW|2	MASTER	Wells	Verbose	NodeShuffleWellRelocateApply.cpp	487	TryPlaceWellGroup	block	2466	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleWellRelocateApply.cpp|Display|INSIDEGATE|1	TOPIC	Gates	Display	NodeShuffleWellRelocateApply.cpp	549	TryPlaceWellGroup	mention	0	0	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleWellRelocateApply.cpp|Display|WELLH2-SEARCH|1	TOPIC	Wells	Display	NodeShuffleWellRelocateApply.cpp	607	TryPlaceWellGroup	mention	0	951	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleWellRelocateApply.cpp|Verbose|WELLH2-SEARCH|2	MASTER	Wells	Verbose	NodeShuffleWellRelocateApply.cpp	647	TryPlaceWellGroup	block	2616	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleWellRelocateApply.cpp|Verbose|WELLH2-SEARCH|3	MASTER	Wells	Verbose	NodeShuffleWellRelocateApply.cpp	662	TryPlaceWellGroup	block	920	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleWellRelocateApply.cpp|Display|WELLH2-SUPPRESS|1	TOPIC	Wells	Display	NodeShuffleWellRelocateApply.cpp	751	SuppressVanillaWellGroup	none	0	0	R5-topic-by-tag
+NodeShuffleWellRelocateApply.cpp|Display|WELLH2-SUPPRESS|2	TOPIC	Wells	Display	NodeShuffleWellRelocateApply.cpp	789	SuppressVanillaWellGroup	none	0	0	R5-topic-by-tag
+NodeShuffleWellRelocateApply.cpp|Warning|WELLH2-SUPPRESS|1	ALWAYS		Warning	NodeShuffleWellRelocateApply.cpp	803	SuppressVanillaWellGroup	none	0	0	R1-warn-error
+NodeShuffleWellRelocateApply.cpp|Display|WELLH2-SUPPRESS|3	TOPIC	Wells	Display	NodeShuffleWellRelocateApply.cpp	911	SuppressVanillaWellGroup	none	10834	23870	R5-topic-by-tag
+NodeShuffleWellRelocateApply.cpp|Display|WELLH2-IMMEDIATE|1	TOPIC	Wells	Display	NodeShuffleWellRelocateApply.cpp	1059	ApplyWellRelocation	mention	0	0	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleWellRelocateApply.cpp|Display|WELLH2-IMMEDIATE|2	TOPIC	Wells	Display	NodeShuffleWellRelocateApply.cpp	1143	ApplyWellRelocation	mention	0	0	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleWellRelocateApply.cpp|Display|WELLH2-IMMEDIATE|3	TOPIC	Wells	Display	NodeShuffleWellRelocateApply.cpp	1208	ApplyWellRelocation	mention	17224	19033	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleWellRelocateApply.cpp|Warning|WELLH2|1	ALWAYS		Warning	NodeShuffleWellRelocateApply.cpp	1264	ApplyWellRelocation	mention	0	0	R1-warn-error VERIFY-gate-token-earlier-in-function
+NodeShuffleWellRelocateApply.cpp|Display|WELLH2-GATE|1	TOPIC	Wells	Display	NodeShuffleWellRelocateApply.cpp	1323	ApplyWellRelocation	mention	0	0	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleWellRelocateApply.cpp|Verbose|WELLH2-GATE|1	MASTER	Wells	Verbose	NodeShuffleWellRelocateApply.cpp	1355	ApplyWellRelocation	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleWellRelocateApply.cpp|Display|WELLH2|1	TOPIC	Wells	Display	NodeShuffleWellRelocateApply.cpp	1489	ApplyWellRelocation	mention	130491	1097553	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleWellRelocateRoll.cpp|Display|WELLH2-ROLL|1	TOPIC	Wells	Display	NodeShuffleWellRelocateRoll.cpp	216	RollWellRelocation	none	0	0	R5-topic-by-tag
+NodeShuffleWellRelocateRoll.cpp|Display|WELLH2-ROLL|2	TOPIC	Wells	Display	NodeShuffleWellRelocateRoll.cpp	227	RollWellRelocation	none	386	386	R5-topic-by-tag
+NodeShuffleWellRelocateRoll.cpp|Warning|WELLH2-ROLL|1	ALWAYS		Warning	NodeShuffleWellRelocateRoll.cpp	302	RollWellRelocation	none	0	0	R1-warn-error
+NodeShuffleWellRelocateRoll.cpp|Display|WELLH2-ROLL|3	TOPIC	Wells	Display	NodeShuffleWellRelocateRoll.cpp	348	RollWellRelocation	none	0	0	R5-topic-by-tag
+NodeShuffleWellRelocateRoll.cpp|Display|WELLH2-ROLL|4	TOPIC	Wells	Display	NodeShuffleWellRelocateRoll.cpp	381	RollWellRelocation	none	0	0	R5-topic-by-tag
+NodeShuffleWellRelocateRoll.cpp|Warning|WELLH2-ROLL|2	ALWAYS		Warning	NodeShuffleWellRelocateRoll.cpp	410	RollWellRelocation	none	0	0	R1-warn-error
+NodeShuffleWellRelocateRoll.cpp|Warning|WELLH2-ROLL|3	ALWAYS		Warning	NodeShuffleWellRelocateRoll.cpp	435	RollWellRelocation	none	0	0	R1-warn-error
+NodeShuffleWellRelocateRoll.cpp|Display|WELLH2-ROLL|5	TOPIC	Wells	Display	NodeShuffleWellRelocateRoll.cpp	447	RollWellRelocation	none	0	0	R5-topic-by-tag
+NodeShuffleWellRelocateRoll.cpp|Warning|WELLH2-ROLL|4	ALWAYS		Warning	NodeShuffleWellRelocateRoll.cpp	483	RollWellRelocation	none	0	0	R1-warn-error
+NodeShuffleWellRelocateRoll.cpp|Warning|WELLH2-ROLL|5	ALWAYS		Warning	NodeShuffleWellRelocateRoll.cpp	512	RollWellRelocation	none	0	0	R1-warn-error
+NodeShuffleWellRelocateRoll.cpp|Display|WELLH2-ROLL|6	TOPIC	Wells	Display	NodeShuffleWellRelocateRoll.cpp	534	RollWellRelocation	none	8685	9600	R5-topic-by-tag
+NodeShuffleWellRelocateRoll.cpp|Warning|WELLH2-ROLL|6	ALWAYS		Warning	NodeShuffleWellRelocateRoll.cpp	552	RollWellRelocation	none	0	0	R1-warn-error
+NodeShuffleWellRelocateRoll.cpp|Warning|WELLH2-ROLL|7	ALWAYS		Warning	NodeShuffleWellRelocateRoll.cpp	646	RollWellRelocation	none	0	0	R1-warn-error
+NodeShuffleWellRelocateRoll.cpp|Display|WELLH2-ROLL|7	TOPIC	Wells	Display	NodeShuffleWellRelocateRoll.cpp	699	RollWellRelocation	none	7076	7822	R5-topic-by-tag
+NodeShuffleWellRelocateRoll.cpp|Warning|WELLH2-ROLL|8	ALWAYS		Warning	NodeShuffleWellRelocateRoll.cpp	721	RollWellRelocation	none	0	0	R1-warn-error
+NodeShuffleWellRelocateRoll.cpp|Display|WELLH2B-ROLLPROBE|1	TOPIC	Wells	Display	NodeShuffleWellRelocateRoll.cpp	755	RollWellRelocation	none	0	0	R5-topic-by-tag
+NodeShuffleWellRelocateRoll.cpp|Display|WELLH2-ROLL|8	TOPIC	Wells	Display	NodeShuffleWellRelocateRoll.cpp	784	RollWellRelocation	mention	0	0	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleWellRelocateRoll.cpp|Display|WELLH2-ROLL|9	TOPIC	Wells	Display	NodeShuffleWellRelocateRoll.cpp	816	RollWellRelocation	mention	0	0	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleWellRelocateRoll.cpp|Warning|WELLH2-ROLL|9	ALWAYS		Warning	NodeShuffleWellRelocateRoll.cpp	859	RollWellRelocation	mention	0	0	R1-warn-error VERIFY-gate-token-earlier-in-function
+NodeShuffleWellRelocateRoll.cpp|Warning|WELLH2-ROLL|10	ALWAYS		Warning	NodeShuffleWellRelocateRoll.cpp	886	RollWellRelocation	mention	0	0	R1-warn-error VERIFY-gate-token-earlier-in-function
+NodeShuffleWellRelocateRoll.cpp|Display|WELLH2-ROLL|10	TOPIC	Wells	Display	NodeShuffleWellRelocateRoll.cpp	898	RollWellRelocation	mention	0	0	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleWellRelocateRoll.cpp|Warning|WELLH2-ROLL|11	ALWAYS		Warning	NodeShuffleWellRelocateRoll.cpp	921	RollWellRelocation	mention	0	0	R1-warn-error VERIFY-gate-token-earlier-in-function
+NodeShuffleWellRelocateRoll.cpp|Warning|WELLH2-ROLL|12	ALWAYS		Warning	NodeShuffleWellRelocateRoll.cpp	933	RollWellRelocation	mention	0	0	R1-warn-error VERIFY-gate-token-earlier-in-function
+NodeShuffleWellRelocateRoll.cpp|Display|WELLH2-ROLL|11	TOPIC	Wells	Display	NodeShuffleWellRelocateRoll.cpp	1053	RollWellRelocation	mention	7279	8043	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleWellRelocateRoll.cpp|Display|WELLH2-ROLL|12	TOPIC	Wells	Display	NodeShuffleWellRelocateRoll.cpp	1073	RollWellRelocation	mention	0	0	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleWellRelocateRoll.cpp|Display|WELLH2-ROLL|13	TOPIC	Wells	Display	NodeShuffleWellRelocateRoll.cpp	1087	RollWellRelocation	mention	1031	1034	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleWellRetype.cpp|Verbose|WELLH1-WRITE|1	TOPIC	Wells	Verbose	NodeShuffleWellRetype.cpp	60	RetypeWellMember	none	13238	18757	R5-topic-by-tag
+NodeShuffleWellRetype.cpp|Display|WELLH1|1	TOPIC	Wells	Display	NodeShuffleWellRetype.cpp	92	ApplyWellRetype	none	0	0	R5-topic-by-tag
+NodeShuffleWellRetype.cpp|Display|WELLH1-SKIP|1	TOPIC	Wells	Display	NodeShuffleWellRetype.cpp	120	ApplyWellRetype	none	0	0	R5-topic-by-tag
+NodeShuffleWellRetype.cpp|Warning|WELLH1-SKIP|1	ALWAYS		Warning	NodeShuffleWellRetype.cpp	142	ApplyWellRetype	none	0	0	R1-warn-error
+NodeShuffleWellRetype.cpp|Display|WELLH1-PIN-UNMEASURED|1	TOPIC	Wells	Display	NodeShuffleWellRetype.cpp	220	ApplyWellRetype	none	0	439	R5-topic-by-tag
+NodeShuffleWellRetype.cpp|Display|WELLH1-PIN|1	TOPIC	Wells	Display	NodeShuffleWellRetype.cpp	269	ApplyWellRetype	none	0	0	R5-topic-by-tag
+NodeShuffleWellRetype.cpp|Warning|WELLH1-MISMATCH|1	ALWAYS		Warning	NodeShuffleWellRetype.cpp	319	ApplyWellRetype	none	0	0	R1-warn-error
+NodeShuffleWellRetype.cpp|Display|WELLH1|2	TOPIC	Wells	Display	NodeShuffleWellRetype.cpp	337	ApplyWellRetype	none	6269	13872	R5-topic-by-tag
+NodeShuffleWellRetype.cpp|Display|%s|1	TOPIC	Wells	Display	NodeShuffleWellRetype.cpp	404	ApplyWellRetype	none	0	0	R6-override WELLH2-UNKNOWN pass-through
+NodeShuffleWellRetype.cpp|Warning|%s|1	ALWAYS		Warning	NodeShuffleWellRetype.cpp	408	ApplyWellRetype	none	0	0	R1-warn-error
+NodeShuffleWellRetype.cpp|Display|WELLH1-CENSUS|1	ALWAYS		Display	NodeShuffleWellRetype.cpp	419	ApplyWellRetype	none	568	1136	R4-once-per-session-or-operation
+NodeShuffleWellRetype.cpp|Display|WELLH1|3	TOPIC	Wells	Display	NodeShuffleWellRetype.cpp	434	ApplyWellRetype	none	238	238	R5-topic-by-tag
+NodeShuffleWellRoll.cpp|Display|WELLH1-ROLL|1	TOPIC	Wells	Display	NodeShuffleWellRoll.cpp	104	RollWellLayout	none	338	338	R5-topic-by-tag
+NodeShuffleWellRoll.cpp|Display|WELLH1-ROLL|2	TOPIC	Wells	Display	NodeShuffleWellRoll.cpp	266	RollWellLayout	none	0	0	R5-topic-by-tag
+NodeShuffleWellRoll.cpp|Warning|WELLH1-ROLL|1	ALWAYS		Warning	NodeShuffleWellRoll.cpp	366	RollWellLayout	none	0	0	R1-warn-error
+NodeShuffleWellRoll.cpp|Warning|WELLH1-ROLL|2	ALWAYS		Warning	NodeShuffleWellRoll.cpp	383	RollWellLayout	none	0	0	R1-warn-error
+NodeShuffleWellRoll.cpp|Display|WELLH1-ROLL|3	TOPIC	Wells	Display	NodeShuffleWellRoll.cpp	449	RollWellLayout	none	8484	9386	R5-topic-by-tag
+NodeShuffleWellRoll.cpp|Display|WELLH1-ROLL|4	TOPIC	Wells	Display	NodeShuffleWellRoll.cpp	490	RollWellLayout	none	406	543	R5-topic-by-tag
+NodeShuffleWellRoll.cpp|Warning|WELLH1-ROLL|3	ALWAYS		Warning	NodeShuffleWellRoll.cpp	498	RollWellLayout	none	0	0	R1-warn-error
+NodeShuffleWellRoll.cpp|Display|WELLH1-ROLL|5	TOPIC	Wells	Display	NodeShuffleWellRoll.cpp	512	RollWellLayout	none	842	846	R5-topic-by-tag
+NodeShuffleWellRwg.cpp|Display|WELLCLAIM|1	TOPIC	Wells	Display	NodeShuffleWellRwg.cpp	180	RwgRebindWellClaimsOnce	none	297	599	R5-topic-by-tag
+NodeShuffleWellRwg.cpp|Warning|WELLCLAIM-UNBOUND|1	ALWAYS		Warning	NodeShuffleWellRwg.cpp	187	RwgRebindWellClaimsOnce	none	0	0	R1-warn-error
+NodeShuffleWellRwg.cpp|Display|WELLCLAIM-RETRY-COLLISION|1	TOPIC	Wells	Display	NodeShuffleWellRwg.cpp	305	RwgRetryUnboundWellSatellites	none	0	0	R5-topic-by-tag
+NodeShuffleWellRwg.cpp|Display|WELLCLAIM-RETRY|1	TOPIC	Wells	Display	NodeShuffleWellRwg.cpp	347	RwgRetryUnboundWellSatellites	none	310	620	R5-topic-by-tag
+NodeShuffleWellRwg.cpp|Display|WELLROLL|1	ALWAYS		Display	NodeShuffleWellRwg.cpp	431	RwgEmitWellRollCensus	none	784	784	R4-once-per-session-or-operation
+NodeShuffleWellRwg.cpp|Display|WELLPLACE|1	TOPIC	Wells	Display	NodeShuffleWellRwg.cpp	454	RwgEmitWellPlace	none	6501	42442	R5-topic-by-tag
+NodeShuffleWellRwgMembers.cpp|Display|WELLCLAIMMEMBERS|1	TOPIC	Wells	Display	NodeShuffleWellRwgMembers.cpp	105	RwgFillWellMembersFromClaims	none	719	719	R5-topic-by-tag
+NodeShuffleWellSnapBox.cpp|Display|WELLH2C-SNAPBOX|1	TOPIC	Wells	Display	NodeShuffleWellSnapBox.cpp	82	ResetWellSnapBoxDiagForWorld	none	768	1540	R5-topic-by-tag
+NodeShuffleWellSnapBox.cpp|Display|WELLH2C-SNAPBOX|2	TOPIC	Wells	Display	NodeShuffleWellSnapBox.cpp	298	EnsureWellMemberSnapBox	none	0	23734	R5-topic-by-tag
+NodeShuffleWellSnapBox.cpp|Warning|WELLH2C-SNAPBOX|1	ALWAYS		Warning	NodeShuffleWellSnapBox.cpp	344	EnsureWellMemberSnapBox	none	0	0	R1-warn-error
+NodeShuffleWellSnapBox.cpp|Display|WELLH2C-SNAPBOX|3	TOPIC	Wells	Display	NodeShuffleWellSnapBox.cpp	370	EnsureWellMemberSnapBox	none	0	28505	R5-topic-by-tag
+NodeShuffleWellSpawn.cpp|Warning|WELLH2-SPAWN|1	ALWAYS		Warning	NodeShuffleWellSpawn.cpp	69	SpawnWellGroup	none	0	0	R1-warn-error
+NodeShuffleWellSpawn.cpp|Warning|WELLH2-SPAWN|2	ALWAYS		Warning	NodeShuffleWellSpawn.cpp	90	SpawnWellGroup	none	0	0	R1-warn-error
+NodeShuffleWellSpawn.cpp|Display|WELLH2-SPAWN|1	TOPIC	Wells	Display	NodeShuffleWellSpawn.cpp	136	SpawnWellGroup	none	0	0	R5-topic-by-tag
+NodeShuffleWellSpawn.cpp|Warning|WELLH2-SPAWN|3	ALWAYS		Warning	NodeShuffleWellSpawn.cpp	160	SpawnWellGroup	none	0	0	R1-warn-error
+NodeShuffleWellSpawn.cpp|Display|WELLH2-SPAWN|2	TOPIC	Wells	Display	NodeShuffleWellSpawn.cpp	181	SpawnWellGroup	none	0	226	R5-topic-by-tag
+NodeShuffleWellSpawn.cpp|Warning|WELLH2-SPAWN|4	ALWAYS		Warning	NodeShuffleWellSpawn.cpp	216	SpawnWellGroup	none	0	0	R1-warn-error
+NodeShuffleWellSpawn.cpp|Display|WELLH2-SPAWN|3	TOPIC	Wells	Display	NodeShuffleWellSpawn.cpp	241	SpawnWellGroup	none	0	0	R5-topic-by-tag
+NodeShuffleWellSpawn.cpp|Warning|WELLH2-SPAWN|5	ALWAYS		Warning	NodeShuffleWellSpawn.cpp	260	SpawnWellGroup	none	0	0	R1-warn-error
+NodeShuffleWellSpawn.cpp|Warning|WELLH2-SPAWN|6	ALWAYS		Warning	NodeShuffleWellSpawn.cpp	276	SpawnWellGroup	none	0	0	R1-warn-error
+NodeShuffleWellSpawn.cpp|Warning|WELLH2-RETYPE-PIN|1	ALWAYS		Warning	NodeShuffleWellSpawn.cpp	398	SpawnWellGroup	none	0	0	R1-warn-error
+NodeShuffleWellSpawn.cpp|Display|WELLH2-RETYPE|1	TOPIC	Wells	Display	NodeShuffleWellSpawn.cpp	427	SpawnWellGroup	none	0	0	R5-topic-by-tag
+NodeShuffleWellSpawn.cpp|Display|WELLH2-RETYPE-OK|1	TOPIC	Wells	Display	NodeShuffleWellSpawn.cpp	449	SpawnWellGroup	none	0	668	R5-topic-by-tag
+NodeShuffleWellSpawn.cpp|Warning|WELLH2-SPAWN|7	ALWAYS		Warning	NodeShuffleWellSpawn.cpp	477	SpawnWellGroup	none	0	0	R1-warn-error
+NodeShuffleWellSpawn.cpp|Display|WELLH2-SPAWN|4	TOPIC	Wells	Display	NodeShuffleWellSpawn.cpp	491	SpawnWellGroup	none	0	412	R5-topic-by-tag
+NodeShuffleWellSpawn.cpp|Display|WELLH2-PLACED|1	TOPIC	Wells	Display	NodeShuffleWellSpawn.cpp	515	SpawnWellGroup	none	0	552	R5-topic-by-tag
+NodeShuffleWellStage0.cpp|Display|WELLH2B-ROLLPROBE|1	MASTER	Wells	Display	NodeShuffleWellStage0.cpp	173	ProbeRollTimeWellMeshIndex	caller	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleWellStage0.cpp|Display|WELLH2B-ROLLPROBE|2	MASTER	Wells	Display	NodeShuffleWellStage0.cpp	195	ProbeRollTimeWellMeshIndex	caller	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleWellStage0.cpp|Display|WELLH2-DEFERCENSUS|1	TOPIC	Wells	Display	NodeShuffleWellStage0.cpp	283	EmitWellDeferralCensus	dual	392256	3299912	R5-topic-by-tag + R8c-dual-mode-today (prints with the master off under another condition): the per-line guard makes it topic-only
+NodeShuffleWellStage0.cpp|Display|WELLH2-PROBECENSUS|1	MASTER	Wells	Display	NodeShuffleWellStage0.cpp	341	LogWellProbeCensus	caller	91271	322105	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleWellSweep.cpp|Warning|WELLH2-ORPHAN|1	ALWAYS		Warning	NodeShuffleWellSweep.cpp	290	SweepOrphanedWellActors	none	0	0	R1-warn-error
+NodeShuffleWellSweep.cpp|Display|WELLH2-ORPHAN|1	TOPIC	Wells	Display	NodeShuffleWellSweep.cpp	322	SweepOrphanedWellActors	none	569	0	R5-topic-by-tag
+NodeShuffleWellSweep.cpp|Display|WELLH2-ORPHAN|2	TOPIC	Wells	Display	NodeShuffleWellSweep.cpp	341	SweepOrphanedWellActors	none	0	0	R5-topic-by-tag
+NodeShuffleWellSweep.cpp|Warning|WELLH2-ORPHAN|2	ALWAYS		Warning	NodeShuffleWellSweep.cpp	363	SweepOrphanedWellActors	none	0	0	R1-warn-error
+NodeShuffleWellSweep.cpp|Display|WELLH2-ROLL|1	TOPIC	Wells	Display	NodeShuffleWellSweep.cpp	428	FinishWellRollTeardown	none	486	486	R5-topic-by-tag
+NodeShuffleWellUnhide.cpp|Warning|WELLH2-UNHIDE|1	ALWAYS		Warning	NodeShuffleWellUnhide.cpp	181	UnhideWellMember	none	0	0	R1-warn-error
+NodeShuffleWellUnhide.cpp|Display|WELLH2-UNHIDE|1	TOPIC	Wells	Display	NodeShuffleWellUnhide.cpp	232	UnhideWellMember	none	0	0	R5-topic-by-tag
+NodeShuffleWellUnhide.cpp|Display|WELLH2-UNHIDE|2	TOPIC	Wells	Display	NodeShuffleWellUnhide.cpp	283	TryUnhideWellGroup	none	0	0	R5-topic-by-tag
+NodeShuffleWellUnhide.cpp|Display|WELLH2-STRANDED|1	TOPIC	Wells	Display	NodeShuffleWellUnhide.cpp	501	EmitWellStrandedCensus	none	27073	314289	R5-topic-by-tag
+NodeShuffleWellUnhide.cpp|Warning|WELLH2-STRANDED|1	ALWAYS		Warning	NodeShuffleWellUnhide.cpp	541	EmitWellStrandedCensus	none	0	0	R1-warn-error
+NodeShuffleWellVisuals.cpp|Display|WELLH2B-ADOPT|1	TOPIC	Wells	Display	NodeShuffleWellVisuals.cpp	123	CaptureWellGroupVisuals	none	10414	23041	R5-topic-by-tag
+NodeShuffleWellVisuals.cpp|Verbose|WELLH2B-CAPTURE|1	MASTER	Wells	Verbose	NodeShuffleWellVisuals.cpp	162	CaptureWellGroupVisuals	block	0	4390	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleWellVisuals.cpp|Display|WELLH2B-CAPTURE|1	TOPIC	Wells	Display	NodeShuffleWellVisuals.cpp	231	CaptureWellGroupVisuals	mention	9103	11021	R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: treated as ungated; the per-line guard is harmless if it is gated (NsDiag is true whenever the master is)
+NodeShuffleWellVisuals.cpp|Display|WELLH2-SUPPRESS|1	MASTER	Wells	Display	NodeShuffleWellVisuals.cpp	297	HideWellMemberMeshes	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleWellVisuals.cpp|Display|WELLH2-COMPONENTCENSUS|1	MASTER	Wells	Display	NodeShuffleWellVisuals.cpp	396	LogWellMemberComponentCensus	earlyret	205960	453158	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleWellVisualsApply.cpp|Display|WELLH2B-COLLISION|1	TOPIC	Wells	Display	NodeShuffleWellVisualsApply.cpp	75	DumpWellActorCollision	none	0	16770	R5-topic-by-tag
+NodeShuffleWellVisualsApply.cpp|Warning|WELLH2B-APPLY|1	ALWAYS		Warning	NodeShuffleWellVisualsApply.cpp	101	DressWellActor	none	0	0	R1-warn-error
+NodeShuffleWellVisualsApply.cpp|Display|WELLH2B-APPLY|1	TOPIC	Wells	Display	NodeShuffleWellVisualsApply.cpp	233	ApplyWellGroupVisuals	none	0	1208	R5-topic-by-tag
+NodeShuffleWhereCaveNodes.cpp|Display|WHERECAVE|1	ONDEMAND		Display	NodeShuffleWhereCaveNodes.cpp	75	CONSOLE:NodeShuffle.WhereCaveNodes	none	0	0	R2-typed-command
+NodeShuffleWhereCaveNodes.cpp|Display|WHERECAVE|2	ONDEMAND		Display	NodeShuffleWhereCaveNodes.cpp	87	LogWhereCaveNodesCensus	none	0	0	R2-typed-command
+NodeShuffleWhereCaveNodes.cpp|Display|WHERECAVE|3	ONDEMAND		Display	NodeShuffleWhereCaveNodes.cpp	161	LogWhereCaveNodesCensus	none	0	0	R2-typed-command
+NodeShuffleWhereCaveNodes.cpp|Display|WHERECAVE|4	ONDEMAND		Display	NodeShuffleWhereCaveNodes.cpp	184	LogWhereCaveNodesCensus	none	0	0	R2-typed-command
+NodeShuffleWhereCaveNodes.cpp|Display|WHERECAVE|5	ONDEMAND		Display	NodeShuffleWhereCaveNodes.cpp	203	LogWhereCaveNodesCensus	none	0	0	R2-typed-command
+NodeShuffleWhereCaveNodes.cpp|Display|WHERECAVE|6	ONDEMAND		Display	NodeShuffleWhereCaveNodes.cpp	227	LogWhereCaveNodesCensus	none	0	0	R2-typed-command
+NodeShuffleDestroyerVetoRequirement.cpp|Display|VETOCENSUS|1	ALWAYS		Display	NodeShuffleDestroyerVetoRequirement.cpp	173	EmitForeignCensus	none	0	710	R4-once-per-session-or-operation
+NodeShuffleDestroyerVetoRequirement.cpp|Display|veto: FOREIGN-PROTECT first requ|1	ALWAYS		Display	NodeShuffleDestroyerVetoRequirement.cpp	346	IsRequirementMet_Implementation	none	0	0	R9-veto-module-no-new-cross-module-import (once per arm per asset)
+NodeShuffleDestroyerVetoRequirement.cpp|Verbose|veto: IsRequirementMet target='%|1	MASTER	Veto	Verbose	NodeShuffleDestroyerVetoRequirement.cpp	375	IsRequirementMet_Implementation	block	0	0	R5-topic-by-tag + R8-existing-master-gate-kept
+NodeShuffleDestroyerVetoRequirement.cpp|Display|veto: OBSERVE-ONLY — first requi|1	ALWAYS		Display	NodeShuffleDestroyerVetoRequirement.cpp	402	IsRequirementMet_Implementation	mention	0	0	R9-veto-module (NodeShuffleVetoKBFL cannot call the unexported guard; draft had TOPIC Veto because its scope scan said mention) [hand-set ns-quietlog-1; draft: R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: trea]
+NodeShuffleDestroyerVetoRequirement.cpp|Display|veto: first destroy vetoed for %|1	ALWAYS		Display	NodeShuffleDestroyerVetoRequirement.cpp	441	IsRequirementMet_Implementation	mention	0	0	R9-veto-module (NodeShuffleVetoKBFL cannot call the unexported guard; draft had TOPIC Veto because its scope scan said mention) [hand-set ns-quietlog-1; draft: R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: trea]
+NodeShuffleDestroyerVetoRequirement.cpp|Display|veto: spared %d destroy attempts|1	ALWAYS		Display	NodeShuffleDestroyerVetoRequirement.cpp	449	IsRequirementMet_Implementation	mention	0	0	R9-veto-module (NodeShuffleVetoKBFL cannot call the unexported guard; draft had TOPIC Veto because its scope scan said mention) [hand-set ns-quietlog-1; draft: R5-topic-by-tag + R8b-gate-token-elsewhere-in-function: trea]
+NodeShuffleVetoKBFL.cpp|Display|veto: OBSERVE-ONLY mode for this|1	ALWAYS		Display	NodeShuffleVetoKBFL.cpp	81	NodeShuffleVetoArmForWorld	none	0	0	R4-once-per-session-or-operation
+NodeShuffleVetoKBFL.cpp|Display|veto: foreign-node protection LA|1	ALWAYS		Display	NodeShuffleVetoKBFL.cpp	95	NodeShuffleVetoArmForWorld	none	0	1090	R4-once-per-session-or-operation
+NodeShuffleVetoKBFL.cpp|Warning|veto: KBFL class layout differs |1	ALWAYS		Warning	NodeShuffleVetoKBFL.cpp	119	NodeShuffleVetoArmForWorld	none	0	0	R1-warn-error
+NodeShuffleVetoKBFL.cpp|Display|veto: ABI guard passed (UKBFLCDO|1	ALWAYS		Display	NodeShuffleVetoKBFL.cpp	125	NodeShuffleVetoArmForWorld	none	0	314	R4-once-per-session-or-operation
+NodeShuffleVetoKBFL.cpp|Warning|veto: FGResourceNodeBase class n|1	ALWAYS		Warning	NodeShuffleVetoKBFL.cpp	136	NodeShuffleVetoArmForWorld	none	0	0	R1-warn-error
+NodeShuffleVetoKBFL.cpp|Display|veto: KBFL is loaded but has no |1	ALWAYS		Display	NodeShuffleVetoKBFL.cpp	142	NodeShuffleVetoArmForWorld	none	0	0	R4-once-per-session-or-operation
+NodeShuffleVetoKBFL.cpp|Display|veto: asset '%s' class=%s has no|1	ALWAYS		Display	NodeShuffleVetoKBFL.cpp	205	NodeShuffleVetoArmForWorld	none	0	0	R9-veto-module-no-new-cross-module-import (once per arm per asset)
+NodeShuffleVetoKBFL.cpp|Display|veto: asset '%s' class=%s target|1	ALWAYS		Display	NodeShuffleVetoKBFL.cpp	241	NodeShuffleVetoArmForWorld	none	0	0	R9-veto-module-no-new-cross-module-import (once per arm per asset)
+NodeShuffleVetoKBFL.cpp|Display|veto: asset '%s' class=%s — subc|1	ALWAYS		Display	NodeShuffleVetoKBFL.cpp	258	NodeShuffleVetoArmForWorld	none	0	0	R9-veto-module-no-new-cross-module-import (once per arm per asset)
+NodeShuffleVetoKBFL.cpp|Display|veto: asset '%s' has no readable|1	ALWAYS		Display	NodeShuffleVetoKBFL.cpp	272	NodeShuffleVetoArmForWorld	none	0	0	R9-veto-module-no-new-cross-module-import (once per arm per asset)
+NodeShuffleVetoKBFL.cpp|Display|veto: late-arm — live requiremen|1	ALWAYS		Display	NodeShuffleVetoKBFL.cpp	344	NodeShuffleVetoArmForWorld	none	0	0	R4-once-per-session-or-operation
+NodeShuffleVetoKBFL.cpp|Display|veto: asset '%s' class=%s target|2	ALWAYS		Display	NodeShuffleVetoKBFL.cpp	359	NodeShuffleVetoArmForWorld	none	0	0	R9-veto-module-no-new-cross-module-import (once per arm per asset)
+NodeShuffleVetoKBFL.cpp|Display|veto: armed on %d asset(s) in OB|1	ALWAYS		Display	NodeShuffleVetoKBFL.cpp	378	NodeShuffleVetoArmForWorld	none	0	0	R4-once-per-session-or-operation
+NodeShuffleVetoKBFL.cpp|Display|veto: armed on %d asset(s) — des|1	ALWAYS		Display	NodeShuffleVetoKBFL.cpp	384	NodeShuffleVetoArmForWorld	none	0	0	R4-once-per-session-or-operation
+NodeShuffleVetoKBFL.cpp|Display|veto: armed, 0 node-destroyer as|1	ALWAYS		Display	NodeShuffleVetoKBFL.cpp	391	NodeShuffleVetoArmForWorld	none	0	216	R4-once-per-session-or-operation
+NodeShuffleVetoKBFL.cpp|Warning|veto: armed with a null world — |1	ALWAYS		Warning	NodeShuffleVetoKBFL.cpp	417	NodeShuffleVetoArmForWorld	none	0	0	R1-warn-error
+NodeShuffleVetoKBFL.cpp|Display|veto: NodeShuffleVetoKBFL module|1	ALWAYS		Display	NodeShuffleVetoKBFL.cpp	447	StartupModule	none	0	135	R4-once-per-session-or-operation

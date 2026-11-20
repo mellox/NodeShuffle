@@ -155,10 +155,10 @@ void ANodeShuffleSubsystem::RwgRockOcclusionPass()
     }
     if (Occluded > 0 || OnSolidTopKept > 0 || (Checked > 0 && (RwgRockPasses % 12) == 1)) // bounded: a pass that found rock, else once a minute while checking
     {
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Rocks)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("RESETTLE-ROCK: pass=%d checked=%d occluded=%d redealt=%d clear=%d terrainOrBuildableAbove=%d refusedBuiltOn=%d candidates=%d windowCm=%.0f skipCapExhausted=%d onSolidTopKept=%d"),
             RwgRockPasses, Checked, Occluded, Redealt, Clear, NonRockAbove, RefusedBuiltOn, Cands.Num(), NodeShuffleMapMode::RwgRockOcclusionHeightCm, CapExhausted,
-            OnSolidTopKept);
+            OnSolidTopKept); }
     }
 }
 
@@ -201,8 +201,8 @@ bool ANodeShuffleSubsystem::RwgRedealWellGroup(FNodeShuffleWellEntry& E, const T
             if (RwgDealWellSite(Q, Rng, Offs, Site)) { const FVector WmFrom = WellMoveAt(E); E.DestCoreLocation = Site; bOutDealt = true; WellMoveLog(E, WmFrom, Site, TEXT("resettleRedeal")); } // rwg-farspawn-1c C7
         }
     }
-    UE_LOG(LogNodeShuffle, Display, TEXT("RESETTLE-WELL-REDEAL: core='%s' from=%s dest=%s apiUsable=%d draws=%d dealtNewSite=%d trigger='%s'"),
-        *WellShort(E.CorePath), *WasAt.ToCompactString(), *E.DestCoreLocation.ToCompactString(), Q.IsUsable() ? 1 : 0, Draws, bOutDealt ? 1 : 0, Why);
+    if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display, TEXT("RESETTLE-WELL-REDEAL: core='%s' from=%s dest=%s apiUsable=%d draws=%d dealtNewSite=%d trigger='%s'"),
+        *WellShort(E.CorePath), *WasAt.ToCompactString(), *E.DestCoreLocation.ToCompactString(), Q.IsUsable() ? 1 : 0, Draws, bOutDealt ? 1 : 0, Why); }
     return true;
 }
 
@@ -269,7 +269,7 @@ void ANodeShuffleSubsystem::RwgResettleWells(int32& Checked, int32& Redealt, int
         if (FloatM > 0) { ++Floating; }
         if (OccM > 0) { ++RockOccluded; }
         if (RedealsLeft <= 0) { ++WaitingBudget; continue; } // not given up: a later pass redeals it
-        if (RwgWellResettleSalt.FindRef(E.CorePath) >= 2) { RwgResettleWellGaveUp.Add(E.CorePath); UE_LOG(LogNodeShuffle, Display, TEXT("RESETTLE-WELL-GAVEUP: core='%s' resettleRedealsThisSession=%d membersDzOverLimit=%d membersSolid=%d; not redealt again this session"), *WellShort(E.CorePath), RwgWellResettleSalt.FindRef(E.CorePath), FloatM, OccM); continue; }
+        if (RwgWellResettleSalt.FindRef(E.CorePath) >= 2) { RwgResettleWellGaveUp.Add(E.CorePath); if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display, TEXT("RESETTLE-WELL-GAVEUP: core='%s' resettleRedealsThisSession=%d membersDzOverLimit=%d membersSolid=%d; not redealt again this session"), *WellShort(E.CorePath), RwgWellResettleSalt.FindRef(E.CorePath), FloatM, OccM); } continue; }
         --RedealsLeft;
         bool bDealt = false;
         if (!RwgRedealWellGroup(E, TEXT("RWG resettle: member probe dZ over limit or solid mesh above"), bDealt)) { ++Occupied; RwgResettleWellGaveUp.Add(E.CorePath); continue; }
@@ -278,8 +278,8 @@ void ANodeShuffleSubsystem::RwgResettleWells(int32& Checked, int32& Redealt, int
     }
     if (Redealt > 0 || Kept > 0 || Occupied > 0 || Floating > 0 || RockOccluded > 0 || (Checked > 0 && (RwgRsPasses % 12) == 1))
     {
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("RESETTLE-WELL: pass=%d checked=%d redealt=%d kept=%d refusedBuiltOn=%d deferred=%d groupsMemberDzOverLimit=%d groupsRockOccluded=%d waitingRedealBudget=%d newSiteNotDealt=%d maxDzCm=%d"),
-            RwgRsPasses, Checked, Redealt, Kept, Occupied, Deferred, Floating, RockOccluded, WaitingBudget, DealFailed, MaxDzCm);
+            RwgRsPasses, Checked, Redealt, Kept, Occupied, Deferred, Floating, RockOccluded, WaitingBudget, DealFailed, MaxDzCm); }
     }
 }

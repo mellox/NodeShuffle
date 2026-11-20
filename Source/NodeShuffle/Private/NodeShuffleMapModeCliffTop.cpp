@@ -98,7 +98,7 @@ bool ANodeShuffleSubsystem::RwgSolidTopTryAccept(const FHitResult& Hit, double T
     const bool bSunkenRefused = SunkenVerdict != 0;
     if (SunkenVerdict == 2) { bRwgRocksTopDeferred = true; Reject = TEXT("sunkenNoTerrainDefer"); }
     else if (bSunkenRefused) { Reject = TEXT("sunkenRefused"); bRwgRocksLastProbeSunkenRefused = true; }
-    if (RwgCliffTopSamples < RwgCliffTopSampleCap && FNodeShuffleModule::AreDiagnosticsEnabled())
+    if (RwgCliffTopSamples < RwgCliffTopSampleCap && NsDiag(ENsDiag::Placement))
     {
         ++RwgCliffTopSamples;
         const NodeShuffleMapMode::FRwgGroundQuery Q(World, RwgGenerator.Get());

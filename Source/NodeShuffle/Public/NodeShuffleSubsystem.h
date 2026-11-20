@@ -1542,6 +1542,7 @@ private:
 
     // ---- apply ----
     void ApplyLayout();
+    void EmitConsumerCensus(); // ns-quietlog-1: NSCONSUMER line (NodeShuffleConsumerCensus.cpp), last statement of ApplyLayout
     // redesign-3 BUG B: ONE-TIME post-load reconciliation. Spawned nodes are now ANodeShuffleResourceNode
     // with a UPROPERTY(SaveGame) EntryGuid that survives reload (Tags do NOT). Iterate the subclass, read
     // each saved EntryGuid, repopulate SpawnedNodes[guid] so EnsureNewNodeSpawned's SpawnedNodes.Find

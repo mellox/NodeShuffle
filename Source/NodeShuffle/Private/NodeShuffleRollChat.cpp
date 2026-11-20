@@ -258,15 +258,15 @@ void ANodeShuffleSubsystem::TickRollChatEmitter()
     const APawn* Pawn = PC ? PC->GetPawn() : nullptr;
     if (!PC || !Pawn)
     {
-        UE_LOG(LogNodeShuffle, Verbose, TEXT("ROLLCHAT: holding %d message(s); pc valid %d, pawn valid %d"),
-            RollChatMessages.Num() - RollChatNext, PC ? 1 : 0, Pawn ? 1 : 0);
+        if (NsDiag(ENsDiag::Status)) { UE_LOG(LogNodeShuffle, Verbose, TEXT("ROLLCHAT: holding %d message(s); pc valid %d, pawn valid %d"),
+            RollChatMessages.Num() - RollChatNext, PC ? 1 : 0, Pawn ? 1 : 0); }
         return;
     }
     if (RollChatNext == 0 && RollChatGateTicks < 0)
     {
         RollChatGateTicks = 0;
-        UE_LOG(LogNodeShuffle, Display, TEXT("ROLLCHAT: player pawn present; holding %d message(s) one more tick"),
-            RollChatMessages.Num());
+        if (NsDiag(ENsDiag::Status)) { UE_LOG(LogNodeShuffle, Display, TEXT("ROLLCHAT: player pawn present; holding %d message(s) one more tick"),
+            RollChatMessages.Num()); }
         return;
     }
     if (RollChatNext == 0) { RollChatStartSeconds = FPlatformTime::Seconds(); }
@@ -276,8 +276,8 @@ void ANodeShuffleSubsystem::TickRollChatEmitter()
     World->GetTimerManager().SetTimer(RollChatDrainTimer, this, &ANodeShuffleSubsystem::RollChatDrainStep,
         RollChatRowGapSeconds, false);
     bRollChatTimerArmed = true;
-    UE_LOG(LogNodeShuffle, Verbose, TEXT("ROLLCHAT: drain started at message %d of %d (gap %.2f s, refusals so far %d)"),
-        RollChatNext + 1, RollChatMessages.Num(), RollChatRowGapSeconds, RollChatAttempts);
+    if (NsDiag(ENsDiag::Status)) { UE_LOG(LogNodeShuffle, Verbose, TEXT("ROLLCHAT: drain started at message %d of %d (gap %.2f s, refusals so far %d)"),
+        RollChatNext + 1, RollChatMessages.Num(), RollChatRowGapSeconds, RollChatAttempts); }
 }
 
 void ANodeShuffleSubsystem::RollChatDrainStep()
@@ -298,8 +298,8 @@ void ANodeShuffleSubsystem::RollChatDrainStep()
         // which always logs here because a refusal leaves RollChatNext < Num.
         if (RollChatAttempts >= RollChatMaxEmitAttempts)
         { const FString Why = FString::Printf(TEXT("emitter refused %d time(s)"), RollChatAttempts); RollChatClear(*Why); return; }
-        UE_LOG(LogNodeShuffle, Verbose, TEXT("ROLLCHAT: message %d refused (refusal %d of %d); retrying on a later tick"),
-            RollChatNext + 1, RollChatAttempts, RollChatMaxEmitAttempts);
+        if (NsDiag(ENsDiag::Status)) { UE_LOG(LogNodeShuffle, Verbose, TEXT("ROLLCHAT: message %d refused (refusal %d of %d); retrying on a later tick"),
+            RollChatNext + 1, RollChatAttempts, RollChatMaxEmitAttempts); }
         return;
     }
     // The log carries the table LINE BY LINE (never the joined body, which holds raw line breaks): each line once,
@@ -309,8 +309,8 @@ void ANodeShuffleSubsystem::RollChatDrainStep()
         const int32 EndLine = RollChatLinesInFirstMessages(RollChatNext + 1, RollChatLines.Num());
         for (int32 i = FirstLine; i < EndLine; ++i)
         {
-            UE_LOG(LogNodeShuffle, Display, TEXT("ROLLCHAT-LINE %d/%d in message %d/%d: |%s|"),
-                i + 1, RollChatLines.Num(), RollChatNext + 1, RollChatMessages.Num(), *RollChatLines[i]);
+            if (NsDiag(ENsDiag::Status)) { UE_LOG(LogNodeShuffle, Display, TEXT("ROLLCHAT-LINE %d/%d in message %d/%d: |%s|"),
+                i + 1, RollChatLines.Num(), RollChatNext + 1, RollChatMessages.Num(), *RollChatLines[i]); }
         }
     }
     ++RollChatNext;
@@ -338,8 +338,8 @@ void ANodeShuffleSubsystem::RollChatDrainStep()
 void ANodeShuffleSubsystem::RollChatNoteFirstApply() const
 {
     // Reached on the first apply after every load and after every roll (RollLayout re-arms bDidInitialApply).
-    UE_LOG(LogNodeShuffle, Verbose, TEXT("ROLLCHAT: first layout apply since load or roll; %d message(s) queued"),
-        RollChatMessages.Num() - RollChatNext);
+    if (NsDiag(ENsDiag::Status)) { UE_LOG(LogNodeShuffle, Verbose, TEXT("ROLLCHAT: first layout apply since load or roll; %d message(s) queued"),
+        RollChatMessages.Num() - RollChatNext); }
 }
 
 // r2 review F2, ADAPTED: the reviewer's body asked the world timer manager whether RollChatDrainTimer is active; this

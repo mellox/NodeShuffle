@@ -43,13 +43,13 @@ void ANodeShuffleSubsystem::MaybeCaptureLateOriginalNodes()
     LateNodeTotalAddedSession += AddedEntries;
     if (LateCaptureUnlistedThisScan > 0)
     {
-        UE_LOG(LogNodeShuffle, Display, TEXT("LATE-CAPTURE: %d further captures this scan not listed (32 lines per scan); scan %d"),
-            LateCaptureUnlistedThisScan, LateNodeScansCompleted);
+        if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display, TEXT("LATE-CAPTURE: %d further captures this scan not listed (32 lines per scan); scan %d"),
+            LateCaptureUnlistedThisScan, LateNodeScansCompleted); }
     }
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("LATE-NODES scan=%d addedEntries=%d addedHideRecords=%d totalAddedSession=%d layoutTotal=%d hideRecordsTotal=%d durationMs=%.1f elapsedSinceFirstS=%.0f"),
         LateNodeScansCompleted, AddedEntries, OriginalNodeRecord.Num() - RecordsBefore, LateNodeTotalAddedSession,
-        Layout.Num(), OriginalNodeRecord.Num(), (FPlatformTime::Seconds() - Started) * 1000.0, Now - FirstLateNodeScanTime);
+        Layout.Num(), OriginalNodeRecord.Num(), (FPlatformTime::Seconds() - Started) * 1000.0, Now - FirstLateNodeScanTime); }
 }
 
 // Additional originals are dealt into new locations, without changing the existing draw.
@@ -169,7 +169,7 @@ void ANodeShuffleSubsystem::CaptureLateOriginalNodes()
         Seen, Managed, Known, Ineligible, OnOurDestination, AnchorDeferred, Candidates.Num());
     if (Census != LastLateCaptureCensus)
     {
-        UE_LOG(LogNodeShuffle, Display, TEXT("LATE-NODES census: %s"), *Census);
+        if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display, TEXT("LATE-NODES census: %s"), *Census); }
         LastLateCaptureCensus = Census;
     }
     if (Candidates.IsEmpty()) { return; }
@@ -321,10 +321,10 @@ void ANodeShuffleSubsystem::CaptureLateOriginalNodes()
             E.bActive ? ++Relocated : ++Inactive;
             ++Added;
         }
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("LATE-NODES captured: resource='%s' found=%d pinned=%d relocated=%d hiddenOnly=%d originalsAfter=%d activeBefore=%d target=%d; existing layout retained"),
             *ResourcePath, End - Begin, GroupPinned, Active, FMath::Max(0, Free.Num() - Active),
-            TotalOriginals, ActiveCounts.FindRef(ResourcePath), Target);
+            TotalOriginals, ActiveCounts.FindRef(ResourcePath), Target); }
         Begin = End;
     }
     if (Added > 0)
@@ -332,9 +332,9 @@ void ANodeShuffleSubsystem::CaptureLateOriginalNodes()
         bKnowledgeUnlockDone = false;
         KnowledgeDeferPasses = 0;
         bAutoAllowExtractorsDone = false;
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("LATE-NODES appended: added=%d pinned=%d relocated=%d hiddenOnly=%d layout=%d hideRecords=%d seed=%d"),
-            Added, Pinned, Relocated, Inactive, Layout.Num(), OriginalNodeRecord.Num(), SavedSeed);
+            Added, Pinned, Relocated, Inactive, Layout.Num(), OriginalNodeRecord.Num(), SavedSeed); }
     }
 }
 
@@ -344,8 +344,8 @@ void ANodeShuffleSubsystem::LogLateCapture(const AFGResourceNodeBase* Node)
     if (LateCaptureLinesThisScan >= 32) { ++LateCaptureUnlistedThisScan; return; }
     ++LateCaptureLinesThisScan;
     const FVector L = Node->GetActorLocation();
-    UE_LOG(LogNodeShuffle, Display, TEXT("LATE-CAPTURE: class=%s path=%s at=(%.0f,%.0f,%.0f) scan=%d"),
-        *Node->GetClass()->GetName(), *Node->GetPathName(), L.X, L.Y, L.Z, LateNodeScansCompleted + 1);
+    if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display, TEXT("LATE-CAPTURE: class=%s path=%s at=(%.0f,%.0f,%.0f) scan=%d"),
+        *Node->GetClass()->GetName(), *Node->GetPathName(), L.X, L.Y, L.Z, LateNodeScansCompleted + 1); }
 }
 
 // RWG P2g visible-original census, part 1 (runs every pass BEFORE SuppressOriginalNodes; works every 12th pass).
@@ -397,13 +397,13 @@ void ANodeShuffleSubsystem::RehideVisibleOriginalsPre()
         ++Lines;
         const int32* At = SteadyHiddenAtPass.Find(Rec.VanillaNodePath);
         const FVector L = Orig->GetActorLocation();
-        UE_LOG(LogNodeShuffle, Display, TEXT("REHIDE-VISIBLE: class=%s path=%s at=(%.0f,%.0f,%.0f) passesSinceHidden=%d actorHidden=%d collisionOn=%d"),
+        if (NsDiag(ENsDiag::Hide)) { UE_LOG(LogNodeShuffle, Display, TEXT("REHIDE-VISIBLE: class=%s path=%s at=(%.0f,%.0f,%.0f) passesSinceHidden=%d actorHidden=%d collisionOn=%d"),
             *Orig->GetClass()->GetName(), *Rec.VanillaNodePath, L.X, L.Y, L.Z, At ? RehideCensusPass - *At : -1,
-            bActorHidden ? 1 : 0, bCollision ? 1 : 0);
+            bActorHidden ? 1 : 0, bCollision ? 1 : 0); }
     }
     if (Unlisted > 0)
     {
-        UE_LOG(LogNodeShuffle, Display, TEXT("REHIDE-VISIBLE: %d further visible-again originals this pass not listed (32 lines per pass)"), Unlisted);
+        if (NsDiag(ENsDiag::Hide)) { UE_LOG(LogNodeShuffle, Display, TEXT("REHIDE-VISIBLE: %d further visible-again originals this pass not listed (32 lines per pass)"), Unlisted); }
     }
 }
 
@@ -419,11 +419,11 @@ void ANodeShuffleSubsystem::RehideVisibleOriginalsPost()
         if (!N) { ++Gone; continue; }
         if (N->IsHidden() && !N->GetActorEnableCollision()) { ++Rehidden; }
     }
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Hide)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("REHIDE-CENSUS: pass=%d checked=%d visibleAgain=%d rehidden=%d unresolved=%d identityReject=%d occupied=%d notSteady=%d newInstance=%d hiddenOk=%d actorGone=%d records=%d steadyUnhiddenSinceCensus=%d"),
         RehideCensusPass, RehideCensusChecked, RehidePendingNodes.Num(), Rehidden, RehideCensusUnresolved, RehideCensusIdentityReject,
         RehideCensusOccupied, RehideCensusNotSteady, RehideCensusNewInstance, RehideCensusHiddenOk, Gone, OriginalNodeRecord.Num(),
-        RehideSteadyUnhiddenSinceCensus);
+        RehideSteadyUnhiddenSinceCensus); }
     RehideSteadyUnhiddenSinceCensus = 0; // the field covers the passes since the previous census line
     RehidePendingNodes.Reset();
 }

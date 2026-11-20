@@ -25,7 +25,7 @@ void ANodeShuffleSubsystem::WellMoveLog(const FNodeShuffleWellEntry& W, const FV
     // Legend (prose only): core is the short core path (the label WELLH2 and RWGSEAREDEAL-WELL lines print); claim is the first 8 hex
     // of the RWG claim guid, the same 8 characters the LAYOUTDUMP-W row prints as its guid; distM is the 3-D distance in metres;
     // reason is the name of the write site that printed the line; nudges and redeals are the entry's counters after the write.
-    UE_LOG(LogNodeShuffle, Display, TEXT("WELLMOVE: core=%s claim=%s from=%s to=%s distM=%.1f reason=%s nudges=%d redeals=%d"),
+    if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display, TEXT("WELLMOVE: core=%s claim=%s from=%s to=%s distM=%.1f reason=%s nudges=%d redeals=%d"),
         *WellShort(W.CorePath), *W.RwgClaimGuid.ToString().Left(8), *From.ToCompactString(), *To.ToCompactString(),
-        FVector::Dist(From, To) / 100.0, Reason, static_cast<int32>(W.GroupNudges), static_cast<int32>(W.GroupRedeals));
+        FVector::Dist(From, To) / 100.0, Reason, static_cast<int32>(W.GroupNudges), static_cast<int32>(W.GroupRedeals)); }
 }

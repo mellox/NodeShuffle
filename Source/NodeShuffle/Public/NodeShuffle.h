@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Modules/ModuleManager.h"
+#include "NodeShuffleDiag.h" // ns-quietlog-1: NsDiag topic guard, visible to every file that already includes this header
 
 // coexist-veto-1: NODESHUFFLE_API-exported (engine idiom, cf. CoreGlobals.h) so the optional
 // NodeShuffleVetoKBFL module logs under the SAME LogNodeShuffle category users already filter on.

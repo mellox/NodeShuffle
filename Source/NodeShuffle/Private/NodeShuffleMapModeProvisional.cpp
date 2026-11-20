@@ -143,8 +143,8 @@ bool ANodeShuffleSubsystem::RwgProvisionalPinWins(FNodeShuffleEntry& E)
     {
         ++RwgProvSettleSamples;
         const double Z = IsValid(Node) ? Node->GetActorLocation().Z : E.Location.Z;
-        UE_LOG(LogNodeShuffle, Display, TEXT("PROVSETTLE: entry=%s res=%s provZ=%.0f settledZ=%.0f dzCm=0 movedXYm=0.0 outcome=pinnedKept hitClass=-1 pinned=%d occupied=%d origin=%s"),
-            *E.EntryGuid.ToString(), *ProvShort(E.AssignedResourceClassPath), Z, Z, E.bPinned ? 1 : 0, bOccupied ? 1 : 0, RwgProvisionalOriginName(E.EntryGuid));
+        if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display, TEXT("PROVSETTLE: entry=%s res=%s provZ=%.0f settledZ=%.0f dzCm=0 movedXYm=0.0 outcome=pinnedKept hitClass=-1 pinned=%d occupied=%d origin=%s"),
+            *E.EntryGuid.ToString(), *ProvShort(E.AssignedResourceClassPath), Z, Z, E.bPinned ? 1 : 0, bOccupied ? 1 : 0, RwgProvisionalOriginName(E.EntryGuid)); }
     }
     return true;
 }
@@ -271,11 +271,11 @@ void ANodeShuffleSubsystem::RwgSettleProvisional(FNodeShuffleEntry& E, bool& bCh
         ++RwgProvSettleSamples;
         // movedXYm: from the provisional actor to the respawned actor (inPlace), else to the entry's location after this call.
         const FVector MovedTo = bFresh ? FreshAt : E.Location;
-        UE_LOG(LogNodeShuffle, Display, TEXT("PROVSETTLE: entry=%s res=%s provZ=%.0f settledZ=%.0f dzCm=%.0f movedXYm=%.1f outcome=%s hitClass=%d apiUsed=%d onSolidTop=%d localMapRevealsBefore=%d localMapRevealsAfter=%d serverMapRevealsBefore=%d serverMapRevealsAfter=%d moveCheck=%s origin=%s firstHit=%s sideways=%s sidewaysM=%.1f"),
+        if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display, TEXT("PROVSETTLE: entry=%s res=%s provZ=%.0f settledZ=%.0f dzCm=%.0f movedXYm=%.1f outcome=%s hitClass=%d apiUsed=%d onSolidTop=%d localMapRevealsBefore=%d localMapRevealsAfter=%d serverMapRevealsBefore=%d serverMapRevealsAfter=%d moveCheck=%s origin=%s firstHit=%s sideways=%s sidewaysM=%.1f"),
             *E.EntryGuid.ToString(), *ProvShort(E.AssignedResourceClassPath), ProvAt.Z, SettledZ, SettledZ - ProvAt.Z,
             FVector::Dist2D(MovedTo, ProvAt) / 100.0, Outcome, HitClass, bApiUsed ? 1 : 0, E.bRwgOnSolidTop ? 1 : 0,
             LocalRevealsBefore, LocalRevealsAfter, ServerRevealsBefore, ServerRevealsAfter, MoveCheck, RwgProvisionalOriginName(E.EntryGuid),
-            *RwgRocksLastFirstHitText(), RwgRocksLastMoveName(), RwgRocksLastMoveCm / 100.0f); // ns-rocks-1 C1/C2: this settle's own first hit and sideways move
+            *RwgRocksLastFirstHitText(), RwgRocksLastMoveName(), RwgRocksLastMoveCm / 100.0f); } // ns-rocks-1 C1/C2: this settle's own first hit and sideways move
     }
 }
 
@@ -363,8 +363,8 @@ void ANodeShuffleSubsystem::RwgProvisionalSpawnPass(const TArray<FVector>& Pawns
         {
             ++WithinSpawned; ++RwgProvSessWithinRadius;
             // rwg-farspawn-1e F9: one line per within-radius provisional spawn (bounded by the attempt budget), naming the entry.
-            UE_LOG(LogNodeShuffle, Display, TEXT("PROVSPAWN: withinRadius entry=%s res=%s at=%s pass=%d"),
-                *E.EntryGuid.ToString(), *ProvShort(E.AssignedResourceClassPath), *Node->GetActorLocation().ToCompactString(), RwgPcPasses);
+            if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display, TEXT("PROVSPAWN: withinRadius entry=%s res=%s at=%s pass=%d"),
+                *E.EntryGuid.ToString(), *ProvShort(E.AssignedResourceClassPath), *Node->GetActorLocation().ToCompactString(), RwgPcPasses); }
         }
     }
     if (K == N && Cands.Num() > N) { BudgetHit = TEXT("count"); } // rwg-farspawn-1e C2: the count cap ended the batch with candidates left
@@ -389,10 +389,10 @@ void ANodeShuffleSubsystem::RwgProvisionalSpawnPass(const TArray<FVector>& Pawns
         // seaPending (re-review R7): entries (far, or within after a fresh attempt that left no actor) held back for the sea/void pass -- those it has not checked yet, PLUS the entries whose
         // sea re-deal found no spot (RwgSeaDealFailed), which the sea pass skips for the rest of the session, so the sea pass never clears them from this count
         // this session; seaDealFailed prints that subset.
-        UE_LOG(LogNodeShuffle, Display, TEXT("PROVSPAWN: pass=%d spawnedThisPass=%d remainingCandidates=%d provisionalTotal=%d zSource=%s msBatch=%.1f refusedThisPass=%d refusedSession=%d batch=%d seaPending=%d caveDealtZ=%d rayCastedNoActor=%d seaDealFailed=%d withinRadiusProvisioned=%d withinRadiusCandidates=%d wetSpotSkipped=%d withinUndergroundSkipped=%d budgetHit=%s budgetMs=%.1f scanMs=%.1f candidates=%d candidateListBuild=%s candidateListBuilds=%d insideRedealThisPass=%d"),
+        if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display, TEXT("PROVSPAWN: pass=%d spawnedThisPass=%d remainingCandidates=%d provisionalTotal=%d zSource=%s msBatch=%.1f refusedThisPass=%d refusedSession=%d batch=%d seaPending=%d caveDealtZ=%d rayCastedNoActor=%d seaDealFailed=%d withinRadiusProvisioned=%d withinRadiusCandidates=%d wetSpotSkipped=%d withinUndergroundSkipped=%d budgetHit=%s budgetMs=%.1f scanMs=%.1f candidates=%d candidateListBuild=%s candidateListBuilds=%d insideRedealThisPass=%d"),
             RwgPcPasses, Spawned, Cands.Num() - Spawned - Refused - InsideRedealt, Total, *ZSource, MsBatch, Refused, RwgProvSessRefused, Batch, SeaPending, CaveDealtZ,
             RayCastedNoActor, SeaDealFailed, WithinSpawned, WithinCands.Num(), WetSpot, WithinUnderground, BudgetHit, BudgetMs,
-            ScanMs, RwgProvCandList.Num(), ListBuild, RwgProvCandBuilds, InsideRedealt);
+            ScanMs, RwgProvCandList.Num(), ListBuild, RwgProvCandBuilds, InsideRedealt); }
     }
     RwgRollFirstEmitPass(Cands, K); // ns-rollfirst-1 (NodeShuffleRollFirst.cpp): after the attempt loop and msBatch; walks this pass's candidates, the priority set and the picks (no Layout walk)
 }
@@ -427,10 +427,10 @@ void ANodeShuffleSubsystem::RwgProvisionalEmitCensus()
     // several passes is counted each time; deferredEntries counts the distinct entries among them this session.
     // withinRadiusProvisionedSession counts this session's provisional spawns of entries within the attempt radius (fresh attempts
     // that left no actor); it is a subset of spawnedSession.
-    UE_LOG(LogNodeShuffle, Display, TEXT("PROVCENSUS: pass=%d provisional=%d settledFromProvisional=%d redealtFromProvisional=%d deferredProvisional=%d deferredEntries=%d pinnedProvisional=%d dzP50Cm=%.0f dzP90Cm=%.0f dzMaxCm=%.0f movedXYmMax=%.1f spawnedSession=%d withinRadiusProvisionedSession=%d refusedSession=%d staleFlagCleared=%d flagNoActor=%d spawnAllAtRoll=%d settledNoActor=%d redealNotMoved=%d movedInPlace=%d moveNotApplied=%d gatedEnclosed=%d gatedAllSolid=%d gatedRespawn=%d insideRedealSession=%d insideRedealRingSession=%d"),
+    if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display, TEXT("PROVCENSUS: pass=%d provisional=%d settledFromProvisional=%d redealtFromProvisional=%d deferredProvisional=%d deferredEntries=%d pinnedProvisional=%d dzP50Cm=%.0f dzP90Cm=%.0f dzMaxCm=%.0f movedXYmMax=%.1f spawnedSession=%d withinRadiusProvisionedSession=%d refusedSession=%d staleFlagCleared=%d flagNoActor=%d spawnAllAtRoll=%d settledNoActor=%d redealNotMoved=%d movedInPlace=%d moveNotApplied=%d gatedEnclosed=%d gatedAllSolid=%d gatedRespawn=%d insideRedealSession=%d insideRedealRingSession=%d"),
         RwgPcPasses, Live, RwgProvSessSettled, RwgProvSessRedealt, RwgProvSessDeferred, RwgProvSessDeferredEntries.Num(), RwgProvSessPinned,
         ProvPercentile(RwgProvSessDzCm, 0.5f), ProvPercentile(RwgProvSessDzCm, 0.9f), ProvPercentile(RwgProvSessDzCm, 1.0f), RwgProvSessMovedXYmMax,
         RwgProvSessSpawned, RwgProvSessWithinRadius, RwgProvSessRefused, RwgProvSessStale, FlagNoActor, NodeShuffleMapMode::RwgSpawnAllAtRollOn() ? 1 : 0, RwgProvSessSettledNoActor, RwgProvSessRedealNotMoved,
         RwgProvSessMovedInPlace, RwgProvSessMoveNotApplied, RwgProvSessMovedEnclosed, RwgProvSessMovedShadowInside, RwgProvSessGatedRespawn,
-        RwgProvSessInsideRedeal, RwgProvSessInsideRedealRing);
+        RwgProvSessInsideRedeal, RwgProvSessInsideRedealRing); }
 }

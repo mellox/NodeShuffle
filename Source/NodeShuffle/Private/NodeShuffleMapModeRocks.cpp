@@ -226,10 +226,10 @@ int32 ANodeShuffleSubsystem::RwgRocksSunkenVerdict(const FHitResult& Hit, double
     {
         const UStaticMeshComponent* Smc = Cast<UStaticMeshComponent>(HitComp);
         const UStaticMesh* Mesh = Smc ? Smc->GetStaticMesh() : nullptr;
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Rocks)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("ROCKTOP: entry=%s via=%s at=%.0f/%.0f hitComponent=%s hitMesh=%s topZ=%.0f apiZAtTopXY=%.0f topMinusApiAtTopXYCm=%.0f firstTerrainZAtTopXY=%.0f terrainTraceSkips=%d tested=%d verdict=%s columnsBlocked=%d/4 columnsStartInside=%d columnsNoStop=%d highestColumnStopAboveTopM=%.1f highestColumnStopClass=%s columnSkippedHits=%d"),
             *RwgSolidTopGuid.ToString().Left(8), RwgSolidTopVia, P.X, P.Y, HitComp ? *HitComp->GetName() : TEXT("<none>"), Mesh ? *Mesh->GetName() : TEXT("<none>"),
-            P.Z, ApiZ, P.Z - ApiZ, TerrainZ, TerrainSkips, bTest ? 1 : 0, Why, Blocked, StartInside, NoStop, TopAboveCm / 100.0, RockClassName(TopClass), Skipped);
+            P.Z, ApiZ, P.Z - ApiZ, TerrainZ, TerrainSkips, bTest ? 1 : 0, Why, Blocked, StartInside, NoStop, TopAboveCm / 100.0, RockClassName(TopClass), Skipped); }
     }
     return Verdict;
 }
@@ -239,17 +239,17 @@ void ANodeShuffleSubsystem::RwgRocksEmitCensus() const
     // Session totals since this world load (not reset by a roll), printed on the PLACECENSUS cadence. RWG settles through
     // RwgResolveAtSpawn only (the spawn path and the provisional settle).
     const int32* K = RwgRkFirstKind;
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Rocks)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("ROCKFIRSTHIT: session first blocking hit of each decided settle's primary trace; decided=%d notBinned=%d terrain=%d canopy=%d water=%d other=%d boulder=%d cliff=%d stone=%d rock=%d largeFlat=%d"),
-        K[0] + K[1] + K[2] + K[3] + K[4] + K[5] + K[6] + K[7] + K[8], RwgRkDeferredNotBinned, K[0], K[1], K[2], K[3], K[4], K[5], K[6], K[7], K[8]);
+        K[0] + K[1] + K[2] + K[3] + K[4] + K[5] + K[6] + K[7] + K[8], RwgRkDeferredNotBinned, K[0], K[1], K[2], K[3], K[4], K[5], K[6], K[7], K[8]); }
     for (int32 Fam = 0; Fam < 5; ++Fam)
     {
         const int32* B = RwgRkWidthBins[Fam];
         const int32 N = B[0] + B[1] + B[2] + B[3] + B[4] + B[5] + B[6];
         if (N == 0) { continue; }
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Rocks)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("ROCKSIZE: family=%s settles=%d widthLt2m=%d width2to4m=%d width4to7m=%d width7to15m=%d width15to30m=%d width30to60m=%d widthGe60m=%d maxWidthM=%.1f (width: largest horizontal full side of the hit instance's world-aligned box)"),
-            RockKindNames[Fam + 4], N, B[0], B[1], B[2], B[3], B[4], B[5], B[6], RwgRkWidthMaxM[Fam]);
+            RockKindNames[Fam + 4], N, B[0], B[1], B[2], B[3], B[4], B[5], B[6], RwgRkWidthMaxM[Fam]); }
     }
     if (RwgRkMeshCounts.Num() > 0)
     {
@@ -261,43 +261,43 @@ void ANodeShuffleSubsystem::RwgRocksEmitCensus() const
         {
             Line += FString::Printf(TEXT(" %s %d/%.1fm"), *Rows[I].Key, Rows[I].Value.X, Rows[I].Value.Y / 100.0f);
         }
-        UE_LOG(LogNodeShuffle, Display, TEXT("ROCKSIZE-MESH: meshNames=%d shown=%d (each: mesh name, settles, largest width):%s"),
-            Rows.Num(), FMath::Min(Rows.Num(), NodeShuffleRocks::MeshTopN), *Line);
+        if (NsDiag(ENsDiag::Rocks)) { UE_LOG(LogNodeShuffle, Display, TEXT("ROCKSIZE-MESH: meshNames=%d shown=%d (each: mesh name, settles, largest width):%s"),
+            Rows.Num(), FMath::Min(Rows.Num(), NodeShuffleRocks::MeshTopN), *Line); }
     }
     const int32* M = RwgRkMoveBins;
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Rocks)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("ROCKMOVE: session sideways moves kept by completed settles; total=%d near=%d spiralAfterRock=%d spiralAfterWaterOrSteep=%d lt5m=%d 5to10m=%d 10to20m=%d 20to40m=%d 40to80m=%d 80to160m=%d ge160m=%d | near searches run=%d foundNear=%d exhaustedToSpiral=%d spiralFoundAfterNear=%d noSpotAfterNear=%d probeStartsRaisedToApiAtProbeXY=%d"),
         RwgRkMoveNear + RwgRkMoveSpiralRock + RwgRkMoveSpiralOther, RwgRkMoveNear, RwgRkMoveSpiralRock, RwgRkMoveSpiralOther,
-        M[0], M[1], M[2], M[3], M[4], M[5], M[6], RwgRkNearRun, RwgRkNearFound, RwgRkNearToSpiral, RwgRkSpiralAfterNear, RwgRkNoSpotAfterNear, RwgRkStartRaised);
-    UE_LOG(LogNodeShuffle, Display,
+        M[0], M[1], M[2], M[3], M[4], M[5], M[6], RwgRkNearRun, RwgRkNearFound, RwgRkNearToSpiral, RwgRkSpiralAfterNear, RwgRkNoSpotAfterNear, RwgRkStartRaised); }
+    if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("ROCKSUNKEN-CENSUS: session solid-top PROBES that passed every earlier gate and lie more than %.1f m below the API Z at their own XY inside the world; testedProbes=%d refusedTotalProbes=%d refusedSidewaysByDepthProbes=%d refusedTerrainAboveTopProbes=%d refusedColumnBlockedProbes=%d refusedNoTerrainNotLandProbes=%d deferredNoTerrainOnLandProbes=%d keptProbes=%d apiUnknownOrOutsideProbes=%d below0p5to3m=%d below3to10m=%d below10to30m=%d below30to60m=%d belowGe60m=%d refused0p5to3m=%d refused3to10m=%d refused10to30m=%d refused30to60m=%d refusedGe60m=%d (apiUnknownOrOutsideProbes counts tops with no API reading, which are outside the tested population; refusedNoTerrainNotLandProbes is expected to stay 0 because a primary's XY already passed the same land check earlier in its resolve, so a zero there is not evidence that no such tops exist; the refused total is the sum of the four refused fields; these refusals and deferrals are in no PLACECENSUS solidTop bin)"),
         NodeShuffleRocks::SunkenMarginCm / 100.0, RwgRkSunkTested, RwgRkSunkRefused, RwgRkSunkSideways, RwgRkSunkTerrainAbove, RwgRkSunkColumnRefused,
         RwgRkSunkNoLandRefused, RwgRkSunkDeferred, RwgRkSunkTested - RwgRkSunkRefused - RwgRkSunkDeferred, RwgRkSunkApiUnknown,
         RwgRkSunkBins[0], RwgRkSunkBins[1], RwgRkSunkBins[2], RwgRkSunkBins[3], RwgRkSunkBins[4],
-        RwgRkSunkRefusedBins[0], RwgRkSunkRefusedBins[1], RwgRkSunkRefusedBins[2], RwgRkSunkRefusedBins[3], RwgRkSunkRefusedBins[4]);
+        RwgRkSunkRefusedBins[0], RwgRkSunkRefusedBins[1], RwgRkSunkRefusedBins[2], RwgRkSunkRefusedBins[3], RwgRkSunkRefusedBins[4]); }
     {
         // Round 3 (coordinator F3): the confirm/refute census for "terrain collision not there yet". Per ENTRY.
         TArray<int32> Runs;
         for (const TPair<FGuid, int32>& KV : RwgRkPrimaryDefers) { Runs.Add(KV.Value); }
         Runs.Sort();
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Rocks)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("ROCKDEFER: session rule-B primary defers per ENTRY; entriesWithOpenDeferRun=%d maxConsecutiveDefers=%d medianConsecutiveDefers=%d entriesEverDeferred=%d settledSinceOnTerrainNearApi=%d settledSinceOnTopAboveApi=%d settledSinceSideways=%d settledSinceOther=%d"),
             Runs.Num(), Runs.Num() > 0 ? Runs.Last() : 0, Runs.Num() > 0 ? Runs[Runs.Num() / 2] : 0, RwgRkEverDeferredN,
-            RwgRkDeferSettledTerrain, RwgRkDeferSettledTopAbove, RwgRkDeferSettledSideways, RwgRkDeferSettledOther);
+            RwgRkDeferSettledTerrain, RwgRkDeferSettledTopAbove, RwgRkDeferSettledSideways, RwgRkDeferSettledOther); }
     }
     for (int32 Sx = 0; Sx < 2; ++Sx)
     {
         const int32* C = RwgRkCand[Sx];
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Rocks)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("ROCKCAND: search=%s tried=%d terrain=%d rockTop=%d noHit=%d ruleBNoTerrainUnder=%d water=%d steepTerrain=%d rockRefused=%d ruleBRefused=%d (session candidates of the shared near/spiral loop; the eight outcomes sum to tried)"),
-            Sx == 0 ? TEXT("near") : TEXT("spiral"), C[0], C[1], C[2], C[3], C[4], C[5], C[6], C[7], C[8]);
+            Sx == 0 ? TEXT("near") : TEXT("spiral"), C[0], C[1], C[2], C[3], C[4], C[5], C[6], C[7], C[8]); }
     }
     for (int32 T = 0; T < 2; ++T)
     {
         const int32* Z = RwgRkSettleDzBins[T];
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Rocks)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("ROCKSETTLEDZ: session completed settles on %s, settled Z minus the API Z at the SETTLED XY; n=%d belowMinus3m=%d minus3toMinus1m=%d minus1toMinus0p5m=%d within0p5m=%d plus0p5to3m=%d abovePlus3m=%d"),
-            T == 0 ? TEXT("terrain") : TEXT("a solid top"), Z[0] + Z[1] + Z[2] + Z[3] + Z[4] + Z[5], Z[0], Z[1], Z[2], Z[3], Z[4], Z[5]);
+            T == 0 ? TEXT("terrain") : TEXT("a solid top"), Z[0] + Z[1] + Z[2] + Z[3] + Z[4] + Z[5], Z[0], Z[1], Z[2], Z[3], Z[4], Z[5]); }
     }
 }
 

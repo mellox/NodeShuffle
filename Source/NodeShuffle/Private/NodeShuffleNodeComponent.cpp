@@ -102,11 +102,11 @@ UNodeShuffleNodeComponent* UNodeShuffleNodeComponent::AttachIdentityOnly(AActor*
     // WELLH2B-* lines beside it in this same flow are ungated for the same reason.
     if (bCreated)
     {
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH2C-IDENTITY actor='%s' class='%s': stamped UNodeShuffleNodeComponent ")
             TEXT("(wellMember=1 forceAccept=0 rockMesh=<none>) -- HOLOGRAMHOOK TrySnapToActor will now ")
             TEXT("read compFound=1 on this actor and emit ACCEPTANCE / ACCEPT-NODE / ACCEPT-EXT."),
-            *Owner->GetName(), *Owner->GetClass()->GetName());
+            *Owner->GetName(), *Owner->GetClass()->GetName()); }
     }
     return Comp;
 }
@@ -291,7 +291,7 @@ void UNodeShuffleNodeComponent::LogRenderState(const TCHAR* Phase) const
     const bool bHaveRock = IsValid(RockMesh);
     const FVector NodeLoc = Owner ? Owner->GetActorLocation() : FVector::ZeroVector;
     const FVector RockLoc = bHaveRock ? RockMesh->GetComponentLocation() : FVector::ZeroVector;
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Visuals)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("RENDERDIAG[%s] node='%s' class='%s' actorHidden=%d nodeLoc=%s | RockMesh: valid=%d registered=%d visible=%d mesh='%s' boundsR=%.0f rockWorldLoc=%s | vanillaOrigin=%d"),
         Phase,
         Owner ? *Owner->GetName() : TEXT("<none>"),
@@ -303,5 +303,5 @@ void UNodeShuffleNodeComponent::LogRenderState(const TCHAR* Phase) const
         (bHaveRock && RockMesh->GetStaticMesh()) ? *RockMesh->GetStaticMesh()->GetName() : TEXT("<none>"),
         bHaveRock ? RockMesh->Bounds.SphereRadius : 0.f,
         bHaveRock ? *RockLoc.ToCompactString() : TEXT("<n/a>"),
-        bVanillaOrigin ? 1 : 0);
+        bVanillaOrigin ? 1 : 0); }
 }

@@ -133,10 +133,10 @@ bool ANodeShuffleSubsystem::SpawnWellGroup(FNodeShuffleWellEntry& E, UClass* Res
         {
             SpawnedWellCores.Add(E.CorePath, Core);
             FNodeShuffleModule::RegisterManagedNode(Core);
-            UE_LOG(LogNodeShuffle, Display,
+            if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
                 TEXT("WELLH2-SPAWN core='%s': adopted-late -- a runtime fracking core was already at %s, ")
                 TEXT("so it is OURS from an earlier session rather than something to spawn a duplicate of."),
-                *WellShort(E.CorePath), *E.PlacedCoreLocation.ToCompactString());
+                *WellShort(E.CorePath), *E.PlacedCoreLocation.ToCompactString()); }
         }
     }
     if (!IsValid(Core))
@@ -178,7 +178,7 @@ bool ANodeShuffleSubsystem::SpawnWellGroup(FNodeShuffleWellEntry& E, UClass* Res
         // the backstop's verdict line; nothing destructive touches it. See the header block on
         // WellActorsSpawnedThisSession.
         WellActorsSpawnedThisSession.Add(Core);
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
             // ns-t27-corefirst: this printed E.GroupYawDeg, which T27 pins to 0.0 for every group it
             // places -- so the line would have read "yaw=0.0" beside a core standing at whatever yaw
             // the terrain settle gave it. A field whose NAME says one thing while its value comes
@@ -186,7 +186,7 @@ bool ANodeShuffleSubsystem::SpawnWellGroup(FNodeShuffleWellEntry& E, UClass* Res
             // prints the yaw the actor was ACTUALLY spawned with, and is named for it.
             TEXT("WELLH2-SPAWN core='%s': spawned '%s' at %s coreYaw=%.1f res='%s'."),
             *WellShort(E.CorePath), *Core->GetName(), *E.PlacedCoreLocation.ToCompactString(),
-            E.PlacedCoreRotation.Yaw, *WellShort(ResourceClass->GetPathName()));
+            E.PlacedCoreRotation.Yaw, *WellShort(ResourceClass->GetPathName())); }
     }
 
     // ---- 2. EVERY SATELLITE, WITH mCore SET BEFORE FinishSpawning ----
@@ -238,10 +238,10 @@ bool ANodeShuffleSubsystem::SpawnWellGroup(FNodeShuffleWellEntry& E, UClass* Res
                                   // a fresh spawn -- otherwise flagMismatch= in the audit cries wolf on
                                   // every adopted member and the cross-check stops being worth reading.
                 ++AdoptedLate;
-                UE_LOG(LogNodeShuffle, Display,
+                if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
                     TEXT("WELLH2-SPAWN core='%s' sat='%s': adopted-late at %s (an existing runtime satellite ")
                     TEXT("was already there -- spawning would have made a duplicate inside it)."),
-                    *WellShort(E.CorePath), *WellShort(S.SatellitePath), *S.PlacedLocation.ToCompactString());
+                    *WellShort(E.CorePath), *WellShort(S.SatellitePath), *S.PlacedLocation.ToCompactString()); }
             }
         }
         if (IsValid(Sat))
@@ -424,7 +424,7 @@ bool ANodeShuffleSubsystem::SpawnWellGroup(FNodeShuffleWellEntry& E, UClass* Res
             {
                 Wrote += RetypeWellMember(Sat, ResourceClass, TEXT("spawned-sat"), *WellShort(E.CorePath)) ? 1 : 0;
             }
-            UE_LOG(LogNodeShuffle, Display,
+            if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
                 TEXT("WELLH2-RETYPE core='%s': MEASURED on the spawned actor '%s' -- the RELOCATED ")
                 TEXT("(player-visible) group's core held '%s' while the layout assigns '%s'; %d of %d ")
                 TEXT("live spawned member(s) disagreed, %d rewritten this pass (1 core + %d live ")
@@ -434,7 +434,7 @@ bool ANodeShuffleSubsystem::SpawnWellGroup(FNodeShuffleWellEntry& E, UClass* Res
                 TEXT("reach this line and this line tests none of them."),
                 *WellShort(E.CorePath), *Core->GetName(), *WellShort(WellPathOf(WorldCoreRes)),
                 *WellShort(ResourceClass->GetPathName()), StaleRes, LiveMembers, Wrote,
-                LiveSpawnedSats.Num());
+                LiveSpawnedSats.Num()); }
         }
     }
     else if (IsValid(Core))
@@ -446,12 +446,12 @@ bool ANodeShuffleSubsystem::SpawnWellGroup(FNodeShuffleWellEntry& E, UClass* Res
         if (!WellStaleInUseLogged.Contains(OkKey))
         {
             WellStaleInUseLogged.Add(OkKey);
-            UE_LOG(LogNodeShuffle, Display,
+            if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
                 TEXT("WELLH2-RETYPE-OK core='%s': MEASURED -- all %d live spawned member(s) (1 core + %d ")
                 TEXT("of %d satellite record(s)) already hold the assigned '%s'. Nothing written. NOT ")
                 TEXT("MEASURED: whether they are the members a player can see -- see WELLH2-AUDIT."),
                 *WellShort(E.CorePath), LiveMembers, LiveSpawnedSats.Num(), E.Satellites.Num(),
-                *WellShort(ResourceClass->GetPathName()));
+                *WellShort(ResourceClass->GetPathName())); }
         }
     }
 
@@ -488,14 +488,14 @@ bool ANodeShuffleSubsystem::SpawnWellGroup(FNodeShuffleWellEntry& E, UClass* Res
 
     if (SpawnedSats > 0 || FailedSats > 0 || AdoptedLate > 0 || UncapturedRefused > 0)
     {
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH2-SPAWN core='%s': %d spawned, %d reused (%d adopted-late), %d FAILED, %d refused ")
             TEXT("(no capture); expected %d of %d records -> group %s. Registration -- %d by BeginPlay ")
             TEXT("(mCore set pre-FinishSpawning, as designed), %d repaired by us, %d skipped (funnel did ")
             TEXT("not run -- NOT evidence either way); purity reproduced on %d, unknown on %d."),
             *WellShort(E.CorePath), SpawnedSats, ReusedSats, AdoptedLate, FailedSats, UncapturedRefused,
             ExpectedSats, E.Satellites.Num(), bComplete ? TEXT("COMPLETE") : TEXT("INCOMPLETE"),
-            RegisteredByBeginPlay, RegisteredByUs, LinkSkippedInvalid, PurityWritten, PurityUnknown);
+            RegisteredByBeginPlay, RegisteredByUs, LinkSkippedInvalid, PurityWritten, PurityUnknown); }
     }
 
     // ns-review-h2 (deferral gap): the coordinate prints even when the group did not fully materialise.
@@ -512,14 +512,14 @@ bool ANodeShuffleSubsystem::SpawnWellGroup(FNodeShuffleWellEntry& E, UClass* Res
     if (!WellRelocLogged.Contains(PlacedKey))
     {
         WellRelocLogged.Add(PlacedKey);
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
             // ns-t27-corefirst: was E.GroupYawDeg -- see the WELLH2-SPAWN line above for why that
             // became a wrong label rather than just a zero.
             TEXT("WELLH2-PLACED core='%s' res='%s' coreYaw=%.1f: vanilla %s -> RELOCATED TO %s (group ")
             TEXT("%s this pass)."),
             *WellShort(E.CorePath), *WellShort(ResourceClass->GetPathName()), E.PlacedCoreRotation.Yaw,
             *E.VanillaCoreLocation.ToCompactString(), *E.PlacedCoreLocation.ToCompactString(),
-            bComplete ? TEXT("COMPLETE") : TEXT("INCOMPLETE -- retried next pass, nothing suppressed yet"));
+            bComplete ? TEXT("COMPLETE") : TEXT("INCOMPLETE -- retried next pass, nothing suppressed yet")); }
     }
 
     return bComplete;

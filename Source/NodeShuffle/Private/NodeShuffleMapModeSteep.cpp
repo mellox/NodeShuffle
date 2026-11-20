@@ -119,7 +119,7 @@ bool ANodeShuffleSubsystem::RwgSteepTryRing(const NodeShuffleMapMode::FRwgGround
     if (bInsideArm) { ++RwgSteepSessInsideEvents; if (bMoved) { ++RwgSteepSessInsideRing; } }
     RwgSteepSessRingTried += Tried;
     RwgSteepSessRingPassed += Passed;
-    if (FNodeShuffleModule::AreDiagnosticsEnabled())
+    if (NsDiag(ENsDiag::Placement))
     {
         const FString To = bMoved ? FString::Printf(TEXT("%.0f/%.0f/%.0f"), Entry.Location.X, Entry.Location.Y, Entry.Location.Z) : FString(TEXT("-"));
         // ringDistM: 2-D distance from the original spot (RwgSteepLoc) to the accepted candidate; a dash when the ring moved nothing.

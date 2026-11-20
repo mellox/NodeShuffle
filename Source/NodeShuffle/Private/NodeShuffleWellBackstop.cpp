@@ -384,7 +384,7 @@ void ANodeShuffleSubsystem::RunWellLocationBackstop(const TCHAR* Phase, int32& O
     // while the census line printed "Iterated %d ... (%d core(s) + %d satellite(s))" as though the
     // three numbers agreed. They are not the same measurement and now the log says which is which.
     const int32 IterSum = LiveCores + LiveSats;
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("WELLH2-BACKSTOP [%s]: GATE CENSUS (ns-review-h2-r2 F-C -- this line is the ONLY evidence ")
         TEXT("that IsNetStartupActor works, and RT-3/RT-6 are unreadable without it). Iterated %d live ")
         TEXT("fracking actor(s) (%d core(s) + %d satellite(s)). Excluded: %d by IsNetStartupActor ONLY ")
@@ -410,7 +410,7 @@ void ANodeShuffleSubsystem::RunWellLocationBackstop(const TCHAR* Phase, int32& O
         WellActorsSpawnedThisSession.Num(), ProvenOursNoHandle,
         BucketSum, Iterated, (BucketSum == Iterated) ? TEXT("by construction, DECORATION not a check -- ns-review-h2-r4 F-8") : TEXT("*** MISMATCH: a population is uncounted ***"),
         IterSum, Iterated, (IterSum == Iterated) ? TEXT("OK") : TEXT("*** MISMATCH: an ITERATED ACTOR FAILED IsValid -- the class counts and the examined count disagree ***"),
-        WellLayout.Num(), KnownLayoutPaths.Num(), LiveCores);
+        WellLayout.Num(), KnownLayoutPaths.Num(), LiveCores); }
 
     // GATE 1 FALSE NEGATIVE, CALLED OUT BY NAME. If gate 2 alone excluded an actor, then gate 1 said
     // "this is not a level actor" about a well the LAYOUT knows is vanilla. Gate 2 caught it here, but
@@ -449,13 +449,13 @@ void ANodeShuffleSubsystem::RunWellLocationBackstop(const TCHAR* Phase, int32& O
     else if (!bWellBackstopLogOnlyLogged)
     {
         bWellBackstopLogOnlyLogged = true;
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH2-ORPHAN [backstop LOG-ONLY, %s]: clean -- %d runtime fracking actor(s) passed ")
             TEXT("both gates and WE HOLD A HANDLE TO EVERY ONE (%d held). ns-review-h2-r3 F-1: 'clean' ")
             TEXT("now means we KNOW ABOUT the actor, not merely that some entry claims the spot it ")
             TEXT("stands on -- the old test conflated those and could not report a stranded actor at ")
             TEXT("all. This backstop never destroys anything in this build. The GATE CENSUS line above ")
             TEXT("carries the numbers RT-3 needs and is NOT throttled. Said once."),
-            Phase, Examined, HeldByUs);
+            Phase, Examined, HeldByUs); }
     }
 }

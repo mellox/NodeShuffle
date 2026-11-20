@@ -58,16 +58,16 @@ namespace NodeShuffleScanFilter
         void EmitCallLine(const FCallFigures& F, const FString& RemovedNames, const FString& AddedNames)
         {
             // Arity hand-counted: 12 format specifiers, 12 arguments. ns-scanfilter-2 appended addedByRow and added (new names).
-            UE_LOG(LogNodeShuffle, Display,
+            if (NsDiag(ENsDiag::Scanner)) { UE_LOG(LogNodeShuffle, Display,
                 TEXT("SCANFILTER-CALL full call=%d snapshotForThisWorld=%d sizeIn=%d sizeOut=%d hiddenByRow=%d hiddenByNoRowDefault=%d moddedSeen=%d vanillaSeen=%d rowsInSnapshot=%d removed=[%s] addedByRow=%d added=[%s]"),
                 GCallsTotal, F.bSnapshot ? 1 : 0, F.In, F.Out, F.HidByRow, F.HidByDefault, F.Modded, F.Vanilla, GRowShown.Num() + GAutoRow.Num(), *RemovedNames,
-                F.AddedByRow, *AddedNames);
+                F.AddedByRow, *AddedNames); }
         }
 
         void EmitAddedSetChanged(const FString& AddedNames, int32 AddedByRow)
         {
             // Arity hand-counted: 3 format specifiers, 3 arguments.
-            UE_LOG(LogNodeShuffle, Display, TEXT("SCANFILTER-CALL addedSetChanged call=%d addedByRow=%d added=[%s]"), GCallsTotal, AddedByRow, *AddedNames);
+            if (NsDiag(ENsDiag::Scanner)) { UE_LOG(LogNodeShuffle, Display, TEXT("SCANFILTER-CALL addedSetChanged call=%d addedByRow=%d added=[%s]"), GCallsTotal, AddedByRow, *AddedNames); }
         }
     }
 
@@ -76,10 +76,10 @@ namespace NodeShuffleScanFilter
     void EmitCallCensus(double Now)
     {
         // Arity hand-counted: 11 format specifiers, 11 arguments. ns-scanfilter-2 appended latestAddedByRow.
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Scanner)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("SCANFILTER-CALL census callsSinceLastLine=%d callsTotal=%d latestSnapshotForThisWorld=%d latestSizeIn=%d latestSizeOut=%d latestHiddenByRow=%d latestHiddenByNoRowDefault=%d latestModdedSeen=%d latestVanillaSeen=%d secondsSinceLastLine=%.1f latestAddedByRow=%d"),
             GCallsSinceLine, GCallsTotal, GLatest.bSnapshot ? 1 : 0, GLatest.In, GLatest.Out, GLatest.HidByRow, GLatest.HidByDefault,
-            GLatest.Modded, GLatest.Vanilla, Now - GLastCallLineTime, GLatest.AddedByRow);
+            GLatest.Modded, GLatest.Vanilla, Now - GLastCallLineTime, GLatest.AddedByRow); }
         GCallsSinceLine = 0;
         GLastCallLineTime = Now;
         GLastCensus = GLatest;
@@ -233,8 +233,8 @@ namespace NodeShuffleScanFilter
         const UWorld* World = IsValid(Scanner) ? Scanner->GetWorld() : nullptr;
         const bool bSnap = World != nullptr && GSnapWorld.IsValid() && GSnapWorld.Get() == World;
         // Arity hand-counted: 6 format specifiers, 6 arguments. Counts are this pick's IsNodeScannable questions only.
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Scanner)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("SCANFILTER-PICK resource=%s scannableQuestions=%d gameAnsweredYes=%d changedToYes=%d clustersReturned=%d snapshotForThisWorld=%d"),
-            Res ? *Res->GetName() : TEXT("<none>"), GPickAsked, GPickGameYes, GPickChangedYes, ClustersReturned, bSnap ? 1 : 0);
+            Res ? *Res->GetName() : TEXT("<none>"), GPickAsked, GPickGameYes, GPickChangedYes, ClustersReturned, bSnap ? 1 : 0); }
     }
 }

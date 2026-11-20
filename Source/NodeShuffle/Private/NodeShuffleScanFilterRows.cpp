@@ -343,10 +343,10 @@ namespace NodeShuffleScanFilter
             const bool bA = Managed.Contains(Path);
             const bool bB = GSeenNoRow.Contains(Path);
             // Arity hand-counted: 7 format specifiers, 7 arguments. ns-scanfilter-4 appended startBasis.
-            UE_LOG(LogNodeShuffle, Display,
+            if (NsDiag(ENsDiag::Scanner)) { UE_LOG(LogNodeShuffle, Display,
                 TEXT("SCANFILTER-ROWADD resource=%s name='%s' nameFromItemName=%d mount=%s startsShown=%d source=%s startBasis=%s"),
                 *Path, *Name, bFromItemName ? 1 : 0, *MountLabel(Path), bDefaultShown ? 1 : 0,
-                (bA && bB) ? TEXT("managed+scannerList") : (bA ? TEXT("managed") : TEXT("scannerList")), Basis ? Basis : TEXT("<none>"));
+                (bA && bB) ? TEXT("managed+scannerList") : (bA ? TEXT("managed") : TEXT("scannerList")), Basis ? Basis : TEXT("<none>")); }
         }
         if (Added > 0 || bCarried) { FNodeShuffleModule::SortResourceRows(Rows, TEXT("scanner-add")); } // T68 sort-last, after every append above
         // Round 3: every row's box, by path, for touch detection, the mirror and the record (NodeShuffleScanFilterState.cpp).

@@ -277,10 +277,10 @@ void NodeShuffleRwgTraceDiag::NoteFirstTrace(UWorld* World, const FGuid& Guid, c
             }
             ++S.CtrlLines;
             // TODO(2026-10-28, rwg-trace-diag-2): diagnostic build only -- gate or remove before release.
-            UE_LOG(LogNodeShuffle, Display, TEXT("RWGTRACECTRL: pass=%d entry=%s x=%.0f y=%.0f apiSurfaceZ=%.0f firstHitKind=%s firstHitZ=%.0f probesRun=%d downHitClass=%s downHitComponent=%s downHitZ=%.0f upHitClass=%s upHitComponent=%s upHitZ=%.0f upSameComponentAsDown=%d priorMisses=%d firstMissPass=%d lastMissPass=%d thisPass=%d playerDistAtFirstMiss=%.0f playerDistAtLastMiss=%.0f playerDistNow=%.0f"),
+            if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display, TEXT("RWGTRACECTRL: pass=%d entry=%s x=%.0f y=%.0f apiSurfaceZ=%.0f firstHitKind=%s firstHitZ=%.0f probesRun=%d downHitClass=%s downHitComponent=%s downHitZ=%.0f upHitClass=%s upHitComponent=%s upHitZ=%.0f upSameComponentAsDown=%d priorMisses=%d firstMissPass=%d lastMissPass=%d thisPass=%d playerDistAtFirstMiss=%.0f playerDistAtLastMiss=%.0f playerDistNow=%.0f"),
                 S.Pass, *Guid.ToString().Left(8), X, Y, ApiZ, RwgFirstClassLabels[FirstClass < RwgFirstClassSlots - 1 ? FirstClass : RwgFirstClassSlots - 1], FirstZ, bCtrlRun ? 1 : 0,
                 *Down.Cls, *Down.Comp, Down.Z, *Up.Cls, *Up.Comp, Up.Z, (Down.bHit && Up.bHit && Up.C == Down.C) ? 1 : 0,
-                Rec.Misses, Rec.FirstMissPass, Rec.LastMissPass, S.Pass, Rec.DistAtFirstMissM, Rec.DistAtLastMissM, PawnDistM);
+                Rec.Misses, Rec.FirstMissPass, Rec.LastMissPass, S.Pass, Rec.DistAtFirstMissM, Rec.DistAtLastMissM, PawnDistM); }
         }
         return;
     }
@@ -321,12 +321,12 @@ void NodeShuffleRwgTraceDiag::NoteFirstTrace(UWorld* World, const FGuid& Guid, c
     const FString Entry8 = Guid.ToString().Left(8);
     const FString Res = RwgTraceDiagTail(ResPath);
     // TODO(2026-10-27, rwg-trace-diag-1): diagnostic build only -- gate on FNodeShuffleModule::AreDiagnosticsEnabled() or remove before release.
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("RWGTRACEMISS: pass=%d entry=%s res=%s x=%.0f y=%.0f apiSurfaceZ=%.0f stuckTrackerPrior=%d attemptOrdinal=%d pawnDist2DM=%.0f pawns=%d shortWindow=%d settleReturned=%d windowTopZ=%.0f windowBottomZ=%.0f channel=%s traceComplex=%d probesRun=%d probeEventsThisPass=%d probeMs=%.2f wideTopZ=%.0f wideBottomZ=%.0f downHitClass=%s downHitActor=%s downHitComponent=%s downHitZ=%.0f downHitMinusApiM=%.1f upHitClass=%s upHitActor=%s upHitComponent=%s upHitZ=%.0f upHitMinusApiM=%.1f distinctHitComponents=%d chunkClassResolved=%d chunkActors=%d chunkActorsBoxWithin500m=%d chunkActorsBoxContainXY=%d chunkActorsCollisionEnabledBoxContainXY=%d containingCollisionEnabledBoxUnionMinZ=%.0f containingCollisionEnabledBoxUnionMaxZ=%.0f containingPrimsCollisionEnabled=%d containingPrimsWithPhysicsBody=%d chunkCensusMs=%.2f killboxTopZ=%.0f"),
         S.Pass, *Entry8, *Res, X, Y, ApiZ, Prior, Ordinal, PawnDistM, S.Pawns.Num(), bShortWindow ? 1 : 0, bSettleReturned ? 1 : 0, WinTop, WinBottom,
         TEXT("WorldStatic"), Fresh.bTraceComplex ? 1 : 0, bRun ? 1 : 0, S.EventsRun, ProbeMs, RwgTraceDiagWideTopZ, RwgTraceDiagWideBottomZ,
         *Down.Cls, *Down.Actor, *Down.Comp, Down.Z, DownDzM, *Up.Cls, *Up.Actor, *Up.Comp, Up.Z, UpDzM, Distinct,
-        Ch.Resolved, Ch.Actors, Ch.Within, Ch.ContainAny, Ch.ContainColliding, Ch.CollMinZ, Ch.CollMaxZ, Ch.PrimsCollisionEnabled, Ch.PrimsWithBody, Ch.Ms, KillboxTopZ);
+        Ch.Resolved, Ch.Actors, Ch.Within, Ch.ContainAny, Ch.ContainColliding, Ch.CollMinZ, Ch.CollMaxZ, Ch.PrimsCollisionEnabled, Ch.PrimsWithBody, Ch.Ms, KillboxTopZ); }
 }
 
 void NodeShuffleRwgTraceDiag::EmitPassCensus(int32 Pass, int32 Attempted, int32 SettledOnTerrain, int32 NoTerrainDefer, int32 DeferredSettle)
@@ -346,11 +346,11 @@ void NodeShuffleRwgTraceDiag::EmitPassCensus(int32 Pass, int32 Attempted, int32 
         const double MedM = N > 0 ? S.AbsDzCm[(N - 1) / 2] / 100.0 : NodeShuffleMapMode::RwgNaN();
         const double MaxM = N > 0 ? S.AbsDzCm.Last() / 100.0 : NodeShuffleMapMode::RwgNaN();
         // TODO(2026-10-27, rwg-trace-diag-1): diagnostic build only -- gate on FNodeShuffleModule::AreDiagnosticsEnabled() or remove before release.
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("RWGTRACECENSUS: pass=%d attempted=%d firstTracesSeen=%d firstTraceHits=%d firstTraceMisses=%d settledOnTerrain=%d noTerrainDefer=%d deferredSettle=%d firstHitKindsTop3=%s absDzMinM=%.1f absDzLowerMedianM=%.1f absDzMaxM=%.1f missLines=%d probeEventsRun=%d probeEventsSkippedBudget=%d extraTraces=%d channel=%s hitsByPawnDistBand=%s missesByPawnDistBand=%s ctrlLines=%d missRecordsHeld=%d missRecordBound=%d missRecordsEvicted=%d missRecordsXYChanged=%d"),
             Pass, Attempted, S.Seen, S.Hits, S.Misses, SettledOnTerrain, NoTerrainDefer, DeferredSettle, *Top3, MinM, MedM, MaxM,
             S.MissLines, S.EventsRun, S.EventsSkipped, S.ExtraTraces, TEXT("WorldStatic"), *RwgTraceDiagBandString(S.BandHits), *RwgTraceDiagBandString(S.BandMisses),
-            S.CtrlLines, GRwgMissRecords.Num(), RwgTraceDiagMissRecordBound, GRwgMissEvicted, GRwgMissXYChanged);
+            S.CtrlLines, GRwgMissRecords.Num(), RwgTraceDiagMissRecordBound, GRwgMissEvicted, GRwgMissXYChanged); }
     }
     GRwgTraceDiag = FRwgTraceDiagPass();
 }

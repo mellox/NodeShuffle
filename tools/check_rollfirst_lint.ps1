@@ -159,7 +159,7 @@ function Invoke-RollFirstChecks($T) {
     if ((Count $emit '    if (RwgRollFirstK <= 0 || bRwgRollFirstDoneLogged) { return; }') -ne 1 -or (Count $emit '    if (Left > 0)') -ne 1 -or (Count $T.subh '    bool bRwgRollFirstDoneLogged = true;') -ne 1) { $f += '(R14) DONE latch starts closed; K guard and Left gate in the per-pass report' }
     # R15 (round 2 review, N2)
     if (-not (Ordered $reord @('    const bool bSuperseded = !bRwgRollFirstDoneLogged;', '    if (Wanted > 0) { ++RwgRollFirstGeneration; bRwgRollFirstDoneLogged = false; }', '    else { bRwgRollFirstDoneLogged = true; }', '    if (Wanted > 0 || bSuperseded || FNodeShuffleModule::AreDiagnosticsEnabled())'))) { $f += '(R15) supersession is read before the latch is re-armed; an empty build closes the latch' }
-    if (-not (Ordered $emit @('    if (Left > 0)', '        if (FNodeShuffleModule::AreDiagnosticsEnabled())', ('            UE_LOG(LogNodeShuffle, Display, TEXT("ROLLFIRST' + '-PASS: '), '        return;', '    bRwgRollFirstDoneLogged = true;'))) { $f += '(R15) PASS prints only with diagnostics on; the DONE latch closes outside that gate' }
+    if (-not (Ordered $emit @('    if (Left > 0)', ('        if (Ns' + 'Diag(ENsDiag::Status))'), ('            UE_LOG(LogNodeShuffle, Display, TEXT("ROLLFIRST' + '-PASS: '), '        return;', '    bRwgRollFirstDoneLogged = true;'))) { $f += '(R15) PASS prints only with diagnostics on; the DONE latch closes outside that gate' }
     $sao = Span $T.pscan '    const auto SetAsideOk = [this](const FNodeShuffleEntry& E)' '    const auto NearestSq ='; if ($sao -eq '' -or (Count $sao ('return ' + 'false;')) -ne 4) { $f += '(R4) SetAsideOk changed: mirror it in RwgRollFirstCanLoad' }
     return $f
 }
@@ -201,7 +201,7 @@ $mutants = @(
     @{ Name = 'Q32 top-K guard dropped'; Key = 'rf'; Expect = 'R3'; Find = '        if (T.Num() >= K && D >= T.Last().D) { return; }'; Repl = '        if (D >= T.Last().D) { return; }' }
     @{ Name = 'Q33 DONE latch starts open'; Key = 'subh'; Expect = 'R14'; Find = '    bool bRwgRollFirstDoneLogged = true;'; Repl = '    bool bRwgRollFirstDoneLogged = false;' }
     @{ Name = 'Q34 empty build leaves the DONE latch open'; Key = 'rf'; Expect = 'R15'; Find = '    else { bRwgRollFirstDoneLogged = true; }'; Repl = '' }
-    @{ Name = 'Q35 PASS ungated again'; Key = 'rf'; Expect = 'R15'; Find = '        if (FNodeShuffleModule::AreDiagnosticsEnabled())'; Repl = '        if (true)' }
+    @{ Name = 'Q35 PASS ungated again'; Key = 'rf'; Expect = 'R15'; Find = ('        if (Ns' + 'Diag(ENsDiag::Status))'); Repl = '        if (true)' }
     @{ Name = 'Q36 supersession read after the re-arm'; Key = 'rf'; Expect = 'R15'; Find = ('    const bool bSuperseded = !bRwgRollFirstDoneLogged;' + ' // a generation was still open: no ROLLFIRST-DONE yet and no earlier build replaced it' + "`n" + '    if (Wanted > 0) { ++RwgRollFirstGeneration; bRwgRollFirstDoneLogged = false; } // a new generation: DONE re-armed'); Repl = ('    if (Wanted > 0) { ++RwgRollFirstGeneration; bRwgRollFirstDoneLogged = false; } // a new generation: DONE re-armed' + "`n" + '    const bool bSuperseded = !bRwgRollFirstDoneLogged;') }
 )
 $mutantFails = @()

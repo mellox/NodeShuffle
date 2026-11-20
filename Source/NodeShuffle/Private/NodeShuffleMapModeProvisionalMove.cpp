@@ -84,8 +84,8 @@ const TCHAR* ANodeShuffleSubsystem::RwgProvisionalMoveInPlace(FNodeShuffleEntry&
     {
         // rwg-farspawn-1d F1 (decrement verbatim; line text adapted to 1f C2, where this move is NOT kept): this call never refuses.
         --InsideGateRefusedThisPass; // this caller never refuses: keep the census's actually-refused count true
-        UE_LOG(LogNodeShuffle, Display, TEXT("PROVMOVE: entry=%s insideGateReturnedRefuse=1 moveKept=0 (the INSIDEGATE-WOULDREFUSE line above says IS BEING REFUSED; this call only measures, and the despawn + respawn that follows evaluates the gate again)"),
-            *E.EntryGuid.ToString());
+        if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display, TEXT("PROVMOVE: entry=%s insideGateReturnedRefuse=1 moveKept=0 (the INSIDEGATE-WOULDREFUSE line above says IS BEING REFUSED; this call only measures, and the despawn + respawn that follows evaluates the gate again)"),
+            *E.EntryGuid.ToString()); }
     }
     if (bEnclosed) { ++RwgProvSessMovedEnclosed; }
     if (bAllSolid) { ++RwgProvSessMovedShadowInside; }
@@ -136,7 +136,7 @@ const TCHAR* ANodeShuffleSubsystem::RwgProvisionalMoveInPlace(FNodeShuffleEntry&
     if (RC) { SpawnVisualRockForNode(Node, RC, E.EntryGuid); }
     if (Comp) { Comp->EnsureAttachedToRoot(); }
 
-    if (FNodeShuffleModule::AreDiagnosticsEnabled())
+    if (NsDiag(ENsDiag::Placement))
     {
         UE_LOG(LogNodeShuffle, Display, TEXT("PROVMOVE: entry=%s from=%s to=%s dzCm=%.0f rotChanged=%d rockDressed=%d rockRedressed=%d radEmitter=%d onSolidTop=%d enclosed=%d encBlocked=%d/%d shadowGate=%s refuseIgnored=%d nodeRepUpdateReturned=%d"),
             *E.EntryGuid.ToString(), *From.ToCompactString(), *Node->GetActorLocation().ToCompactString(), Node->GetActorLocation().Z - From.Z,
@@ -164,8 +164,8 @@ bool ANodeShuffleSubsystem::RwgProvisionalInsideRedeal(FNodeShuffleEntry& E, con
     bRwgSteepArmed = false; // a refused redeal, or a redeal that returned at !Q.IsUsable(), did not consume the arm
     if (!bRedealt)
     {
-        UE_LOG(LogNodeShuffle, Display, TEXT("PROVINSIDE: entry=%s path=%s moveCheck=insideRedeal redealRefused=1 pinned=%d at=%s (RwgRedealLiveEntry refused: the entry is pinned or its live actor is occupied; nothing was changed)"),
-            *E.EntryGuid.ToString(), Path, E.bPinned ? 1 : 0, *Before.ToCompactString());
+        if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display, TEXT("PROVINSIDE: entry=%s path=%s moveCheck=insideRedeal redealRefused=1 pinned=%d at=%s (RwgRedealLiveEntry refused: the entry is pinned or its live actor is occupied; nothing was changed)"),
+            *E.EntryGuid.ToString(), Path, E.bPinned ? 1 : 0, *Before.ToCompactString()); }
         return false;
     }
     const bool bRing = RwgPcSteepOccludedRing > OccludedRingBefore;
@@ -173,9 +173,9 @@ bool ANodeShuffleSubsystem::RwgProvisionalInsideRedeal(FNodeShuffleEntry& E, con
     ++RwgProvSessInsideRedeal;
     if (bRing) { ++RwgProvSessInsideRedealRing; }
     const int32 RevealLost = (LocalRevealsBefore < 0 && ServerRevealsBefore < 0) ? -1 : (LocalRevealsBefore > 0 || ServerRevealsBefore > 0) ? 1 : 0;
-    UE_LOG(LogNodeShuffle, Display, TEXT("PROVINSIDE: entry=%s res=%s path=%s moveCheck=insideRedeal from=%s to=%s redealRing=%d redealMoved=%d movedM=%.1f revealLostOnRedeal=%d localMapRevealsBefore=%d serverMapRevealsBefore=%d insideRedealSession=%d insideRedealRingSession=%d"),
+    if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display, TEXT("PROVINSIDE: entry=%s res=%s path=%s moveCheck=insideRedeal from=%s to=%s redealRing=%d redealMoved=%d movedM=%.1f revealLostOnRedeal=%d localMapRevealsBefore=%d serverMapRevealsBefore=%d insideRedealSession=%d insideRedealRingSession=%d"),
         *E.EntryGuid.ToString(), *E.AssignedResourceClassPath, Path, *From.ToCompactString(), *E.Location.ToCompactString(), bRing ? 1 : 0, bMoved ? 1 : 0,
-        FVector::Dist2D(From, E.Location) / 100.0, RevealLost, LocalRevealsBefore, ServerRevealsBefore, RwgProvSessInsideRedeal, RwgProvSessInsideRedealRing);
+        FVector::Dist2D(From, E.Location) / 100.0, RevealLost, LocalRevealsBefore, ServerRevealsBefore, RwgProvSessInsideRedeal, RwgProvSessInsideRedealRing); }
     return true;
 }
 
@@ -186,6 +186,6 @@ void ANodeShuffleSubsystem::RwgProvisionalLogRefusal(const FNodeShuffleEntry& E,
     // left the entry inactive: overlap give-up; since rwg-farspawn-1f OPTION B an inside-gate positive at a spot not dealt as a cave is redealt
     // before this line can run, and the gate never refuses a cave-flagged spot), overlapNudgeFailed (its nudge count rose), spawnActorNull (its spawn-failure count rose), noActorOtherReturn
     // (none of those changed; another early return of the spawn call ran).
-    UE_LOG(LogNodeShuffle, Display, TEXT("PROVSPAWN: refused entry=%s res=%s at=%s refusedReason=%s refusedSession=%d"),
-        *E.EntryGuid.ToString(), *E.AssignedResourceClassPath, *E.Location.ToCompactString(), Reason, RwgProvSessRefused);
+    if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display, TEXT("PROVSPAWN: refused entry=%s res=%s at=%s refusedReason=%s refusedSession=%d"),
+        *E.EntryGuid.ToString(), *E.AssignedResourceClassPath, *E.Location.ToCompactString(), Reason, RwgProvSessRefused); }
 }

@@ -120,7 +120,7 @@ bool ANodeShuffleSubsystem::CaptureWellGroupVisuals(FNodeShuffleWellEntry& E)
             SatPieces += S.Visuals.Num();
             if (S.bVisualsCaptured) { ++SatCaptured; }
         }
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH2B-ADOPT core='%s': as loaded, groupComplete=%d coreCaptured=%d corePieces=%d, ")
             TEXT("%d/%d satellite(s) captured with %d piece(s) total. This is the state BEFORE any capture ")
             TEXT("runs this session. Non-zero means the save carried this group's captured look. Zero means ")
@@ -128,7 +128,7 @@ bool ANodeShuffleSubsystem::CaptureWellGroupVisuals(FNodeShuffleWellEntry& E)
             TEXT("group whose members were never available to capture, and is NOT by itself a lost save. ")
             TEXT("Said once per group per session."),
             *WellShort(E.CorePath), E.bGroupVisualsComplete ? 1 : 0, E.bCoreVisualsCaptured ? 1 : 0,
-            E.CoreVisuals.Num(), SatCaptured, E.Satellites.Num(), SatPieces);
+            E.CoreVisuals.Num(), SatCaptured, E.Satellites.Num(), SatPieces); }
     }
 
     if (E.bGroupVisualsComplete) { return true; }
@@ -228,7 +228,7 @@ bool ANodeShuffleSubsystem::CaptureWellGroupVisuals(FNodeShuffleWellEntry& E)
     if (NewPieces > 0 || (MembersMissing > 0 && !WellVisualCaptureLogged.Contains(MissKey)))
     {
         WellVisualCaptureLogged.Add(MissKey);
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH2B-CAPTURE core='%s': +%d piece(s) this pass (%d of them MT_Crack), %d member(s) ")
             TEXT("captured, %d still empty -> group %s. Of the empty ones: %d had no node from ")
             TEXT("FindOriginalBaseByPath, %d had a live node but no indexed mesh piece, %d had indexed ")
@@ -236,7 +236,7 @@ bool ANodeShuffleSubsystem::CaptureWellGroupVisuals(FNodeShuffleWellEntry& E)
             TEXT("never completes is dressed from the session template and says so."),
             *WellShort(E.CorePath), NewPieces, CrackPieces, MembersDone, MembersMissing,
             bComplete ? TEXT("COMPLETE") : TEXT("INCOMPLETE"),
-            MissNoNode, MissNoPieces, MissNoVisuals);
+            MissNoNode, MissNoPieces, MissNoVisuals); }
     }
     return bComplete;
 }

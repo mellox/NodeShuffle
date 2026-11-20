@@ -217,10 +217,10 @@ bool ANodeShuffleSubsystem::TryPlaceWellGroup(FNodeShuffleWellEntry& E, UClass* 
         // into a lake was trapped permanently, and the corruption persisted across saves.
         // IsKnownWaterCell is a LEARNED grid, so a fresh save deals into lakes routinely; this is not
         // an exotic path.
-        UE_LOG(LogNodeShuffle, Verbose,
+        if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Verbose,
             TEXT("WELLH2-SEARCH core='%s': CORE rejected at %s (%s) -- escalating (nudge %d/%d, redeal %d/%d)."),
             *CoreLabel, *E.DestCoreLocation.ToCompactString(), *CoreReason,
-            E.GroupNudges + 1, WellMaxGroupNudges, E.GroupRedeals, WellMaxGroupRedeals);
+            E.GroupNudges + 1, WellMaxGroupNudges, E.GroupRedeals, WellMaxGroupRedeals); }
         // ns-t23-stage0 REVIEW FIX: emit BEFORE the ladder. EscalateWellPlacement sets E.YawCursor = 0
         // (NodeShuffleWellEscalate.cpp), so emitting after it prints "cursor now 0" on every escalating
         // line and deletes the one field that says how far this search had got.
@@ -546,7 +546,7 @@ bool ANodeShuffleSubsystem::TryPlaceWellGroup(FNodeShuffleWellEntry& E, UClass* 
             }
             if (bInsideRefused)
             {
-                UE_LOG(LogNodeShuffle, Display,
+                if (NsDiag(ENsDiag::Gates)) { UE_LOG(LogNodeShuffle, Display,
                     TEXT("INSIDEGATE core='%s': this validated layout is REFUSED -- at least one of the ")
                     TEXT("core and %d member spot(s) met solid in every probed direction; the ")
                     TEXT("INSIDEGATE-WOULDREFUSE line(s) above name which. Nothing was committed and ")
@@ -554,7 +554,7 @@ bool ANodeShuffleSubsystem::TryPlaceWellGroup(FNodeShuffleWellEntry& E, UClass* 
                     TEXT("rejection, so the whole layout is re-drawn next attempt and the shared ")
                     TEXT("escalation ladder takes over when the attempts run out. Reachable only while ")
                     TEXT("NodeShuffle.InsideGateRefuse is set."),
-                    *CoreLabel, MemberLocs.Num());
+                    *CoreLabel, MemberLocs.Num()); }
             }
         }
 
@@ -604,7 +604,7 @@ bool ANodeShuffleSubsystem::TryPlaceWellGroup(FNodeShuffleWellEntry& E, UClass* 
                 S.PlacedRotation = MemberRots[Cursor];
                 ++Cursor;
             }
-            UE_LOG(LogNodeShuffle, Display,
+            if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
                 // ns-review-h4 F6: print the count actually PLACED (the bCaptured subset, after h3 H10
                 // stopped validating uncaptured records) and the raw record count separately. Saying
                 // "N satellites all settled" with N = Satellites.Num() claimed validation of members
@@ -627,7 +627,7 @@ bool ANodeShuffleSubsystem::TryPlaceWellGroup(FNodeShuffleWellEntry& E, UClass* 
                 *CoreLabel, *CoreLoc.ToCompactString(), AttemptIndex + 1, WellLayoutAttempts,
                 E.YawCursor, LayoutSeed, E.GroupNudges, E.GroupRedeals,
                 ExpectedRelocatedSatelliteCount(E), E.Satellites.Num(),
-                WellEnclosureGateOnSatellites ? TEXT("on") : TEXT("off"));
+                WellEnclosureGateOnSatellites ? TEXT("on") : TEXT("off")); }
             EmitProbes(TEXT("VALIDATED"), TEXT("no-side(whole group placed)"));
             return true;
         }
@@ -748,9 +748,9 @@ void ANodeShuffleSubsystem::SuppressVanillaWellGroup(FNodeShuffleWellEntry& E, E
             if (!WellSuppressSkipLogged.Contains(WellPathOf(Node)))
             {
                 WellSuppressSkipLogged.Add(WellPathOf(Node));
-                UE_LOG(LogNodeShuffle, Display,
+                if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
                     TEXT("WELLH2-SUPPRESS core='%s' member='%s': NOT hidden -- in use (%s). Said once."),
-                    *WellShort(E.CorePath), *Node->GetName(), InUseWhy);
+                    *WellShort(E.CorePath), *Node->GetName(), InUseWhy); }
             }
             return;
         }
@@ -786,7 +786,7 @@ void ANodeShuffleSubsystem::SuppressVanillaWellGroup(FNodeShuffleWellEntry& E, E
             ++NewlyOwned;
             if (bEverRelocatedByUs && (bLiveHidden || bLiveNoCollision))
             {
-                UE_LOG(LogNodeShuffle, Display,
+                if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
                     TEXT("WELLH2-SUPPRESS core='%s' member='%s': taken into the ledger while ALREADY ")
                     TEXT("hidden %d and de-collided %d. The predicate this branch tested is that we have ")
                     TEXT("dealt or placed this entry (placed %d, dealt %d) -- at a roll-time commit the ")
@@ -796,7 +796,7 @@ void ANodeShuffleSubsystem::SuppressVanillaWellGroup(FNodeShuffleWellEntry& E, E
                     TEXT("is unrecoverable and handing back a visible one self-corrects. This is what a ")
                     TEXT("later restore will hand back."),
                     *WellShort(E.CorePath), *Node->GetName(), bLiveHidden ? 1 : 0,
-                    bLiveNoCollision ? 1 : 0, E.bGroupPlaced ? 1 : 0, E.bDestDealt ? 1 : 0);
+                    bLiveNoCollision ? 1 : 0, E.bGroupPlaced ? 1 : 0, E.bDestDealt ? 1 : 0); }
             }
             else if (!bEverRelocatedByUs && (bLiveHidden || bLiveNoCollision))
             {
@@ -908,7 +908,7 @@ void ANodeShuffleSubsystem::SuppressVanillaWellGroup(FNodeShuffleWellEntry& E, E
         // world state nothing measured, which is the defect class this repo has shipped repeatedly.
         // bGroupPlaced is false at every roll-phase call site (the phase-3 commit runs after the
         // re-enrolment teardown clears it), so the roll path's wording is UNCHANGED by this swap.
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH2-SUPPRESS core='%s' phase=%s: hid %d vanilla member(s) + %d mesh piece(s) (%d were ")
             TEXT("already hidden; %d piece(s) indexed for this group across all %d indexed member(s) ")
             TEXT("world-wide); %d newly taken into our suppression ledger this call; %d occupied (left ")
@@ -922,7 +922,7 @@ void ANodeShuffleSubsystem::SuppressVanillaWellGroup(FNodeShuffleWellEntry& E, E
                                    TEXT("it is built when a player reaches it."),
                                    *E.DestCoreLocation.ToCompactString())
                 : *FString::Printf(TEXT("The relocated group now lives at %s."),
-                                   *E.PlacedCoreLocation.ToCompactString()));
+                                   *E.PlacedCoreLocation.ToCompactString())); }
     }
 }
 
@@ -1056,7 +1056,7 @@ void ANodeShuffleSubsystem::ApplyWellRelocation(float SpawnRadiusCm)
                 if (!WellUnhideLogged.Contains(ArmKey))
                 {
                     WellUnhideLogged.Add(ArmKey);
-                    UE_LOG(LogNodeShuffle, Display,
+                    if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
                         TEXT("WELLH2-IMMEDIATE core='%s': RESTORE ARMED -- this entry is not placed and we ")
                         TEXT("hold a suppression record on at least one of its members, and the predicate ")
                         // T71 cold review F7 (AUTHORED -- the review offered two options, "drop the
@@ -1072,7 +1072,7 @@ void ANodeShuffleSubsystem::ApplyWellRelocation(float SpawnRadiusCm)
                         TEXT("restore intent is set and drained on every apply pass on which the ORIGINAL ")
                         TEXT("site resolves; a placed entry is never armed, because its vanilla twin must ")
                         TEXT("stay hidden while the relocated group stands."),
-                        *WellShort(E.CorePath), E.bRelocate ? 0 : 1);
+                        *WellShort(E.CorePath), E.bRelocate ? 0 : 1); }
                 }
             }
 
@@ -1140,7 +1140,7 @@ void ANodeShuffleSubsystem::ApplyWellRelocation(float SpawnRadiusCm)
                     if (!WellGroupGateLogged.Contains(ImmKey))
                     {
                         WellGroupGateLogged.Add(ImmKey);
-                        UE_LOG(LogNodeShuffle, Display,
+                        if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
                             TEXT("WELLH2-IMMEDIATE core='%s': IMMEDIATE HIDE REFUSED. MEASURED -- the shared ")
                             TEXT("occupancy predicate returned true for actor '%s' of the VANILLA group ")
                             TEXT("(core signal '%s', satellite signal '%s'); the actors asked were %s, %d ")
@@ -1151,7 +1151,7 @@ void ANodeShuffleSubsystem::ApplyWellRelocation(float SpawnRadiusCm)
                             TEXT("Said once per group per verdict."),
                             *WellShort(E.CorePath), *ImmPin.FiredActorName,
                             ImmPin.CoreWhy, ImmPin.SatelliteWhy, WellPinSourceName(ImmPin.Source),
-                            ImmPin.CoresTested, ImmPin.SatellitesTested, E.Satellites.Num());
+                            ImmPin.CoresTested, ImmPin.SatellitesTested, E.Satellites.Num()); }
                     }
                 }
                 else if (!ImmPin.IsDecisive())
@@ -1205,7 +1205,7 @@ void ANodeShuffleSubsystem::ApplyWellRelocation(float SpawnRadiusCm)
                         if (!WellSuppressLogged.Contains(HidKey))
                         {
                             WellSuppressLogged.Add(HidKey);
-                            UE_LOG(LogNodeShuffle, Display,
+                            if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
                                 TEXT("WELLH2-IMMEDIATE core='%s': ORIGIN HIDDEN NOW, not at placement. This ")
                                 TEXT("entry is marked as moving and is not placed; the occupancy predicate ")
                                 TEXT("was asked of %d core and %d of %d satellite record(s) that resolved ")
@@ -1220,7 +1220,7 @@ void ANodeShuffleSubsystem::ApplyWellRelocation(float SpawnRadiusCm)
                                 TEXT("obligation. Said once per group per session."),
                                 *WellShort(E.CorePath), ImmPin.CoresTested, ImmPin.SatellitesTested,
                                 E.Satellites.Num(), CapDressable, CapWithPieces, CapCaptured, CapMissing,
-                                *E.DestCoreLocation.ToCompactString());
+                                *E.DestCoreLocation.ToCompactString()); }
                         }
                     }
                     else
@@ -1320,7 +1320,7 @@ void ANodeShuffleSubsystem::ApplyWellRelocation(float SpawnRadiusCm)
                 if (!WellGroupGateLogged.Contains(GateKey))
                 {
                     WellGroupGateLogged.Add(GateKey);
-                    UE_LOG(LogNodeShuffle, Display,
+                    if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
                         TEXT("WELLH2-GATE core='%s': PLACEMENT REFUSED THIS PASS. MEASURED -- the shared ")
                         TEXT("occupancy predicate returned true for actor '%s' of the VANILLA group ")
                         TEXT("(core signal '%s', satellite signal '%s'); the actors asked were %s, %d ")
@@ -1332,7 +1332,7 @@ void ANodeShuffleSubsystem::ApplyWellRelocation(float SpawnRadiusCm)
                         TEXT("once the building is gone. Said once per group per verdict."),
                         *WellShort(E.CorePath), *GatePin.FiredActorName,
                         GatePin.CoreWhy, GatePin.SatelliteWhy, WellPinSourceName(GatePin.Source),
-                        GatePin.CoresTested, GatePin.SatellitesTested, E.Satellites.Num());
+                        GatePin.CoresTested, GatePin.SatellitesTested, E.Satellites.Num()); }
                 }
                 continue;
             }
@@ -1486,7 +1486,7 @@ void ANodeShuffleSubsystem::ApplyWellRelocation(float SpawnRadiusCm)
     if (Searching > 0 || PlacedNow > 0 || Spawned > 0 || IncompleteSpawns > 0 || ReassertedUnplaced > 0
         || GateRefused > 0)
     {
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH2 pass: %d group(s) searching, %d newly validated, %d spawned COMPLETE, ")
             TEXT("%d spawned INCOMPLETE (not marked placed, nothing suppressed, retried next pass), ")
             TEXT("%d maintained, %d deferred (no player near the destination), %d unplaced group(s) had ")
@@ -1496,7 +1496,7 @@ void ANodeShuffleSubsystem::ApplyWellRelocation(float SpawnRadiusCm)
             TEXT("UNMEASURED (no vanilla CORE resolved to a live actor on that entry's pass). %d placed ")
             TEXT("this session."),
             Searching, PlacedNow, Spawned, IncompleteSpawns, Maintained, Deferred, ReassertedUnplaced,
-            Searching, GateRefused, GateUnmeasured, WellGroupsPlacedThisSession);
+            Searching, GateRefused, GateUnmeasured, WellGroupsPlacedThisSession); }
     }
 
     // ns-t23-stage0 INSTRUMENT 2 (K3). LAST, so it reports the state this pass ended in rather than the

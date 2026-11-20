@@ -104,10 +104,10 @@ void ANodeShuffleSubsystem::RwgNoteHitClass(const FHitResult& Hit, int32 Class, 
     const FString Key = Mesh ? Mesh->GetPathName() : (FString(TEXT("<no mesh>|")) + CompClass);
     if (RwgHitClassPaths.Contains(Key)) { return; }
     RwgHitClassPaths.Add(Key);
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("RWGHITCLASS: first hit on this mesh path; class=%s rule=%s mesh='%s' componentClass='%s' ownerClass='%s' hitNormalZ=%.2f boundsExtentMaxCm=%.0f pathsSoFar=%d"),
         RwgHitClassName(Class), Rule ? Rule : TEXT("?"), *Key, *CompClass, A ? *A->GetClass()->GetName() : TEXT("<no actor>"),
-        Hit.ImpactNormal.Z, C ? C->Bounds.BoxExtent.GetMax() : 0.0, RwgHitClassPaths.Num());
+        Hit.ImpactNormal.Z, C ? C->Bounds.BoxExtent.GetMax() : 0.0, RwgHitClassPaths.Num()); }
 }
 
 void ANodeShuffleSubsystem::RwgNoteSkippedHit(const FHitResult& Hit, int32 Class) const
@@ -125,9 +125,9 @@ void ANodeShuffleSubsystem::RwgNoteSkippedHit(const FHitResult& Hit, int32 Class
     const UStaticMesh* Mesh = Smc ? Smc->GetStaticMesh() : nullptr;
     const FString MeshPath = Mesh ? Mesh->GetPathName() : FString(TEXT("<none>"));
     const FVector Ext = C ? C->Bounds.BoxExtent : FVector::ZeroVector;
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("RWGTERRAINSKIP: first skip of this kind (a terrain-only trace ignored the component and traced again); class=%s ownerClass='%s' componentClass='%s' component='%s' mesh='%s' hitZ=%.0f hitNormalZ=%.2f boundsExtentCm=(%.0f,%.0f,%.0f) kindsSoFar=%d"),
-        RwgHitClassName(Class), *OwnerClass, *CompClass, *CompName, *MeshPath, Hit.ImpactPoint.Z, Hit.ImpactNormal.Z, Ext.X, Ext.Y, Ext.Z, RwgSkippedHitKinds.Num());
+        RwgHitClassName(Class), *OwnerClass, *CompClass, *CompName, *MeshPath, Hit.ImpactPoint.Z, Hit.ImpactNormal.Z, Ext.X, Ext.Y, Ext.Z, RwgSkippedHitKinds.Num()); }
 }
 
 double ANodeShuffleSubsystem::RwgNearestPawnDist2D(const FVector& At) const
@@ -164,9 +164,9 @@ void ANodeShuffleSubsystem::RwgEmitDzCensus()
     BandStats(RwgDzBand0, N0, M0, P0, X0);
     BandStats(RwgDzBand1, N1, M1, P1, X1);
     BandStats(RwgDzBand2, N2, M2, P2, X2);
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("PLACEDZ: apiToTerrainDz session samples (terrain-mesh hit Z minus RWG surface Z, from spawn settles and resettle probes), bands by distance to the nearest pawn, 0 is 0-250 m, 1 is 250-500 m, 2 is 500-1000 m; dzN0=%d dzMeanAbsCm0=%.0f dzP95AbsCm0=%.0f dzMaxAbsCm0=%.0f dzN1=%d dzMeanAbsCm1=%.0f dzP95AbsCm1=%.0f dzMaxAbsCm1=%.0f dzN2=%d dzMeanAbsCm2=%.0f dzP95AbsCm2=%.0f dzMaxAbsCm2=%.0f dzBeyond1000m=%d; settles accepted on a solid-mesh top are kept out of every band and counted after them, solidTopSettlesExcluded=%d solidTopMaxAbsDzCm=%.0f"),
-        N0, M0, P0, X0, N1, M1, P1, X1, N2, M2, P2, X2, RwgDzBeyond, RwgDzSolidTopN, RwgDzSolidTopMaxAbsCm);
+        N0, M0, P0, X0, N1, M1, P1, X1, N2, M2, P2, X2, RwgDzBeyond, RwgDzSolidTopN, RwgDzSolidTopMaxAbsCm); }
 }
 
 void ANodeShuffleSubsystem::RwgResettlePass()
@@ -198,7 +198,7 @@ void ANodeShuffleSubsystem::RwgResettlePass()
     }
     Cands.Sort([](const TPair<double, int32>& A, const TPair<double, int32>& B) { return A.Key < B.Key; });
     const int32 N = FMath::Min(Cands.Num(), NodeShuffleMapMode::RwgResettlePerPass);
-    const bool bDiag = FNodeShuffleModule::AreDiagnosticsEnabled();
+    // ns-quietlog-1 (decision N2): the master-gate local that only gated RESETTLE-MOVE is gone; that line now uses the Placement topic guard.
     int32 Checked = 0, Moved = 0, Kept = 0, Deferred = 0, MaxDz = 0, Occupied = 0, Wet = 0, MovedSteep = 0, GaveUp = 0, MoveRefused = 0;
     int32 RejectedRock = 0, RockRedealt = 0; // RWG P2d
     int32 KeptOnSolidTop = 0; // rwg-clifftop-1
@@ -269,8 +269,8 @@ void ANodeShuffleSubsystem::RwgResettlePass()
         {
             ++MoveRefused;
             RwgResettleGaveUp.Add(E.EntryGuid);
-            UE_LOG(LogNodeShuffle, Display, TEXT("RESETTLE-REFUSED: entry=%s requestedZ=%.0f actorZAfter=%.0f (entry left unflagged)"),
-                *E.EntryGuid.ToString(), HitLoc.Z, ActorZAfter);
+            if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display, TEXT("RESETTLE-REFUSED: entry=%s requestedZ=%.0f actorZAfter=%.0f (entry left unflagged)"),
+                *E.EntryGuid.ToString(), HitLoc.Z, ActorZAfter); }
             continue;
         }
         AdoptRotRefit.Remove(E.EntryGuid);
@@ -279,7 +279,7 @@ void ANodeShuffleSubsystem::RwgResettlePass()
         E.RwgApiToTerrainDzCm = static_cast<float>(DzApi);
         ++Moved;
         if (bSteep) { ++MovedSteep; }
-        if (bDiag)
+        if (NsDiag(ENsDiag::Placement))
         {
             UE_LOG(LogNodeShuffle, Display, TEXT("RESETTLE-MOVE: entry=%s from=%s to=%s moveDzCm=%.0f apiDzCm=%.0f steep=%d"),
                 *E.EntryGuid.ToString(), *Cur.ToCompactString(), *HitLoc.ToCompactString(), DzMove, DzApi, bSteep ? 1 : 0);
@@ -289,10 +289,10 @@ void ANodeShuffleSubsystem::RwgResettlePass()
     RwgResettleWells(WChecked, WMoved, WKept, WDeferred, WOccupied, WMaxDz);
     if (Moved > 0 || Kept > 0 || MoveRefused > 0 || Occupied > 0 || Wet > 0 || GaveUp > 0 || Requeued > 0 || RejectedRock > 0 || KeptOnSolidTop > 0 || WMoved > 0 || WKept > 0 || WOccupied > 0 || (RwgRsPasses % 12) == 1) // bounded: a pass that changed state, else once a minute
     {
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("RESETTLE: pass=%d checked=%d moved=%d kept=%d deferred=%d maxDzCm=%d occupiedSkipped=%d wetNotMoved=%d movedOntoCliff=%d moveRefused=%d rejectedRock=%d rockRedealt=%d keptOnSolidTop=%d voidGaveUpNow=%d requeuedUnspawned=%d unflaggedEntries=%d wellGroupsChecked=%d wellGroupsRedealt=%d wellGroupsKept=%d wellGroupsDeferred=%d wellGroupsInUse=%d wellMaxDzCm=%d"),
             RwgRsPasses, Checked, Moved, Kept, Deferred, MaxDz, Occupied, Wet, MovedSteep, MoveRefused, RejectedRock, RockRedealt, KeptOnSolidTop, GaveUp, Requeued, Remaining,
-            WChecked, WMoved, WKept, WDeferred, WOccupied, WMaxDz);
+            WChecked, WMoved, WKept, WDeferred, WOccupied, WMaxDz); }
     }
 }
 // RwgResettleWells moved to NodeShuffleMapModeRock.cpp (RWG P2d: well resettle via the despawn path; 500-line limit).

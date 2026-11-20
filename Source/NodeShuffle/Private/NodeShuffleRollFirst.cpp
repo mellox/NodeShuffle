@@ -194,7 +194,7 @@ void ANodeShuffleSubsystem::RwgRollFirstEmitPass(const TArray<int32>& Cands, int
     StatusNoteRollFirst(AtK, Left, RwgRollFirstResources); // ns-status-1: copies for the status display (S4/S5); writes no roll-first state
     if (Left > 0)
     {
-        if (FNodeShuffleModule::AreDiagnosticsEnabled())
+        if (NsDiag(ENsDiag::Status))
         {
             UE_LOG(LogNodeShuffle, Display, TEXT("ROLLFIRST-PASS: pass=%d generation=%d wanted=%d withActor=%d prioSeaPending=%d seaCheckedFirst=%d prioCandidates=%d prioAttempted=%d prioSpawnedThisPass=%d prioFailedThisPass=%d setAside=%d resources=%d resourcesAtK=%d secondsSinceRoll=%.0f"),
                 RwgPcPasses, RwgRollFirstGeneration, RwgRollFirstList.Num(), With, SeaPend, SeaFirst, CandN, SpawnedN + FailedN, SpawnedN, FailedN, Aside,
@@ -243,7 +243,7 @@ void ANodeShuffleSubsystem::EmitScanCover(AFGResourceScanner* Scanner)
     // when the sea check is done and the sea latch reads unusable, whatever the entry's own flags; -1 when there is no such entry or the map is not RWG), and its queue
     // position is its index in the provisional candidate list as last compacted (-1 when not on it or the map is not RWG; this pass's
     // within-radius fresh entries are tried ahead of the list). clustersForResource counts this scanner's cluster list entries for the resource.
-    UE_LOG(LogNodeShuffle, Display, TEXT("SCANCOVER: resource=%s dealtActive=%d withActor=%d withoutActor=%d nearestWithoutActorM=%.0f nearestWithoutActorSeaDone=%d nearestWithoutActorQueuePos=%d clustersForResource=%d secondsSinceRoll=%.0f"),
+    if (NsDiag(ENsDiag::Status)) { UE_LOG(LogNodeShuffle, Display, TEXT("SCANCOVER: resource=%s dealtActive=%d withActor=%d withoutActor=%d nearestWithoutActorM=%.0f nearestWithoutActorSeaDone=%d nearestWithoutActorQueuePos=%d clustersForResource=%d secondsSinceRoll=%.0f"),
         Res ? *Res->GetName() : TEXT("<none>"), Dealt, With, Without, NearestI != INDEX_NONE ? NearestM : -1.0, SeaDone, QueuePos, ForRes,
-        RwgRollFirstSecondsSinceRoll());
+        RwgRollFirstSecondsSinceRoll()); }
 }

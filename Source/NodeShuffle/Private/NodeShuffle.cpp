@@ -597,6 +597,7 @@ using FNodeShuffleActorExtractorLoggedSet = TSet<FNodeShuffleActorExtractorKey>;
 
 void FNodeShuffleModule::StartupModule()
 {
+    NsDiagTopics::ReadOnce(); // ns-quietlog-1: Engine.ini topic switches, read once, before any module-start line
     UE_LOG(LogNodeShuffle, Log, TEXT("NodeShuffle module loaded"));
     // BUILD TAG. 2026-08-13: bumped for the COMBINED T71 + T72 build. NEITHER packet bumped it -- both
     // ran while the game was up and stopped at BUILD-PENDING -- so the tree was about to produce an

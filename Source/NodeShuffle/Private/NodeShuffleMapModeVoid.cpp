@@ -283,16 +283,16 @@ void ANodeShuffleSubsystem::RwgKillboxResettlePass()
         {
             ++Redealt;
             E.bRwgVoidChecked = false; // flag for re-deal: the re-deal pass re-checks the new spot under v3
-            UE_LOG(LogNodeShuffle, Display, TEXT("RESETTLE-KILLBOX-ENTRY: entry=%s actorAt=%s to=%s killboxTopZ=%.0f"),
-                *E.EntryGuid.ToString(), *From.ToCompactString(), *E.Location.ToCompactString(), Top);
+            if (NsDiag(ENsDiag::Void)) { UE_LOG(LogNodeShuffle, Display, TEXT("RESETTLE-KILLBOX-ENTRY: entry=%s actorAt=%s to=%s killboxTopZ=%.0f"),
+                *E.EntryGuid.ToString(), *From.ToCompactString(), *E.Location.ToCompactString(), Top); }
         }
         else { ++Refused; RwgKillboxRefused.Add(E.EntryGuid); }
     }
     for (const FNodeShuffleWellEntry& W : WellLayout) { WellCoresBelow += (W.bGroupPlaced && W.PlacedCoreLocation.Z < Top) ? 1 : 0; }
     if (Below > 0 || RwgKbPasses == 1 || (RwgKbPasses % 60) == 0)
     {
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Void)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("RESETTLE-KILLBOX: pass=%d killboxTopZ=%.0f liveChecked=%d below=%d redealt=%d refusedBuiltOn=%d refusedEarlier=%d cappedThisPass=%d settledNoActorBelow=%d placedWellCoresBelow=%d settleRefusedSession=%d perPassCap=%d"),
-            RwgKbPasses, Top, Live, Below, Redealt, Refused, RefusedEarlier, Capped, NoActorBelow, WellCoresBelow, RwgKbSettleRefused, NodeShuffleMapMode::RwgKillboxResettlePerPass);
+            RwgKbPasses, Top, Live, Below, Redealt, Refused, RefusedEarlier, Capped, NoActorBelow, WellCoresBelow, RwgKbSettleRefused, NodeShuffleMapMode::RwgKillboxResettlePerPass); }
     }
 }

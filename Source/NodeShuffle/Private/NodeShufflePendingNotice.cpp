@@ -227,10 +227,10 @@ void FNodeShuffleModule::BuildPendingNotice(const TArray<FNodeShufflePendingRaw>
 
     if (!bDetail)
     {
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Status)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("PENDINGNOTICE: %d pending entr(ies), UNCHANGED since the last pass -- per-extractor detail ")
             TEXT("suppressed (a sustained write failure re-runs this pass every tick; the detail is in the ")
-            TEXT("PENDINGNOTICE lines from the first pass that saw this set)."), OutEntries.Num());
+            TEXT("PENDINGNOTICE lines from the first pass that saw this set)."), OutEntries.Num()); }
         return;
     }
 
@@ -243,11 +243,11 @@ void FNodeShuffleModule::BuildPendingNotice(const TArray<FNodeShufflePendingRaw>
                 TEXT("message will show '%s', which may not be player-readable."),
                 *E.ExtractorPath, NameSourceLabel(E.NameSource), *E.BuildingName.ToString());
         }
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Status)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("PENDINGNOTICE: pending extractor='%s' name='%s' nameSource=%s resources=[%s] ")
             TEXT("extraResources=%d writeFailed=%d alreadyAllowed=%d"),
             *E.ExtractorPath, *E.BuildingName.ToString(), NameSourceLabel(E.NameSource),
-            *JoinResourceNames(E), E.ExtraResourceCount, E.bWriteFailed ? 1 : 0, E.bAlreadyAllowed ? 1 : 0);
+            *JoinResourceNames(E), E.ExtraResourceCount, E.bWriteFailed ? 1 : 0, E.bAlreadyAllowed ? 1 : 0); }
     }
 }
 
@@ -288,11 +288,11 @@ bool FNodeShuffleModule::EmitPendingNotice(UWorld* World, const TArray<FNodeShuf
     // Route diagnostics: the log must say which route ran and why the others did not. The alternatives
     // considered were a UMG push-notification widget and an ADA/UFGMessage codex entry -- BOTH need a
     // cooked .uasset and NodeShuffle has no Content/ tree, so neither is queried at runtime at all.
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Status)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("PENDINGNOTICE ROUTE: chatManager=%s netMode=%d entries=%d gameUI=<not-queried: needs a cooked ")
         TEXT("widget asset this mod has no Content/ tree for> -> chose CHAT (ladder: BroadcastChatMessage ")
         TEXT("-> AddChatMessageToReceived -> log-only)"),
-        Chat ? TEXT("valid") : TEXT("NULL"), (int32)World->GetNetMode(), Entries.Num());
+        Chat ? TEXT("valid") : TEXT("NULL"), (int32)World->GetNetMode(), Entries.Num()); }
 
     if (!Chat)
     {

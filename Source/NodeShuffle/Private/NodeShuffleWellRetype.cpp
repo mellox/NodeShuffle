@@ -57,8 +57,8 @@ bool ANodeShuffleSubsystem::RetypeWellMember(AFGResourceNodeBase* Member, UClass
     // ASSUMED, runtime-verify: that the mesh actor really does re-dress for the well mesh types. It runs
     // through engine code we cannot read, so it is a test step, not a conclusion (see the report).
     RebuildNodeNativeVisual(Member);
-    UE_LOG(LogNodeShuffle, Verbose, TEXT("WELLH1-WRITE core='%s' %s '%s': res '%s' -> '%s'"),
-        CoreName, MemberRole, *Member->GetName(), *Was, *WellShort(ResourceClass->GetPathName()));
+    if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Verbose, TEXT("WELLH1-WRITE core='%s' %s '%s': res '%s' -> '%s'"),
+        CoreName, MemberRole, *Member->GetName(), *Was, *WellShort(ResourceClass->GetPathName())); }
     ++WellMembersWrittenThisSession;
     return true;
 }
@@ -89,9 +89,9 @@ void ANodeShuffleSubsystem::ApplyWellRetype()
         if (!bWellNoRollLogged)
         {
             bWellNoRollLogged = true;
-            UE_LOG(LogNodeShuffle, Display,
+            if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
                 TEXT("WELLH1: no well roll is recorded in this save yet (bWellLayoutRolled=0) -- nothing to "
-                     "apply. Wells are dealt at ROLL time, so use 'Re-roll Layout' once on an existing save."));
+                     "apply. Wells are dealt at ROLL time, so use 'Re-roll Layout' once on an existing save.")); }
         }
         return;
     }
@@ -117,7 +117,7 @@ void ANodeShuffleSubsystem::ApplyWellRetype()
                 // good Original, and the two-way ternary mislabelled it "no original resource resolved
                 // at roll time" -- a diagnostic pointing at the wrong subsystem entirely, for a state
                 // only reachable when the deck/recipient guard has already fired.
-                UE_LOG(LogNodeShuffle, Display,
+                if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
                     TEXT("WELLH1-SKIP core='%s' reason=%s res='%s' -- left exactly as it stands."),
                     *WellShort(E.CorePath),
                     E.bPinned ? TEXT("PINNED (pressurizer/extractor already built on this well)")
@@ -125,7 +125,7 @@ void ANodeShuffleSubsystem::ApplyWellRetype()
                             ? TEXT("UNDEALT (no card reached this well -- see the deck/recipient mismatch warning at roll time)")
                             : TEXT("no original resource resolved at roll time")),
                     *WellShort(E.AssignedResourceClassPath.IsEmpty() ? E.OriginalResourceClassPath
-                                                                    : E.AssignedResourceClassPath));
+                                                                    : E.AssignedResourceClassPath)); }
             }
             continue;
         }
@@ -217,13 +217,13 @@ void ANodeShuffleSubsystem::ApplyWellRetype()
         // NOT expected afterwards; a repeat past pass 2 means an adopted handle went missing.
         if (!Pin.IsDecisive())
         {
-            UE_LOG(LogNodeShuffle, Display,
+            if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
                 TEXT("WELLH1-PIN-UNMEASURED core='%s' pass=%d resolvedAgainst=%s groupPlaced=%d "
                      "(tested %d core + %d/%d satellite actor(s)) -- MEASURED: no in-use signal on the "
                      "actors tested. NOT MEASURED: whether anything is built on this well, because the "
                      "population tested is not the one a player can build on. This pass writes anyway."),
                 *WellShort(E.CorePath), WellApplyPasses, WellPinSourceName(Pin.Source),
-                E.bGroupPlaced ? 1 : 0, Pin.CoresTested, Pin.SatellitesTested, Pin.SatellitesExpected);
+                E.bGroupPlaced ? 1 : 0, Pin.CoresTested, Pin.SatellitesTested, Pin.SatellitesExpected); }
         }
         const bool bAlreadyApplied = (Core->mResourceClassOverride.Get() == ResourceClass);
 
@@ -266,7 +266,7 @@ void ANodeShuffleSubsystem::ApplyWellRetype()
             int32 Disagree = 0;
             const FString GroupState = DescribeGroupState(Core, Disagree);
             if (Disagree > 0) { ++Mismatches; } // W2: the assert below is unreachable from here, so count it HERE
-            UE_LOG(LogNodeShuffle, Display,
+            if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
                 TEXT("WELLH1-PIN core='%s' reason=%s why='%s' firedOn='%s' resolvedAgainst=%s (tested %d core "
                      "+ %d/%d satellite actor(s), groupPlaced=%d) -- un-managed until the next roll (which "
                      "re-evaluates the pin from live state and may free it again). The core the pin was READ "
@@ -282,7 +282,7 @@ void ANodeShuffleSubsystem::ApplyWellRetype()
                 WellPinSourceName(Pin.Source), Pin.CoresTested, Pin.SatellitesTested, Pin.SatellitesExpected,
                 E.bGroupPlaced ? 1 : 0,
                 *PinCore->GetName(),
-                *WellShort(E.AssignedResourceClassPath), *GroupState);
+                *WellShort(E.AssignedResourceClassPath), *GroupState); }
             continue;
         }
 
@@ -334,7 +334,7 @@ void ANodeShuffleSubsystem::ApplyWellRetype()
             // originals, not on the well a player can see. Without this flag a reader takes res= for
             // the world's value on exactly the wells where it is not. The visible group's own measured
             // resource is reported by WELLH2-RETYPE / WELLH2-RETYPE-PIN in NodeShuffleWellSpawn.cpp.
-            UE_LOG(LogNodeShuffle, Display,
+            if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
                 TEXT("WELLH1 core='%s' res='%s' (was '%s') members=1core+%d/%dsat written=%d equal=%s "
                      "groupPlaced=%d (1 => written=/equal= describe the HIDDEN VANILLA originals only; "
                      "the relocated actors a player sees are reported by WELLH2-RETYPE)"),
@@ -344,7 +344,7 @@ void ANodeShuffleSubsystem::ApplyWellRetype()
                 // and printing a pass would be the "clean vs could-not-answer" conflation H0's own summary
                 // verdicts were rewritten three times to avoid.
                 !bComparable ? TEXT("n/a(no satellite streamed)") : (bEqual ? TEXT("1") : TEXT("0")),
-                E.bGroupPlaced ? 1 : 0);
+                E.bGroupPlaced ? 1 : 0); }
         }
     }
 
@@ -401,7 +401,7 @@ void ANodeShuffleSubsystem::ApplyWellRetype()
                 *It->GetName(), bOurs ? 1 : 0, bLevelPlaced ? 1 : 0, *Path);
             if (bOurs)
             {
-                UE_LOG(LogNodeShuffle, Display, TEXT("%s"), *UnknownMsg);
+                if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display, TEXT("%s"), *UnknownMsg); }
             }
             else
             {
@@ -431,10 +431,10 @@ void ANodeShuffleSubsystem::ApplyWellRetype()
     // MembersWritten is 0 and this pass prints nothing at all.
     if (MembersWritten > 0 || Mismatches > 0)
     {
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH1 pass: %d wells resolved (%d not streamed, %d skipped), satellites %d resolved / %d not "
                  "streamed, %d members written this pass (%d this session), %d resource-equality violations."),
             WellsResolved, WellsUnstreamed, WellsSkipped, SatsResolved, SatsMissing,
-            MembersWritten, WellMembersWrittenThisSession, Mismatches);
+            MembersWritten, WellMembersWrittenThisSession, Mismatches); }
     }
 }

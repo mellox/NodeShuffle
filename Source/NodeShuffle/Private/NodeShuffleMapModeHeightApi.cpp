@@ -330,8 +330,8 @@ namespace
         FMemory::Memcpy(&SplicedDisp, static_cast<const uint8*>(reinterpret_cast<const void*>(A.GetSpliced)) + 3, sizeof(SplicedDisp));
         const uint32 GMinDisp = A.GMin ? reinterpret_cast<const uint8*>(A.GMin)[4] : 0, GMaxDisp = A.GMax ? reinterpret_cast<const uint8*>(A.GMax)[4] : 0;
         const uint32 OutsideDisp = reinterpret_cast<const uint8*>(A.Outside)[12];
-        UE_LOG(LogNodeShuffle, Display, TEXT("RWGHEIGHTAPI: signature check mismatched='%s' matchedEntry='%s' optionalResolved=%d getFieldDisp=0x%X getSplicedDisp=0x%X gMinDisp=0x%X gMaxDisp=0x%X isOutsideWorldDisp=0x%X (empty list = every resolved export matched its mask; each Disp value is that export's wildcarded member-offset bytes read back, a displacement only while the export is absent from the list, 0 = optional export missing or dropped on a mismatch; each item is the export and the offset of its first differing pinned byte)"),
-            *SigBad, *A.Matched, A.Optional, FieldDisp, SplicedDisp, GMinDisp, GMaxDisp, OutsideDisp);
+        if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display, TEXT("RWGHEIGHTAPI: signature check mismatched='%s' matchedEntry='%s' optionalResolved=%d getFieldDisp=0x%X getSplicedDisp=0x%X gMinDisp=0x%X gMaxDisp=0x%X isOutsideWorldDisp=0x%X (empty list = every resolved export matched its mask; each Disp value is that export's wildcarded member-offset bytes read back, a displacement only while the export is absent from the list, 0 = optional export missing or dropped on a mismatch; each item is the export and the offset of its first differing pinned byte)"),
+            *SigBad, *A.Matched, A.Optional, FieldDisp, SplicedDisp, GMinDisp, GMaxDisp, OutsideDisp); }
         if (A.Gen == 0)
         {
             UE_LOG(LogNodeShuffle, Display, TEXT("RWGGENERATION: accepted=none surfaceFirstDiffA=%d surfaceFirstDiffB=%d; SurfaceHeightCm matched neither generation's mask, the required refusal follows"),
@@ -521,26 +521,26 @@ void ANodeShuffleSubsystem::RwgLogHeightApi(bool bFull)
     NodeShuffleRwgGate::TickNotice(GetWorld()); // RWG 0.1.12: drain the refusal / unlisted-verified notice; runs before the callsAllowed guard so a refused bind still posts
     if (bFull)
     {
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("RWGHEIGHTAPI: bind status=%s module='%s' uplugin='%s' semVer='%s' build=%d accepted='%s' matchedEntry='%s' requiredResolved=%d of 6 optionalResolved=%d of 2 missing='%s' generation=%s callsAllowed=%d"),
             *A.Status, *A.Module, *A.Uplugin, *A.SemVer, A.Build, *RwgAcceptedList(), *A.Matched,
-            A.Required, A.Optional, *A.Missing, RwgHapiGenLabel(A.Gen), A.bUsable ? 1 : 0);
+            A.Required, A.Optional, *A.Missing, RwgHapiGenLabel(A.Gen), A.bUsable ? 1 : 0); }
     }
     UWorld* World = GetWorld();
     APawn* Pawn = World ? NodeShuffleMapMode::FirstPlayerPawn(World) : nullptr;
     if (!A.bUsable || !Pawn)
     {
-        UE_LOG(LogNodeShuffle, Display, TEXT("RWGHEIGHTAPI: census skipped; callsAllowed=%d pawnFound=%d status=%s"),
-            A.bUsable ? 1 : 0, Pawn ? 1 : 0, *A.Status);
+        if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display, TEXT("RWGHEIGHTAPI: census skipped; callsAllowed=%d pawnFound=%d status=%s"),
+            A.bUsable ? 1 : 0, Pawn ? 1 : 0, *A.Status); }
         return;
     }
     void* Gen = A.Get(World);
-    if (!Gen) { UE_LOG(LogNodeShuffle, Display, TEXT("RWGHEIGHTAPI: unavailable; Get(World) returned null")); return; }
+    if (!Gen) { if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display, TEXT("RWGHEIGHTAPI: unavailable; Get(World) returned null")); } return; }
     const int32 SameGen = (Gen == static_cast<void*>(RwgGenerator.Get())) ? 1 : 0;
     FFieldPtr Field; // holds a strong reference for this call only; released at return, never cached
     A.GetField(Gen, &Field);
     const void* F = Field.Get();
-    if (!F) { UE_LOG(LogNodeShuffle, Display, TEXT("RWGHEIGHTAPI: unavailable; GetField returned an empty pointer sameGeneratorAsReflected=%d"), SameGen); return; }
+    if (!F) { if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display, TEXT("RWGHEIGHTAPI: unavailable; GetField returned an empty pointer sameGeneratorAsReflected=%d"), SameGen); } return; }
     const void* S = A.GetSpliced(F);
     // rwg-0-2-0-1 D4: on generation B no SurfaceHeightCm call (pawn, ring, edge) runs before the edge guard read its values.
     double EdgeH = NodeShuffleMapMode::RwgNaN(), EdgeG = NodeShuffleMapMode::RwgNaN();
@@ -549,16 +549,16 @@ void ANodeShuffleSubsystem::RwgLogHeightApi(bool bFull)
         if (!S)
         {
             // A null spliced world is a per-call condition (the plausibility branch below handles it on generation A); never a process-wide refusal.
-            UE_LOG(LogNodeShuffle, Display, TEXT("RWGHEIGHTAPI: census not run; splicedFound=0 generation=B; no edge-guard read and no SurfaceHeightCm call"));
+            if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display, TEXT("RWGHEIGHTAPI: census not run; splicedFound=0 generation=B; no edge-guard read and no SurfaceHeightCm call")); }
             return;
         }
         if (!RwgEdgeGuardRead(A, F, S, EdgeH, EdgeG))
         {
-            UE_LOG(LogNodeShuffle, Display, TEXT("RWGHEIGHTAPI: census not run; edgeGuardRead=0 generation=B splicedFound=%d status=%s"), S ? 1 : 0, *A.Status);
+            if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display, TEXT("RWGHEIGHTAPI: census not run; edgeGuardRead=0 generation=B splicedFound=%d status=%s"), S ? 1 : 0, *A.Status); }
             return;
         }
-        UE_LOG(LogNodeShuffle, Display, TEXT("RWGEDGEGUARD: cumulative finishedQueries=%lld outsideCalls=%lld rejectedByIsOutsideWorld=%lld rejectedByStripOnly=%lld (summed over ground queries on generation B since the process started)"),
-            A.EdgeQueries, A.EdgeOutsideCallsTotal, A.EdgeRejApiTotal, A.EdgeRejStripTotal);
+        if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display, TEXT("RWGEDGEGUARD: cumulative finishedQueries=%lld outsideCalls=%lld rejectedByIsOutsideWorld=%lld rejectedByStripOnly=%lld (summed over ground queries on generation B since the process started)"),
+            A.EdgeQueries, A.EdgeOutsideCallsTotal, A.EdgeRejApiTotal, A.EdgeRejStripTotal); }
     }
     const FVector P = Pawn->GetActorLocation();
     const double GMin = A.GMin ? A.GMin(F) : TNumericLimits<double>::Max();
@@ -570,9 +570,9 @@ void ANodeShuffleSubsystem::RwgLogHeightApi(bool bFull)
     const bool bPawnOk = FMath::IsFinite(PawnApiZ) && PawnApiZ > -200000.0 && PawnApiZ < 360000.0;
     if (!bRangeOk || !bPawnOk || !S)
     {
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("RWGHEIGHTAPI: plausibility failed; globalSurfaceCm=%.1f..%.1f pawnApiZ=%.1f pawnZ=%.0f splicedFound=%d sameGeneratorAsReflected=%d; batch not run"),
-            GMin, GMax, PawnApiZ, P.Z, S ? 1 : 0, SameGen);
+            GMin, GMax, PawnApiZ, P.Z, S ? 1 : 0, SameGen); }
         return;
     }
     const double Top = FMath::Max(static_cast<double>(RwgZMax) + 30000.0, A.GMax ? GMax + 10000.0 : -1.0e9);
@@ -620,9 +620,9 @@ void ANodeShuffleSubsystem::RwgLogHeightApi(bool bFull)
             if (bFull || (bDisagree && Listed < 16))
             {
                 ++Listed;
-                UE_LOG(LogNodeShuffle, Display,
+                if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display,
                     TEXT("RWGHEIGHTAPI point %d: x=%.0f y=%.0f traceZ=%.1f apiZ=%.1f dZ=%.1f hitClass='%s' hitComponent='%s' terrainMesh=%d waterLevelApi=%.1f inVolumeAtHit=%d"),
-                    AbsDz.Num(), X, Y, TraceZ, ApiZ, Dz, *HitClass, *HitComp, bTerrainMesh ? 1 : 0, WaterZ, bIn ? 1 : 0);
+                    AbsDz.Num(), X, Y, TraceZ, ApiZ, Dz, *HitClass, *HitComp, bTerrainMesh ? 1 : 0, WaterZ, bIn ? 1 : 0); }
             }
         }
     }
@@ -632,13 +632,13 @@ void ANodeShuffleSubsystem::RwgLogHeightApi(bool bFull)
     const auto Under50 = [](const TArray<double>& V) { int32 C = 0; for (double D : V) { C += D < 50.0 ? 1 : 0; } return V.Num() ? double(C) / V.Num() : 0.0; };
     const double Frac = Under50(AbsDz);
     const double TerrainFrac = Under50(TerrainAbsDz);
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("RWGHEIGHTAPI: census n=%d targetN=64 candidates=%d absDzUnder50Frac=%.3f absDzMedian=%.1f absDzP95=%.1f signedDzMedian=%.1f terrainMeshHitN=%d terrainMeshAbsDzUnder50Frac=%.3f terrainMeshAbsDzMedian=%.1f terrainMeshAbsDzP95=%.1f terrainMeshNAtLeast64AndUnder50FracAtLeast95=%d waterAboveHitInVolume=%d waterAboveHitNotInVolume=%d waterNotAboveHitInVolume=%d waterNotAboveHitNotInVolume=%d globalSurfaceCm=%.1f..%.1f traceWindowZ=%.0f..%.0f pawn=(%.0f,%.0f,%.0f) pawnApiZ=%.1f sameGeneratorAsReflected=%d apiUsPerCall=%.2f linesListed=%d"),
         AbsDz.Num(), Candidates, Frac, PctOf(AbsDz, 0.5), PctOf(AbsDz, 0.95), PctOf(SignedDz, 0.5),
         TerrainAbsDz.Num(), TerrainFrac, PctOf(TerrainAbsDz, 0.5), PctOf(TerrainAbsDz, 0.95),
         (TerrainAbsDz.Num() >= 64 && TerrainFrac >= 0.95) ? 1 : 0,
         WaterAboveIn, WaterAboveOut, WaterBelowIn, WaterBelowOut, GMin, GMax, Top, Bottom, P.X, P.Y, P.Z, PawnApiZ, SameGen,
-        ApiCalls > 0 ? ApiSec * 1.0e6 / ApiCalls : 0.0, Listed);
+        ApiCalls > 0 ? ApiSec * 1.0e6 / ApiCalls : 0.0, Listed); }
     if (!bFull) { return; }
     // IsOutsideWorld at 8 points 500 m past the map edge, plus the pawn as the inside control (a stub that
     // answers true everywhere fails the control).
@@ -655,10 +655,10 @@ void ANodeShuffleSubsystem::RwgLogHeightApi(bool bFull)
         OutsideTrue += bOut ? 1 : 0;
         Pts += FString::Printf(TEXT("%s%.0f,%.0f:%d,%.0f"), I ? TEXT("; ") : TEXT(""), Sx[I] * O, Sy[I] * O, bOut ? 1 : 0, A.Surface(F, Sx[I] * O, Sy[I] * O));
     }
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("RWGHEIGHTAPI: edge halfExtentCm=%.0f edgeSource=%s outsideTrue=%d of 8 pawnControlOutside=%d [%s]"),
         Half, WorldM > 0.0 ? TEXT("GenerationParams.WorldSizeMeters") : TEXT("researchConstant"), OutsideTrue,
-        A.Outside(F, P.X, P.Y) ? 1 : 0, *Pts);
+        A.Outside(F, P.X, P.Y) ? 1 : 0, *Pts); }
     // rwg-0-2-0-1 D5: generation B -- RWG's raw answers just inside / outside the strip's inner limit L on the four axes, plus a control two
     // grid cells inside, each against a line trace at the same XY (measurement only; gates nothing; traces hit only where terrain is resident).
     if (A.Gen == kRwgHapiGenB && FMath::IsFinite(EdgeH) && FMath::IsFinite(EdgeG))
@@ -683,8 +683,8 @@ void ANodeShuffleSubsystem::RwgLogHeightApi(bool bFull)
                     bHit ? StripHit.ImpactPoint.Z : NodeShuffleMapMode::RwgNaN());
             }
         }
-        UE_LOG(LogNodeShuffle, Display, TEXT("RWGEDGESTRIP-SAMPLE: stripInnerCm=%.1f points=12 traceHits=%d [%s] (each item: x,y:isOutsideWorld,stripOutside,apiZ,traceZ; nan traceZ = no hit in the trace window; per axis the offsets from stripInnerCm are minus two grid cells, minus 50 cm, plus 50 cm)"),
-            L, StripTraceHits, *StripPts);
+        if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display, TEXT("RWGEDGESTRIP-SAMPLE: stripInnerCm=%.1f points=12 traceHits=%d [%s] (each item: x,y:isOutsideWorld,stripOutside,apiZ,traceZ; nan traceZ = no hit in the trace window; per axis the offsets from stripInnerCm are minus two grid cells, minus 50 cm, plus 50 cm)"),
+            L, StripTraceHits, *StripPts); }
     }
 }
 
@@ -744,8 +744,8 @@ NodeShuffleMapMode::FRwgGroundQuery::~FRwgGroundQuery()
     if (EdgeRejectedByStripOnly > 0 && A.EdgeQueryLines < 200)
     {
         ++A.EdgeQueryLines;
-        UE_LOG(LogNodeShuffle, Display, TEXT("RWGEDGEGUARD: query outsideCalls=%d rejectedByIsOutsideWorld=%d rejectedByStripOnly=%d stripInnerCm=%.1f lineIndex=%d of 200 (printed only for a query whose strip test refused at least one point)"),
-            EdgeOutsideCalls, EdgeRejectedByApi, EdgeRejectedByStripOnly, StripInnerCm, A.EdgeQueryLines);
+        if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display, TEXT("RWGEDGEGUARD: query outsideCalls=%d rejectedByIsOutsideWorld=%d rejectedByStripOnly=%d stripInnerCm=%.1f lineIndex=%d of 200 (printed only for a query whose strip test refused at least one point)"),
+            EdgeOutsideCalls, EdgeRejectedByApi, EdgeRejectedByStripOnly, StripInnerCm, A.EdgeQueryLines); }
     }
 }
 

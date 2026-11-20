@@ -138,9 +138,9 @@ void ANodeShuffleSubsystem::RunSettledRestoreOnce(float SpawnRadiusCm, bool& bCh
     {
         if (++SkippedLines <= SettledRestoreSkippedLinesMax)
         {
-            UE_LOG(LogNodeShuffle, Display, TEXT("SETTLEDRESTORE-SKIPPED guid=%s res=%s at=%s skipTest=%s overlapNudges=%d settledOnTerrain=%d underground=%d cave=%d"),
+            if (NsDiag(ENsDiag::Spawn)) { UE_LOG(LogNodeShuffle, Display, TEXT("SETTLEDRESTORE-SKIPPED guid=%s res=%s at=%s skipTest=%s overlapNudges=%d settledOnTerrain=%d underground=%d cave=%d"),
                 *S.EntryGuid.ToString(), *FPackageName::ObjectPathToObjectName(S.AssignedResourceClassPath), *S.Location.ToCompactString(), Test,
-                static_cast<int32>(S.OverlapNudges), S.bRwgSettledOnTerrain ? 1 : 0, S.bUnderground ? 1 : 0, S.bRwgCave ? 1 : 0);
+                static_cast<int32>(S.OverlapNudges), S.bRwgSettledOnTerrain ? 1 : 0, S.bUnderground ? 1 : 0, S.bRwgCave ? 1 : 0); }
         }
         else { ++SkippedCut; }
     };

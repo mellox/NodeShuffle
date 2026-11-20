@@ -111,7 +111,7 @@ void ANodeShuffleSubsystem::RwgBuildWaterVolumeCache()
     {
         if (IsValid(*It)) { RwgWaterVolumes.Emplace(It->GetComponentsBoundingBox(true), TWeakObjectPtr<AFGWaterVolume>(*It)); }
     }
-    if (RwgWaterVolumes.Num() > 0) { UE_LOG(LogNodeShuffle, Display, TEXT("RWGWATERCACHE: built volumes=%d"), RwgWaterVolumes.Num()); }
+    if (RwgWaterVolumes.Num() > 0) { if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display, TEXT("RWGWATERCACHE: built volumes=%d"), RwgWaterVolumes.Num()); } }
 }
 
 bool ANodeShuffleSubsystem::RwgIsPointInWaterCached(const FVector& P) const
@@ -141,13 +141,13 @@ void ANodeShuffleSubsystem::RwgNoteWaterSample(const NodeShuffleMapMode::FRwgGro
     const double Wl = Q.WaterLevelZ(P.X, P.Y);
     if (bVolumeWet)
     {
-        UE_LOG(LogNodeShuffle, Display, TEXT("RWGWATERSAMPLE: caller=%s sample=%d x=%.0f y=%.0f surfaceZ=%.0f waterApiLevelSample=%.0f volumeTest=1 volumeBoxContains=%d"),
-            Caller, N, P.X, P.Y, P.Z, Wl, bAnyBox ? 1 : 0);
+        if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display, TEXT("RWGWATERSAMPLE: caller=%s sample=%d x=%.0f y=%.0f surfaceZ=%.0f waterApiLevelSample=%.0f volumeTest=1 volumeBoxContains=%d"),
+            Caller, N, P.X, P.Y, P.Z, Wl, bAnyBox ? 1 : 0); }
     }
     else
     {
-        UE_LOG(LogNodeShuffle, Display, TEXT("RWGDEALTBELOWZ0SAMPLE: caller=%s sample=%d x=%.0f y=%.0f surfaceZ=%.0f waterApiLevelSample=%.0f volumeTest=%d volumeBoxContains=%d"),
-            Caller, N, P.X, P.Y, P.Z, Wl, RwgIsPointInWaterCached(P) ? 1 : 0, bAnyBox ? 1 : 0);
+        if (NsDiag(ENsDiag::Roll)) { UE_LOG(LogNodeShuffle, Display, TEXT("RWGDEALTBELOWZ0SAMPLE: caller=%s sample=%d x=%.0f y=%.0f surfaceZ=%.0f waterApiLevelSample=%.0f volumeTest=%d volumeBoxContains=%d"),
+            Caller, N, P.X, P.Y, P.Z, Wl, RwgIsPointInWaterCached(P) ? 1 : 0, bAnyBox ? 1 : 0); }
     }
 }
 
@@ -294,8 +294,8 @@ bool ANodeShuffleSubsystem::TryRedealRwgEntry(FNodeShuffleEntry& Entry, float Sp
         bOutMoved = true;
     }
     ++RwgPcRedealApi;
-    UE_LOG(LogNodeShuffle, Verbose, TEXT("RWG-REDEAL: entry %s moved=%d salt=%d rejectedOutside=%d rejectedWater=%d waterApiDisagree=%d rejectedSlope=%d rejectedSpacing=%d"),
-        *Entry.EntryGuid.ToString(), bOutMoved ? 1 : 0, Salt, Outside, Water, Disagree, Slope, Spacing);
+    if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Verbose, TEXT("RWG-REDEAL: entry %s moved=%d salt=%d rejectedOutside=%d rejectedWater=%d waterApiDisagree=%d rejectedSlope=%d rejectedSpacing=%d"),
+        *Entry.EntryGuid.ToString(), bOutMoved ? 1 : 0, Salt, Outside, Water, Disagree, Slope, Spacing); }
     return true;
 }
 
@@ -358,8 +358,8 @@ bool ANodeShuffleSubsystem::RwgResolveAtSpawn(FNodeShuffleEntry& Entry, bool& bO
         if (RwgKbSettleSamples < 8)
         {
             ++RwgKbSettleSamples;
-            UE_LOG(LogNodeShuffle, Display, TEXT("RWGKILLBOXSETTLE: sample=%d entry=%s settledAt=%s apiSurfaceZ=%.0f killboxTopZ=%.0f; refused, redealt by the caller"),
-                RwgKbSettleSamples, *Entry.EntryGuid.ToString(), *Entry.Location.ToCompactString(), ApiZ1, RwgKillboxTopZ);
+            if (NsDiag(ENsDiag::Void)) { UE_LOG(LogNodeShuffle, Display, TEXT("RWGKILLBOXSETTLE: sample=%d entry=%s settledAt=%s apiSurfaceZ=%.0f killboxTopZ=%.0f; refused, redealt by the caller"),
+                RwgKbSettleSamples, *Entry.EntryGuid.ToString(), *Entry.Location.ToCompactString(), ApiZ1, RwgKillboxTopZ); }
         }
         Entry.bRwgOnSolidTop = false; bOutWaterNoLand = true;
         return false;

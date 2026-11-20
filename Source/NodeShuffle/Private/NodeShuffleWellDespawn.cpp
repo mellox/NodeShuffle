@@ -184,11 +184,11 @@ bool ANodeShuffleSubsystem::DespawnWellGroup(FNodeShuffleWellEntry& E, const TCH
 
     if (Destroyed > 0 || RefusedOccupied > 0)
     {
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH2-DESPAWN core='%s' (%s): destroyed %d relocated member(s), %d already gone, %d ")
             TEXT("REFUSED (occupied). Without this the old actors would stay live at the abandoned ")
             TEXT("coordinates while the entry moved on -- a duplicate well the audit cannot see."),
-            *WellShort(E.CorePath), Why, Destroyed, AlreadyGone, RefusedOccupied);
+            *WellShort(E.CorePath), Why, Destroyed, AlreadyGone, RefusedOccupied); }
     }
 
     if (RefusedOccupied > 0)

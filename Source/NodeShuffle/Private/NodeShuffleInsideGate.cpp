@@ -146,7 +146,7 @@ bool ANodeShuffleSubsystem::EvaluateInsideShadowGate(const FVector& At, const cl
         Subject ? Subject->GetName() : FString(TEXT("<none: no live actor was handed as the subject>")),
         /*bGateRefuses=*/false, /*Blocked=*/0, /*Total=*/0, /*Threshold=*/-1);
 
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Gates)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("INSIDEGATE-WOULDREFUSE %s at %s: the containment instrument reports every one of %d probed ")
         TEXT("direction(s) meeting solid geometry and %d escaping, with the furthest of those first ")
         TEXT("contacts at %.0f cm, so this centre met solid in every probed direction. Subject actor excluded from ")
@@ -163,7 +163,7 @@ bool ANodeShuffleSubsystem::EvaluateInsideShadowGate(const FVector& At, const cl
         Subject ? *Subject->GetName() : TEXT("<none>"),
         bWouldActuallyRefuse ? TEXT("IS BEING REFUSED") : TEXT("PROCEEDS"),
         bRefusalLive ? TEXT("LIVE") : TEXT("OFF (shadow)"),
-        bCaveFlagged ? 1 : 0, bAdoptedNotPlaced ? 1 : 0);
+        bCaveFlagged ? 1 : 0, bAdoptedNotPlaced ? 1 : 0); }
 
     return bWouldActuallyRefuse;
 }
@@ -190,7 +190,7 @@ void ANodeShuffleSubsystem::EmitInsideShadowGateCensus()
     if (Key != InsideGateCensusLastKey)
     {
         InsideGateCensusLastKey = Key;
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Gates)) { UE_LOG(LogNodeShuffle, Display,
             // ns-t54 cold review F3 -- NO VERDICT TOKEN IS REPRODUCED ON THIS LINE, IN ANY CASE. The
             // emitter's four tokens are TOTALLY INSIDE / AN ESCAPE WAS FOUND / RAY SOLID / RAY CLEAR
             // (NodeShuffleTotallyInsideLog.cpp:75,181). The reviewer's own replacement kept the words
@@ -215,7 +215,7 @@ void ANodeShuffleSubsystem::EmitInsideShadowGateCensus()
             InsideGateRefusedThisPass,
             IsInsideGateRefusalLive() ? TEXT("LIVE -- positives change placements") : TEXT("OFF -- shadow only"),
             InsideGateAdoptedThisPass, InsideGateQueriesThisPass, InsideGateOverlapsThisPass,
-            InsideGateCaveFlaggedThisPass);
+            InsideGateCaveFlaggedThisPass); }
     }
 
     InsideGateEvaluatedThisPass = 0;

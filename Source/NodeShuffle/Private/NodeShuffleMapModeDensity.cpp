@@ -100,8 +100,8 @@ void ANodeShuffleSubsystem::RwgEmitDensityCensus(const TCHAR* Trigger)
     const NodeShuffleMapMode::FRwgGroundQuery Q(GetWorld(), RwgGenerator.Get());
     if (!Q.IsUsable())
     {
-        UE_LOG(LogNodeShuffle, Display, TEXT("RWGDENSITY-SKIP: trigger=%s apiUsable=%d apiStatus='%s' layoutEntries=%d; no grid printed (the cell frame is the API half extent)"),
-            Trigger, Q.IsUsable() ? 1 : 0, *Q.Status(), Layout.Num());
+        if (NsDiag(ENsDiag::Roll)) { UE_LOG(LogNodeShuffle, Display, TEXT("RWGDENSITY-SKIP: trigger=%s apiUsable=%d apiStatus='%s' layoutEntries=%d; no grid printed (the cell frame is the API half extent)"),
+            Trigger, Q.IsUsable() ? 1 : 0, *Q.Status(), Layout.Num()); }
         return;
     }
     if (RwgWaterVolumes.Num() == 0) { RwgBuildWaterVolumeCache(); }
@@ -157,8 +157,8 @@ void ANodeShuffleSubsystem::RwgEmitDensityCensus(const TCHAR* Trigger)
             Pairs += FString::Printf(TEXT("%s%d/%d"), Cx == 0 ? TEXT("") : TEXT(" "), Active[I], Land[I]);
             if (Land[I] * 2 >= S * S) { Cells50.Add(Active[I]); Expected50Sum += ExpectedFull * Land[I] / (S * S); }
         }
-        UE_LOG(LogNodeShuffle, Display, TEXT("RWGDENSITY-ROW: trigger=%s row=%d yMinM=%.0f xMinM=%.0f cellM=%.0f landSamplesPerCell=%d activeSlashLand=%s"),
-            Trigger, Cy, (-H + Cy * Cell) / 100.0, -H / 100.0, Cell / 100.0, S * S, *Pairs);
+        if (NsDiag(ENsDiag::Roll)) { UE_LOG(LogNodeShuffle, Display, TEXT("RWGDENSITY-ROW: trigger=%s row=%d yMinM=%.0f xMinM=%.0f cellM=%.0f landSamplesPerCell=%d activeSlashLand=%s"),
+            Trigger, Cy, (-H + Cy * Cell) / 100.0, -H / 100.0, Cell / 100.0, S * S, *Pairs); }
     }
     Cells50.Sort();
     const int32 C50 = Cells50.Num();
@@ -197,8 +197,8 @@ void ANodeShuffleSubsystem::RwgEmitStuckCensus(const TArray<FVector>& Pawns, flo
     }
     Local.Sort([](const TPair<double, int32>& A, const TPair<double, int32>& B) { return A.Key < B.Key; });
     const int32 Lines = FMath::Min(Local.Num(), RwgStuckMaxEntryLines);
-    UE_LOG(LogNodeShuffle, Display, TEXT("RWGSTUCK: pass=%d threshold=%d attemptRadiusM=%.0f pawns=%d stuckInAttemptRadius=%d stuckTotalMap=%d trackedEntries=%d entryLinesPrinted=%d"),
-        RwgPcPasses, RwgStuckMinFailedAttempts, AttemptRadiusCm / 100.f, Pawns.Num(), StuckLocal, StuckMap, RwgStuckTracker.Num(), Lines);
+    if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display, TEXT("RWGSTUCK: pass=%d threshold=%d attemptRadiusM=%.0f pawns=%d stuckInAttemptRadius=%d stuckTotalMap=%d trackedEntries=%d entryLinesPrinted=%d"),
+        RwgPcPasses, RwgStuckMinFailedAttempts, AttemptRadiusCm / 100.f, Pawns.Num(), StuckLocal, StuckMap, RwgStuckTracker.Num(), Lines); }
     if (Lines == 0) { return; }
     const NodeShuffleMapMode::FRwgGroundQuery Q(GetWorld(), RwgGenerator.Get());
     const bool bQ = Q.IsUsable();
@@ -217,12 +217,12 @@ void ANodeShuffleSubsystem::RwgEmitStuckCensus(const TArray<FVector>& Pawns, flo
             RiseRun = 0.0;
             RwgApiSlopeTooSteep(Q, X, Y, RiseRun);
         }
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("RWGSTUCK-ENTRY: pass=%d entry=%s res=%s loc=%.0f/%.0f/%.0f distM=%.0f failedAttemptsAtLoc=%d lastAttemptCounters=%s settled=%d caveEntry=%d apiUsable=%d apiOutside=%d apiSurfaceZ=%.0f apiWater=%d volumeWater=%d rejectV3Bits=%d apiSlopeRiseRun=%.2f parkedThisSession=%d dormantThisSession=%d"),
             RwgPcPasses, *E.EntryGuid.ToString().Left(8), *RwgDensityShortPath(E.AssignedResourceClassPath), X, Y, E.Location.Z,
             FMath::Sqrt(Local[K].Key) / 100.0, T.Key, *T.Value, E.bRayCasted ? 1 : 0, E.bRwgCave ? 1 : 0, bQ ? 1 : 0, bQ ? (bOut ? 1 : 0) : -1, ApiZ,
             Bits < 0 ? -1 : ((Bits & 5) != 0 ? 1 : 0), Bits < 0 ? -1 : ((Bits & 2) != 0 ? 1 : 0), Bits, RiseRun,
-            SpawnParkedThisSession.Contains(E.EntryGuid) ? 1 : 0, DormantThisSession.Contains(E.EntryGuid) ? 1 : 0);
+            SpawnParkedThisSession.Contains(E.EntryGuid) ? 1 : 0, DormantThisSession.Contains(E.EntryGuid) ? 1 : 0); }
     }
 }
 

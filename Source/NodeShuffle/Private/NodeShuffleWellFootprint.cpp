@@ -295,12 +295,12 @@ void ANodeShuffleSubsystem::BuildWellNodeScanCache(const FVector& ScanCentre,
         if (FVector::DistSquared2D(Other->GetActorLocation(), ScanCentre) >= ScopeSq) { continue; }
         OutNodes.Add(Other);
     }
-    UE_LOG(LogNodeShuffle, Verbose,
+    if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Verbose,
         TEXT("WELLH2-NODESCAN centre=%s: walked %d AFGResourceNode actor(s) and kept %d within %.0f cm ")
         TEXT("in XY (the satellite draw's outer radius plus the node reject radius). This ran ONCE for ")
         TEXT("this group this pass; before ns-t27-perf the same walk ran inside every probe. Both ")
         TEXT("numbers were counted by this call; neither states why any node is or is not in the set."),
-        *ScanCentre.ToCompactString(), Walked, OutNodes.Num(), ScopeRadius);
+        *ScanCentre.ToCompactString(), Walked, OutNodes.Num(), ScopeRadius); }
 }
 
 // ------------------------------------------------------------------------------------------------

@@ -121,7 +121,7 @@ void ANodeShuffleSubsystem::RwgLogCollision(bool bEmitWater)
     APawn* Pawn = World ? NodeShuffleMapMode::FirstPlayerPawn(World) : nullptr;
     if (!Pawn)
     {
-        UE_LOG(LogNodeShuffle, Display, TEXT("RWGCOLLISION: no player pawn this pass; probes skipped"));
+        if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display, TEXT("RWGCOLLISION: no player pawn this pass; probes skipped")); }
         return;
     }
     // Two windows per probe: "wide" = strict originals' zMax+300 m down to zMin-300 m (the spec C2 candidate) and
@@ -171,9 +171,9 @@ void ANodeShuffleSubsystem::RwgLogCollision(bool bEmitWater)
             B > 0 ? TEXT("; ") : TEXT(""), BandMinM[B], BandMaxM[B], HitWide, HitToday,
             HitWide > 0 ? *FString::Printf(TEXT("%.0f..%.0f"), ZLo, ZHi) : TEXT("none"));
     }
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("RWGCOLLISION: pawn=(%.0f,%.0f,%.0f) wideWindowZ=%.0f..%.0f todayWindowZ=%.0f..%.0f probesPerBand=16 bands[%s] wideHitClasses[%s]"),
-        P.X, P.Y, P.Z, WideTop, WideBottom, TodayTop, TodayBottom, *Bands, *TopCounts(HitClasses, 5));
+        P.X, P.Y, P.Z, WideTop, WideBottom, TodayTop, TodayBottom, *Bands, *TopCounts(HitClasses, 5)); }
     if (!bEmitWater) { return; }
 
     int32 Volumes = 0;
@@ -184,9 +184,9 @@ void ANodeShuffleSubsystem::RwgLogCollision(bool bEmitWater)
         const FString Name = It->GetClass()->GetName();
         if (Name.Contains(TEXT("Water")) || Name.Contains(TEXT("Ocean"))) { WaterClasses.FindOrAdd(Name)++; }
     }
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("RWGWATER: waterVolumeActors=%d waterOrOceanClassesDistinct=%d [%s] ringWideHits=%d ringHitsInWaterVolume=%d ringHitsBelowZ0=%d"),
-        Volumes, WaterClasses.Num(), *TopCounts(WaterClasses, 15), RingWide, RingInVolume, RingBelowZ0);
+        Volumes, WaterClasses.Num(), *TopCounts(WaterClasses, 15), RingWide, RingInVolume, RingBelowZ0); }
 }
 
 void ANodeShuffleSubsystem::RwgLogWater2()
@@ -195,7 +195,7 @@ void ANodeShuffleSubsystem::RwgLogWater2()
     // largest XY bounds area: the predicate is size, so the line says largest, not sea.
     UWorld* World = GetWorld();
     APawn* Pawn = World ? NodeShuffleMapMode::FirstPlayerPawn(World) : nullptr;
-    if (!Pawn) { UE_LOG(LogNodeShuffle, Display, TEXT("RWGWATER2: no player pawn this pass; probes skipped")); return; }
+    if (!Pawn) { if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display, TEXT("RWGWATER2: no player pawn this pass; probes skipped")); } return; }
     int32 Volumes = 0;
     const AFGWaterVolume* Largest = nullptr;
     double LargestArea = -1.0;
@@ -267,14 +267,14 @@ void ANodeShuffleSubsystem::RwgLogWater2()
             PhysMats.FindOrAdd(PM ? PM->GetName() : FString(TEXT("<none>")))++;
         }
     }
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("RWGWATER2: pawn=(%.0f,%.0f,%.0f) volumes=%d largestVolume='%s' largestBoundsZ=%.0f..%.0f largestVolumeKm2=%.1f ringProbes=%d ringHits=%d inVolume=%d belowLargestTopNotInVolume=%d waterNamedHits=%d waterNamedHitZ=%s waterNamedHitLabels[%s] rwgWaterClassActors=%d rwgWaterClasses[%s] physMats[%s] waterTestUsPerProbe=%.2f"),
         P.X, P.Y, P.Z, Volumes, Largest ? *Largest->GetName() : TEXT("<none>"),
         LOrigin.Z - LExtent.Z, LargestTop, LargestArea > 0.0 ? LargestArea / 1.0e10 : 0.0,
         Probes, Hits, InVolume, BelowTopNotIn, WaterNamed,
         WaterNamed > 0 ? *FString::Printf(TEXT("%.0f..%.0f"), WZLo, WZHi) : TEXT("none"),
         *TopCounts(WaterNamedLabels, 3), RwgWaterActors, *TopCounts(RwgWaterClasses, 5), *TopCounts(PhysMats, 5),
-        Hits > 0 ? WaterTestSec * 1.0e6 / Hits : 0.0);
+        Hits > 0 ? WaterTestSec * 1.0e6 / Hits : 0.0); }
 }
 
 void ANodeShuffleSubsystem::RwgLogRock(bool bPerNode)
@@ -347,16 +347,16 @@ void ANodeShuffleSubsystem::RwgLogRock(bool bPerNode)
         if (!LinkedActor && OwnMeshes == 0 && MeshActorHere == 0 && InstRockHere == 0) { ++None; }
         if (bPerNode)
         {
-            UE_LOG(LogNodeShuffle, Display,
+            if (NsDiag(ENsDiag::Rocks)) { UE_LOG(LogNodeShuffle, Display,
                 TEXT("RWGROCK2 node %d of %d: kind=%s class='%s' distFromPawnM=%.0f linkedMeshActor='%s' ownMeshComponents=%d overlapsWithin8m=%d nodeMeshActorsWithin8m=%d instancedRockMeshWithin8m=%d [%s]"),
                 I + 1, Nodes.Num(), I < NStrict ? TEXT("strict") : TEXT("deposit"), *N->GetClass()->GetName(),
                 FVector::Dist(N->GetActorLocation(), From) / 100.0,
                 LinkedActor ? *LinkedActor->GetClass()->GetName() : TEXT("<unresolved or unset>"),
-                OwnMeshes, Over.Num(), MeshActorHere, InstRockHere, *List);
+                OwnMeshes, Over.Num(), MeshActorHere, InstRockHere, *List); }
         }
     }
     int32 StrictCachePaired = 0; for (int32 I = 0; I < NStrict; ++I) { if (FindMeshActorForNode(Strict[I])) { ++StrictCachePaired; } }
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Rocks)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("RWGROCK2: sampled=%d strictSampled=%d depositsSampled=%d linked=%d own=%d nearMeshActor=%d nearInstancedRockMesh=%d none=%d strictCachePaired=%d (nearMeshActor counts 8 m overlap-query hits; a mesh actor NodeShuffle hid has its actor collision disabled)"),
-        Nodes.Num(), NStrict, Nodes.Num() - NStrict, Linked, Own, NearMeshActor, NearInstRock, None, StrictCachePaired);
+        Nodes.Num(), NStrict, Nodes.Num() - NStrict, Linked, Own, NearMeshActor, NearInstRock, None, StrictCachePaired); }
 }

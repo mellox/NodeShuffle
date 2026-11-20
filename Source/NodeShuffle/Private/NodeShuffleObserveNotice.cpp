@@ -105,17 +105,17 @@ bool FNodeShuffleModule::PostChatNotice(UWorld* World, const FString& Body, cons
         if (PcIt) { Instigator = PcIt->Get(); }
     }
     Chat->BroadcastChatMessage(Msg, Instigator);
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Status)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("CHATNOTICE[%s]: EMITTED via AFGChatManager::BroadcastChatMessage (type=%d sender='NODE SHUFFLE' bodyChars=%d instigatorRequested=%d instigatorPassed=%d netMode=%d)"),
         SourceTag, (int32)EFGChatMessageType::CMT_CustomMessage, Body.Len(),
-        bPassFirstPlayerAsInstigator ? 1 : 0, Instigator ? 1 : 0, (int32)World->GetNetMode());
+        bPassFirstPlayerAsInstigator ? 1 : 0, Instigator ? 1 : 0, (int32)World->GetNetMode()); }
     // ASSUMED: a NetMulticast RPC executes locally in Standalone, so the host sees this without a
     // separate local echo. If in-game testing shows it does not, add AddChatMessageToReceived(Msg)
     // HERE -- this comment names the exact line so the fix needs no re-investigation.
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Status)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("CHATNOTICE[%s] ROUTE: BroadcastChatMessage taken; local echo NOT separately added ")
         TEXT("(multicast is expected to execute locally -- if it does not, add AddChatMessageToReceived here)."),
-        SourceTag);
+        SourceTag); }
     return true;
 }
 
@@ -145,13 +145,13 @@ void FNodeShuffleModule::NoteUnlistedForeignResourceForNotice(const FString& Res
     New.bLabelCarriesMount = bLabelCarriesMount; // T67 alt E
     // Arity hand-counted: 5 format specifiers, 5 arguments. The parse flag is printed as the caller
     // measured it; this line does not say why a parse failed, only which value arrived.
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Status)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("T61NOTICE: queued resource '%s' (label '%s', mount-and-name parse succeeded %d) -- it had ")
         TEXT("no row in the protection list and one was just added. Queue now holds %d item(s); %d ")
         TEXT("already announced this session."),
         *ResourceClassPath, *DisplayName, bLabelCarriesMount ? 1 : 0,
         GNodeShuffleForeignNoticeQueue.Num(),
-        GNodeShuffleForeignNoticeAnnounced.Num());
+        GNodeShuffleForeignNoticeAnnounced.Num()); }
 }
 
 namespace
@@ -300,11 +300,11 @@ void FNodeShuffleModule::TickForeignNoticeEmitter(UWorld* World, bool bNoticesEn
     // ever does. Delete both if no opt-out is wanted by 1.5.0.
     if (!bNoticesEnabled)
     {
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Status)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("T61NOTICE: decision=SUPPRESSED(config-off) -- 'Show Compatibility Notices In Chat' is ")
             TEXT("off; %d queued resource(s) dropped. The rows are still in the settings list and the ")
             TEXT("T60 log lines above still name them."),
-            GNodeShuffleForeignNoticeQueue.Num());
+            GNodeShuffleForeignNoticeQueue.Num()); }
         GNodeShuffleForeignNoticeQueue.Reset();
         GNodeShuffleForeignNoticeGateTicks = -1;
         GNodeShuffleForeignNoticeEmitAttempts = 0;
@@ -330,10 +330,10 @@ void FNodeShuffleModule::TickForeignNoticeEmitter(UWorld* World, bool bNoticesEn
         // run that prints this line is telling you one of those two invariants has been broken by a
         // later edit -- which is worth more than the four lines it costs. docs/DIAGNOSTICS.md says the
         // same, so a reader does not go looking for the run that produces it.
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Status)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("T61NOTICE: decision=SUPPRESSED(duplicate) -- %d queued, 0 of them unannounced this ")
             TEXT("session. NOTE: unreachable by construction in this build; seeing this line means the ")
-            TEXT("queue/announced-set invariant has been broken."), GNodeShuffleForeignNoticeQueue.Num());
+            TEXT("queue/announced-set invariant has been broken."), GNodeShuffleForeignNoticeQueue.Num()); }
         GNodeShuffleForeignNoticeQueue.Reset();
         GNodeShuffleForeignNoticeGateTicks = -1;
         GNodeShuffleForeignNoticeEmitAttempts = 0;
@@ -344,29 +344,29 @@ void FNodeShuffleModule::TickForeignNoticeEmitter(UWorld* World, bool bNoticesEn
     const APawn* Pawn = PC ? PC->GetPawn() : nullptr;
     if (!PC || !Pawn)
     {
-        UE_LOG(LogNodeShuffle, Verbose,
+        if (NsDiag(ENsDiag::Status)) { UE_LOG(LogNodeShuffle, Verbose,
             TEXT("T61NOTICE: decision=SUPPRESSED(no-local-player) pc=%s pawn=%s -- holding %d item(s)"),
             PC ? TEXT("valid") : TEXT("null"), Pawn ? TEXT("valid") : TEXT("null"),
-            GNodeShuffleForeignNoticeQueue.Num());
+            GNodeShuffleForeignNoticeQueue.Num()); }
         return;
     }
 
     if (GNodeShuffleForeignNoticeGateTicks < 0)
     {
         GNodeShuffleForeignNoticeGateTicks = 0;
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Status)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("T61NOTICE: player spawned; holding %d item(s) for ONE more tick before posting to chat ")
             TEXT("(the message reaches chat history regardless -- this only protects the toast)."),
-            GNodeShuffleForeignNoticeQueue.Num());
+            GNodeShuffleForeignNoticeQueue.Num()); }
         return;
     }
 
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Status)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("T61NOTICE: decision=EMIT (%d queued, %d unannounced) observing %d foreignProtectActing %d ")
         TEXT("attempt %d of %d"),
         GNodeShuffleForeignNoticeQueue.Num(), Unannounced.Num(),
         IsVetoObservingOnlyThisWorld() ? 1 : 0, IsForeignProtectionActingThisWorld() ? 1 : 0,
-        GNodeShuffleForeignNoticeEmitAttempts + 1, MaxNoticeEmitAttempts);
+        GNodeShuffleForeignNoticeEmitAttempts + 1, MaxNoticeEmitAttempts); }
 
     if (PostChatNotice(World, BuildForeignNoticeBody(Unannounced), TEXT("T61")))
     {

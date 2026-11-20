@@ -101,12 +101,12 @@ void ANodeShuffleSubsystem::RollWellLayout(int32 Seed, bool bIsReroll)
     CollectWellCensus(GetWorld(), Census);
     int32 CensusSatellites = 0;
     for (const FNodeShuffleWellRecord& W : Census.Wells) { CensusSatellites += W.Members.Num(); }
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("WELLH1-ROLL: census saw %d wells / %d satellites (iteratorCores=%d adoptedCores=%d invalidCores=%d "
              "orphanSats=%d) -- compare with NodeShuffle.DumpWells. Wells NOT seen here keep their previous "
              "assignment (or stay vanilla) -- H1 never fails to a broken well, only to an untouched one."),
         Census.Wells.Num(), CensusSatellites, Census.IteratorCores, Census.AdoptedCores,
-        Census.InvalidCoresSkipped, Census.OrphanSatellites.Num());
+        Census.InvalidCoresSkipped, Census.OrphanSatellites.Num()); }
     // RWG P4c (2026-10-18): off vanilla, a claimed well the engine links left short gets its members from its bound claim paths.
     if (GetMapMode() != ENodeShuffleMapMode::Vanilla) { RwgFillWellMembersFromClaims(Census, TEXT("layout")); }
     // ns-review-h2 F1: the exclusion has to be VISIBLE, not merely correct -- a silent filter is
@@ -263,12 +263,12 @@ void ANodeShuffleSubsystem::RollWellLayout(int32 Seed, bool bIsReroll)
 
     if (SkippedOurSpawned > 0)
     {
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH1-ROLL: skippedOurSpawned=%d -- %d live fracking core(s) in the census are wells H2 ")
             TEXT("RELOCATED (NodeShuffle-managed spawns), excluded from the deck and from re-enrolment. ")
             TEXT("Without this they would contribute a card AND receive one, contaminating the well-only ")
             TEXT("resource conservation and re-relocating our own wells once per re-roll (ns-review-h2 F1)."),
-            SkippedOurSpawned, SkippedOurSpawned);
+            SkippedOurSpawned, SkippedOurSpawned); }
     }
 
     // 3. DEAL. A DECK PERMUTATION of the wells' own resources, not an independent per-well draw. This
@@ -446,11 +446,11 @@ void ANodeShuffleSubsystem::RollWellLayout(int32 Seed, bool bIsReroll)
                 Pin->FiredActorName.IsEmpty() ? TEXT("<none>") : *Pin->FiredActorName,
                 Pin->IsDecisive() ? 1 : 0);
         }
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH1-ROLL well #%d core='%s' sats=%d res '%s' -> '%s' pinned=%d managed=%d %s corePath='%s'"),
             WellIndex, *WellShort(E.CorePath), E.Satellites.Num(), *WellShort(E.OriginalResourceClassPath),
             *WellShort(E.AssignedResourceClassPath), E.bPinned ? 1 : 0, E.bManaged ? 1 : 0, *PinDetail,
-            *E.CorePath);
+            *E.CorePath); }
     }
 
     // CONSERVATION CHECK -- WORLD TOTALS, NOT THE DECK (ns-review-h1 F3).
@@ -487,11 +487,11 @@ void ANodeShuffleSubsystem::RollWellLayout(int32 Seed, bool bIsReroll)
         const int32 Before = WorldBefore.FindRef(Key);
         const int32 After = WorldAfter.FindRef(Key);
         if (After != Before) { ++ConservationBreaks; }
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH1-ROLL pool '%s': world %d -> %d wells (%d shuffled + %d pinned)%s"),
             *WellShort(Key), Before, After, ShuffledHeld.FindRef(Key), PinnedHeld.FindRef(Key),
             After == Before ? TEXT("")
-                            : TEXT("  <<< WORLD TOTAL CHANGED -- a well resource was created or destroyed, this is a BUG"));
+                            : TEXT("  <<< WORLD TOTAL CHANGED -- a well resource was created or destroyed, this is a BUG")); }
     }
     if (ConservationBreaks > 0 || UnmatchedTakes > 0)
     {
@@ -509,7 +509,7 @@ void ANodeShuffleSubsystem::RollWellLayout(int32 Seed, bool bIsReroll)
     // undealt tail entry were one figure, and `0 pinned/unresolved` read as "nobody has built on a well"
     // when it was in fact "the pin question was never answerable for the 17 relocated wells". Four
     // disjoint counts now, and they sum to the well total by construction.
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("WELLH1-ROLL: %s complete -- %d wells = %d managed (dealt a card) + %d PINNED (bPinned set "
              "-- see the per-well pinSrc for whether THIS roll measured it -- and "
              "holding an authored resource) + %d with no authored resource (pinned or not) + %d undealt "
@@ -522,5 +522,5 @@ void ANodeShuffleSubsystem::RollWellLayout(int32 Seed, bool bIsReroll)
              "Seed %d (well stream %d)."),
         bIsReroll ? TEXT("re-roll") : TEXT("initial roll"), WellLayout.Num(), DealCount, PinnedTakes.Num(),
         NoAuthoredResource, Recipients.Num() - DealCount, NewlyDiscovered, Changed,
-        PinnedViaSpawned, PinnedViaOriginal, PinnedCarried, RelocatedFallback, Seed, Seed ^ 0x57454C4C);
+        PinnedViaSpawned, PinnedViaOriginal, PinnedCarried, RelocatedFallback, Seed, Seed ^ 0x57454C4C); }
 }

@@ -351,7 +351,7 @@ void ANodeShuffleSubsystem::AdoptRestoredWellGroups()
     // back what we placed" needs a settled world, and the only place that exists is the audit -- which
     // runs on the settled pass and again on a slow cadence, and now owns the verdict (see the NoteCore
     // block at the end of AuditWellGroupLinks). So this line states what it saw and stops.
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("WELLH2-ADOPT (load-time snapshot, NOT a verdict -- almost nothing has streamed this early; ")
         TEXT("the settled/cadence WELLH2-AUDIT owns the pass/fail call): %d/%d relocated well core(s) and ")
         TEXT("%d/%d captured satellite(s) re-matched by location (%d runtime cores / %d runtime satellites ")
@@ -361,6 +361,6 @@ void ANodeShuffleSubsystem::AdoptRestoredWellGroups()
         TEXT("here (and lazily, every pass, as more stream in) is the only thing standing between a ")
         TEXT("relocated well and a silent death."),
         CoresAdopted, ExpectedGroups, SatsAdopted, ExpectedSats, RuntimeCoresSeen, RuntimeSatsSeen,
-        LinksRepaired, LinksAlreadyGood, CoresMissing, SatsMissing);
+        LinksRepaired, LinksAlreadyGood, CoresMissing, SatsMissing); }
 }
 

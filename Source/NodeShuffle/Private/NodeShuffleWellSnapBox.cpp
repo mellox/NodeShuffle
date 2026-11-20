@@ -79,7 +79,7 @@ void ANodeShuffleSubsystem::ResetWellSnapBoxDiagForWorld(const UWorld* World)
     SnapBoxLogged.Reset();
     // DELIBERATELY UNGATED, unlike the NARROWED/WIDENED/BYSTANDER lines: runtime step 5 greps for this
     // line to prove the world reset fired, and it emits at most once per UWorld change.
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("WELLH2C-SNAPBOX RESET: the T3 snapshot now belongs to a different UWorld ('%s'), so it has ")
         TEXT("been dropped -- it held %d node location(s) taken on pass %d and %d deduped log key(s). ")
         TEXT("Until RebuildWellMeshIndex runs again in this world, every WELLH2C-SNAPBOX line will read ")
@@ -88,7 +88,7 @@ void ANodeShuffleSubsystem::ResetWellSnapBoxDiagForWorld(const UWorld* World)
         TEXT("first use in this process -- the first call of a session always takes this branch because ")
         TEXT("the stored pointer starts null). ns-t7-split added this; before it, a second save load in ")
         TEXT("one process printed a cross-world distance and a NEGATIVE snapshot age."),
-        World ? *World->GetName() : TEXT("<null>"), PrevNodes, PrevPass, PrevLogged);
+        World ? *World->GetName() : TEXT("<null>"), PrevNodes, PrevPass, PrevLogged); }
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -295,7 +295,7 @@ void ANodeShuffleSubsystem::EnsureWellMemberSnapBox(AActor* Actor)
     {
         if (bSayIt)
         {
-            UE_LOG(LogNodeShuffle, Display,
+            if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
                 TEXT("WELLH2C-SNAPBOX actor='%s' class='%s' pieces=%d reach=(xy=%.0f z=%.0f): NO-OP -- the ")
                 TEXT("member's own mBoxComponent '%s' extent=%s ALREADY covers every piece, so nothing was ")
                 TEXT("created and mBoxComponent was NOT re-pointed. If the snap still fails, the collider is ")
@@ -324,7 +324,7 @@ void ANodeShuffleSubsystem::EnsureWellMemberSnapBox(AActor* Actor)
                 *Existing->GetName(), *ExistingExtent.ToCompactString(),
                 *FinalExtent.ToCompactString(), NearestNonWellCm, NearestDX, NearestDY, NearestDZ,
                 BystanderCount, HiddenExcluded, BystanderFromPass, SnapBoxCurrentAuditPass,
-                SnapBoxCurrentAuditPass - BystanderFromPass, bProvableOverlap);
+                SnapBoxCurrentAuditPass - BystanderFromPass, bProvableOverlap); }
         }
         return;
     }
@@ -367,7 +367,7 @@ void ANodeShuffleSubsystem::EnsureWellMemberSnapBox(AActor* Actor)
 
     if (bSayIt)
     {
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH2C-SNAPBOX actor='%s' class='%s' pieces=%d reach=(xy=%.0f z=%.0f) clamped=%d: ")
             TEXT("%s 'NodeShuffleWellUseBox_Rt' profile='Resource' extent=%s; mBoxComponent re-pointed ")
             TEXT("'%s' extent=%s -> ours. This is what an off-centre hit on a NodeShuffleWellMesh_* piece ")
@@ -398,6 +398,6 @@ void ANodeShuffleSubsystem::EnsureWellMemberSnapBox(AActor* Actor)
             *PrevName, *ExistingExtent.ToCompactString(),
             *FinalExtent.ToCompactString(), NearestNonWellCm, NearestDX, NearestDY, NearestDZ,
             BystanderCount, HiddenExcluded, BystanderFromPass, SnapBoxCurrentAuditPass,
-            SnapBoxCurrentAuditPass - BystanderFromPass, bProvableOverlap);
+            SnapBoxCurrentAuditPass - BystanderFromPass, bProvableOverlap); }
     }
 }

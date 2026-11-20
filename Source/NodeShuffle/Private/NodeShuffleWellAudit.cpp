@@ -300,7 +300,7 @@ ANodeShuffleSubsystem::AuditOneWellGroup(const FNodeShuffleWellEntry& E, const T
                   TEXT("signal on this group, which is the same predicate that declines the retype");
     }
 
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
         // ns-t27-corefirst: coreYaw= was yaw= and read E.GroupYawDeg, which T27 pins to 0.0 for every
         // group it places. It now reports the spawned core's own yaw, which is what a reader auditing
         // a placed well was always looking for.
@@ -315,7 +315,7 @@ ANodeShuffleSubsystem::AuditOneWellGroup(const FNodeShuffleWellEntry& E, const T
         ResDisagree, ResTested, *ResDisagreeOn, E.PlacedCoreRotation.Yaw,
         Expected, SpawnedCount, RegisteredCount, ArrayLive, ArrayRaw, ArrayStale, Uncaptured,
         MaxDrift, *DriftWho, FlagDisagreements, *E.PlacedCoreLocation.ToCompactString(),
-        Verdict);
+        Verdict); }
 
     // The distinct greppable tokens, each on its own line so they survive any rewording of the verdict.
     if (bScattered)
@@ -371,7 +371,7 @@ ANodeShuffleSubsystem::AuditOneWellGroup(const FNodeShuffleWellEntry& E, const T
     }
     if (bResourcePinned)
     {
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("WELL [%s] core=%s RESOURCE PINNED BY USE (this DISAGREEMENT is not a fault; this line ")
             TEXT("says nothing about the group's overall verdict -- read the WELL [ line above for that): ")
             TEXT("%d of %d live spawned ")
@@ -387,7 +387,7 @@ ANodeShuffleSubsystem::AuditOneWellGroup(const FNodeShuffleWellEntry& E, const T
             *WellShort(E.AssignedResourceClassPath), *WellShort(WellPathOf(CoreHolds)), *ResDisagreeOn,
             WellPinSourceName(ResPin.Source), ResPin.CoresTested, ResPin.SatellitesTested,
             ResPin.SatellitesExpected, ResPin.CoreWhy, ResPin.SatelliteWhy,
-            ResPin.FiredActorName.IsEmpty() ? TEXT("<none>") : *ResPin.FiredActorName);
+            ResPin.FiredActorName.IsEmpty() ? TEXT("<none>") : *ResPin.FiredActorName); }
     }
     if (bResourceUnknown)
     {
@@ -452,7 +452,7 @@ void ANodeShuffleSubsystem::AuditWellGroupLinks(const TCHAR* Phase)
 
     if (Groups > 0)
     {
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH2-AUDIT [%s]: %d relocated group(s) -- %d fully linked (this total is THE GATE ")
             TEXT("VERDICT: fully linked AND not scattered AND not short by design AND no unexplained ")
             TEXT("resource mismatch -- it is not a link-only count), %d not OK. The not-OK breakdown is ")
@@ -475,7 +475,7 @@ void ANodeShuffleSubsystem::AuditWellGroupLinks(const TCHAR* Phase)
             TEXT("Every number here is a total of the per-group verdicts above; this sweep derives none ")
             TEXT("of them."),
             Phase, Groups, Healthy, Broken, NoCore, Scattered, Inflated, ResMismatch, ShortByDesign, ShortOrUnlinked,
-            ResPinned, ResPinnedAndHealthy, ResUnknown);
+            ResPinned, ResPinnedAndHealthy, ResUnknown); }
     }
 
     // ns-review-h3 H2: THE ADOPTION VERDICT BELONGS HERE, NOT IN AdoptRestoredWellGroups.

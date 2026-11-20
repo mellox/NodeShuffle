@@ -194,8 +194,8 @@ void ANodeShuffleSubsystem::RwgSeaRedealPass()
         if (!bRwgSeaPassSkipLogged && (bRwgSeaCheckDone || !Q.IsUsable()))
         {
             bRwgSeaPassSkipLogged = true;
-            UE_LOG(LogNodeShuffle, Display, TEXT("RWGSEAREDEAL: skipped; queryUsable=%d seaUsable=%d seaBind=%s; no entry is flagged, so a session with a usable grade re-deals them"),
-                Q.IsUsable() ? 1 : 0, bRwgSeaUsable ? 1 : 0, *NodeShuffleMapMode::RwgSeaBindStatus());
+            if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display, TEXT("RWGSEAREDEAL: skipped; queryUsable=%d seaUsable=%d seaBind=%s; no entry is flagged, so a session with a usable grade re-deals them"),
+                Q.IsUsable() ? 1 : 0, bRwgSeaUsable ? 1 : 0, *NodeShuffleMapMode::RwgSeaBindStatus()); }
         }
         return;
     }
@@ -214,7 +214,7 @@ void ANodeShuffleSubsystem::RwgSeaRedealPass()
     int32 WellsChecked = 0, WellsRedealt = 0;
     int32 PlacedWet = 0;
     int32 VoidN = 0, KillboxN = 0; // P2f: spots rejected by the void term / the killbox floor (raw bits; may overlap the water count)
-    const bool bDiag = FNodeShuffleModule::AreDiagnosticsEnabled();
+    // ns-quietlog-1 (decision N2): the master-gate local that only gated RWGSEAREDEAL-ENTRY is gone; that line now uses the Placement topic guard.
     // ns-rollfirst-1 (2026-11-14): the priority entries (RwgRollFirstList, built with the provisional candidate list, (rank, distance) order) are
     // walked first, then the layout-index walk as before. One loop, one body, one Left: the per-pass bound is unchanged, and an entry the
     // first steps flagged is skipped by the same test when the index walk reaches it. A (guid, index) pair that no longer matches is dropped.
@@ -243,7 +243,7 @@ void ANodeShuffleSubsystem::RwgSeaRedealPass()
         E.bRwgRockChecked = false;
         const bool bMoved = TryRedealWaterLockedEntry(E);
         if (bMoved) { ++Redealt; E.bRwgSeaChecked = true; E.bRwgVoidChecked |= bVoidOn; } else { ++DealFailed; RwgSeaDealFailed.Add(E.EntryGuid); }
-        if (bDiag)
+        if (NsDiag(ENsDiag::Placement))
         {
             UE_LOG(LogNodeShuffle, Display, TEXT("RWGSEAREDEAL-ENTRY: entry=%s from=%s to=%s wetBits=%d moved=%d"),
                 *E.EntryGuid.ToString(), *From.ToCompactString(), *E.Location.ToCompactString(), Wet, bMoved ? 1 : 0);
@@ -282,15 +282,15 @@ void ANodeShuffleSubsystem::RwgSeaRedealPass()
             ++Redealt; ++WellsRedealt;
         }
         else { ++DealFailed; RwgSeaWellDealFailed.Add(W.CorePath); }
-        UE_LOG(LogNodeShuffle, Display, TEXT("RWGSEAREDEAL-WELL: core='%s' from=%s dest=%s wetBits=%d dealtNewSite=%d"),
-            *WellShort(W.CorePath), *From.ToCompactString(), *W.DestCoreLocation.ToCompactString(), Wet, bDealt ? 1 : 0);
+        if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display, TEXT("RWGSEAREDEAL-WELL: core='%s' from=%s dest=%s wetBits=%d dealtNewSite=%d"),
+            *WellShort(W.CorePath), *From.ToCompactString(), *W.DestCoreLocation.ToCompactString(), Wet, bDealt ? 1 : 0); }
     }
     int32 Remaining = 0;
     for (const FNodeShuffleEntry& E : Layout) { Remaining += (E.bIsNewNode && E.bActive && !(E.bRwgSeaChecked && (E.bRwgVoidChecked || !bVoidOn)) && !RwgSeaDealFailed.Contains(E.EntryGuid)) ? 1 : 0; }
     for (const FNodeShuffleWellEntry& W : WellLayout) { Remaining += (W.bDestDealt && !(W.bRwgSeaChecked && (W.bRwgVoidChecked || !bVoidOn)) && !RwgSeaWellDealFailed.Contains(W.CorePath)) ? 1 : 0; }
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Placement)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("RWGSEAREDEAL: pass=%d checked=%d sea=%d redealt=%d kept=%d dealFailed=%d inSeaVolume=%d skippedPlaced=%d skippedPinnedOrCave=%d skippedFailedWell=%d outsideWorld=%d wellsChecked=%d wellsRedealt=%d remaining=%d failedThisSession=%d placedWet=%d perPassCap=%d durationMs=%.0f voidN=%d killboxN=%d voidTermsOn=%d"),
         RwgSeaPasses, Checked, Sea, Redealt, Kept, DealFailed, InSea, SkipPlaced, SkipPinned, SkipFailedWell, Outside, WellsChecked, WellsRedealt,
         Remaining, RwgSeaDealFailed.Num() + RwgSeaWellDealFailed.Num(), PlacedWet, NodeShuffleMapMode::RwgSeaRedealPerPass, (FPlatformTime::Seconds() - T0) * 1000.0,
-        VoidN, KillboxN, bVoidOn ? 1 : 0);
+        VoidN, KillboxN, bVoidOn ? 1 : 0); }
 }

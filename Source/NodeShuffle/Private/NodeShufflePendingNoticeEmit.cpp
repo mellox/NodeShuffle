@@ -49,10 +49,10 @@ void ANodeShuffleSubsystem::EmitPendingNoticeIfReady(bool bNoticesEnabled)
     // opt-out would re-enter at, and so the suppression stays counted if one ever does.
     if (!bNoticesEnabled)
     {
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Status)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("PENDINGNOTICE: signature='%s' lastSignature='%s' -> decision=SUPPRESSED(config-off) ")
             TEXT("('Show Compatibility Notices In Chat' is off; %d entr(ies) dropped, log above still has them)"),
-            *Signature, *LastNotifiedSignature, PendingNoticeQueue.Num());
+            *Signature, *LastNotifiedSignature, PendingNoticeQueue.Num()); }
         PendingNoticeQueue.Empty();
         PendingNoticeGateTicks = -1;
         PendingNoticeEmitAttempts = 0;
@@ -77,11 +77,11 @@ void ANodeShuffleSubsystem::EmitPendingNoticeIfReady(bool bNoticesEnabled)
     }
     if (NewKeyCount == 0)
     {
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Status)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("PENDINGNOTICE: signature='%s' lastSignature='%s' -> decision=SUPPRESSED(duplicate) ")
             TEXT("(%d entr(ies), 0 of them unannounced -- already covered by a message this session; a ")
             TEXT("re-roll re-runs the pass and a SHRINKING set is not news)"),
-            *Signature, *LastNotifiedSignature, Keys.Num());
+            *Signature, *LastNotifiedSignature, Keys.Num()); }
         PendingNoticeQueue.Empty();
         PendingNoticeGateTicks = -1;
         PendingNoticeEmitAttempts = 0;
@@ -96,9 +96,9 @@ void ANodeShuffleSubsystem::EmitPendingNoticeIfReady(bool bNoticesEnabled)
     const APawn* Pawn = PC ? PC->GetPawn() : nullptr;
     if (!PC || !Pawn)
     {
-        UE_LOG(LogNodeShuffle, Verbose,
+        if (NsDiag(ENsDiag::Status)) { UE_LOG(LogNodeShuffle, Verbose,
             TEXT("PENDINGNOTICE: decision=SUPPRESSED(no-local-player) pc=%s pawn=%s -- holding %d entr(ies), retry next tick"),
-            PC ? TEXT("valid") : TEXT("null"), Pawn ? TEXT("valid") : TEXT("null"), PendingNoticeQueue.Num());
+            PC ? TEXT("valid") : TEXT("null"), Pawn ? TEXT("valid") : TEXT("null"), PendingNoticeQueue.Num()); }
         return;
     }
 
@@ -106,18 +106,18 @@ void ANodeShuffleSubsystem::EmitPendingNoticeIfReady(bool bNoticesEnabled)
     if (PendingNoticeGateTicks < 0)
     {
         PendingNoticeGateTicks = 0;
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Status)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("PENDINGNOTICE: player spawned; holding %d entr(ies) for ONE more tick before posting to chat ")
             TEXT("(the message is added to chat history regardless -- this only protects the toast)."),
-            PendingNoticeQueue.Num());
+            PendingNoticeQueue.Num()); }
         return;
     }
 
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Status)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("PENDINGNOTICE: signature='%s' lastSignature='%s' -> decision=EMIT (%d entr(ies), %d of them ")
         TEXT("not previously announced) attempt=%d/%d"),
         *Signature, *LastNotifiedSignature, PendingNoticeQueue.Num(), NewKeyCount,
-        PendingNoticeEmitAttempts + 1, MaxPendingNoticeEmitAttempts);
+        PendingNoticeEmitAttempts + 1, MaxPendingNoticeEmitAttempts); }
 
     if (FNodeShuffleModule::EmitPendingNotice(World, PendingNoticeQueue))
     {

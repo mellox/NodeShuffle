@@ -213,9 +213,9 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll)
     }
     if (SkippedOurSpawned > 0)
     {
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH2-ROLL: skippedOurSpawned=%d -- that many live fracking cores are wells WE relocated ")
-            TEXT("and are excluded from the census this roll reads (ns-review-h2 F1)."), SkippedOurSpawned);
+            TEXT("and are excluded from the census this roll reads (ns-review-h2 F1)."), SkippedOurSpawned); }
     }
 
     int32 PlacedInSave = 0;
@@ -224,12 +224,12 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll)
     // POPULATION it measured on THIS roll instead of a setting. Count these by anchoring on
     // "WELLH2-ROLL: alreadyRelocated" -- the legend below contains no token of the printed form.
     // Arity hand-counted: 2 format specifiers, 2 arguments.
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("WELLH2-ROLL: alreadyRelocated %d of %d well(s) in this save. Every one of them is ")
         TEXT("re-considered by this roll and dealt a new destination like any other well, and each is ")
         TEXT("absent from the world until a player reaches its new spot. Wells someone has built on are ")
         TEXT("refused separately and counted in the summary at the end of this roll."),
-        PlacedInSave, WellLayout.Num());
+        PlacedInSave, WellLayout.Num()); }
 
     // -------- PHASE 1 COUNTERS: these PARTITION WellLayout, and the partition is checked below --------
     // ns-t7b F5: before T7b, AlreadyCaptured was incremented at the TOP of the loop and six later
@@ -345,11 +345,11 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll)
             if (bAlreadyPlaced)
             {
                 ++RefusedPinnedWhilePlaced;
-                UE_LOG(LogNodeShuffle, Display,
+                if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
                     TEXT("WELLH2-ROLL core='%s': NOT re-enrolled -- bManaged=0, bPinned=%d. For an ")
                     TEXT("already-relocated well the pin behind bManaged is read from the actors WE ")
                     TEXT("spawned (T16); this branch could not fire for this population before that. %s"),
-                    *WellShort(E.CorePath), E.bPinned ? 1 : 0, *KeptOrVanilla(E));
+                    *WellShort(E.CorePath), E.bPinned ? 1 : 0, *KeptOrVanilla(E)); }
             }
             continue;
         }
@@ -378,11 +378,11 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll)
             {
                 // Newly reachable in T7b, so it is announced. Silent for the never-placed population,
                 // whose cadence is unchanged.
-                UE_LOG(LogNodeShuffle, Display,
+                if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
                     TEXT("WELLH2-ROLL core='%s': NOT re-enrolled -- its VANILLA core is not in this ")
                     TEXT("roll's census. Re-enrolment re-captures the rigid body from the vanilla ")
                     TEXT("actors, so it cannot run without them. %s"),
-                    *WellShort(E.CorePath), *KeptOrVanilla(E));
+                    *WellShort(E.CorePath), *KeptOrVanilla(E)); }
             }
             continue;
         }
@@ -444,13 +444,13 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll)
         {
             ++(LiveSats < WellMinSatellitesForRelocation ? RefusedTooFew : RefusedUnstreamed);
             NoteRefusal(E);
-            UE_LOG(LogNodeShuffle, Display,
+            if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
                 TEXT("WELLH2-ROLL core='%s': NOT enrolled this roll -- %d satellite(s) live vs %d in the ")
                 TEXT("layout (floor is %d, H0's measured minimum over 20 wells). This is a STREAMING ")
                 TEXT("verdict, not a failure: moving a well we only partly know would shrink it ")
                 TEXT("permanently, and every missing satellite would look routine in the log. %s"),
                 *WellShort(E.CorePath), LiveSats, E.Satellites.Num(), WellMinSatellitesForRelocation,
-                *KeptOrVanilla(E));
+                *KeptOrVanilla(E)); }
             continue;
         }
 
@@ -531,14 +531,14 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll)
         ++Captured;
         if (bAlreadyPlaced) { ++CapturedWhilePlaced; }
 
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH2-ROLL core='%s' CAPTURED as a %s candidate: %d satellite(s), rigid body about the ")
             TEXT("core at %s (coreYaw=%.1f deg, minIntraGroup=%.0f cm vs %.0f cm reject radius). NOTHING ")
             TEXT("is written to this entry yet -- T7b/A3 holds the capture outside the save until a ")
             TEXT("destination exists, so a failed deal cannot leave the well nowhere."),
             *WellShort(E.CorePath),
             bAlreadyPlaced ? TEXT("RE-ENROLMENT (already relocated)") : TEXT("first-relocation"),
-            E.Satellites.Num(), *CoreLoc.ToCompactString(), CoreYaw, MinIntra, WellSelfOverlapFloorCm);
+            E.Satellites.Num(), *CoreLoc.ToCompactString(), CoreYaw, MinIntra, WellSelfOverlapFloorCm); }
     }
 
     // ns-t7b F5 / RT-7: the buckets must PARTITION the layout. Asserted, not assumed -- the old
@@ -696,12 +696,12 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll)
                 P.bDealt = true;
                 WellDestinations.Add(Cand);
                 ++Dealt;
-                UE_LOG(LogNodeShuffle, Display,
+                if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
                     TEXT("WELLH2-ROLL core='%s' DEALT %s -> %s (attempt %d of %d; settles + rotates on ")
                     TEXT("discovery). Spaced against %d other well site(s); a well's own vacating site is ")
                     TEXT("excluded from its OWN draw only, never from another well's."),
                     *WellShort(E.CorePath), *P.CoreLoc.ToCompactString(), *Cand.ToCompactString(),
-                    Try + 1, RollDraws, OtherSites);
+                    Try + 1, RollDraws, OtherSites); }
             }
         }
         if (!P.bDealt)
@@ -752,11 +752,11 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll)
         // does NOT increment. On a mid-session re-roll that is the PREVIOUS apply pass's number, so the
         // roll-time summary and that pass's summary are indistinguishable by pass number. Name the
         // roll-time one rather than changing the shared line.
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH2B-ROLLPROBE: the NEXT WELLH2B-INDEX line was produced by this ROLL, not by an ")
             TEXT("apply pass. It prints pass=%d because the roll does not increment WellAuditPasses; on a ")
             TEXT("mid-session re-roll that is the previous apply pass's number."),
-            WellAuditPasses);
+            WellAuditPasses); }
         const double T0 = FPlatformTime::Seconds();
         // RebuildWellMeshIndex, NEVER EnsureWellMeshIndex. The Ensure wrapper early-returns when
         // WellMeshIndexPass == WellAuditPasses, and this roll runs BEFORE ApplyLayout increments
@@ -781,12 +781,12 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll)
             E.bRelocate = P.bWasPlaced;
             if (P.bWasPlaced)
             {
-                UE_LOG(LogNodeShuffle, Display,
+                if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
                     TEXT("WELLH2-ROLL core='%s': no destination cleared the water grid and spacing ")
                     TEXT("filters in %d draws -- NOT re-enrolled. It KEEPS the relocated placement it ")
                     TEXT("already has at %s: nothing was despawned, no claim was withdrawn and no state ")
                     TEXT("was rewritten (T7b/A3)."),
-                    *WellShort(E.CorePath), WellRedealTries, *E.PlacedCoreLocation.ToCompactString());
+                    *WellShort(E.CorePath), WellRedealTries, *E.PlacedCoreLocation.ToCompactString()); }
             }
             else
             {
@@ -813,11 +813,11 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll)
                     E.bUnhidePending = true;
                     TryUnhideWellGroup(E, TEXT("roll found no destination for a never-placed well"));
                 }
-                UE_LOG(LogNodeShuffle, Display,
+                if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
                     TEXT("WELLH2-ROLL core='%s': no destination cleared the water grid and spacing ")
                     TEXT("filters in %d draws -- left vanilla this roll. The next roll draws again. ")
                     TEXT("Restore obligation outstanding after this roll: %d."),
-                    *WellShort(E.CorePath), WellRedealTries, E.bUnhidePending ? 1 : 0);
+                    *WellShort(E.CorePath), WellRedealTries, E.bUnhidePending ? 1 : 0); }
             }
             continue;
         }
@@ -895,10 +895,10 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll)
                     *E.PlacedCoreLocation.ToCompactString());
                 continue;
             }
-            UE_LOG(LogNodeShuffle, Display,
+            if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
                 TEXT("WELLH2-ROLL core='%s': re-enrolment occupancy gate PASSED -- %d of %d member ")
                 TEXT("handle(s) were live and none reported in use, so the teardown may run."),
-                *WellShort(E.CorePath), Tested, 1 + E.Satellites.Num());
+                *WellShort(E.CorePath), Tested, 1 + E.Satellites.Num()); }
         }
 
         // ns-review-h3 H1 -- THE MOST REACHABLE OF THE THREE ROUTES INTO THAT BUG.
@@ -1050,14 +1050,14 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll)
         // something actually being destroyed, so a placed entry whose handles were already dropped moved
         // again with nothing in the log saying so. The two are now named apart, and the previous
         // placement is printed beside the new destination.
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH2-ROLL core='%s' %s: %d satellite(s), rigid body captured about the core at %s ")
             TEXT("(coreYaw=%.1f deg, minIntraGroup=%.0f cm vs %.0f cm reject radius), dealt %s. ")
             TEXT("previousPlacement=%s claimWithdrawn=%d."),
             *WellShort(E.CorePath),
             P.bWasPlaced ? TEXT("RE-ENROLLED (MOVED AGAIN)") : TEXT("ENROLLED (FIRST RELOCATION)"),
             Written, *P.CoreLoc.ToCompactString(), P.CoreYaw, P.MinIntra, WellSelfOverlapFloorCm,
-            *P.Dest.ToCompactString(), *WasPlacedAt.ToCompactString(), bClaimWithdrawn ? 1 : 0);
+            *P.Dest.ToCompactString(), *WasPlacedAt.ToCompactString(), bClaimWithdrawn ? 1 : 0); }
     }
 
     const double CommitMs = (FPlatformTime::Seconds() - CommitStartSec) * 1000.0;
@@ -1070,13 +1070,13 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll)
     {
         // ns-t7b RT-6: the first re-roll on a save full of relocated wells tears down every one of them
         // in a single frame. This is that number, measured, instead of an estimate in a review.
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH2-ROLL: re-enrolment teardown -- %d already-relocated group(s) torn down this ")
             TEXT("roll, up to %d member Destroy() call(s) in this one frame, %.1f ms measured across the ")
             TEXT("whole commit phase. No per-pass destroy cap applies on this path ")
             TEXT("(WellSweepMaxDestroysPerPass gates the SWEEP, not DespawnWellGroup). If this is a ")
             TEXT("visible stall, this is the measurement to act on."),
-            ReEnrolled, TeardownMembers, CommitMs);
+            ReEnrolled, TeardownMembers, CommitMs); }
     }
 
     // ns-review-h2-r2 F-I: the roll's TEARDOWN TAIL lives in NodeShuffleWellSweep.cpp next to the sweep
@@ -1084,7 +1084,7 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll)
     // claim of every entry this roll abandoned, computes the post-roll sweep gate, and runs the sweep.
     FinishWellRollTeardown(); // T71: no gate argument -- relocation is hard-wired ON.
 
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("WELLH2-ROLL: %s complete over %d well(s) -- %d captured (%d of them ALREADY RELOCATED and ")
         TEXT("re-enrolled), %d dealt a destination, %d deal-failed (%d of those kept an existing ")
         TEXT("relocated placement), %d committed (%d moved again, %d first relocation), %d aborted ")
@@ -1104,5 +1104,5 @@ void ANodeShuffleSubsystem::RollWellRelocation(int32 Seed, bool bIsReroll)
         RefusedPinned, RefusedPinnedWhilePlaced, RefusedGeometry, RefusedNonFinite, PermanentlyFailed,
         RefusedWhilePlaced, Seed, Seed ^ 0x574C5232,
         WellLayoutAttempts, WellLayoutAttemptsPerPass, WellSatPlacementTries,
-        WellMaxGroupNudges, WellMaxGroupRedeals);
+        WellMaxGroupNudges, WellMaxGroupRedeals); }
 }

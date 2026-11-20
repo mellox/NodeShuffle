@@ -102,10 +102,10 @@ void ANodeShuffleSubsystem::EmitRepClassClearanceLine(const FString& ResourcePat
         }
     }
 
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Visuals)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("REPCLASS-CLEARANCE res=%s role=%s class=%s resident=%d nodeBase=%d clearN=%d clear=%s boxExtent=%s boxProfile=%s boxCollision=%d scsPrims=%d scs=[%s]"),
         *FPackageName::ObjectPathToObjectName(ResourcePath), RoleName, *FPackageName::ObjectPathToObjectName(ClassPath),
-        Cls ? 1 : 0, Cdo ? 1 : 0, ClearN, *Clear, *BoxExtent, *BoxProfile, BoxCollision, ScsPrims, *FString::Join(ScsParts, TEXT(";")));
+        Cls ? 1 : 0, Cdo ? 1 : 0, ClearN, *Clear, *BoxExtent, *BoxProfile, BoxCollision, ScsPrims, *FString::Join(ScsParts, TEXT(";"))); }
 }
 
 void ANodeShuffleSubsystem::EmitRepClassStaleCensusOnce()
@@ -162,9 +162,9 @@ void ANodeShuffleSubsystem::EmitRepClassStaleCensusOnce()
     TArray<FString> Parts;
     for (const FString& K : Keys) { Parts.Add(FString::Printf(TEXT("%s:%d"), *K, ByClass.FindChecked(K))); }
 
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Visuals)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("REPCLASS-STALE count=%d pinned=%d spawned=%d modded=%d unresolved=%d byClass=[%s]"),
-        Stale, StalePinned, Spawned, Modded, Unresolved, *FString::Join(Parts, TEXT(";")));
+        Stale, StalePinned, Spawned, Modded, Unresolved, *FString::Join(Parts, TEXT(";"))); }
 }
 
 // rwg-thoriumclass-2 (2026-11-01): DRESS-NATIVE. Diagnostics-gated like its DRESS-SKIP siblings; once per entry (NativeDressLogged)

@@ -491,7 +491,7 @@ bool ANodeShuffleSubsystem::IsPointInsideSolidShadowForDiag(const FVector& At, c
         }
     }
 
-    UE_LOG(LogNodeShuffle, Verbose,
+    if (NsDiag(ENsDiag::Gates)) { UE_LOG(LogNodeShuffle, Verbose,
         TEXT("CENTRESHADOW at %s: entries %d, exits %d, net %d of the %d counted crossing(s) on both ")
         TEXT("walks; %d hit(s) were seen in total and %d of those were not counted as a crossing -- ")
         TEXT("%d on a buildable, %d on a pawn, %d on the named subject, each of those being the first ")
@@ -512,7 +512,7 @@ bool ANodeShuffleSubsystem::IsPointInsideSolidShadowForDiag(const FVector& At, c
             : (Out.bControlInside
                    ? TEXT("read inside, so this method detected containment in that geometry on this run")
                    : TEXT("did NOT read inside, so this method did not demonstrate it can detect ")
-                     TEXT("containment there")));
+                     TEXT("containment there"))); }
 
     return Out.bInside;
 }

@@ -452,7 +452,7 @@ void ANodeShuffleSubsystem::RebuildWellMeshIndex()
         FlushWellIndexSpatialDump(SpatialDump);
     }
 
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("WELLH2B-INDEX pass %d: %d vanilla well member(s) WALKED (not 'indexed' -- see the ")
         TEXT("member(s)-with-at-least-one-piece count at the end of this line for that), ")
         TEXT("%d mesh piece(s) paired ")
@@ -495,5 +495,5 @@ void ANodeShuffleSubsystem::RebuildWellMeshIndex()
         WellAuditPasses, WellMeshIndexMembers, WellMeshIndexPieces, ByOwn, ByLink, BySpatial,
         RejectedBystander, NarrowedByType, NameCandidates, NameCandidatesInRadius,
         WidenedByType, TypeCandidates, TypeCandidatesInRadius, Bystanders.Num(),
-        UseBoxNodes.Num(), HiddenOriginalUseBoxNodes, WellMeshIndex.Num());
+        UseBoxNodes.Num(), HiddenOriginalUseBoxNodes, WellMeshIndex.Num()); }
 }

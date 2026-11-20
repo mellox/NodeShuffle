@@ -54,18 +54,18 @@ void ANodeShuffleSubsystem::NoteWellVoidDefer(FNodeShuffleWellEntry& E, const TC
 
     if (Count == WellVoidDeferNoticeAt)
     {
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Void)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH2-VOID core='%s': %d consecutive probes have found NO TERRAIN -- last was the %s ")
             TEXT("probe for '%s' at %s. Normal if no player has been near that destination; if a player ")
             TEXT("IS there, the spot cannot be settled and the group will be nudged at %d."),
-            *WellShort(E.CorePath), Count, Which, Who, *Probe.ToCompactString(), WellVoidDeferEscalateAt);
+            *WellShort(E.CorePath), Count, Which, Who, *Probe.ToCompactString(), WellVoidDeferEscalateAt); }
     }
     else if (Count >= WellVoidDeferEscalateAt)
     {
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Void)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH2-VOID core='%s': %d void probes -- escalating rather than deferring forever. Last ")
             TEXT("was the %s probe for '%s' at %s."),
-            *WellShort(E.CorePath), Count, Which, Who, *Probe.ToCompactString());
+            *WellShort(E.CorePath), Count, Which, Who, *Probe.ToCompactString()); }
         Count = 0; // the ladder moves the destination; the new spot gets a fresh allowance
         EscalateWellPlacement(E, E.DestCoreLocation, /*bHaveSettledCore=*/false,
                               TEXT("probes never found terrain"));
@@ -131,13 +131,13 @@ void ANodeShuffleSubsystem::NoteWellIncompleteSpawn(const FNodeShuffleWellEntry&
 
     if (Count == WellIncompleteSpawnNoticeAt)
     {
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH2-STUCK core='%s': validated a footprint %d times and failed to assemble the group ")
             TEXT("every time (first member with no live actor: '%s', destination %s). Normal for a while ")
             TEXT("-- the usual cause is a satellite whose terrain has not streamed, and it clears itself. ")
             TEXT("Escalates to a warning at %d."),
             *WellShort(E.CorePath), Count, *Missing, *E.PlacedCoreLocation.ToCompactString(),
-            WellIncompleteSpawnWarnAt);
+            WellIncompleteSpawnWarnAt); }
     }
     else if (Count >= WellIncompleteSpawnWarnAt && (Count % WellIncompleteSpawnWarnAt) == 0)
     {
@@ -195,11 +195,11 @@ void ANodeShuffleSubsystem::EscalateWellPlacement(FNodeShuffleWellEntry& E, cons
         E.DestCoreLocation = FVector(Anchor.X + Radius * FMath::Cos(Angle),
                                      Anchor.Y + Radius * FMath::Sin(Angle), Anchor.Z);
         WellMoveLog(E, WmFrom, E.DestCoreLocation, TEXT("nudge")); // rwg-farspawn-1c C7
-        UE_LOG(LogNodeShuffle, Display,
+        if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
             TEXT("WELLH2-SEARCH core='%s': %s at %s -- nudging the whole group to %s (nudge %d/%d, ")
             TEXT("redeal %d/%d). Yaw order re-seeded for the new spot, deterministically."),
             *CoreLabel, Why, *Anchor.ToCompactString(), *E.DestCoreLocation.ToCompactString(),
-            E.GroupNudges, WellMaxGroupNudges, E.GroupRedeals, WellMaxGroupRedeals);
+            E.GroupNudges, WellMaxGroupNudges, E.GroupRedeals, WellMaxGroupRedeals); }
         return;
     }
 
@@ -237,8 +237,8 @@ void ANodeShuffleSubsystem::EscalateWellPlacement(FNodeShuffleWellEntry& E, cons
                         if (RwgDealWellSite(RwgQ, Rng, Offs, Site)) { const FVector WmFrom = WellMoveAt(E); E.DestCoreLocation = Site; bRwgRedealt = true; WellMoveLog(E, WmFrom, Site, TEXT("rwgRedeal")); } // rwg-farspawn-1c C7
                     }
                 }
-                UE_LOG(LogNodeShuffle, Display, TEXT("WELLRWG-REDEAL: core='%s' apiUsable=%d draws=%d viaApi=%d"),
-                    *CoreLabel, RwgQ.IsUsable() ? 1 : 0, Draws, bRwgRedealt ? 1 : 0);
+                if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display, TEXT("WELLRWG-REDEAL: core='%s' apiUsable=%d draws=%d viaApi=%d"),
+                    *CoreLabel, RwgQ.IsUsable() ? 1 : 0, Draws, bRwgRedealt ? 1 : 0); }
             }
             if (!bRwgRedealt)
             {
@@ -250,10 +250,10 @@ void ANodeShuffleSubsystem::EscalateWellPlacement(FNodeShuffleWellEntry& E, cons
                                          (DealMeanZ != 0.0f) ? DealMeanZ : E.DestCoreLocation.Z);
             WellMoveLog(E, WmFrom, E.DestCoreLocation, TEXT("boxRedeal")); // rwg-farspawn-1c C7
             }
-            UE_LOG(LogNodeShuffle, Display,
+            if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
                 TEXT("WELLH2-SEARCH core='%s': %s and the nudge budget is exhausted -- RE-DEALT to %s ")
                 TEXT("(redeal %d/%d)."),
-                *CoreLabel, Why, *E.DestCoreLocation.ToCompactString(), E.GroupRedeals, WellMaxGroupRedeals);
+                *CoreLabel, Why, *E.DestCoreLocation.ToCompactString(), E.GroupRedeals, WellMaxGroupRedeals); }
             return;
         }
         // No usable deal box: fall through to give-up rather than looping on an undealable entry.
@@ -287,7 +287,7 @@ void ANodeShuffleSubsystem::EscalateWellPlacement(FNodeShuffleWellEntry& E, cons
         E.bUnhidePending = true;
         bRestoredNow = TryUnhideWellGroup(E, TEXT("relocation gave up permanently"));
     }
-    UE_LOG(LogNodeShuffle, Display,
+    if (NsDiag(ENsDiag::Wells)) { UE_LOG(LogNodeShuffle, Display,
         TEXT("WELLH2-SEARCH core='%s': GIVING UP (%s) -- %d independent-layout attempts x %d nudges x ")
         TEXT("%d redeals all failed. Our ")
         TEXT("own spawned members at the abandoned destination were destroyed at the top of this ")
@@ -304,5 +304,5 @@ void ANodeShuffleSubsystem::EscalateWellPlacement(FNodeShuffleWellEntry& E, cons
                 : TEXT("*** WE HAD SUPPRESSED THIS WELL'S VANILLA MEMBERS AND NOT ALL OF THEM COULD BE ")
                   TEXT("RESTORED ON THIS PASS *** so it is NOT yet standing where the level author put ")
                   TEXT("it. The restore is persisted and re-attempted every apply pass; until it ")
-                  TEXT("completes this well is counted in WELLH2-STRANDED.")));
+                  TEXT("completes this well is counted in WELLH2-STRANDED."))); }
 }
