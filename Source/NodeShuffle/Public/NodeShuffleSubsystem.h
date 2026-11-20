@@ -293,6 +293,9 @@ struct FNodeShuffleEntry
     // and has not been trace-settled. The resettle, rock, killbox and settle-near-players passes skip it; the spawn pass settles it on approach through
     // RwgResolveAtSpawn and clears it (settled, redealt or pinned). Forward-only: older saves load it false. False on every vanilla entry (never written there).
     UPROPERTY(SaveGame) bool bRwgProvisional = false;
+    // ns-finalflag-1 (2026-11-20): read by other mods by reflected name; contract in docs/DIAGNOSTICS.md. Written ONLY by
+    // ANodeShuffleSubsystem::ReconcilePlacementFinal (NodeShuffleFinalFlag.cpp; tools/check_finalflag_lint.ps1 F1). Older saves load it false.
+    UPROPERTY(SaveGame) bool bPlacementFinal = false;
 };
 
 // One original vanilla node location to suppress on stream-in after a wipe-on-
@@ -837,6 +840,9 @@ struct FNodeShuffleWellEntry
 // See the declaration of SuppressVanillaWellGroup for what each phase changes and why neither may be
 // guessed from state.
 enum class EWellSuppressPhase : uint8 { Apply, Roll };
+
+// ns-finalflag-1: which entry point is calling ReconcilePlacementFinal. File scope for the same UHT reason as above.
+enum class ENsFinalStage : uint8 { Seed, ApplyStart, ApplyEnd };
 
 // Server-side brain of NodeShuffle.
 //
@@ -1543,6 +1549,9 @@ private:
     // ---- apply ----
     void ApplyLayout();
     void EmitConsumerCensus(); // ns-quietlog-1: NSCONSUMER line (NodeShuffleConsumerCensus.cpp), last statement of ApplyLayout
+    // ns-finalflag-1: the ONLY writer of FNodeShuffleEntry::bPlacementFinal and PlacementFinalEpoch (NodeShuffleFinalFlag.cpp). Called from
+    // PostLoadGame (Seed), the first statement of ApplyLayout (ApplyStart) and the line before EmitConsumerCensus (ApplyEnd).
+    void ReconcilePlacementFinal(ENsFinalStage Stage);
     // redesign-3 BUG B: ONE-TIME post-load reconciliation. Spawned nodes are now ANodeShuffleResourceNode
     // with a UPROPERTY(SaveGame) EntryGuid that survives reload (Tags do NOT). Iterate the subclass, read
     // each saved EntryGuid, repopulate SpawnedNodes[guid] so EnsureNewNodeSpawned's SpawnedNodes.Find
@@ -2380,6 +2389,14 @@ private:
     // Live nodes for new-node entries (spawned this session + adopted-on-load). redesign-5: the visual
     // rock is now a RockMesh subobject OF each node (no separate rock actors — that machinery is gone).
     UPROPERTY() TMap<FGuid, AFGResourceNode*> SpawnedNodes;
+    // ns-finalflag-1: number of ApplyEnd reconciles run in this world session; 0 = the bPlacementFinal flags are as loaded and not yet
+    // validated. Read by other mods by reflected name. Not SaveGame. Session state below is not saved either.
+    UPROPERTY() int32 PlacementFinalEpoch = 0;
+    TMap<FGuid, FVector> FinalAnchors;   // Location when the flag last turned true (rebuilt from saved flags by the Seed stage)
+    TMap<FGuid, int32> FinalRevokedAt;   // reconcile number (epoch value) charged to the last true->false change, for the dwell
+    int32 FinalApplyPass = 0;            // ApplyStart calls this session (the applyPass field)
+    bool bFinalLoadPending = false;      // set by Seed; the next ApplyEnd prints stage=load
+    TArray<int32> FinalLastCensus;       // last printed FINALCENSUS counts, per stage (compared, never printed)
 
     // Cache: original-node path -> live BASE node, rebuilt when stale. redesign-6 FIX 2: broadened from
     // AFGResourceNode to AFGResourceNodeBase so esc_ (Base-only) originals can be found + hidden too.

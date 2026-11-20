@@ -2,20 +2,22 @@
 // ANodeShuffleSubsystem::Layout / SpawnedNodes and FNodeShuffleEntry::bActive / bIsNewNode / bRayCasted / bPinned.
 // Always on; printed at the end of an ApplyLayout pass only when one of the counts differs from the last printed line
 // (the first call of a subsystem prints). Reads only; writes nothing but its own statics.
+// ns-finalflag-1: two trailing fields, placementFinal (rows with bPlacementFinal set) and finalEpoch (PlacementFinalEpoch). The
+// epoch moves every pass, so only whether it is above 0 takes part in the change test; its value is printed.
 #include "NodeShuffleSubsystem.h"
 
 void ANodeShuffleSubsystem::EmitConsumerCensus()
 {
     static TWeakObjectPtr<ANodeShuffleSubsystem> LastOwner;
     static int32 Pass = 0;
-    static int32 Last[7] = { -1, -1, -1, -1, -1, -1, -1 };
+    static int32 Last[9] = { -1, -1, -1, -1, -1, -1, -1, -1, -1 };
     if (LastOwner.Get() != this)
     {
         LastOwner = this; Pass = 0;
         for (int32& V : Last) { V = -1; }
     }
     ++Pass;
-    int32 Now[7] = { Layout.Num(), 0, 0, 0, 0, 0, SpawnedNodes.Num() };
+    int32 Now[9] = { Layout.Num(), 0, 0, 0, 0, 0, SpawnedNodes.Num(), 0, PlacementFinalEpoch > 0 ? 1 : 0 };
     for (const FNodeShuffleEntry& E : Layout)
     {
         const bool bNewNotCast = E.bIsNewNode && !E.bRayCasted;
@@ -24,13 +26,14 @@ void ANodeShuffleSubsystem::EmitConsumerCensus()
         if (bNewNotCast) { ++Now[3]; }
         if (E.bActive && bNewNotCast) { ++Now[4]; }
         if (E.bPinned) { ++Now[5]; }
+        if (E.bPlacementFinal) { ++Now[7]; }
     }
     bool bChanged = false;
-    for (int32 i = 0; i < 7; ++i) { if (Now[i] != Last[i]) { bChanged = true; } Last[i] = Now[i]; }
+    for (int32 i = 0; i < 9; ++i) { if (Now[i] != Last[i]) { bChanged = true; } Last[i] = Now[i]; }
     if (!bChanged) { return; }
     // pass counts this subsystem's ApplyLayout passes. layoutEntries: entries in Layout; active: bActive set; newNode: bIsNewNode set;
     // newNodeNotRayCasted: bIsNewNode set and bRayCasted clear; activeNewNodeNotRayCasted: the same with bActive set;
-    // pinned: bPinned set; spawnedNodes: entries in the SpawnedNodes map.
-    UE_LOG(LogNodeShuffle, Display, TEXT("NSCONSUMER: pass=%d layoutEntries=%d active=%d newNode=%d newNodeNotRayCasted=%d activeNewNodeNotRayCasted=%d pinned=%d spawnedNodes=%d"),
-        Pass, Now[0], Now[1], Now[2], Now[3], Now[4], Now[5], Now[6]);
+    // pinned: bPinned set; spawnedNodes: entries in the SpawnedNodes map; placementFinal: bPlacementFinal set; finalEpoch: PlacementFinalEpoch.
+    UE_LOG(LogNodeShuffle, Display, TEXT("NSCONSUMER: pass=%d layoutEntries=%d active=%d newNode=%d newNodeNotRayCasted=%d activeNewNodeNotRayCasted=%d pinned=%d spawnedNodes=%d placementFinal=%d finalEpoch=%d"),
+        Pass, Now[0], Now[1], Now[2], Now[3], Now[4], Now[5], Now[6], Now[7], PlacementFinalEpoch);
 }

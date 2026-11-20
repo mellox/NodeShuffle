@@ -8,8 +8,10 @@ Rules (one id per failure):
   Q4              no #define whose body names the guard, no #define/#undef of the log macro, no output-device filter in Source.
   Q5              the one automatic INHERIT caller (InsideGate) carries the Gates guard; INHERIT helper bodies carry none.
   Q6              the guard body ORs the master with the topic bit; ReadOnce is the first statement of StartupModule.
-  Q7              the startup topics line and the consumer census line exist once each (Q3 keeps them unguarded); TSV rows == sites.
-  Q8              the 9 reflected names PrimalFauna reads exist, with UPROPERTY, type, and owner unchanged.
+  Q7              the startup topics line, the consumer census line and (ns-finalflag-1) the FINALCENSUS line exist once each
+                  (Q3 keeps them unguarded); TSV rows == sites.
+  Q8              the 11 reflected names other mods read exist, with UPROPERTY, type, and owner unchanged (9 PrimalFauna reads today,
+                  plus ns-finalflag-1's entry flag and epoch); the entry flag keeps SaveGame.
 Needles are built by concatenation so this file cannot match itself. Run: python tools/check_quietlog_lint.py [--no-mutants]
 """
 import os, re, sys
@@ -145,7 +147,7 @@ def guard_text(topic):
     return 'if (' + GUARDCALL + ENUM + topic + ')) { '
 
 
-EXPECT_CLASSES = {'ALWAYS': 415, 'INHERIT': 16, 'MASTER': 144, 'ONDEMAND': 163, 'TOPIC': 277, 'TOPICGATE': 6}
+EXPECT_CLASSES = {'ALWAYS': 419, 'INHERIT': 16, 'MASTER': 144, 'ONDEMAND': 163, 'TOPIC': 277, 'TOPICGATE': 6}
 EXPECT_TOPICS = {'Gates': 13, 'Hide': 8, 'Hologram': 10, 'Placement': 58, 'Rocks': 14, 'Roll': 21, 'Scanner': 6, 'Spawn': 8, 'Status': 23, 'Veto': 6, 'Visuals': 16, 'Void': 5, 'Wells': 89}
 
 
@@ -218,7 +220,8 @@ def check(files, rows):
         m = re.search(r'void\s+FNodeShuffleModule::StartupModule\s*\(\s*\)\s*\{\s*([^;]*);', c)
         if not m or m.group(1).strip() != GUARD + 'Topics::ReadOnce()':
             f.append('(Q6) ReadOnce must be the first statement of StartupModule')
-    for needle, name in ((('NSDIAG' + ': topics='), 'startup topics line'), (('NSCONSUMER' + ': pass='), 'consumer census line')):
+    for needle, name in ((('NSDIAG' + ': topics='), 'startup topics line'), (('NSCONSUMER' + ': pass='), 'consumer census line'),
+                         (('FINAL' + 'CENSUS: stage='), 'final-flag census line')):
         n = sum(t.count(needle) for t in files.values())
         if n != 1: f.append('(Q7) the %s must exist exactly once (found %d)' % (name, n))
     for rel, c in allcode.items():
@@ -243,7 +246,9 @@ REFLECTED = [  # (owner, type regex, name)
     ('FNodeShuffleEntry', r'bool', 'bPinned'), ('FNodeShuffleEntry', r'bool', 'bRayCasted'), ('FNodeShuffleEntry', r'bool', 'bIsNewNode'),
     ('FNodeShuffleEntry', r'FString', 'VanillaNodePath'),
     ('ANodeShuffleSubsystem', r'TArray<\s*FNodeShuffleEntry\s*>', 'Layout'),
-    ('ANodeShuffleSubsystem', r'TMap<\s*FGuid\s*,\s*(?:class\s+)?AFGResourceNode\s*\*\s*>', 'SpawnedNodes')]
+    ('ANodeShuffleSubsystem', r'TMap<\s*FGuid\s*,\s*(?:class\s+)?AFGResourceNode\s*\*\s*>', 'SpawnedNodes'),
+    ('FNodeShuffleEntry', r'bool', 'bPlacement' + 'Final'), ('ANodeShuffleSubsystem', r'int32', 'PlacementFinal' + 'Epoch')]  # ns-finalflag-1
+SAVEGAME_REQUIRED = ('FNodeShuffleEntry', 'bPlacement' + 'Final')  # ns-finalflag-1: the flag must survive a save
 
 
 def check_reflected(files):
@@ -264,6 +269,8 @@ def check_reflected(files):
         body = c[om.end():i]
         if not re.search(r'UPROPERTY\([^)]*\)\s*' + typ + r'\s+' + name + r'\s*[;={]', body):
             f.append('(Q8) %s::%s must stay a UPROPERTY of its type' % (owner, name))
+        elif (owner, name) == SAVEGAME_REQUIRED and not re.search(r'UPROPERTY\([^)]*\bSave' + r'Game\b[^)]*\)\s*' + typ + r'\s+' + name + r'\s*[;={]', body):
+            f.append('(Q8) %s::%s must keep the SaveGame specifier' % (owner, name))
     return f
 
 
@@ -287,6 +294,10 @@ MUTANTS = [  # (name, file suffix, find, replace, expected rule)
     ('M17 the consumer census line duplicated', 'NodeShuffleConsumerCensus.cpp', 'TEXT("NSCONSUMER' + ': pass=', 'TEXT("NSCONSUMER' + ': pass=NSCONSUMER' + ': pass=', 'Q7'),
     ('M20 topic side forced on', 'NodeShuffleDiag.cpp', '() || ((uint8)Topic < (uint8)EN' + 'sDiag::Count && GNsDiagTopicOn[(uint8)Topic]);', '() || true;', 'Q6'),
     ('M21 topic bits start on', 'NodeShuffleDiag.cpp', 'Count] = {};', 'Count] = { true };', 'Q6'),
+    ('M22 the final flag renamed', 'Public/NodeShuffleSubsystem.h', ' bPlacement' + 'Final = false;', ' bPlacement' + 'FinalX = false;', 'Q8'),
+    ('M23 the final flag loses SaveGame', 'Public/NodeShuffleSubsystem.h', 'UPROPERTY(Save' + 'Game) bool bPlacement' + 'Final', 'UPROPERTY() bool bPlacement' + 'Final', 'Q8'),
+    ('M24 the final epoch renamed', 'Public/NodeShuffleSubsystem.h', 'int32 PlacementFinal' + 'Epoch = 0;', 'int32 PlacementFinal' + 'EpochX = 0;', 'Q8'),
+    ('M25 the final census line duplicated', 'NodeShuffleFinalFlag.cpp', 'TEXT("FINAL' + 'CENSUS: stage=', 'TEXT("FINAL' + 'CENSUS: stage=FINAL' + 'CENSUS: stage=', 'Q7'),
 ]
 
 

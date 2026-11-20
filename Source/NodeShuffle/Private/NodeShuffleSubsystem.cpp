@@ -677,6 +677,7 @@ void ANodeShuffleSubsystem::PostLoadGame_Implementation(int32 /*saveVersion*/, i
     {
         bKnowledgeUnlockDone = true;
     }
+    ReconcilePlacementFinal(ENsFinalStage::Seed); // ns-finalflag-1: anchors from the saved flags; writes no flag (NodeShuffleFinalFlag.cpp)
 }
 
 // rwg-rerolldup-1: the hide record for one original, factored out of the Hide & Replace conversion so the carried-entry
@@ -2720,6 +2721,7 @@ void ANodeShuffleSubsystem::WriteGeneratedLocationsJson(const TArray<FVector>& L
 
 void ANodeShuffleSubsystem::ApplyLayout()
 {
+    ReconcilePlacementFinal(ENsFinalStage::ApplyStart); // ns-finalflag-1: verify-only tripwire, first statement (NodeShuffleFinalFlag.cpp)
     bool bChangedWorld = false;
 
     const FNodeShuffleConfigStruct Config = FNodeShuffleConfigStruct::GetActiveConfig(this);
@@ -2984,6 +2986,7 @@ void ANodeShuffleSubsystem::ApplyLayout()
     {
         RefreshScannersAndRadarTowers();
     }
+    ReconcilePlacementFinal(ENsFinalStage::ApplyEnd); // ns-finalflag-1: verify, set, epoch++ (NodeShuffleFinalFlag.cpp)
     EmitConsumerCensus(); // ns-quietlog-1: NSCONSUMER, always on, printed only when a count changed (ApplyLayout has no early return)
 }
 
