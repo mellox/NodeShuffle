@@ -54,7 +54,7 @@ void ANodeShuffleSubsystem::ReconcilePlacementFinal(ENsFinalStage Stage)
     const TCHAR* StageName = !bEnd ? TEXT("applyStart") : (bLoadStage ? TEXT("load") : TEXT("applyEnd"));
     const int32 Recon = PlacementFinalEpoch + 1; // the number this pass's ApplyEnd reconcile carries (a revoke at ApplyStart is charged to it)
 
-    // C[]: rows checked kept revokedRowMoved revokedActorMoved revokedActorLost revokedPredicate noAnchor newlyFinal dwellHeld finalNow
+    // C[]: rows checked kept revokedRowMoved revokedActorOff revokedActorNotFound revokedPredicate noAnchor newlyFinal dwellHeld finalNow
     //      armPinned armNewRow armOriginal linesSuppressed stickyUnresolved
     int32 C[NsFinal::CensusFields] = {};
     C[0] = Layout.Num();
@@ -134,7 +134,7 @@ void ANodeShuffleSubsystem::ReconcilePlacementFinal(ENsFinalStage Stage)
     if (bEnd) { bFinalLoadPending = false; }
     if (!bChanged && MovedLines == 0 && C[14] == 0 && !bLoadStage) { return; }
     // checked = rows flagged at stage start (the tripwire's denominator); rows = entries in Layout. Measured counts and predicate bits only.
-    UE_LOG(LogNodeShuffle, Display, TEXT("FINALCENSUS: stage=%s epoch=%d applyPass=%d mode=%s rows=%d checked=%d kept=%d revokedRowMoved=%d revokedActorMoved=%d revokedActorLost=%d revokedPredicate=%d noAnchor=%d newlyFinal=%d dwellHeld=%d finalNow=%d armPinned=%d armNewRow=%d armOriginal=%d linesSuppressed=%d stickyUnresolved=%d"),
+    UE_LOG(LogNodeShuffle, Display, TEXT("FINALCENSUS: stage=%s epoch=%d applyPass=%d mode=%s rows=%d checked=%d kept=%d revokedRowMoved=%d revokedActorOff=%d revokedActorNotFound=%d revokedPredicate=%d noAnchor=%d newlyFinal=%d dwellHeld=%d finalNow=%d armPinned=%d armNewRow=%d armOriginal=%d linesSuppressed=%d stickyUnresolved=%d"),
         StageName, PlacementFinalEpoch, FinalApplyPass, bVanilla ? TEXT("vanilla") : TEXT("rwg"), C[0], C[1], C[2], C[3], C[4], C[5], C[6], C[7],
         C[8], C[9], C[10], C[11], C[12], C[13], C[14], C[15]);
 }

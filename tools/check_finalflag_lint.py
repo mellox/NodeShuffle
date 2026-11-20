@@ -21,6 +21,7 @@ Rules (one id per failure):
   F11 NSCONSUMER the census format keeps its old field order and appends the two fields; the change test holds 9 slots.
   F12 DOCS       docs/DIAGNOSTICS.md carries the three lines, the contract names, the not-promised list and the LOADED sentence.
   F13 TOOLS      the quietlog TSV, the quietlog lint (Q8 SaveGame), and the rotated marker pins in mcpcontract/scanfilter/rwg020.
+  F14 GUARDS     the decision-5 sticky test is exact; ApplyLayout has one caller (RefreshTick) and RefreshTick calls no mover after it.
 Needles are built by concatenation so this file cannot match itself. Run: python tools/check_finalflag_lint.py [--no-mutants]
 """
 import os, re, sys
@@ -43,7 +44,7 @@ FMT_SEED = 'FINAL' + 'SEED: flaggedInSave=%d'
 FMT_MOVED = ('FINAL' + 'MOVED: stage=%s applyPass=%d guid=%s res=%s anchor=%s now=%s actorAt=%s rowDeltaCm=%.0f actorDeltaCm=%.0f '
              'predicateNow=%d pinned=%d rayCasted=%d provisional=%d active=%d')
 FMT_CENSUS = ('FINAL' + 'CENSUS: stage=%s epoch=%d applyPass=%d mode=%s rows=%d checked=%d kept=%d revokedRowMoved=%d '
-              'revokedActorMoved=%d revokedActorLost=%d revokedPredicate=%d noAnchor=%d newlyFinal=%d dwellHeld=%d finalNow=%d '
+              'revokedActorOff=%d revokedActorNotFound=%d revokedPredicate=%d noAnchor=%d newlyFinal=%d dwellHeld=%d finalNow=%d '
               'armPinned=%d armNewRow=%d armOriginal=%d linesSuppressed=%d stickyUnresolved=%d')
 FMT_CONSUMER = ('NS' + 'CONSUMER: pass=%d layoutEntries=%d active=%d newNode=%d newNodeNotRayCasted=%d activeNewNodeNotRayCasted=%d '
                 'pinned=%d spawnedNodes=%d placementFinal=%d finalEpoch=%d')
@@ -219,6 +220,19 @@ def check(files, tools):
         f.append('(F13) quietlog Q8 must pin both names and the SaveGame specifier')
     own = "'2026-11-20-' + 'finalflag-1'"
     if ('$own = ' + own) not in tools['mcp'] or own not in tools['sf'] or own not in tools['g20']: f.append('(F13) mcpcontract C4 / scanfilter S9 / rwg020 G9 must name finalflag-1 as newest')
+    # ---- F14 (cold review): decision-5 sticky test exact; one ApplyLayout caller; no mover after it in RefreshTick
+    if body.count('const bool bSticky = !Actor && !E.bIsNew' + 'Node && E.bPinned;') != 1:
+        f.append('(F14) the decision-5 sticky test must read: no actor, an original (not a new row), pinned')
+    alc = [(r, mm.start()) for r, t in cs.items() if r.endswith('.cpp') for mm in re.finditer(r'(?<![:\w])' + 'Apply' + r'Layout\s*\(\s*\)\s*;', t)]
+    tb, te = body_of(code[sub], 'void ANodeShuffleSubsystem::Refresh' + 'Tick()')
+    if len(alc) != 1 or alc[0][0] != sub or not (tb < alc[0][1] < te):
+        f.append('(F14) ApplyLayout must have exactly one caller, inside RefreshTick (found %d)' % len(alc))
+    else:
+        tail = cs[sub][alc[0][1]:te]
+        for bad in ('EnsureNew' + 'NodeSpawned(', 'Settle' + 'NewNodesNearPlayers(', 'Roll' + 'Layout(', 'RwgSpawn' + 'Pass(', 'Raycast' + 'Settle(',
+                    'Try' + 'Redeal', 'RwgRedeal' + 'LiveEntry(', 'SetActor' + 'Location', 'Destroy' + '(', 'AdoptRestored' + 'SpawnedNodes(',
+                    'CaptureLate' + 'OriginalNodes(', 'Restore' + 'OriginalsForReroll('):
+            if bad in tail: f.append('(F14) RefreshTick calls a mover after ApplyLayout: ' + bad)
     return f
 
 
@@ -253,6 +267,9 @@ MUTANTS = [
     mut('N18 MCP snapshot reads the flag', 'Private/NodeShuffleMcpSnapshot.cpp', '#include', 'static bool NsFz(const FNodeShuffleEntry& E) { return E.' + FLAG + '; }\n#include', 'F1'),
     mut('N19 ApplyEnd after EmitConsumerCensus', SUB, '    ' + RECON + '(' + STAGE + 'ApplyEnd);', '   ', 'F2'),
     mut('N20 strict < relaxed to <=', FF, 'FVector::DistSquared(A, B) < FMath', 'FVector::DistSquared(A, B) <= FMath', 'F5'),
+    mut('N25 sticky widened to new rows', FF, 'const bool bSticky = !Actor && !E.bIsNew' + 'Node && E.bPinned;', 'const bool bSticky = !Actor && E.bPinned;', 'F14'),
+    mut('N26 mover after ApplyLayout', SUB, '        ApplyLayout();\n', '        ApplyLayout();\n        SettleNewNodesNearPlayers();\n', 'F14'),
+    mut('N27 second ApplyLayout caller', SUB, '        RollLayout(RerollSeed, true);\n', '        RollLayout(RerollSeed, true);\n        ApplyLayout();\n', 'F14'),
 ]
 
 
