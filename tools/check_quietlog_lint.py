@@ -145,6 +145,10 @@ def guard_text(topic):
     return 'if (' + GUARDCALL + ENUM + topic + ')) { '
 
 
+EXPECT_CLASSES = {'ALWAYS': 415, 'INHERIT': 16, 'MASTER': 144, 'ONDEMAND': 163, 'TOPIC': 277, 'TOPICGATE': 6}
+EXPECT_TOPICS = {'Gates': 13, 'Hide': 8, 'Hologram': 10, 'Placement': 58, 'Rocks': 14, 'Roll': 21, 'Scanner': 6, 'Spawn': 8, 'Status': 23, 'Veto': 6, 'Visuals': 16, 'Void': 5, 'Wells': 89}
+
+
 def check(files, rows):
     f = []
     sites = all_sites(files)
@@ -202,8 +206,11 @@ def check(files, rows):
     else:
         c = allcode[dg[0]]
         m = re.search(r'bool\s+' + GUARD + r'\s*\(\s*' + 'EN' + 's' + r'Diag\s+\w+\s*\)\s*\{(.*?)\n\}', c, re.S)
-        if not m or not re.search(r'return\s+FNodeShuffleModule::' + MASTER + r'\(\)\s*\|\|', m.group(1)):
-            f.append('(Q6) the guard must return the master OR the topic bit')
+        want = 'return FNodeShuffleModule::' + MASTER + '() || ((uint8)Topic < (uint8)' + 'EN' + 's' + 'Diag::Count && GNsDiag' + 'TopicOn[(uint8)Topic]);'
+        if not m or ' '.join(m.group(1).split()) != want:
+            f.append('(Q6) the guard must return exactly the master OR the topic bit')
+        if c.count('static bool GNsDiag' + 'TopicOn[(int32)EN' + 'sDiag::Count] = {};') != 1:
+            f.append('(Q6) the topic bits must start all off')
     mods = [rel for rel in files if rel.endswith('NodeShuffle/Private/NodeShuffle.cpp')]
     if not mods: f.append('(Q6) module source missing')
     else:
@@ -214,6 +221,19 @@ def check(files, rows):
     for needle, name in ((('NSDIAG' + ': topics='), 'startup topics line'), (('NSCONSUMER' + ': pass='), 'consumer census line')):
         n = sum(t.count(needle) for t in files.values())
         if n != 1: f.append('(Q7) the %s must exist exactly once (found %d)' % (name, n))
+    for rel, c in allcode.items():
+        cs = blank_strings(c)
+        for m in re.finditer(r'\bLogNode' + r'Shuffle\b', cs):
+            pre = cs[max(0, m.start() - 40):m.start()]
+            if pre.endswith(MACRO + '(') or pre.endswith(MACRO + '_ACTIVE(') or re.search(r'(?:DEFINE|DECLARE)_LOG_CATEGORY\w*\(\s*$', pre):
+                continue
+            f.append('(Q1) log category used outside the enumerated form in %s (line %d)' % (rel, cs.count('\n', 0, m.start()) + 1))
+    got = {}; gt = {}
+    for r in rows:
+        got[r['cls']] = got.get(r['cls'], 0) + 1
+        if r['cls'] == 'TOPIC': gt[r['topic']] = gt.get(r['topic'], 0) + 1
+    if got != EXPECT_CLASSES: f.append('(Q9) class counts changed: %s (a reclassification edits this pin in the same commit)' % sorted(got.items()))
+    if gt != EXPECT_TOPICS: f.append('(Q9) TOPIC rows per topic changed: %s' % sorted(gt.items()))
     f.extend(check_reflected(files))
     return f, sites
 
@@ -265,6 +285,8 @@ MUTANTS = [  # (name, file suffix, find, replace, expected rule)
     ('M15 SpawnedNodes loses UPROPERTY', 'Public/NodeShuffleSubsystem.h', 'UPROPERTY() TMap<FGuid, AFGResourceNode*> Spawned' + 'Nodes;', 'TMap<FGuid, AFGResourceNode*> Spawned' + 'Nodes;', 'Q8'),
     ('M16 ReadOnce no longer first', 'NodeShuffle/Private/NodeShuffle.cpp', GUARD + 'Topics::ReadOnce();', 'int32 QlX = 0; ' + GUARD + 'Topics::ReadOnce();', 'Q6'),
     ('M17 the consumer census line duplicated', 'NodeShuffleConsumerCensus.cpp', 'TEXT("NSCONSUMER' + ': pass=', 'TEXT("NSCONSUMER' + ': pass=NSCONSUMER' + ': pass=', 'Q7'),
+    ('M20 topic side forced on', 'NodeShuffleDiag.cpp', '() || ((uint8)Topic < (uint8)EN' + 'sDiag::Count && GNsDiagTopicOn[(uint8)Topic]);', '() || true;', 'Q6'),
+    ('M21 topic bits start on', 'NodeShuffleDiag.cpp', 'Count] = {};', 'Count] = { true };', 'Q6'),
 ]
 
 
