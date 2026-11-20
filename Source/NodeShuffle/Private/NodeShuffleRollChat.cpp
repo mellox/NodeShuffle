@@ -309,8 +309,8 @@ void ANodeShuffleSubsystem::RollChatDrainStep()
         const int32 EndLine = RollChatLinesInFirstMessages(RollChatNext + 1, RollChatLines.Num());
         for (int32 i = FirstLine; i < EndLine; ++i)
         {
-            if (NsDiag(ENsDiag::Status)) { UE_LOG(LogNodeShuffle, Display, TEXT("ROLLCHAT-LINE %d/%d in message %d/%d: |%s|"),
-                i + 1, RollChatLines.Num(), RollChatNext + 1, RollChatMessages.Num(), *RollChatLines[i]); }
+            UE_LOG(LogNodeShuffle, Display, TEXT("ROLLCHAT-LINE %d/%d in message %d/%d: |%s|"),
+                i + 1, RollChatLines.Num(), RollChatNext + 1, RollChatMessages.Num(), *RollChatLines[i]);
         }
     }
     ++RollChatNext;

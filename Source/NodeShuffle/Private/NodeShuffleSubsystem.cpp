@@ -933,10 +933,10 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
             if (!bCarriedOld && !Old.VanillaNodePath.IsEmpty() && RerollCarriedPaths.Contains(Old.VanillaNodePath))
             {
                 ++RerollPathDupesDropped;
-                if (NsDiag(ENsDiag::Roll)) { UE_LOG(LogNodeShuffle, Display,
+                UE_LOG(LogNodeShuffle, Display,
                     TEXT("REROLLPOOL-PATHDUPE dropped path='%s' res='%s' guid=%s active=%d pinned=%d newNode=%d"),
                     *Old.VanillaNodePath, *Old.OriginalResourceClassPath, *Old.EntryGuid.ToString(),
-                    Old.bActive ? 1 : 0, Old.bPinned ? 1 : 0, Old.bIsNewNode ? 1 : 0); }
+                    Old.bActive ? 1 : 0, Old.bPinned ? 1 : 0, Old.bIsNewNode ? 1 : 0);
                 continue;
             }
             // rwg-rerolldup-2: a row the identity pre-pass grouped under another row's original (by anchor, or by path where the
@@ -944,12 +944,12 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
             if (const NodeShuffleRerollIdentity::FDrop* Drop = RerollIdentity.Drops.Find(Old.EntryGuid))
             {
                 ++RerollIdentityDupesDropped;
-                if (NsDiag(ENsDiag::Roll)) { UE_LOG(LogNodeShuffle, Display,
+                UE_LOG(LogNodeShuffle, Display,
                     TEXT("REROLLPOOL-IDENTITYDUPE dropped path='%s' res='%s' guid=%s anchor=%s keeperGuid=%s keeperPath='%s' keeperAnchor=%s match=%s distCm=%.0f active=%d pinned=%d newNode=%d"),
                     *Old.VanillaNodePath, *Old.OriginalResourceClassPath, *Old.EntryGuid.ToString(),
                     *NodeShuffleRerollIdentity::OriginalAnchor(Old).ToCompactString(), *Drop->KeeperGuid.ToString(), *Drop->KeeperPath,
                     *Drop->KeeperAnchor.ToCompactString(), Drop->bByPath ? TEXT("path") : (Drop->DistCm >= 0.0f ? TEXT("anchor") : TEXT("throughThirdRow")),
-                    Drop->DistCm, Old.bActive ? 1 : 0, Old.bPinned ? 1 : 0, Old.bIsNewNode ? 1 : 0); }
+                    Drop->DistCm, Old.bActive ? 1 : 0, Old.bPinned ? 1 : 0, Old.bIsNewNode ? 1 : 0);
                 continue;
             }
             if (bCarriedOld)
@@ -2219,7 +2219,7 @@ void ANodeShuffleSubsystem::RollLayout(int32 Seed, bool bIsReroll)
             NodeShuffleRerollIdentity::RestampVanillaDealOffForeignClass(C, ResolvedSolidRepresentative, ResolvedLiquidRepresentative, FormLiquid, RerollVanillaRestampCarried);
         }
         NodeShuffleRerollIdentity::EmitVanillaRestampCensus(TEXT("carried"), RerollVanillaRestampCarried);
-        if (NsDiag(ENsDiag::Visuals)) { UE_LOG(LogNodeShuffle, Display, TEXT("REPCLASS-VANRESTAMP-LIVEKEPT carriedTotal=%d liveNotInUnboundSet=%d eligibleKept=%d unboundClassesAtAdopt=%d adoptRan=%d preAdoptKept=%d"), CarriedEntries.Num(), RerollVanillaRestampLiveKept, RerollVanillaRestampEligibleKept, AdoptUnboundSpawnClasses.Num(), bAdoptedRestoredNodes ? 1 : 0, RerollVanillaRestampPreAdoptKept); } // carriedTotal, not carried: the CARRY census owns that token (rerolldup U6)
+        UE_LOG(LogNodeShuffle, Display, TEXT("REPCLASS-VANRESTAMP-LIVEKEPT carriedTotal=%d liveNotInUnboundSet=%d eligibleKept=%d unboundClassesAtAdopt=%d adoptRan=%d preAdoptKept=%d"), CarriedEntries.Num(), RerollVanillaRestampLiveKept, RerollVanillaRestampEligibleKept, AdoptUnboundSpawnClasses.Num(), bAdoptedRestoredNodes ? 1 : 0, RerollVanillaRestampPreAdoptKept); // carriedTotal, not carried: the CARRY census owns that token (rerolldup U6)
     }
     NewLayout.Append(CarriedEntries);
     Layout = MoveTemp(NewLayout);
@@ -5202,9 +5202,9 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
                 {
                     Entry.bUnderground = false;
                     RedealAttempts.Remove(Entry.EntryGuid);
-                    if (NsDiag(ENsDiag::Roll)) { UE_LOG(LogNodeShuffle, Verbose,
+                    UE_LOG(LogNodeShuffle, Verbose,
                         TEXT("CAVE-DEAL: entry %s (%s) escaped a bad cave cell after 8 settle misses — returned to the surface pool"),
-                        *Entry.EntryGuid.ToString(), *Entry.AssignedResourceClassPath); }
+                        *Entry.EntryGuid.ToString(), *Entry.AssignedResourceClassPath);
                 }
             }
             DeferredThisPass++;
@@ -5488,9 +5488,9 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
                     // re-logs. (Logged once at Display, not spammed at Verbose.)
                     Entry.bActive = false;
                     Entry.bRayCasted = false;
-                    if (NsDiag(ENsDiag::Gates)) { UE_LOG(LogNodeShuffle, Display,
+                    UE_LOG(LogNodeShuffle, Display,
                         TEXT("Overlap guard: resolved %s node at %s after %d failed nudges (spot occupied; node dropped to stop retry spam)"),
-                        *ResourceClass->GetName(), *Entry.Location.ToCompactString(), Entry.OverlapNudges); }
+                        *ResourceClass->GetName(), *Entry.Location.ToCompactString(), Entry.OverlapNudges);
                 }
                 return; // try again next tick (until the cap) at the new/old spot
             }
@@ -5583,7 +5583,7 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
             // spiral's counter and this is not a spiral attempt.
             Entry.bActive = false;
             Entry.bRayCasted = false;
-            if (NsDiag(ENsDiag::Gates)) { UE_LOG(LogNodeShuffle, Display,
+            UE_LOG(LogNodeShuffle, Display,
                 TEXT("INSIDEGATE: resolved %s at %s on the FIRST refusal by the centre-totally-inside ")
                 TEXT("gate -- the entry is dropped immediately rather than retried. MEASURED: the ")
                 TEXT("instrument's verdict on the line above, at this exact location. The reason there is ")
@@ -5597,7 +5597,7 @@ void ANodeShuffleSubsystem::EnsureNewNodeSpawned(FNodeShuffleEntry& Entry, bool&
                 TEXT("the switch on. Reachable only while ")
                 TEXT("NodeShuffle.InsideGateRefuse is set; with it at its default the gate logs and ")
                 TEXT("changes nothing."),
-                *ResourceClass->GetName(), *Entry.Location.ToCompactString()); }
+                *ResourceClass->GetName(), *Entry.Location.ToCompactString());
             return;
         }
     }
@@ -7933,18 +7933,18 @@ bool ANodeShuffleSubsystem::RaycastSettle(FNodeShuffleEntry& Entry, const AActor
             RwgRocksCountCandidate(bNear, bTryHit, bTryWater, bTrySteep); // ns-rocks-1 round 2: ROCKCAND outcome of this candidate (counts only)
             if (bTryHit && !bTryWater && !bTrySteep)
             {
-                if (NsDiag(ENsDiag::Gates)) { UE_LOG(LogNodeShuffle, Verbose, TEXT("Land-check: relocated %s off %s to %s"),
+                UE_LOG(LogNodeShuffle, Verbose, TEXT("Land-check: relocated %s off %s to %s"),
                     *Entry.EntryGuid.ToString(), bWater ? TEXT("water") : TEXT("a cliff face"),
-                    *TryLoc.ToCompactString()); }
+                    *TryLoc.ToCompactString());
                 // ns-rocks-1 C2: which search found it and how far (XY from the refused spot); counted when the resolve completes.
                 RwgRocksLastMove = bNear ? 1 : 2; RwgRocksLastMoveCm = static_cast<float>(FVector::Dist2D(TryLoc, OriginXY));
                 bRwgRocksLastSpiralAfterRock = !bNear && bPrimaryRockRefused;
                 if (bNear) { ++RwgRkNearFound; } else if (NearTries > 0) { ++RwgRkSpiralAfterNear; }
                 if (RwgRocksSampleSlot())
                 {
-                    if (NsDiag(ENsDiag::Rocks)) { UE_LOG(LogNodeShuffle, Display, TEXT("ROCKNEAR: entry=%s search=%s step=%d of %d moveM=%.1f primaryRockRefused=%d to=%s"),
+                    UE_LOG(LogNodeShuffle, Display, TEXT("ROCKNEAR: entry=%s search=%s step=%d of %d moveM=%.1f primaryRockRefused=%d to=%s"),
                         *Entry.EntryGuid.ToString().Left(8), bNear ? TEXT("near") : TEXT("spiral"), Step + 1, NearTries + LandRelocationTries,
-                        RwgRocksLastMoveCm / 100.0f, bPrimaryRockRefused ? 1 : 0, *TryLoc.ToCompactString()); }
+                        RwgRocksLastMoveCm / 100.0f, bPrimaryRockRefused ? 1 : 0, *TryLoc.ToCompactString());
                 }
                 Entry.Location = TryLoc; // persist the corrected location (stable thereafter)
                 Entry.bRwgOnSolidTop = bRwgLastProbeTopAccepted; // rwg-clifftop-1: the winning spiral probe's own accept signal
@@ -7960,7 +7960,7 @@ bool ANodeShuffleSubsystem::RaycastSettle(FNodeShuffleEntry& Entry, const AActor
         if (!WaterDeferLoggedThisSession.Contains(Entry.EntryGuid))
         {
             WaterDeferLoggedThisSession.Add(Entry.EntryGuid);
-            if (NsDiag(ENsDiag::Gates)) { UE_LOG(LogNodeShuffle, Verbose, TEXT("Land-check: deferred %s (no placeable ground at %d spiral probes out to %.0f m of the %s hit)"), *Entry.EntryGuid.ToString(), LandRelocationTries, FMath::Min(LandRelocationMaxRadiusCm, LandRelocationStepCm * FMath::Sqrt(static_cast<float>(LandRelocationTries))) / 100.0f, bWater ? TEXT("water") : TEXT("cliff")); }
+            UE_LOG(LogNodeShuffle, Verbose, TEXT("Land-check: deferred %s (no placeable ground at %d spiral probes out to %.0f m of the %s hit)"), *Entry.EntryGuid.ToString(), LandRelocationTries, FMath::Min(LandRelocationMaxRadiusCm, LandRelocationStepCm * FMath::Sqrt(static_cast<float>(LandRelocationTries))) / 100.0f, bWater ? TEXT("water") : TEXT("cliff"));
         }
     }
 
@@ -8935,9 +8935,9 @@ void ANodeShuffleSubsystem::ReassociateOrphanedExtractors()
                     {
                         HealedClass = HealedRes->GetResourceClass().Get();
                     }
-                    if (NsDiag(ENsDiag::Spawn)) { UE_LOG(LogNodeShuffle, Display, TEXT("relink: refreshed resource binding on %s -> %s (%s)"),
+                    UE_LOG(LogNodeShuffle, Display, TEXT("relink: refreshed resource binding on %s -> %s (%s)"),
                         *Extractor->GetName(), HealedClass ? *HealedClass->GetName() : TEXT("<still null>"),
-                        bStale ? TEXT("stale binding") : bResNull ? TEXT("null resource") : TEXT("wrong node")); }
+                        bStale ? TEXT("stale binding") : bResNull ? TEXT("null resource") : TEXT("wrong node"));
                 }
             }
             continue;
@@ -8984,9 +8984,9 @@ void ANodeShuffleSubsystem::ReassociateOrphanedExtractors()
         if (RelinkKey != RelinkCensusLastKey)
         {
             RelinkCensusLastKey = RelinkKey;
-            if (NsDiag(ENsDiag::Spawn)) { UE_LOG(LogNodeShuffle, Display, TEXT("EXTRACTOR-RELINK linked=%d unboundNoSpawnedNodeInSnap=%d bindingPresent=%d linkNoEffect=%d extractors=%d spawnedNodes=%d refreshedStale=%d refreshedResNull=%d refreshedWrongNode=%d"),
+            UE_LOG(LogNodeShuffle, Display, TEXT("EXTRACTOR-RELINK linked=%d unboundNoSpawnedNodeInSnap=%d bindingPresent=%d linkNoEffect=%d extractors=%d spawnedNodes=%d refreshedStale=%d refreshedResNull=%d refreshedWrongNode=%d"),
                 RelinkLinked, RelinkNoNode, RelinkAlreadyLinked, RelinkLinkNoEffect, RelinkExtractors, SpawnedNodes.Num(),
-                RelinkRefreshedStale, RelinkRefreshedResNull, RelinkRefreshedWrongNode); }
+                RelinkRefreshedStale, RelinkRefreshedResNull, RelinkRefreshedWrongNode);
         }
     }
 

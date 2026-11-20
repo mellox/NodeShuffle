@@ -20,9 +20,9 @@
 //   && (bPinned || (!RwgProvRefused && bRayCasted && OverlapNudges == 0 && (bRwgSettledOnTerrain || bUnderground || bRwgCave)))
 // On a spawn, a set bRwgProvisional is cleared: RwgSpawnPass clears it on every actorless entry before its attempt loop, and a live actor
 // carrying it would be re-settled (moved) by that loop.
+#include "NodeShuffleSettledRestore.h"
 #include "NodeShuffleSubsystem.h"
 #include "NodeShuffle.h"
-#include "NodeShuffleSettledRestore.h"
 #include "NodeShuffleMapMode.h"
 #include "NodeShuffleResourceNode.h"
 #include "NodeShuffleNodeComponent.h"
@@ -138,9 +138,9 @@ void ANodeShuffleSubsystem::RunSettledRestoreOnce(float SpawnRadiusCm, bool& bCh
     {
         if (++SkippedLines <= SettledRestoreSkippedLinesMax)
         {
-            if (NsDiag(ENsDiag::Spawn)) { UE_LOG(LogNodeShuffle, Display, TEXT("SETTLEDRESTORE-SKIPPED guid=%s res=%s at=%s skipTest=%s overlapNudges=%d settledOnTerrain=%d underground=%d cave=%d"),
+            UE_LOG(LogNodeShuffle, Display, TEXT("SETTLEDRESTORE-SKIPPED guid=%s res=%s at=%s skipTest=%s overlapNudges=%d settledOnTerrain=%d underground=%d cave=%d"),
                 *S.EntryGuid.ToString(), *FPackageName::ObjectPathToObjectName(S.AssignedResourceClassPath), *S.Location.ToCompactString(), Test,
-                static_cast<int32>(S.OverlapNudges), S.bRwgSettledOnTerrain ? 1 : 0, S.bUnderground ? 1 : 0, S.bRwgCave ? 1 : 0); }
+                static_cast<int32>(S.OverlapNudges), S.bRwgSettledOnTerrain ? 1 : 0, S.bUnderground ? 1 : 0, S.bRwgCave ? 1 : 0);
         }
         else { ++SkippedCut; }
     };

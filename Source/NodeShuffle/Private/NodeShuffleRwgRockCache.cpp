@@ -49,11 +49,11 @@
 // ROCKPAIR / ROCKPAIR-UNPAIRED (EnableDiagnostics only, that first pass only): the first 20 pairs and every
 // ambiguous or contended original, capped. Every count names what was counted, never why.
 
+#include "NodeShuffleRwgRockCache.h"
 #include "NodeShuffleSubsystem.h"
 
 #include "NodeShuffle.h"
 #include "NodeShuffleMapMode.h"
-#include "NodeShuffleRwgRockCache.h"
 
 #include "EngineUtils.h"
 #include "HAL/PlatformTime.h"

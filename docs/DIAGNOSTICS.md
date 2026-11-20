@@ -1,9 +1,25 @@
 # NodeShuffle — Diagnostics Catalog (troubleshooting reference)
 
-All diagnostics are **gated behind the `EnableDiagnostics` config toggle** (Mods → Node Shuffle →
-"Enable Diagnostic Logging", default OFF). Turn it on, reproduce the issue, then read the game log:
-`%LOCALAPPDATA%\FactoryGame\Saved\Logs\FactoryGame.log` and grep for the marker below. The mod's
-actual fixes are always active regardless of this toggle.
+NodeShuffle prints a small fixed set of lines in every session: the build marker, every warning and error, and one summary line per
+session or per operation (roll, deal, readiness, status stage). Everything else is diagnostic and OFF by default. Ticking *Enable Diagnostic
+Logging* (Mods → Node Shuffle, default OFF) turns it on; lines logged at Verbose level also need `LogNodeShuffle=Verbose` under `[Core.Log]` in
+Engine.ini. To turn on single topics without that checkbox, add `[NodeShuffle.Diagnostics]` with `Topics=<names>` to Engine.ini; the `NSDIAG:`
+line at startup prints what was read. Then reproduce the issue and read `%LOCALAPPDATA%\FactoryGame\Saved\Logs\FactoryGame.log`.
+
+**Topics (ns-quietlog-1, read once at module startup, comma-separated, case-insensitive, `All` = every topic):** `Void`, `Status`, `Placement`,
+`Gates`, `Spawn`, `Rocks`, `Visuals`, `Wells`, `Hide`, `Scanner`, `Hologram`, `Veto`, `Roll`. Example, in
+`%LOCALAPPDATA%\FactoryGame\Saved\Config\Windows\Engine.ini`:
+
+```
+[NodeShuffle.Diagnostics]
+Topics=Void,Status,Placement
+```
+
+A topic switches on only the lines tagged with it in `tools/quietlog-sites.tsv` (class TOPIC or TOPICGATE); lines of class MASTER print with
+with the checkbox (`ROLLDENSITY-CELL` also prints at Verbose level without it). Always on (class ALWAYS in that table): the build marker, warnings and errors, `NSDIAG` / `NSDIAG-MASTER`, `NSCONSUMER`
+(only when a count changed), `RWGVOIDCHECK-SAMPLES`, `NSSTATUS-ROLLSEEN`, and the once-per-session or per-operation censuses. A few lines
+that print with the checkbox OR under their own condition still print under that condition with the checkbox off. Lines reached only from a
+typed `NodeShuffle.*` command or an MCP call print when that command runs.
 
 This catalog maps **symptom → which diagnostic to enable/restore**. Some heavy probes are removed from
 the shipping build to keep it lean; for those, the "Restore from" column gives the git commit on branch

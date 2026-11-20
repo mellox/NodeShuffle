@@ -220,8 +220,8 @@ namespace NodeShuffleRerollIdentity
         for (const FString& Slot : Slots)
         {
             const TPair<FString, int32>& Row = Census.BySlotClass.FindChecked(Slot);
-            if (NsDiag(ENsDiag::Visuals)) { UE_LOG(LogNodeShuffle, Display, TEXT("REPCLASS-VANRESTAMP role=%s slotClass=%s to=%s restamped=%d"),
-                Role, *ShortName(Slot), *ShortName(Row.Key), Row.Value); }
+            UE_LOG(LogNodeShuffle, Display, TEXT("REPCLASS-VANRESTAMP role=%s slotClass=%s to=%s restamped=%d"),
+                Role, *ShortName(Slot), *ShortName(Row.Key), Row.Value);
         }
         UE_LOG(LogNodeShuffle, Display, TEXT("REPCLASS-VANRESTAMP-END role=%s restamped=%d repNotGeneric=%d slotClasses=%d"),
             Role, Census.Restamped, Census.RepNotGeneric, Slots.Num());

@@ -102,10 +102,10 @@ void ANodeShuffleSubsystem::EmitRepClassClearanceLine(const FString& ResourcePat
         }
     }
 
-    if (NsDiag(ENsDiag::Visuals)) { UE_LOG(LogNodeShuffle, Display,
+    UE_LOG(LogNodeShuffle, Display,
         TEXT("REPCLASS-CLEARANCE res=%s role=%s class=%s resident=%d nodeBase=%d clearN=%d clear=%s boxExtent=%s boxProfile=%s boxCollision=%d scsPrims=%d scs=[%s]"),
         *FPackageName::ObjectPathToObjectName(ResourcePath), RoleName, *FPackageName::ObjectPathToObjectName(ClassPath),
-        Cls ? 1 : 0, Cdo ? 1 : 0, ClearN, *Clear, *BoxExtent, *BoxProfile, BoxCollision, ScsPrims, *FString::Join(ScsParts, TEXT(";"))); }
+        Cls ? 1 : 0, Cdo ? 1 : 0, ClearN, *Clear, *BoxExtent, *BoxProfile, BoxCollision, ScsPrims, *FString::Join(ScsParts, TEXT(";")));
 }
 
 void ANodeShuffleSubsystem::EmitRepClassStaleCensusOnce()
