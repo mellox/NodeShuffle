@@ -9218,8 +9218,8 @@ bool ANodeShuffleSubsystem::UnlockModdedScannerKnowledge()
         NewlyUnlockedThisPass.Add(TSubclassOf<UFGResourceDescriptor>(ResClass)); // scanregen-1
         if (bDiag)
         {
-            if (NsDiag(ENsDiag::Scanner)) { UE_LOG(LogNodeShuffle, Verbose, TEXT("knowledge: scanner-unlocked %s (type=%s)"),
-                *ResClass->GetName(), PairType == EResourceNodeType::Geyser ? TEXT("Geyser") : TEXT("Node")); }
+            UE_LOG(LogNodeShuffle, Verbose, TEXT("knowledge: scanner-unlocked %s (type=%s)"),
+                *ResClass->GetName(), PairType == EResourceNodeType::Geyser ? TEXT("Geyser") : TEXT("Node"));
         }
     }
     if (Unlocked > 0)
