@@ -11,7 +11,7 @@
 #   T6  READ-ONLY toward the shuffle: the status files assign no readiness, roll or layout member.
 #   T7  StatusNoteGate sits on the line before the readiness return gate; RefreshTick calls StatusTick in both places; files <= 500 lines.
 #   T8  NSSTATUS format: tag first, no field twice, legend prose only; the two chat lines verbatim.
-#   T9  Marker 2026-11-15-status-1 is the newest header entry, once in NodeShuffle.cpp, absent from the status files.
+#   T9  Marker 2026-11-15-status-1 stays listed in the header (newest until ns-cl520140-1), once in NodeShuffle.cpp, absent from the status files.
 #   T10 PANEL: NativePaint draws nothing while the owning controller shows the cursor (early return, never SetVisibility); the widget is a
 #       UPROPERTY; EndPlay removes it; it is created only for a LOCAL player controller; Build.cs carries UMG/Slate/SlateCore privately.
 #   T11 TEST COMMAND: display only -- no chat call, no stage/latch/chat/layout write; assigns only the test flag; '(test)' title; never
@@ -113,7 +113,8 @@ function Invoke-StatusChecks($T, $all) {
     # T9
     $arr = [regex]::Match($T.mk, 'PacketMarkers\[\] = \{([\s\S]*?)\};')
     $tags = @(if ($arr.Success) { [regex]::Matches($arr.Groups[1].Value, 'TEXT\("([\w-]+)"\)') | ForEach-Object { $_.Groups[1].Value } })
-    if ($tags.Count -eq 0 -or $tags[-1] -ne $marker -or @($tags | Where-Object { $_ -eq $marker }).Count -ne 1 -or (Count $T.nsmod ('packet marker (' + $marker + ')=====')) -ne 1) { $f += '(T9) marker status-1 must be the newest header entry, once, and once in NodeShuffle.cpp' }
+    # ns-cl520140-1 (2026-11-19): status-1 is no longer the newest; it stays listed (the newest is pinned by check_mcpcontract C4).
+    if ($tags.Count -eq 0 -or $tags -notcontains $marker -or @($tags | Where-Object { $_ -eq $marker }).Count -ne 1 -or (Count $T.nsmod ('packet marker (' + $marker + ')=====')) -ne 1) { $f += '(T9) marker status-1 must stay listed in the header, once, and once in NodeShuffle.cpp (ns-cl520140-1: no longer the newest)' }
     foreach ($k in $statusKeys) { if ($T[$k].Contains($marker)) { $f += "(T9) marker literal in $k" } }
     # T10
     $paint = Span $T.wg 'int32 UNodeShuffleStatusWidget::NativePaint(' "`n}"
