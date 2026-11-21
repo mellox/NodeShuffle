@@ -394,7 +394,8 @@ function Invoke-McpChecks($Txt, $Cod) {
     # ns-status-1: no longer the newest; pinned present (check_status_lint T9). ns-cl520140-1 bumped the newest marker.
     # ns-cl520140-1: no longer the newest (it had no lint of its own pinning it present). ns-quietlog-1 bumped the newest marker.
     # ns-quietlog-1: no longer the newest; pinned present (check_finalflag_lint F10). ns-finalflag-1 bumped the newest marker.
-    $own = '2026-11-20-' + 'finalflag-1' # McpDescribe's buildMarker reads the header's newest entry
+    # ns-finalflag-1: no longer the newest; pinned present (check_finalflag_lint F10). ns-rwg022-list-1 bumped the newest marker.
+    $own = '2026-11-20-' + 'rwg022-list-1' # McpDescribe's buildMarker reads the header's newest entry
     if ($hdrTags.Count -eq 0 -or $hdrTags[-1] -ne $own -or (Count $nsm $own) -ne 1) { $f += '(C4) this packet marker must be the newest, once, on its own line' }
     if ((Count $Txt[$pin.desc] $newestExpr) -ne 1 -or [regex]::IsMatch($Txt[$pin.desc], 'TEXT\("20\d\d-\d\d-\d\d-')) { $f += '(C4) buildMarker must come from the markers header (newest entry), never a literal in Describe' }
     # ---- F (contract R4.4: finite numbers only)

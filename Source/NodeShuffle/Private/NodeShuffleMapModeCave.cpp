@@ -81,6 +81,8 @@ namespace
         // 0x40 (RWG 0.2.1 build 1130, _team/test-logs/2026-11-15-rwg-0.2.1-export-diff.md Q3/Q4). The 1130 array is SELECTED only when every
         // one of its bytes matches; otherwise the 1063 array is applied exactly as before (so a 1063 DLL and any third form are unchanged:
         // a third form fails closed at its first byte that differs from the 1063 array). No wildcard. Copied token-equal into NodeShuffleRwgGateNotice.cpp (GateSigCaves1130).
+        // ns-rwg022-list-1 (2026-11-20): on RWG 0.2.2 build 1150 (one world, one machine) both the gate check and this bind selected the
+        // B1130 array and read byte 3 as 0x40; no third form was added.
         static const int16 SigCaves1130[] = { 0x48,0x8D,0x41,0x40,0xC3 };
         const int32 Gen = NodeShuffleMapMode::RwgHeightApiGeneration();
         const bool bGenB = Gen == NodeShuffleMapMode::RwgHeightApiGenB;

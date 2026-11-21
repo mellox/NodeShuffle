@@ -16,7 +16,7 @@ Rules (one id per failure):
   F8  SIZE/MCP   the reconcile file is under 500 lines; no MCP file names the reconcile, the flag or the epoch (decision 7).
   F9  READ-ONLY  the reconcile file assigns no member other than the flag, holds one mutable entry reference (the loop), calls no
                  mover/spawner/destroyer, and keeps its contract comment.
-  F10 MARKER     finalflag-1 is the newest header marker and once in NodeShuffle.cpp; quietlog-1 stays listed; no marker literal in
+  F10 MARKER     finalflag-1 (newest until ns-rwg022-list-1) and quietlog-1 stay listed; finalflag-1 once in NodeShuffle.cpp; no marker literal in
                  the new file.
   F11 NSCONSUMER the census format keeps its old field order and appends the two fields; the change test holds 9 slots.
   F12 DOCS       docs/DIAGNOSTICS.md carries the three lines, the contract names, the not-promised list and the LOADED sentence.
@@ -199,7 +199,8 @@ def check(files, tools):
         f.append('(F9) the contract comment at the top of the reconcile file is missing')
     # ---- F10 marker
     tags = re.findall(r'TEXT\("([\w-]+)"\)', re.search(r'PacketMarkers\[\]\s*=\s*\{(.*?)\};', code[mk], re.S).group(1)) if re.search(r'PacketMarkers\[\]\s*=\s*\{(.*?)\};', code[mk], re.S) else []
-    if not tags or tags[-1] != MARK or tags.count(MARK) != 1 or tags.count(PREV) != 1: f.append('(F10) finalflag-1 must be the newest header marker, quietlog-1 still listed')
+    # ns-rwg022-list-1 bumped the newest marker: finalflag-1 is pinned LISTED, no longer newest (the newest is pinned by mcpcontract C4).
+    if not tags or tags.count(MARK) != 1 or tags.count(PREV) != 1: f.append('(F10) finalflag-1 and quietlog-1 must each stay listed once in the header')
     for t in (MARK, PREV):
         if files[nsm].count('packet marker (' + t + ')=====') != 1: f.append('(F10) marker %s once on its own line in NodeShuffle.cpp' % t)
     for k in (ff, cc):
@@ -218,8 +219,8 @@ def check(files, tools):
         if not re.search(r'^NodeShuffleFinalFlag\.cpp\|Display\|' + tag + r'\|1\tALWAYS\t\t', tools['tsv'], re.M): f.append('(F13) TSV row %s must be class ALWAYS' % tag)
     if "SAVEGAME_REQUIRED = ('FNodeShuffleEntry', 'bPlacement' + 'Final')" not in tools['ql'] or "'PlacementFinal' + 'Epoch')" not in tools['ql']:
         f.append('(F13) quietlog Q8 must pin both names and the SaveGame specifier')
-    own = "'2026-11-20-' + 'finalflag-1'"
-    if ('$own = ' + own) not in tools['mcp'] or own not in tools['sf'] or own not in tools['g20']: f.append('(F13) mcpcontract C4 / scanfilter S9 / rwg020 G9 must name finalflag-1 as newest')
+    own = "'2026-11-20-' + 'rwg022-list-1'"  # ns-rwg022-list-1 rotation
+    if ('$own = ' + own) not in tools['mcp'] or own not in tools['sf'] or own not in tools['g20']: f.append('(F13) mcpcontract C4 / scanfilter S9 / rwg020 G9 must name rwg022-list-1 as newest')
     # ---- F14 (cold review): decision-5 sticky test exact; one ApplyLayout caller; no mover after it in RefreshTick
     if body.count('const bool bSticky = !Actor && !E.bIsNew' + 'Node && E.bPinned;') != 1:
         f.append('(F14) the decision-5 sticky test must read: no actor, an original (not a new row), pinned')
@@ -289,7 +290,7 @@ def run_mutants(files, tools):
             ('N21 DIAGNOSTICS drops the not-promised list', 'doc', 'Not promised', 'Not listed', 'F12'),
             ('N22 TSV row reclassified', 'tsv', 'FINAL' + 'MOVED|1\tALWAYS', 'FINAL' + 'MOVED|1\tTOPIC', 'F13'),
             ('N23 quietlog Q8 SaveGame pin removed', 'ql', "SAVEGAME_REQUIRED = ('FNodeShuffleEntry', 'bPlacement' + 'Final')", "SAVEGAME_REQUIRED = ('', '')", 'F13'),
-            ('N24 mcpcontract C4 not rotated', 'mcp', "$own = '2026-11-20-' + 'finalflag-1'", "$own = '2026-11-20-' + 'quietlog-1'", 'F13')):
+            ('N24 mcpcontract C4 not rotated', 'mcp', "$own = '2026-11-20-' + 'rwg022-list-1'", "$own = '2026-11-20-' + 'finalflag-1'", 'F13')):
         if find not in tools[key]: miss.append('%s: find text absent (mutant cannot apply)' % name); continue
         mt = dict(tools); mt[key] = tools[key].replace(find, repl, 1)
         if any(x.startswith('(' + rule + ')') for x in check(files, mt)): caught += 1

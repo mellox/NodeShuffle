@@ -58,7 +58,7 @@ function Lines-Between([string]$t, [int]$a, [int]$b) { if ($a -lt 0 -or $b -lt $
 function Invoke-019Checks($T) {
     $f = @()
     # V1
-    if ((Count $T.hapi ('const FRwgAcceptedBuild RwgHeightApiAccepted[] = { { TEXT("0.1.7"), 705 }, { TEXT("0.1.9"), 745 }, { TEXT("0.1.12"), ' + '802 }, { TEXT("0.2.0"), 1063 }, { TEXT("0.2.1"), 1130 } };')) -ne 1) { $f += '(V1) the accept list must be exactly {0.1.7,705} {0.1.9,745} {0.1.12,802} {0.2.0,1063} {0.2.1,1130} in one declaration' } # rwg-0-2-0-1 added {0.2.0,1063}; ns-status-1 added {0.2.1,1130}
+    if ((Count $T.hapi ('const FRwgAcceptedBuild RwgHeightApiAccepted[] = { { TEXT("0.1.7"), 705 }, { TEXT("0.1.9"), 745 }, { TEXT("0.1.12"), ' + '802 }, { TEXT("0.2.0"), 1063 }, { TEXT("0.2.1"), 1130 }, { TEXT("0.2.2"), 1150 } };')) -ne 1) { $f += '(V1) the accept list must be exactly {0.1.7,705} {0.1.9,745} {0.1.12,802} {0.2.0,1063} {0.2.1,1130} {0.2.2,1150} in one declaration' } # rwg-0-2-0-1 added {0.2.0,1063}; ns-status-1 added {0.2.1,1130}
     if ((Count $T.hapi 'struct FRwgAcceptedBuild { const TCHAR* SemVer; int32 Build; };') -ne 1) { $f += '(V1) FRwgAcceptedBuild must pair a SemVer with a build' }
     if ((Count $T.hapi ('if (A.Build == E.Build && A.SemVer == E.SemVer) { bVersion = ' + 'true;')) -ne 1 -or (Count $T.hapi ('bVersion = ' + 'true')) -ne 1) { $f += '(V1) the lookup must require BOTH build and SemVer of one entry, at the only bVersion = true site' }
     if ((Count $T.hapi 'for (const FRwgAcceptedBuild& E : RwgHeightApiAccepted)') -lt 1 -or (Count $T.hapi 'bool bVersion = false;') -ne 1) { $f += '(V1) bVersion must start false and be set only by walking the accept list' }

@@ -147,7 +147,7 @@ def guard_text(topic):
     return 'if (' + GUARDCALL + ENUM + topic + ')) { '
 
 
-EXPECT_CLASSES = {'ALWAYS': 419, 'INHERIT': 16, 'MASTER': 144, 'ONDEMAND': 163, 'TOPIC': 277, 'TOPICGATE': 6}
+EXPECT_CLASSES = {'ALWAYS': 421, 'INHERIT': 16, 'MASTER': 144, 'ONDEMAND': 163, 'TOPIC': 277, 'TOPICGATE': 6}  # ns-rwg022-list-1: ALWAYS 419 -> 421 (its build marker + RWGLISTCHECK)
 EXPECT_TOPICS = {'Gates': 13, 'Hide': 8, 'Hologram': 10, 'Placement': 58, 'Rocks': 14, 'Roll': 21, 'Scanner': 6, 'Spawn': 8, 'Status': 23, 'Veto': 6, 'Visuals': 16, 'Void': 5, 'Wells': 89}
 
 

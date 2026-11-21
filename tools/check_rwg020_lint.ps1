@@ -14,7 +14,9 @@
 #   G4 Cave masks: generation A arrays keep their exact text; generation B arrays pin CarvedCaves @3 = 0x38, AnyNear @22 = 0x50,
 #      FloorCmAt @30 = 0x50 (no wildcard -- D2); the Cave.cpp and GateNotice.cpp copies are token-equal; both select by generation.
 #   G5 Accept list carries {0.2.0,1063} with the sha256 prefix and the record of the census that ran (rwg-0-2-0-2); ns-status-1
-#      (2026-11-15) appends {0.2.1,1130} with its sha256 prefix and the census of its unlisted run.
+#      (2026-11-15) appends {0.2.1,1130} with its sha256 prefix and the census of its unlisted run; ns-rwg022-list-1 (2026-11-20)
+#      appends {0.2.2,1150} with the census of its unlisted run (no sha256 was taken) and pins the always-on listed-path line
+#      (once, Display, ungated, after the usable status in TryBind).
 #   G6 Marker 2026-11-13-rwg-0-2-0-1 newest in the header, once in NodeShuffle.cpp, absent from the packet's source files.
 #   G7 New formats: each starts with its tag (Display/Warning), no field repeats in a format, no `word=` inside a legend parenthetical.
 #   G8 The mask tool parses masks from source (no hard-coded mask bytes); the edited lints carry the 0.2.0 anchors.
@@ -124,7 +126,11 @@ function Invoke-020Checks($T, $others) {
     if ((Count $T.gate 'const bool bGenB = Gen == GenB;') -ne 1 -or (Count $T.gate 'const int16* const CavesSig = bGenB ? (bCaves1130 ? GateSigCaves1130 : GateSigCaves1063) : GateSigCaves;') -ne 1 -or (Count $T.gate 'const int16* const FloorSig = bGenB ? GateSigFloor1063 : GateSigFloor;') -ne 1 -or (Count $T.gate 'const int16* const AnyNearSig = bGenB ? GateSigAnyNear1063 : GateSigAnyNear;') -ne 1) { $f += '(G4) the unlisted cave half must select the same masks by generation' }
     if ((Count $T.mmh 'constexpr int32 RwgHeightApiGenB = 2;') -ne 1 -or (Count $T.gateh 'constexpr int32 GenB = 2;') -ne 1 -or (Count $T.hapi 'static_assert(NodeShuffleMapMode::RwgHeightApiGenA == NodeShuffleRwgGate::GenA && NodeShuffleMapMode::RwgHeightApiGenB == NodeShuffleRwgGate::GenB,') -ne 1) { $f += '(G4) the two generation constant pairs must be equal and asserted' }
     # G5
-    if ((Count $T.hapi ', { TEXT("0.2.0"), 1063 }, { TEXT("0.2.1"), 1130 } };') -ne 1 -or (Count $T.hapi '0.2.1 build 1130, sha256 7F5E4A64776A2CFB') -ne 1 -or (Count $T.hapi 'n=99, median |dZ| 5.0 cm, p95 28.9 cm') -ne 1 -or (Count $T.hapi '0.2.0 build 1063, sha256 6AEF57A9652D77AD') -ne 1 -or (Count $T.hapi 'RAN 2026-11-13 (first 0.2.0 load, world') -ne 1 -or (Count $T.hapi 'RWGHEIGHTAPI census usable=1, terrain n=84, median |dZ| 8.6 cm, p95 40.3 cm') -ne 1) { $f += '(G5) the accept list must carry {0.2.0,1063} and {0.2.1,1130} (ns-status-1) with their sha256 prefixes and census records' }
+    if ((Count $T.hapi ', { TEXT("0.2.0"), 1063 }, { TEXT("0.2.1"), 1130 }, { TEXT("0.2.2"), 1150 } };') -ne 1 -or (Count $T.hapi '0.2.2 build 1150, listed 2026-11-20') -ne 1 -or (Count $T.hapi 'first census terrain-mesh n=89, median |dZ| 8.8 cm, p95 44.6 cm') -ne 1 -or (Count $T.hapi '0.2.1 build 1130, sha256 7F5E4A64776A2CFB') -ne 1 -or (Count $T.hapi 'n=99, median |dZ| 5.0 cm, p95 28.9 cm') -ne 1 -or (Count $T.hapi '0.2.0 build 1063, sha256 6AEF57A9652D77AD') -ne 1 -or (Count $T.hapi 'RAN 2026-11-13 (first 0.2.0 load, world') -ne 1 -or (Count $T.hapi 'RWGHEIGHTAPI census usable=1, terrain n=84, median |dZ| 8.6 cm, p95 40.3 cm') -ne 1) { $f += '(G5) the accept list must carry {0.2.0,1063} and {0.2.1,1130} (ns-status-1) with their sha256 prefixes and census records, and {0.2.2,1150} (ns-rwg022-list-1) with its census record' }
+    # G5 (ns-rwg022-list-1): the listed path's positive line -- once, Display, not behind a topic gate, after the usable status in TryBind
+    $lcHead = 'Measured values of this run only.' + "`n" + '        UE_LOG(LogNodeShuffle, Display, TEXT("RWG' + 'LISTCHECK: status=%s semVer=''%s'' build=%d matchedEntry=''%s'' accepted=''%s'' generation=%s optionalMismatched=%d;'
+    $lcArgs = '            *A.Status, *A.SemVer, A.Build, *A.Matched, *RwgAcceptedList(), RwgHapiGenLabel(A.Gen), OptionalSigBad);'
+    if ((Count $T.hapi ('TEXT("RWG' + 'LISTCHECK: ')) -ne 1 -or (Count $tb $lcHead) -ne 1 -or -not (Ordered $tb @('A.Status = bUnlisted ? TEXT("signatureVerifiedUnlisted") : TEXT("bound");', $lcHead, $lcArgs, '#else'))) { $f += '(G5) the listed-path line must print once, ungated, right after the usable status in TryBind, with status and matchedEntry' }
     # G6
     $arr = [regex]::Match($T.mk, 'PacketMarkers\[\] = \{([\s\S]*?)\};')
     $hdrTags = @(if ($arr.Success) { [regex]::Matches($arr.Groups[1].Value, 'TEXT\("([\w-]+)"\)') | ForEach-Object { $_.Groups[1].Value } })
@@ -143,7 +149,7 @@ function Invoke-020Checks($T, $others) {
     }
     # G8
     if (-not $T.tool.Contains("SIG_RX = re.compile(") -or $T.tool.Contains('0x48,' + '0x8B,0xC4') -or $T.tool.Contains('0x48, ' + '0x8B, 0xC4') -or -not $T.tool.Contains("'git', '-C', ROOT, 'show'")) { $f += '(G8) the mask tool must parse masks from source, carry no mask bytes of its own, and compare against the base commit' }
-    if (-not $T.l019.Contains('{ TEXT("0.2.0"), 1063 }, { TEXT("0.2.1"), 1130 } };') -or -not $T.l019.Contains('CheckCaveSignatures(H, A.Gen, CaveMissing, CaveBad);') -or -not $T.lmcp.Contains('# rwg-0-2-0-2: no longer the newest; pinned present') -or -not $T.lthh.Contains('# rwg-0-2-0-1: no longer the newest; pinned present')) { $f += '(G8) the edited lints must carry their 0.2.0 anchors' }
+    if (-not $T.l019.Contains('{ TEXT("0.2.0"), 1063 }, { TEXT("0.2.1"), 1130 }, { TEXT("0.2.2"), 1150 } };') -or -not $T.l019.Contains('CheckCaveSignatures(H, A.Gen, CaveMissing, CaveBad);') -or -not $T.lmcp.Contains('# rwg-0-2-0-2: no longer the newest; pinned present') -or -not $T.lthh.Contains('# rwg-0-2-0-1: no longer the newest; pinned present')) { $f += '(G8) the edited lints must carry their 0.2.0 anchors' }
     # G9 (rwg-0-2-1-1)
     $c130 = Mask $T.cave 'SigCaves1130'; $g130 = Mask $T.gate 'GateSigCaves1130'
     if (-not $c130 -or -not $g130) { $f += '(G9) SigCaves1130 / GateSigCaves1130 must be declared once in each file' }
@@ -182,8 +188,8 @@ function Invoke-020Checks($T, $others) {
     $tags9 = @(if ($arr9.Success) { [regex]::Matches($arr9.Groups[1].Value, 'TEXT\("([\w-]+)"\)') | ForEach-Object { $_.Groups[1].Value } })
     if ($tags9.Count -eq 0 -or $tags9 -notcontains $marker021 -or @($tags9 | Where-Object { $_ -eq $marker021 }).Count -ne 1 -or (Count $T.nsmod ('packet marker (' + $marker021 + ')=====')) -ne 1) { $f += '(G9) marker rwg-0-2-1-1 must stay listed in the header, once, and once in NodeShuffle.cpp (ns-status-1: no longer the newest)' }
     foreach ($k in @('hapi', 'cave', 'gate', 'gateh', 'tool', 'doc')) { if ($T[$k].Contains($marker021)) { $f += "(G9) no rwg-0-2-1-1 marker literal in $k" } }
-    if (-not $T.lmcp.Contains("`$own = '2026-11-20-' + 'finalflag-1'") -or -not $T.lsf.Contains("'2026-11-20-' + 'finalflag-1'") -or -not $T.lsf.Contains('(S9) check_mcpcontract C4 must name finalflag-1 as the newest') -or
-        -not $T.lrf.Contains("if (`$hdrTags.Count -eq 0 -or `$hdrTags -notcontains `$own -or `$hdrTags -notcontains `$prev)") -or $T.lrf.Contains('$hdrTags[-1]')) { $f += '(G9) mcpcontract C4 and scanfilter S9 must name finalflag-1 as the newest (ns-finalflag-1 rotation), and rollfirst R9 must pin rollfirst-1 listed, not newest' }
+    if (-not $T.lmcp.Contains("`$own = '2026-11-20-' + 'rwg022-list-1'") -or -not $T.lsf.Contains("'2026-11-20-' + 'rwg022-list-1'") -or -not $T.lsf.Contains('(S9) check_mcpcontract C4 must name rwg022-list-1 as the newest') -or
+        -not $T.lrf.Contains("if (`$hdrTags.Count -eq 0 -or `$hdrTags -notcontains `$own -or `$hdrTags -notcontains `$prev)") -or $T.lrf.Contains('$hdrTags[-1]')) { $f += '(G9) mcpcontract C4 and scanfilter S9 must name rwg022-list-1 as the newest (ns-rwg022-list-1 rotation), and rollfirst R9 must pin rollfirst-1 listed, not newest' }
     if (-not $T.tool.Contains("('SigCaves1063', 'SigCaves1130')") -or -not $T.tool.Contains("'SigCaves1130': 'GateSigCaves1130'") -or -not $T.tool.Contains("('SigGetState1063', 'SigGetState1130')") -or -not $T.tool.Contains("('SigContentSpawned1063', 'SigContentSpawned1130')") -or -not $T.tool.Contains('def control_d(')) { $f += '(G9) the mask tool must mirror the two-form masks and run control (d)' }
     if (-not $T.doc.Contains('`cavesMaskApplied`') -or -not $T.doc.Contains('`RWGGETTERS`') -or -not $T.doc.Contains('`cavesDisp`')) { $f += '(G9) docs/DIAGNOSTICS.md must describe cavesMaskApplied, cavesDisp and the RWGGETTERS form' }
     return $f
@@ -209,14 +215,14 @@ $mutants = @(
     @{ Name = 'M15 FloorCmAt B copy drifts'; Key = 'gate'; Expect = 'G4'; Find = '0x18,0x01,0x00,0x00,0x8B,0x59,0x50,0x4C,0x8B,0xE9 };'; Repl = '0x18,0x01,0x00,0x00,0x8B,0x59,0x48,0x4C,0x8B,0xE9 };' }
     @{ Name = 'M16 generation-A SigCaves edited'; Key = 'cave'; Expect = 'G4'; Find = 'SigCaves[] = { 0x48,0x8D,0x41,0x28,0xC3 };'; Repl = 'SigCaves[] = { 0x48,0x8D,0x41,-1,0xC3 };' }
     @{ Name = 'M17 cave bind ignores the generation'; Key = 'cave'; Expect = 'G4'; Find = 'Bind(SymCaves, CavesSig, CavesN, TEXT("CarvedCaves"))'; Repl = 'Bind(SymCaves, SigCaves, UE_ARRAY_COUNT(SigCaves), TEXT("CarvedCaves"))' }
-    @{ Name = 'M18 accept entry dropped'; Key = 'hapi'; Expect = 'G5'; Find = ', { TEXT("0.2.0"), 1063 }, { TEXT("0.2.1"), 1130 } };'; Repl = ', { TEXT("0.2.0"), 1063 } };' } # ns-status-1: the 1130 entry dropped
+    @{ Name = 'M18 accept entry dropped'; Key = 'hapi'; Expect = 'G5'; Find = ', { TEXT("0.2.1"), 1130 }, { TEXT("0.2.2"), 1150 } };'; Repl = ', { TEXT("0.2.1"), 1130 } };' } # ns-rwg022-list-1: the 1150 entry dropped
     @{ Name = 'M19 census record dropped'; Key = 'hapi'; Expect = 'G5'; Find = 'RAN 2026-11-13 (first 0.2.0 load, world'; Repl = 'OWED (first 0.2.0 load, world' }
     @{ Name = 'M20 marker dropped from the header'; Key = 'mk'; Expect = 'G6'; Find = ('        TEXT("' + $marker + '"),' + $N); Repl = '' }
     @{ Name = 'M21 marker literal in the gate file'; Key = 'gate'; Expect = 'G6'; Find = '// RWG 0.1.12 gate lane (2026-10-26)'; Repl = ('// ' + $marker + ' gate lane (2026-10-26)') }
     @{ Name = 'M22 field=value in the RWGGENERATION legend'; Key = 'hapi'; Expect = 'G7'; Find = 'a FirstDiff of -1 means'; Repl = 'surfaceFirstDiffA=-1 means' }
     @{ Name = 'M23 RWGEDGESTRIP repeats a field'; Key = 'hapi'; Expect = 'G7'; Find = 'bisectionValid=%d thresholdMinusStripInnerCm='; Repl = 'bisectionValid=%d gridCm=' }
     @{ Name = 'M24 mask tool hard-codes a mask'; Key = 'tool'; Expect = 'G8'; Find = 'BASE_COMMIT = '; Repl = ('X = [0x48,' + '0x8B,0xC4]' + $N + 'BASE_COMMIT = ') }
-    @{ Name = 'M25 rwg019 lint loses the 1063 entry'; Key = 'l019'; Expect = 'G8'; Find = '{ TEXT("0.2.0"), 1063 }, { TEXT("0.2.1"), 1130 } };'; Repl = '};' }
+    @{ Name = 'M25 rwg019 lint loses the 1063 entry'; Key = 'l019'; Expect = 'G8'; Find = '{ TEXT("0.2.0"), 1063 }, { TEXT("0.2.1"), 1130 }, { TEXT("0.2.2"), 1150 } };'; Repl = '};' }
     @{ Name = 'M27 SigSurface1063 widened (pinned byte wildcarded)'; Key = 'hapi'; Expect = 'G2'; Find = '0x80,0xB9,-1,-1,-1,-1,0x00,0x48,0x8B,0xD9 };'; Repl = '0x80,0xB9,-1,-1,-1,-1,-1,0x48,0x8B,0xD9 };' }
     @{ Name = 'M28 SigInSea1063 widened (pinned byte wildcarded)'; Key = 'hapi'; Expect = 'G2'; Find = '0x0F,0x28,0xEA,0x66,0x0F,0x2F,0xD8,0x48,0x8B,0xD9 };'; Repl = '0x0F,0x28,0xEA,0x66,0x0F,0x2F,0xD8,0x48,-1,0xD9 };' }
     @{ Name = 'M29 InSea generation-B bind removed'; Key = 'hapi'; Expect = 'G1'; Find = 'else if (SeaGen == kRwgHapiGenB) { A.SeaStatus = TEXT("bound"); }'; Repl = '' }
@@ -241,11 +247,16 @@ $mutants = @(
     @{ Name = 'M48 RWGGATE-CAVESIG drops cavesDisp'; Key = 'gate'; Expect = 'G9'; Find = "mismatchedList='%s' cavesMaskApplied=%s cavesDisp=%s ("; Repl = "mismatchedList='%s' cavesMaskApplied=%s (" }
     @{ Name = 'M49 RWGGETTERS drops the form'; Key = 'hapi'; Expect = 'G9'; Find = 'TEXT("%s%s:%s@%d/form%s/disp0x%X"), Detail.IsEmpty() ? TEXT("") : TEXT(" "), Names[I], St, Diff, Form, Disp);'; Repl = 'TEXT("%s%s:%s@%d"), Detail.IsEmpty() ? TEXT("") : TEXT(" "), Names[I], St, Diff);' }
     @{ Name = 'M50 marker rwg-0-2-1-1 dropped from the header'; Key = 'mk'; Expect = 'G9'; Find = ('        TEXT("' + $marker021 + '"),' + $N); Repl = '' }
-    @{ Name = 'M51 mcpcontract C4 not rotated'; Key = 'lmcp'; Expect = 'G9'; Find = "`$own = '2026-11-20-' + 'finalflag-1'"; Repl = "`$own = '2026-11-20-' + 'quietlog-1'" } # ns-finalflag-1: rotated from quietlog-1
-    @{ Name = 'M52 scanfilter S9 not rotated'; Key = 'lsf'; Expect = 'G9'; Find = "'2026-11-20-' + 'finalflag-1'"; Repl = "'2026-11-20-' + 'quietlog-1'" } # ns-finalflag-1: rotated from quietlog-1
+    @{ Name = 'M51 mcpcontract C4 not rotated'; Key = 'lmcp'; Expect = 'G9'; Find = "`$own = '2026-11-20-' + 'rwg022-list-1'"; Repl = "`$own = '2026-11-20-' + 'finalflag-1'" } # ns-rwg022-list-1: rotated from finalflag-1
+    @{ Name = 'M52 scanfilter S9 not rotated'; Key = 'lsf'; Expect = 'G9'; Find = "'2026-11-20-' + 'rwg022-list-1'"; Repl = "'2026-11-20-' + 'finalflag-1'" } # ns-rwg022-list-1: rotated from finalflag-1
     @{ Name = 'M53 rollfirst R9 still pins newest'; Key = 'lrf'; Expect = 'G9'; Find = '$hdrTags -notcontains $own -or $hdrTags -notcontains $prev)'; Repl = '$hdrTags[-1] -ne $own -or $hdrTags -notcontains $prev)' }
     @{ Name = 'M54 mask tool loses the 1130 cave form'; Key = 'tool'; Expect = 'G9'; Find = "('SigCaves1063', 'SigCaves1130')"; Repl = "'SigCaves1063'" }
     @{ Name = 'M55 DIAGNOSTICS row dropped'; Key = 'doc'; Expect = 'G9'; Find = '`cavesMaskApplied`'; Repl = 'cavesMaskApplied' }
+    @{ Name = 'M56 1130 entry dropped, 1150 kept'; Key = 'hapi'; Expect = 'G5'; Find = ', { TEXT("0.2.1"), 1130 }, { TEXT("0.2.2"), 1150 } };'; Repl = ', { TEXT("0.2.2"), 1150 } };' } # ns-rwg022-list-1
+    @{ Name = 'M57 1150 census record dropped'; Key = 'hapi'; Expect = 'G5'; Find = 'first census terrain-mesh n=89, median |dZ| 8.8 cm, p95 44.6 cm'; Repl = 'census owed' } # ns-rwg022-list-1
+    @{ Name = 'M58 listed-path line behind the Placement topic'; Key = 'hapi'; Expect = 'G5'; Find = ('Measured values of this run only.' + $N + '        UE_LOG(LogNodeShuffle, Display, TEXT("RWG' + 'LISTCHECK: '); Repl = ('Measured values of this run only.' + $N + '        if (NsDiag(ENsDiag::Placement)) UE_LOG(LogNodeShuffle, Display, TEXT("RWG' + 'LISTCHECK: ') } # ns-rwg022-list-1
+    @{ Name = 'M59 listed-path line drops its last measured field'; Key = 'hapi'; Expect = 'G5'; Find = 'RwgAcceptedList(), RwgHapiGenLabel(A.Gen), OptionalSigBad);'; Repl = 'RwgAcceptedList(), RwgHapiGenLabel(A.Gen), 0);' } # ns-rwg022-list-1
+    @{ Name = 'M60 1150 entry dropped from the rwg019 lint'; Key = 'l019'; Expect = 'G8'; Find = '{ TEXT("0.2.1"), 1130 }, { TEXT("0.2.2"), 1150 } };'; Repl = '{ TEXT("0.2.1"), 1130 } };' } # ns-rwg022-list-1
     @{ Name = 'M26 unlisted cave half checks generation A always'; Key = 'hapi'; Expect = 'G1'; Find = 'CheckCaveSignatures(H, A.Gen, CaveMissing, CaveBad);'; Repl = 'CheckCaveSignatures(H, 1, CaveMissing, CaveBad);' }
 )
 $mutantFails = @(); $caught = 0
