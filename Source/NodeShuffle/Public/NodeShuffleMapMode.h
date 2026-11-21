@@ -161,7 +161,7 @@ namespace NodeShuffleMapMode
         bool VoidAt(double X, double Y) const;           // RWG P2f: raw VoidAt; false when !HasVoid() or outside the world (our check first)
         bool KillboxTopApi(double& OutZ) const;          // RWG P2f: GetKillboxTop on the generator; false when unbound or it returned false
         // RWG P5 (2026-10-18): FPWCarvedCaves queries (NodeShuffleMapModeCave.cpp; optional group, own byte-signature gate). The cave object
-        // is CarvedCaves(F) (F+0x28 on generation A, +0x38 on build 1063, +0x40 on builds 1130 and 1150), taken per call (never cached). Every method answers the "no cave" value when !HasCaves().
+        // is CarvedCaves(F) (F+0x28 on generation A, +0x38 on build 1063, +0x40 on build 1130, and on build 1150 as read 2026-11-20 on one world), taken per call (never cached). Every method answers the "no cave" value when !HasCaves().
         bool HasCaves() const;                                              // usable AND the optional cave group bound
         int32 CaveNum() const;                                              // Num(); -1 when !HasCaves()
         bool CaveAnyNear(double X, double Y, double RadiusCm) const;        // AnyNear(X, Y, R)

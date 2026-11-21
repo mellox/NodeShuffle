@@ -449,7 +449,7 @@ namespace
         A.bUsable = true;
         A.Status = bUnlisted ? TEXT("signatureVerifiedUnlisted") : TEXT("bound");
         // ns-rwg022-list-1: ALWAYS ON, once per process, on every bind that reaches this point, listed or unlisted, so the listed path has a
-        // positive line of its own (the bind line above is topic-gated). Measured values of this run only.
+        // positive line of its own (the bind line above is topic-gated); a bind that returned earlier prints none. Measured values of this run only.
         UE_LOG(LogNodeShuffle, Display, TEXT("RWGLISTCHECK: status=%s semVer='%s' build=%d matchedEntry='%s' accepted='%s' generation=%s optionalMismatched=%d; printed once when the height-API bind reaches its usable status, listed or not (matchedEntry is the accept-list entry whose SemVersion and build both equal this build's, or none; optionalMismatched counts optional exports whose mask did not match)"),
             *A.Status, *A.SemVer, A.Build, *A.Matched, *RwgAcceptedList(), RwgHapiGenLabel(A.Gen), OptionalSigBad);
 #else
