@@ -53,8 +53,9 @@ namespace
     //   generation B with the 1130 CarvedCaves / GetState / IsContentSpawned forms. RAN 2026-11-15 as an UNLISTED build (world "Bleak",
     //   _team/test-logs/2026-11-15-nodeshuffle-rwg-0-2-1-newworld.md §A-B): signatureVerifiedUnlisted, all 16 + 2 matched; census terrain-mesh
     //   n=99, median |dZ| 5.0 cm, p95 28.9 cm. Listing it drops the strict unlisted verdict (optional/cave misses refuse only unlisted builds).
-    //   0.2.2 build 1150, listed 2026-11-20 (ns-rwg022-list-1); no sha256 was taken (the DLL was not hashed, only its log was read). MEASURED
-    //   on one world, one machine, 2026-11-20 (_team/test-logs/2026-11-20-nodeshuffle-finalflag-1-session/FactoryGame.log), as an UNLISTED
+    //   0.2.2 build 1150, sha256 4DD9B4AFAF69C739... (Steam DLL; EGS DLL 0F9B42DF9069F469...), listed 2026-11-20 (ns-rwg022-list-1); hashed at review from
+    //   the installed files (mtime 2026-11-20T05:02Z, before the session), so identity with the DLL that ran is assumed; tools/check_rwg_masks.py on both: PASS. MEASURED
+    //   on one world, one machine, one game process, Steam DLL only, 2026-11-20 (_team/test-logs/2026-11-20-nodeshuffle-finalflag-1-session/FactoryGame.log), as an UNLISTED
     //   build: signatureVerifiedUnlisted, all 16 + 2 matched, generation B, CarvedCaves form B1130 (disp 0x40), GetState / IsContentSpawned
     //   form 1130; first census terrain-mesh n=89, median |dZ| 8.8 cm, p95 44.6 cm. No per-build value was added: every form it matched exists.
     struct FRwgAcceptedBuild { const TCHAR* SemVer; int32 Build; };
@@ -448,10 +449,11 @@ namespace
         A.Hmod = H; // RWG P5: published only on the path that also sets bUsable
         A.bUsable = true;
         A.Status = bUnlisted ? TEXT("signatureVerifiedUnlisted") : TEXT("bound");
+        const int32 OptionalUnbound = (A.GMin ? 0 : 1) + (A.GMax ? 0 : 1) + (A.InSea ? 0 : 1) + (A.VoidAt ? 0 : 1) + (A.KillboxTop ? 0 : 1);
         // ns-rwg022-list-1: ALWAYS ON, once per process, on every bind that reaches this point, listed or unlisted, so the listed path has a
         // positive line of its own (the bind line above is topic-gated); a bind that returned earlier prints none. Measured values of this run only.
-        UE_LOG(LogNodeShuffle, Display, TEXT("RWGLISTCHECK: status=%s semVer='%s' build=%d matchedEntry='%s' accepted='%s' generation=%s optionalMismatched=%d; printed once when the height-API bind reaches its usable status, listed or not (matchedEntry is the accept-list entry whose SemVersion and build both equal this build's, or none; optionalMismatched counts optional exports whose mask did not match)"),
-            *A.Status, *A.SemVer, A.Build, *A.Matched, *RwgAcceptedList(), RwgHapiGenLabel(A.Gen), OptionalSigBad);
+        UE_LOG(LogNodeShuffle, Display, TEXT("RWGLISTCHECK: status=%s semVer='%s' build=%d matchedEntry='%s' accepted='%s' generation=%s optionalMismatched=%d optionalUnbound=%d of 5; printed once when the height-API bind reaches its usable status, listed or not (matchedEntry is the accept-list entry whose SemVersion and build both equal this build's, or none; optionalMismatched counts, among GlobalMinSurfaceCm, GlobalMaxSurfaceCm, InSeaVolume, VoidAt and GetKillboxTop, those whose mask did not match; optionalUnbound counts those five left unbound, missing or dropped; the five cave exports are not counted here, the cave bind prints RWGCAVEBIND later)"),
+            *A.Status, *A.SemVer, A.Build, *A.Matched, *RwgAcceptedList(), RwgHapiGenLabel(A.Gen), OptionalSigBad, OptionalUnbound);
 #else
         A.Status = TEXT("notWindows");
 #endif

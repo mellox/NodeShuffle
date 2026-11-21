@@ -220,7 +220,7 @@ def check(files, tools):
     if "SAVEGAME_REQUIRED = ('FNodeShuffleEntry', 'bPlacement' + 'Final')" not in tools['ql'] or "'PlacementFinal' + 'Epoch')" not in tools['ql']:
         f.append('(F13) quietlog Q8 must pin both names and the SaveGame specifier')
     own = "'2026-11-20-' + 'rwg022-list-1'"  # ns-rwg022-list-1 rotation
-    if ('$own = ' + own) not in tools['mcp'] or own not in tools['sf'] or own not in tools['g20']: f.append('(F13) mcpcontract C4 / scanfilter S9 / rwg020 G9 must name rwg022-list-1 as newest')
+    if ('$own = ' + own) not in tools['mcp'] or own not in tools['sf'] or ('$T.lmcp.Contains("`$own = ' + own + '")') not in tools['g20']: f.append('(F13) mcpcontract C4 / scanfilter S9 / rwg020 G9 must name rwg022-list-1 as newest')
     # ---- F14 (cold review): decision-5 sticky test exact; one ApplyLayout caller; no mover after it in RefreshTick
     if body.count('const bool bSticky = !Actor && !E.bIsNew' + 'Node && E.bPinned;') != 1:
         f.append('(F14) the decision-5 sticky test must read: no actor, an original (not a new row), pinned')
