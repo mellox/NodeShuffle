@@ -1593,7 +1593,7 @@ private:
     // ns-logfix-1 (2026-11-22): set in RefreshTick's first-roll branch when that roll produced a layout BEFORE adopt-on-load ran
     // in this session. Plain member (no property macro): never saved, so a loaded world starts false. Read ONLY by the
     // Adopt-on-load line, which prints it and skips its low-adoption check when it is 1 (a layout rolled this session has no
-    // saved spawned node to adopt). Gates no behaviour.
+    // saved spawned node to adopt). A RE-roll before adopt does not set it. Gates no behaviour.
     bool bAdoptFirstRollThisSession = false;
     // rwg-pinnedspawn-1 I3 (2026-11-01): once per load (latched only once the Layout is non-empty), every
     // pinned entry that the spawn path's overlap or inside gate deactivated is re-activated and re-armed;

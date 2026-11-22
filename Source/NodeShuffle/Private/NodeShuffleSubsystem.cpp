@@ -4338,7 +4338,7 @@ void ANodeShuffleSubsystem::AdoptRestoredSpawnedNodes()
         ? FString(TEXT(" (no check: the layout was rolled this session before this pass; adoptFirstRoll 1)"))
         : (bFail
             // Arity hand-counted: 3 format specifiers, 3 arguments.
-            ? FString::Printf(TEXT(" <-- WARNING: low adoption on a layout not rolled this session: %d adopted <= 1, %d candidates <= 1, %d spawn-entries > 1; adoptFirstRoll 0"),
+            ? FString::Printf(TEXT(" <-- WARNING: low adoption: %d adopted <= 1, %d candidates <= 1, %d spawn-entries > 1; adoptFirstRoll 0"),
                 Adopted, RuntimeNodesSeen, ExpectedSpawned)
             : FString(TEXT(" (OK; adoptFirstRoll 0)")));
     // Arity hand-counted: 8 format specifiers, 8 arguments.
