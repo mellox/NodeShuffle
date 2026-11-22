@@ -635,6 +635,7 @@ void FNodeShuffleModule::StartupModule()
     UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle packet marker (2026-11-20-finalflag-1)=====")); // own line, same reason as the lines above; also listed in NodeShuffleBuildMarkers.h
     UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle packet marker (2026-11-20-rwg022-list-1)=====")); // own line, same reason as the lines above; also listed in NodeShuffleBuildMarkers.h
     UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle packet marker (2026-11-22-css87-1)=====")); // own line, same reason as the lines above; also listed in NodeShuffleBuildMarkers.h
+    UE_LOG(LogNodeShuffle, Display, TEXT("===== NodeShuffle packet marker (2026-11-22-150-rc1)=====")); // own line, same reason as the lines above; also listed in NodeShuffleBuildMarkers.h
     FNodeShuffleModule::LogAutoAllowExtractorsState(); // Packet G: log the CVar state once at startup
 
 #if !WITH_EDITOR

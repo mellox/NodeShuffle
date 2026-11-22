@@ -1032,3 +1032,4 @@ NodeShuffleFinalFlag.cpp|Display|FINALCENSUS|1	ALWAYS		Display	NodeShuffleFinalF
 NodeShuffle.cpp|Display|===== NodeShuffle packet marker |29	ALWAYS		Display	NodeShuffle.cpp	636	StartupModule	none	0	0	NEW-ns-rwg022-list-1 build marker (always on)
 NodeShuffleMapModeHeightApi.cpp|Display|RWGLISTCHECK|1	ALWAYS		Display	NodeShuffleMapModeHeightApi.cpp	455	TryBind	none	0	0	NEW-ns-rwg022-list-1 (always on, once per process when the height-API bind reaches its usable status; measured values only)
 NodeShuffle.cpp|Display|===== NodeShuffle packet marker |30	ALWAYS		Display	NodeShuffle.cpp	637	StartupModule	none	0	0	NEW-ns-css87-1 build marker (always on)
+NodeShuffle.cpp|Display|===== NodeShuffle packet marker |31	ALWAYS		Display	NodeShuffle.cpp	638	StartupModule	none	0	0	NEW-ns-logfix-1 build marker (always on)
