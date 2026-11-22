@@ -55,7 +55,7 @@ and dedicated servers; Satisfactory Plus or KBFL installed alongside it.
 
 - **Modded nodes that appear after the world loads are no longer left in place.** Some mods spawn
   their nodes a little after the world is ready (All Minable is one), and those used to stay where
-  they were, unshuffled. With **Include Modded Nodes** on, NodeShuffle now looks for new nodes when the world is ready and then every 60 game seconds for the rest of the session, and adds them to the layout without re-rolling anything else. After 2048 nodes have been added this way in one session it stops looking until the next load.
+  they were, unshuffled. With **Include Modded Nodes** on, NodeShuffle now looks for new nodes when the world is ready and then every 60 game seconds for the rest of the session, and adds them to the layout without re-rolling anything else. Once 2048 layout entries have been added this way in one session, it stops looking until the next load.
 
 ## 1.4.0 — 2026-08-13
 
