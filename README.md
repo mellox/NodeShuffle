@@ -68,7 +68,7 @@ terrain data (height, water, void and caves) instead of the prebuilt map of the 
 - **Starter nodes (optional)** — on a brand-new game, a small guaranteed set
   near spawn (Iron/Limestone/Copper) keeps the early game playable.
 - **Per-save, deterministic** — the layout is rolled once per save from a seed
-  and persists. With modded-node inclusion enabled, eligible additions are captured when the world is ready and then every 60 game seconds for the rest of the session (up to 2048 additions per session); existing entries are not re-rolled unless you opt in.
+  and persists. With modded-node inclusion enabled, eligible additions are captured when the world is ready and then about every 60 game seconds for the rest of the session; once a session's scans have added 2048 or more layout entries, scanning stops until the next load. Existing entries are not re-rolled unless you opt in.
 - **Balance guarantees** — every vanilla resource keeps a configurable minimum
   number of active nodes, so no playthrough becomes impossible.
 - **Respects your factory** — any node with a miner or extractor on it is never
@@ -81,7 +81,7 @@ terrain data (height, water, void and caves) instead of the prebuilt map of the 
   tested in multiplayer or on a dedicated server with this version.
 
 > **Note on player-built nodes** (if you use a mod that lets you *build* resource
-> nodes): with modded-node inclusion enabled, newly discovered eligible nodes can join at any of those scans. Occupied nodes are recorded in place; unoccupied nodes present at a scan can move. Scan duration and additions are logged.
+> nodes): with modded-node inclusion enabled, newly discovered eligible nodes can join at any of those scans. Occupied nodes are recorded in place; unoccupied nodes present at a scan can move. With Enable Diagnostic Logging on, each scan's duration and additions are logged.
 
 ## Configuration
 
@@ -212,7 +212,7 @@ destination. On Random World Generator worlds nodes are spawned map-wide and set
 ground when you come near.
 
 **One real exception.** Nodes added by **other mods** are picked up when they appear — and
-some mods spawn theirs after the world loads, or only once you research something. With **Include Modded Nodes** on, NodeShuffle looks for new nodes when the world is ready and then every 60 game seconds for the rest of the session, and adds them to the layout without re-rolling anything else. After 2048 nodes have been added this way in one session it stops looking until the next load.
+some mods spawn theirs after the world loads, or only once you research something. With **Include Modded Nodes** on, NodeShuffle looks for new nodes when the world is ready and then every 60 game seconds for the rest of the session, and adds them to the layout without re-rolling anything else. Once 2048 layout entries have been added this way in one session, it stops looking until the next load.
 
 ### Known behaviour: a relocated resource well is absent until you reach its new site
 
