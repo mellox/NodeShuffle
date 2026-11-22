@@ -9,7 +9,7 @@ standard map and on **Random World Generator** worlds (see below).
 
 NodeShuffle 1.4.0 was built for an older game version; on game build 513885 it crashed a few seconds after a world loaded. Use 1.5.0 or later on the current game.
 
-NodeShuffle 1.5.0 is built for Satisfactory 1.2.6 (game build 520140) and needs SML 3.12.1 or later. A mod with C++ code that was built for an older game build can crash on this one until its author updates it; if the game crashes when you look at or use something another mod adds, check that the mod has a build for 1.2.6.
+NodeShuffle 1.5.0 is built for Satisfactory 1.2.6 (game build 520140) and needs SML 3.12.1 or a later 3.x version. A mod with C++ code that was built for an older game build can crash on this one until its author updates it; if the game crashes when you look at or use something another mod adds, check that the mod has a build for 1.2.6.
 
 ## Compatibility — Satisfactory Plus and other overhauls
 
