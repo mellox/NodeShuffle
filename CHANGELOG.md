@@ -2,7 +2,7 @@
 
 ## 1.5.0 — 2026-11-22
 
-**Requires game build 520140 or later and SML 3.12.1 or later.** 1.4.0 was built for an older game version; on game build 513885 it crashed a few seconds after a world loaded, and it has not been tested on later builds. 1.5.0 is built for game build 520140.
+**Requires game build 520140 or later and SML 3.12.1 or a later 3.x version.** 1.4.0 was built for an older game version; on game build 513885 it crashed a few seconds after a world loaded, and it has not been tested on later builds. 1.5.0 is built for game build 520140.
 
 **What has been tested.** This version has been played on the standard map (one new game, with 300
 new node locations, 100% active and tiers unlocked: first shuffle, the chat summary, two extractors
