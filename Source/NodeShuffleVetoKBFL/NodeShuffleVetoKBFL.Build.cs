@@ -4,8 +4,13 @@ using UnrealBuildTool;
 // engine never auto-loads it (ModuleDescriptor.cpp only loads a module when the requested phase
 // EQUALS the descriptor's phase, and "None" is documented "Do not automatically load this module").
 // The main NodeShuffle module loads it BY NAME at world init, and only after confirming the real
-// KBFL module is present — so when KBFL is not installed this DLL is never loaded and its imports
-// against KBFL-Win64-Shipping are never resolved (no missing-DLL error for KBFL-less users).
+// KBFL module is present, so when KBFL is not installed this module is never STARTED (StartupModule never runs).
+// CORRECTED ns-logfix-1 (2026-11-22): the DLL is still ATTEMPTED. In a packaged (pak-file) game the engine preloads the
+// module binaries of every plugin it can enable for the current target at PostConfigInit without checking LoadingPhase (LaunchEngineLoop.cpp SetPreloadBinaries;
+// PluginManager.cpp LoadModulesForEnabledPlugins -> LoadModuleBinaryOnly), so a KBFL-less game logs one LogWindows
+// "Failed to load ... (GetLastError=126) / Missing import: FactoryGameSteam-KBFL-Win64-Shipping.dll" at startup.
+// Read from the CSS engine source; see docs/DIAGNOSTICS.md. UNodeShuffleDestroyerVetoRequirement derives from a KBFL
+// class, so delay-loading the KBFL import is not a safe fix (registering that class needs its KBFL parent; untested).
 public class NodeShuffleVetoKBFL : ModuleRules
 {
     public NodeShuffleVetoKBFL(ReadOnlyTargetRules Target) : base(Target)

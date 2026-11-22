@@ -204,7 +204,7 @@ function Invoke-Checks($T) {
     if ($hdrTags -notcontains $prevMark) { $f += '(S9) quietchat-1 stays listed in the markers header' }
     if ((Count $T.nsmod ('packet marker (' + $marker + ')=====')) -ne 1 -or (Count $T.nsmod ('packet marker (' + $prevMark + ')=====')) -ne 1) { $f += '(S9) both markers once on their own lines in NodeShuffle.cpp' }
     foreach ($k in @('sf', 'sfh', 'sfr', 'sfi', 'sfs')) { if ((Count $T[$k] $marker) -ne 0 -or (Count $T[$k] $marker2) -ne 0 -or (Count $T[$k] $marker3) -ne 0 -or (Count $T[$k] $marker4) -ne 0) { $f += "(S9) no marker inside the new file ($k)" } }
-    if (-not $T.lmcp.Contains("`$own = '2026-11-22-' + 'css87-1'")) { $f += '(S9) check_mcpcontract C4 must name css87-1 as the newest (ns-css87-1 rotated it from rwg022-list-1)' }
+    if (-not $T.lmcp.Contains("`$own = '2026-11-22-' + '150-rc1'")) { $f += '(S9) check_mcpcontract C4 must name 150-rc1 as the newest (ns-logfix-1 rotated it from css87-1)' }
     # S10
     $cfgKnow = Span $T.cfgc '    AddBool(TEXT("UnlockModdedKnowledge"), true,' 'AddBool(TEXT("ProtectOtherModsNodes"), true,'
     if ($cfgKnow -eq '' -or (Count $cfgKnow 'NodeShuffleScanFilter::RegisterConfigRows(Root, ArrayClass, SectionClass, StringClass, BoolClass);') -ne 1) { $f += '(S10) the rows are registered right after the knowledge option' }

@@ -347,6 +347,7 @@ void ANodeShuffleSubsystem::RefreshTick()
             : static_cast<int32>(FPlatformTime::Cycles());
         RollLayout(Seed, false);
         StatusNoteFirstRoll(); // ns-status-1: the first-shuffle session flag (RWG only; display only)
+        if (bLayoutGenerated && !bAdoptedRestoredNodes) { bAdoptFirstRollThisSession = true; } // ns-logfix-1: read only by the Adopt-on-load line (diagnostic)
         // A fresh FIRST roll supersedes any pending re-roll request (e.g. RerollNow left on for a new game).
         if (Config.RerollNow) { ClearRerollNowFlag(); }
     }
@@ -4327,12 +4328,25 @@ void ANodeShuffleSubsystem::AdoptRestoredSpawnedNodes()
         }
     }
 
-    const bool bFail = (Adopted <= 1 && ExpectedSpawned > 1 && RuntimeNodesSeen <= 1);
+    // ns-logfix-1 (2026-11-22): the line prints the predicate, never a cause. The old suffix named one ("may not be
+    // save-collected") that nothing here tests, and fired on every first roll: a layout rolled this session before this pass
+    // has had no save to restore spawned nodes from, so adopted 0 / candidates 0 of N entries is what that state measures.
+    // The bracket used to label the adopted count "streamed in"; nothing here measures streaming, so it now says adopted.
+    const bool bLowAdoption = (Adopted <= 1 && ExpectedSpawned > 1 && RuntimeNodesSeen <= 1);
+    const bool bFail = bLowAdoption && !bAdoptFirstRollThisSession;
+    const FString AdoptVerdict = bAdoptFirstRollThisSession
+        ? FString(TEXT(" (no check: the layout was rolled this session before this pass; adoptFirstRoll 1)"))
+        : (bFail
+            // Arity hand-counted: 3 format specifiers, 3 arguments.
+            ? FString::Printf(TEXT(" <-- WARNING: low adoption: %d adopted <= 1, %d candidates <= 1, %d spawn-entries > 1; adoptFirstRoll 0"),
+                Adopted, RuntimeNodesSeen, ExpectedSpawned)
+            : FString(TEXT(" (OK; adoptFirstRoll 0)")));
+    // Arity hand-counted: 8 format specifiers, 8 arguments.
     UE_LOG(LogNodeShuffle, Display,
-        TEXT("Adopt-on-load (real-class): adopted %d (%d legacy-by-guid, %d real-by-location); pinned %d occupied; %d candidate runtime nodes seen. [%d of %d layout spawn-entries streamed in — a count below total is normal.]%s"),
+        TEXT("Adopt-on-load (real-class): adopted %d (%d legacy-by-guid, %d real-by-location); pinned %d occupied; %d candidate runtime nodes seen. [%d of %d layout spawn-entries adopted.]%s"),
         Adopted, LegacyByGuid, RealByLocation, PinnedOnLoad, RuntimeNodesSeen,
         Adopted, ExpectedSpawned,
-        bFail ? TEXT(" <-- WARNING: almost nothing adopted — spawned nodes may not be save-collected") : TEXT(" (OK)"));
+        *AdoptVerdict);
     AdoptAuditEmit(Adopted); // rwg-farspawn-1f C1: ADOPTMISS per pre-registered node left unbound + ADOPTCENSUS (NodeShuffleAdoptAudit.cpp; diagnostic only)
 }
 
