@@ -1,35 +1,69 @@
 # Changelog
 
-## Unreleased
+## 1.5.0 — 2026-11-22
 
-(Not yet verified in game: the in-game checks for this entry are still open.)
+**Requires game build 520140 or later and SML 3.12.1 or later.** 1.4.0 was built for an older game
+version and is known to crash on load on later ones (recorded on game build 513885); 1.5.0 is built
+for the current game.
+
+**What has been tested.** This version has been played on the standard map (one new game, with 300
+new node locations, 100% active and tiers unlocked: first shuffle, the chat summary, two extractors
+placed) and on one Random World Generator 0.2.2 world, including one re-roll. Each item below was
+played in game at least once while it was being made, on Random World Generator worlds, but not every
+one of them on this final version. Not tested yet with this version: re-rolling, or saving and
+reloading, on the standard map; the default settings; a new game without unlocked tiers; multiplayer
+and dedicated servers; Satisfactory Plus or KBFL installed alongside it.
+
+**Known issue (not caused by NodeShuffle):** with AlkaLib 1.1.2, Lithium 1.2.1 and DroneChargers 1.1.4
+on this game version, the game has crashed while the player aimed at a lithium node from within use
+range. See "Known issues" in the README.
 
 ### New
 
+- **Random World Generator worlds are supported.** NodeShuffle recognises a Random World Generator
+  world and places nodes with the generator's own terrain data (height, water, void and caves). The
+  version tested is Random World Generator 0.2.2 (build 1150). On a version that is not on the mod's
+  list, it checks the generator functions it uses before relying on them and tells you in chat what it
+  decided; if the check fails, it places nodes with its own ground traces instead. On these worlds the
+  first shuffle of a new world waits until the generator reports it is ready, and nodes are spawned
+  across the whole map, not only near you, then settle onto the ground as you come near them.
+- **Status panel (Random World Generator worlds only).** While the first shuffle of a new world waits,
+  and for up to ten minutes after it, a small panel on the host's screen says what NodeShuffle is
+  doing. Setting: **Show Status Panel (Random World Generator)**, on by default.
+- **A chat summary after every shuffle** lists each resource the layout dealt and how many nodes it got.
+- **Show in scanner, per modded resource.** Each row of the **Protect Other Mods' Nodes (Per
+  Resource)** list now has a **Show in scanner** switch that shows or hides that resource in the
+  resource scanner wheel. It applies in a running game and writes nothing to the save. All Minable's
+  resources start hidden; every other mod's start shown.
 - **Modded resources on Random World Generator maps get vanilla-map node counts, on by default.** Random World
   Generator places modded ores from its own templates, so a resource can end up with far more nodes than the vanilla
   map has (lead: 104 on one tested world, against 6 on the vanilla map). A new table, **Modded Resource Vanilla
   Counts**, gives each listed modded resource its vanilla map node count, scaled by how many vanilla ore nodes the
   world has compared with the vanilla map, so it follows your Random World Generator amount settings the way the
   vanilla ores do. The shuffle then deals that many instead; your density and minimum-per-resource settings still
-  apply. Pre-filled: Lead 6, Lithium 23, Thorium 20 (thorium is set lower than the 45 counted on one vanilla-map save); the row's count field is now labelled "Node count to scale". On a world with lead, lead nodes become far fewer.
+  apply. Pre-filled: Lead 6, Lithium 23, Thorium 20 (thorium is set lower than the 45 counted on one vanilla-map save). On a world with lead, lead nodes become far fewer.
 - **A listed gas resource with no node on the world** (Lithium is the known case) gets new nodes of its own node
   class. If no usable node class is found, nothing is added for that resource.
 - Both act only when a layout is rolled: a new Random World Generator world at its first roll, an existing one at
   its next **Re-roll Layout**. Loading a save changes nothing, and other maps are not affected. Turn off **Use
   Vanilla Counts For Modded Resources** before re-rolling to keep the counts Random World Generator planned.
-
-### Changed
-
 - **Random World Generator maps: new node spots are spread by land, and nodes you have built on count first.** The
   map is divided into 1 km squares, and each square's share of the nodes is in proportion to how much of it the shuffle
   can place on (not sea, void or too steep), measured at 16 points per square. Nodes you have built on count toward
   their square's share before any fresh spot is dealt there, so a built-up base gets few or no fresh spots on top of its
   kept nodes, and a square that is mostly sea gets a small share. If the deal runs low on draws before every share is
-  filled, the remaining spots are placed anywhere on placeable land, so the configured total is still dealt. New
-  setting **Spread Nodes Evenly By Land (Random World Generator)**, on by default; off restores the previous
-  anywhere-on-land draw. Takes effect at the next roll or **Re-roll Layout**. **A fixed Seed Override now gives a
-  different layout than earlier builds did** on Random World Generator maps while this is on.
+  filled, the remaining spots are placed anywhere on placeable land, so the configured total is still dealt.
+  Setting: **Spread Nodes Evenly By Land (Random World Generator)**, on by default; off places spots anywhere on
+  placeable land with no per-square limit. Takes effect at the next roll or **Re-roll Layout**. The same Seed
+  Override gives a different layout with this on than with it off.
+
+### Fixed
+
+- **Modded nodes that appear after the world loads are no longer left in place.** Some mods spawn
+  their nodes a little after the world is ready (All Minable is one), and those used to stay where
+  they were, unshuffled. With **Include Modded Nodes** on, NodeShuffle now looks for new nodes twice
+  per load, once when the world is ready and again 60 game seconds later, and adds them to the layout
+  without re-rolling anything else. Nodes that appear after the second look wait until the next load.
 
 ## 1.4.0 — 2026-08-13
 
@@ -43,7 +77,8 @@
 - **Read this first: a moving well is gone in the meantime.** The original is removed the
   moment a destination is dealt and the replacement is only built when you travel there, so it is in
   **neither** place in between, for an **unbounded** time — and a re-roll sends most already-moved
-  wells missing again. Nothing turns this off; building on a well is the only way to pin it.
+  wells missing again. There is no setting that turns this off; building on a well is the only way to
+  pin it.
   (Unverified edges: desert-biome wells may arrive without rock graphics, and a relocated well's build
   area is untested against ordinary nodes within ~15 m.)
 - **Other mods' nodes are protected, on by default.** Some overhaul mods sweep the map on a new game

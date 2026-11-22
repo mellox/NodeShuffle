@@ -163,7 +163,7 @@ function Invoke-T71Checks([hashtable]$T) {
     if ($T.readme -match 'stops the mod acting at all') {
         $f += "FAIL(H4): README.md again claims turning Enabled off 'stops the mod acting at all' -- the build-gun and scanner hooks are installed in StartupModule and never read Enabled."
     }
-    if ($T.readme -notmatch 'genuinely absent from the world for an \*\*unbounded\*\* time') {
+    if ($T.readme -notmatch 'absent from the world for an \*\*unbounded\*\* time') {
         $f += "FAIL(H4): README.md's NEW Resource wells section no longer carries the unbounded-absence sentence -- that section is where a player is sent now that the tooltip is gone."
     }
     if ($T.readme -notmatch 'not bounded') {

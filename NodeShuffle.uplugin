@@ -1,11 +1,11 @@
 {
   "FileVersion": 3,
   "Version": 1,
-  "VersionName": "1.4.0",
-  "SemVersion": "1.4.0",
-  "GameVersion": ">=491125",
+  "VersionName": "1.5.0",
+  "SemVersion": "1.5.0",
+  "GameVersion": ">=520140",
   "FriendlyName": "Node Shuffle",
-  "Description": "Randomizes the planet's resource nodes per save — relocates nodes across the map and shuffles which are active, their resource, and purity, for solids, oil/liquids, and modded nodes alike. Places nodes on hillsides and in caverns, avoids water, and ships a prebuilt map of the terrain so relocations land well from the first launch. Adds extra locations; balance minimums keep every playthrough completable. Re-roll the layout live anytime. Resource wells are part of the shuffle and cannot be switched off: what a well yields is re-rolled, and whole wells move as one rigid body - a moving well is removed as soon as it is dealt a destination and only rebuilt when you travel there, so it is absent for an unbounded time in between. A well you have built on is never touched. Built to run alongside the Satisfactory Plus ecosystem: extractor compatibility patches are written while you play (restart once to pick them up) and protection for other mods' nodes is on by default. The game's August 2026 update broke many overhaul mods' own builds; compatibility is re-confirmed as they update - see the mod page.",
+  "Description": "Randomizes the planet's resource nodes per save — relocates nodes across the map and shuffles which are active, their resource, and purity, for solids, oil/liquids, and modded nodes alike. Places nodes on hillsides and in caverns, avoids water, and ships a prebuilt terrain map of the standard map so relocations land well from the first launch. Also runs on Random World Generator worlds, using the generator's own terrain data (tested with Random World Generator 0.2.2). Adds extra locations; balance minimums keep every playthrough completable. Re-roll the layout live anytime. Resource wells are part of the shuffle and cannot be switched off: what a well yields is re-rolled, and whole wells move as one rigid body - a moving well is removed as soon as it is dealt a destination and only rebuilt when you travel there, so it is absent for an unbounded time in between. A well you have built on is never touched. Built to run alongside the Satisfactory Plus ecosystem: extractor compatibility patches are written while you play (restart once to pick them up) and protection for other mods' nodes is on by default. Overhaul combinations have not been re-tested on the current game version - see the mod page.",
   "Category": "Modding",
   "CreatedBy": "mello",
   "CreatedByURL": "",
@@ -32,7 +32,7 @@
     {
       "Name": "SML",
       "Enabled": true,
-      "SemVersion": "^3.12.0"
+      "SemVersion": "^3.12.1"
     }
   ]
 }

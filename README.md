@@ -1,10 +1,14 @@
 # Node Shuffle
 
-A Satisfactory mod (SML 3.12+, game version ≥ 491125 / Satisfactory 1.1) that
+A Satisfactory mod (requires SML 3.12.1 or later and game build 520140 or later) that
 **randomizes the planet's resource nodes per save**. It **relocates nodes to new
 locations** across the map and shuffles which are active, what resource each
 carries, and their purity — for **solids, oil/liquids, and modded nodes** alike —
-so every world is a fresh puzzle, while staying completable.
+so every world is a fresh puzzle, while staying completable. It runs on the
+standard map and on **Random World Generator** worlds (see below).
+
+NodeShuffle 1.4.0 was built for an older game version and is known to crash on load
+on later ones; use 1.5.0 or later on the current game.
 
 ## Compatibility — Satisfactory Plus and other overhauls
 
@@ -12,29 +16,51 @@ NodeShuffle is built to run alongside the Satisfactory Plus ecosystem: it writes
 compatibility patches an overhaul needs while you play (restart the game once to pick them up), and
 protection for other mods' nodes is on by default.
 
-*On the game's August 2026 anniversary update:* that update broke many overhaul mods' own builds, and
-several are still rebuilding for it. Compatibility gets re-confirmed as they update. The versions last
-confirmed working with NodeShuffle, **before** the update, were KBFL 2026.2.267, MkPlusSFPlus
-1.3.0-alpha and KPatchwork 2026.3.26 (and earlier) — a historical record, not a current pass.
+No overhaul combination has been re-tested on the current game version. The versions last confirmed
+working with NodeShuffle, before the game's August 2026 update, were KBFL 2026.2.267, MkPlusSFPlus
+1.3.0-alpha and KPatchwork 2026.3.26 (and earlier). That is a historical record, not a current pass.
+
+## Random World Generator worlds
+
+NodeShuffle recognises a Random World Generator world and places nodes using the generator's own
+terrain data (height, water, void and caves) instead of the prebuilt map of the standard world.
+
+- **Tested version:** Random World Generator 0.2.2 (build 1150), on one world. The mod's list of
+  known versions also names 0.1.7, 0.1.9, 0.1.12, 0.2.0 and 0.2.1; those have not been played with
+  this NodeShuffle version.
+- **A version not on the list:** NodeShuffle checks the generator functions it uses before relying
+  on them and posts a chat message saying what it decided. If the check fails, it places nodes with
+  its own ground traces for that session instead. If nodes land in water or over void, include the
+  Random World Generator version when you report it.
+- **First shuffle of a new world:** it waits until the generator reports the world is ready and no
+  new nodes have appeared for a minute, then shuffles. The game may pause briefly when it does.
+- **Placement:** nodes are spawned across the whole map, not only near you, and settle onto the
+  ground when you come near them.
+- **Settings that only act on these worlds** carry "(Random World Generator)" in their name: the
+  status panel, spreading nodes by land, and the vanilla counts for modded resources. The status
+  panel is shown only on Random World Generator worlds, only for the first shuffle of a new world,
+  and only on the host's screen.
 
 ## What it does
 
 - **Relocates & shuffles nodes** — nodes move to new map-wide locations and may
   change resource and purity. This covers solid ore, **oil/liquid and gas nodes**
   (minable with the matching extractors), and **modded nodes** added by other
-  mods. Originals are hidden, never destroyed, so it stays save-safe and
-  reversible (disabling the mod restores the vanilla world).
-- **Adds ~100+ new node locations** — spawned across the map, settled onto the
-  terrain, visible, solid, and mineable like any vanilla node.
+  mods. Originals are hidden, never destroyed. Uninstalling stops all relocation
+  and no new nodes appear, but resource changes already written onto vanilla
+  nodes stay in that save.
+- **Adds new node locations** (100 by default, up to 300) — spawned across the
+  map, settled onto the terrain, visible, solid, and mineable like any vanilla node.
 - **Places nodes where they belong** — relocated nodes **conform to slopes and
   hillsides**, stay **out of water** and **off sheer cliff faces**, and can land
   on **cavern floors** the mod maps as you explore (so caves keep resources
   instead of being emptied by the shuffle). A node that lands somewhere a miner
   can't go re-deals itself to better ground.
-- **Ships a prebuilt terrain map** — a snapshot of discovered water and cave
-  areas travels inside the mod, so a **fresh install places nodes well from the
-  first launch** instead of learning the map from scratch; your own exploration
-  keeps refining it, and each update folds in more.
+- **Ships a prebuilt terrain map of the standard map** — a snapshot of discovered
+  water and cave areas travels inside the mod, so a **fresh install places nodes
+  well from the first launch** instead of learning the map from scratch; your own
+  exploration keeps refining it. Random World Generator worlds use the
+  generator's terrain data instead.
 - **Fully buildable** — relocated and new nodes accept hand-mining, portable
   miners, **and Miner buildings (Mk.1 and up)**; placed miners keep their node
   through save/load and re-roll.
@@ -50,7 +76,10 @@ confirmed working with NodeShuffle, **before** the update, were KBFL 2026.2.267,
   changed, retyped, or removed (checked at roll time and continuously).
 - **Radioactivity follows the shuffle** — a node retyped to uranium irradiates;
   one retyped away from it stops.
-- **Multiplayer-aware** — all logic is server-side; overrides replicate.
+- **Tells you what it dealt** — after every shuffle or re-roll, a chat message
+  lists each resource in the new layout and how many nodes it got.
+- **Multiplayer-aware** — all logic is server-side; overrides replicate. Not
+  tested in multiplayer or on a dedicated server with this version.
 
 > **Note on player-built nodes** (if you use a mod that lets you *build* resource
 > nodes): with modded-node inclusion enabled, newly discovered eligible nodes
@@ -80,7 +109,7 @@ and have no switches of their own (see **Resource wells** below).
 | Randomize Purity | on | Shuffle node purities too. Each dealt node's purity is drawn from the purities of that resource's original nodes on this map. Applied when the layout is rolled. |
 | Starter Nodes Near Spawn | on | New game only: place a small starter set (2 Iron, 2 Limestone, 1 Copper, Pure) near spawn. |
 | Starter Node Radius (m) | 200 | How far from spawn the starter nodes may sit. |
-| Spawn-On-Discovery Radius (m) | 600 | New nodes materialize once you come within this range and the terrain has streamed in. |
+| Spawn-On-Discovery Radius (m) | 600 | New nodes materialize once you come within this range and the terrain has streamed in. On Random World Generator worlds nodes are spawned map-wide and settle onto the ground as you come near. |
 | Spread Nodes Evenly By Land (Random World Generator) | on | Random World Generator maps only, when a layout is rolled or re-rolled: the map is divided into 1 km squares and each square's share of the nodes is in proportion to how much of it the shuffle can place on (not sea, void or too steep), measured at 16 points per square. Nodes you have built on count toward their square's share first, so a square already full of them gets few or no fresh spots. If the deal runs low on draws before every share is filled, the remaining spots are placed anywhere on placeable land, so the configured total is still dealt. Off: spots land anywhere on placeable land with no per-square limit, as before. Takes effect at the next roll or Re-roll Layout; other maps are not affected. |
 | Show Status Panel (Random World Generator) | on | Random World Generator worlds only: while the first shuffle of a new world waits, and for up to ten minutes after it, a small panel on the host's screen says what Node Shuffle is doing. It is hidden while the mouse cursor is shown (menus). Other players do not see the panel. Off hides the panel; the chat lines still post. |
 
@@ -89,7 +118,7 @@ and have no switches of their own (see **Resource wells** below).
 | Setting | Default | Meaning |
 |---|---|---|
 | Include Modded Nodes | on | Shuffle nodes added by other mods too; their solid nodes also **relocate** on a re-roll, like vanilla nodes. |
-| Unlock Scanner Knowledge For Shuffled Modded Resources | on | Registers shuffled modded resources with the resource scanner so it can find them. Some overhaul mods also gate **miner placement** on scanner knowledge, so this can allow placing miners on modded ores earlier than that overhaul's own research intended (crafting stays gated). Turn off to let each mod's own progression grant this. Vanilla resources are never affected. |
+| Unlock Scanner Knowledge For Shuffled Modded Resources | on | After a world loads, and again after a re-roll or when NodeShuffle finds new nodes, adds the modded resources it shuffles in that world to the game's list of researched scanner resources, unless a resource is already on it. When the KAPI library is loaded, a resource is added only if KAPI has miner data for it or NodeShuffle can supply that data. Added resources are stored in the save and NodeShuffle never removes them, so turning this off later does not take them back. Some overhaul mods also gate **miner placement** on this list, so this can allow placing miners on modded ores earlier than that overhaul's own research intended (crafting stays gated). Base-game resources are never added. To show or hide a resource in the scanner without writing to the save, use **Show in scanner** in the list below. |
 | Protect Other Mods' Nodes | **on** | Some overhaul mods — Satisfactory Plus is the known case — remove other mods' resource nodes. When on, NodeShuffle **answers those removal checks** for the resources ticked in the list below (refusing the handler's condition — never a claim that it "stops removal" outright). Off, NodeShuffle answers nothing and each mod's own handler decides; the list still fills itself in either way. Takes effect the next time you load the save; doesn't bring back nodes already removed. |
 | Use Vanilla Counts For Modded Resources (Random World Generator) | on | ON by default. Random World Generator maps only, at each layout roll or re-roll: each modded resource listed in the Modded Resource Vanilla Counts table gets its vanilla map node count, scaled by how many vanilla ore nodes this world has compared with the vanilla map, in place of the number of its nodes NodeShuffle found on this world, when deciding how many nodes of it the shuffle deals. A listed gas resource with no node on this world gets new nodes of its own node class (one NodeShuffle finds in that resource's mod, otherwise the class listed in the row); if neither is usable, none are added. Other maps are not affected. |
 | Modded Resource Vanilla Counts (Random World Generator) | Lead 6, Lithium 23, Thorium 20 | Used on Random World Generator maps only, at each layout roll or re-roll, while 'Use Vanilla Counts For Modded Resources' is on. Each row names a modded resource, an optional node class, and a node count to scale (pre-filled with the vanilla map's count, except thorium, set lower). That number is scaled by how many vanilla ore nodes this world has compared with the vanilla map and replaces the resource's own node count in the shuffle. A gas resource with no node on this world gets new nodes of its own node class (one NodeShuffle finds in that resource's mod, otherwise the class in the row); if neither is usable, nothing is added. Pre-filled: Lead 6, Lithium 23, Thorium 20 (thorium is set lower than the 45 counted on one vanilla-map save). |
@@ -99,6 +128,10 @@ resource appears once another mod's node handler has checked nodes of that resou
 so it starts empty and grows as you play alongside other mods. Every row defaults to ticked
 (protected); untick one to let that resource's own mod decide for itself. The console variable
 `NodeShuffle.DestroyerVeto` still overrides the checkbox above whenever it has been explicitly set.
+
+Each row also has a **Show in scanner** switch: on shows that resource in the resource scanner wheel
+(adding it if the game's list lacks it), off hides it. It applies in a running game and writes nothing
+to the save. A new row starts hidden for All Minable's resources and shown for every other mod's.
 
 ### Resource wells (no settings — always on since 1.4.0)
 
@@ -137,7 +170,7 @@ ordinary node right beside a relocated well, please report it.
 Generation-time settings (seed, counts, percentages, purity) affect a save only
 at its first roll or an explicit re-roll. Toggles like Diagnostic Logging apply
 live. Old settings files upgrade automatically — a setting removed in a newer
-version is simply dropped from `NodeShuffle.cfg` the next time you load.
+version is dropped from `NodeShuffle.cfg` the next time you load.
 
 ### Advanced data files
 
@@ -152,7 +185,7 @@ version is simply dropped from `NodeShuffle.cfg` the next time you load.
   `NodeShuffle_CaveFloors.json` — the mod's **learned terrain map** (which
   100 m cells are land/water and where cavern floors are). Written as you play
   and merged with the prebuilt map shipped inside the mod; safe to delete (they
-  simply re-learn). Not per-save — the terrain is the same across saves.
+  re-learn). Not per-save — the terrain is the same across saves.
 
 ## How it works (design)
 
@@ -172,19 +205,22 @@ Two different things get confused here:
 
 **Not gated on you at all.** Deciding *which resource goes where* and *hiding the original
 rock* cover the **whole map, at load** — every one of the game's resource nodes is already
-live the moment your save opens (measured: all 630 of them, in a single frame, across
-biomes tens of kilometres apart). You do not have to explore for the shuffle to reach a
+live the moment your save opens (measured once on the standard map: all 630 of them, in a
+single frame, across biomes tens of kilometres apart). You do not have to explore for the shuffle to reach a
 node, and exploring does not "unlock" more of it.
 
 **Gated on you.** *Spawning a replacement rock* and *moving a resource well* both
 need the ground itself to be loaded, because we place them with a downward trace and you
-cannot trace terrain that isn't there. So a dealt node materialises when you come within
-the Spawn-On-Discovery radius, and a well moves when you visit its destination.
+cannot trace terrain that isn't there. So on the standard map a dealt node materialises
+when you come within the Spawn-On-Discovery radius, and a well moves when you visit its
+destination. On Random World Generator worlds nodes are spawned map-wide and settle onto the
+ground when you come near.
 
 **One real exception.** Nodes added by **other mods** are picked up when they appear — and
-some mods spawn theirs minutes after the world loads, or only once you research something.
-Those can be **added after the first roll has already happened**, so they stay vanilla where
-they are until you re-roll. Re-rolling re-scans the live world and brings them in.
+some mods spawn theirs after the world loads, or only once you research something. With
+**Include Modded Nodes** on, NodeShuffle looks for new nodes twice per load (when the world
+is ready and again 60 game seconds later) and adds them to the layout without re-rolling
+anything else. A node that appears later than that stays where it is until the next load.
 
 ### Known behaviour: a relocated resource well is absent until you reach its new site
 
@@ -243,6 +279,24 @@ Open the console (`` ` ``) and run:
   reporting a spot that looks off.
 - `NodeShuffle.SeedHere` — while standing under a natural rock roof (cave, arch,
   overhang), marks that spot so the shuffle can place nodes in that cavern.
+- `NodeShuffle.AuditPlacements` — logs how every node was placed.
+- `NodeShuffle.DumpExtractors` — logs the extractors, nodes and compatibility
+  state the mod can see.
+- `NodeShuffle.NearestCave` — Random World Generator worlds: logs the nearest cave
+  mouth and the nearest node dealt into a cave, with distance and bearing.
+
+## Known issues
+
+- **Lithium mod family on the current game version.** With AlkaLib 1.1.2,
+  Lithium 1.2.1 and DroneChargers 1.1.4 (the versions published on 2026-09-02)
+  on game build 520140, the game has crashed while the player aimed at a lithium
+  node from within use range. The fault is in AlkaLib's node class, which was
+  built for an earlier game version; NodeShuffle's code is not on the crash's
+  call stack, and the same node class is used whether or not NodeShuffle is
+  installed. NodeShuffle places lithium on that mod's own node type, so its
+  lithium nodes are affected too. Until updated builds of those mods are
+  published, avoid aiming at lithium nodes up close, or play without the
+  Lithium mod family.
 
 ## License
 
