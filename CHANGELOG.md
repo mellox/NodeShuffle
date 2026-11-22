@@ -10,8 +10,6 @@ placed) and on one Random World Generator 0.2.2 world, including one re-roll. Ea
 reloading, on the standard map; the default settings; a new game without unlocked tiers; multiplayer
 and dedicated servers; Satisfactory Plus or KBFL installed alongside it.
 
-**Known issue with the Lithium mod family:** with AlkaLib 1.1.2, Lithium 1.2.1 and DroneChargers 1.1.4 on this game version, the game crashed once while the player aimed at a lithium node at close range. NodeShuffle's code was not on the crash's call stack. See "Known issues" in the README.
-
 ### New
 
 - **Random World Generator worlds are supported.** NodeShuffle recognises a Random World Generator

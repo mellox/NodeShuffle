@@ -9,6 +9,8 @@ standard map and on **Random World Generator** worlds (see below).
 
 NodeShuffle 1.4.0 was built for an older game version; on game build 513885 it crashed a few seconds after a world loaded. Use 1.5.0 or later on the current game.
 
+NodeShuffle 1.5.0 is built for Satisfactory 1.2.6 (game build 520140) and needs SML 3.12.1 or later. A mod with C++ code that was built for an older game build can crash on this one until its author updates it; if the game crashes when you look at or use something another mod adds, check that the mod has a build for 1.2.6.
+
 ## Compatibility — Satisfactory Plus and other overhauls
 
 NodeShuffle is built to run alongside the Satisfactory Plus ecosystem: it writes the extractor
@@ -274,10 +276,6 @@ Open the console (`` ` ``) and run:
   state the mod can see.
 - `NodeShuffle.NearestCave` — Random World Generator worlds: logs the nearest cave
   mouth and the nearest node dealt into a cave, with distance and bearing.
-
-## Known issues
-
-- **Lithium mod family on the current game version.** With AlkaLib 1.1.2, Lithium 1.2.1 and DroneChargers 1.1.4 (the versions published on 2026-09-02) on game build 520140, the game crashed once while the player aimed at a lithium node at close range, on a Random World Generator world. NodeShuffle's code was not on the crash's call stack. AlkaLib's lithium node class, which NodeShuffle also uses for the lithium nodes it adds, was built for an earlier game version, and its table of interaction functions does not match the one this game build expects. On that world NodeShuffle's layout had no lithium nodes until a re-roll added 13 of them (**Use Vanilla Counts For Modded Resources**, on by default). Until updated builds of those mods are published, playing without the Lithium mod family avoids this class entirely. Turning off **Use Vanilla Counts For Modded Resources** before a roll stops NodeShuffle adding lithium nodes on Random World Generator worlds. Neither has been tested as a workaround.
 
 ## License
 
