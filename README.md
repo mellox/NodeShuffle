@@ -66,7 +66,7 @@ terrain data (height, water, void and caves) instead of the prebuilt map of the 
 - **Starter nodes (optional)** — on a brand-new game, a small guaranteed set
   near spawn (Iron/Limestone/Copper) keeps the early game playable.
 - **Per-save, deterministic** — the layout is rolled once per save from a seed
-  and persists. With modded-node inclusion enabled, eligible additions are captured when the world is ready and then every 60 game seconds for the rest of the session; existing entries are not re-rolled unless you opt in.
+  and persists. With modded-node inclusion enabled, eligible additions are captured when the world is ready and then every 60 game seconds for the rest of the session (up to 2048 additions per session); existing entries are not re-rolled unless you opt in.
 - **Balance guarantees** — every vanilla resource keeps a configurable minimum
   number of active nodes, so no playthrough becomes impossible.
 - **Respects your factory** — any node with a miner or extractor on it is never
