@@ -168,8 +168,8 @@ ordinary node right beside a relocated well, please report it.
 | Enable Diagnostic Logging | off | Verbose placement/node logging to `FactoryGame.log` for troubleshooting. The mod's fixes work whether this is on or off. |
 
 Generation-time settings (seed, counts, percentages, purity) affect a save only
-at its first roll or an explicit re-roll. Toggles like Diagnostic Logging apply
-live. Old settings files upgrade automatically — a setting removed in a newer
+at its first roll or an explicit re-roll. After turning on Diagnostic Logging,
+load your save again before reproducing a problem. Old settings files upgrade automatically — a setting removed in a newer
 version is dropped from `NodeShuffle.cfg` the next time you load.
 
 ### Advanced data files
@@ -185,7 +185,8 @@ version is dropped from `NodeShuffle.cfg` the next time you load.
   `NodeShuffle_CaveFloors.json` — the mod's **learned terrain map** (which
   100 m cells are land/water and where cavern floors are). Written as you play
   and merged with the prebuilt map shipped inside the mod; safe to delete (they
-  re-learn). Not per-save — the terrain is the same across saves.
+  re-learn). Not per-save — on the standard map the terrain is the same across
+  saves. Random World Generator worlds do not use these files.
 
 ## How it works (design)
 
@@ -195,8 +196,9 @@ dressed from an authored visual table, a look **captured from the original
 node** (for modded resources the table doesn't cover, e.g. thorium), or a clean
 quartz placeholder. Nodes **settle onto the terrain** — slope-fitting, avoiding
 water and cliffs, and mapping cavern floors — and the layout is **rolled once
-per save from a seed**. A **global terrain map** (water/land and cave floors) is
-learned as you play and **shipped prebuilt** inside the mod. See
+per save from a seed**. On the standard map, a **global terrain map** (water/land
+and cave floors) is learned as you play and **shipped prebuilt** inside the mod;
+Random World Generator worlds use the generator's own terrain data. See
 [DESIGN.md](DESIGN.md) for more detail.
 
 ### What needs you nearby, and what doesn't
@@ -266,8 +268,8 @@ or shipped.
 
 Quiet by default (session summaries only). For troubleshooting, enable
 **Enable Diagnostic Logging** in the in-game Mods → Node Shuffle panel (writes
-verbose placement / node diagnostics to `FactoryGame.log`; toggles live, off by
-default). For detailed per-node console output you can also run
+verbose placement / node diagnostics to `FactoryGame.log`; off by default), then
+load your save again before reproducing the problem. For detailed per-node console output you can also run
 `Log LogNodeShuffle Verbose`.
 
 ### Console commands
