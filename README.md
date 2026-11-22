@@ -7,8 +7,7 @@ carries, and their purity — for **solids, oil/liquids, and modded nodes** alik
 so every world is a fresh puzzle, while staying completable. It runs on the
 standard map and on **Random World Generator** worlds (see below).
 
-NodeShuffle 1.4.0 was built for an older game version and is known to crash on load
-on later ones; use 1.5.0 or later on the current game.
+NodeShuffle 1.4.0 was built for an older game version; on game build 513885 it crashed a few seconds after a world loaded. Use 1.5.0 or later on the current game.
 
 ## Compatibility — Satisfactory Plus and other overhauls
 
@@ -67,9 +66,7 @@ terrain data (height, water, void and caves) instead of the prebuilt map of the 
 - **Starter nodes (optional)** — on a brand-new game, a small guaranteed set
   near spawn (Iron/Limestone/Copper) keeps the early game playable.
 - **Per-save, deterministic** — the layout is rolled once per save from a seed
-  and persists. With modded-node inclusion enabled, eligible additions are captured
-  once after each new game/load is ready and again 60 game seconds later. Discovery
-  then stops until the next load; existing entries are not re-rolled unless you opt in.
+  and persists. With modded-node inclusion enabled, eligible additions are captured when the world is ready and then every 60 game seconds for the rest of the session; existing entries are not re-rolled unless you opt in.
 - **Balance guarantees** — every vanilla resource keeps a configurable minimum
   number of active nodes, so no playthrough becomes impossible.
 - **Respects your factory** — any node with a miner or extractor on it is never
@@ -82,11 +79,7 @@ terrain data (height, water, void and caves) instead of the prebuilt map of the 
   tested in multiplayer or on a dedicated server with this version.
 
 > **Note on player-built nodes** (if you use a mod that lets you *build* resource
-> nodes): with modded-node inclusion enabled, newly discovered eligible nodes
-> can join during those two startup/load scans. Occupied nodes are recorded in place;
-> unoccupied nodes present at a scan can move. Nodes appearing after the follow-up
-> wait until a later load. The follow-up runs on the first refresh at or after 60
-> game seconds; pausing the game pauses that delay. Scan duration and additions are logged.
+> nodes): with modded-node inclusion enabled, newly discovered eligible nodes can join at any of those scans. Occupied nodes are recorded in place; unoccupied nodes present at a scan can move. Scan duration and additions are logged.
 
 ## Configuration
 
@@ -123,15 +116,13 @@ and have no switches of their own (see **Resource wells** below).
 | Use Vanilla Counts For Modded Resources (Random World Generator) | on | ON by default. Random World Generator maps only, at each layout roll or re-roll: each modded resource listed in the Modded Resource Vanilla Counts table gets its vanilla map node count, scaled by how many vanilla ore nodes this world has compared with the vanilla map, in place of the number of its nodes NodeShuffle found on this world, when deciding how many nodes of it the shuffle deals. A listed gas resource with no node on this world gets new nodes of its own node class (one NodeShuffle finds in that resource's mod, otherwise the class listed in the row); if neither is usable, none are added. Other maps are not affected. |
 | Modded Resource Vanilla Counts (Random World Generator) | Lead 6, Lithium 23, Thorium 20 | Used on Random World Generator maps only, at each layout roll or re-roll, while 'Use Vanilla Counts For Modded Resources' is on. Each row names a modded resource, an optional node class, and a node count to scale (pre-filled with the vanilla map's count, except thorium, set lower). That number is scaled by how many vanilla ore nodes this world has compared with the vanilla map and replaces the resource's own node count in the shuffle. A gas resource with no node on this world gets new nodes of its own node class (one NodeShuffle finds in that resource's mod, otherwise the class in the row); if neither is usable, nothing is added. Pre-filled: Lead 6, Lithium 23, Thorium 20 (thorium is set lower than the 45 counted on one vanilla-map save). |
 
-**Protect Other Mods' Nodes (Per Resource)** — the self-filling list under the checkbox above: a
-resource appears once another mod's node handler has checked nodes of that resource at least once,
-so it starts empty and grows as you play alongside other mods. Every row defaults to ticked
+**Protect Other Mods' Nodes (Per Resource)** — the self-filling list under the checkbox above: a resource appears once another mod's node handler has checked nodes of that resource, or once NodeShuffle shuffles a modded resource or the scanner offers one, so it starts empty and grows as you play alongside other mods. Every row defaults to ticked
 (protected); untick one to let that resource's own mod decide for itself. The console variable
 `NodeShuffle.DestroyerVeto` still overrides the checkbox above whenever it has been explicitly set.
 
 Each row also has a **Show in scanner** switch: on shows that resource in the resource scanner wheel
 (adding it if the game's list lacks it), off hides it. It applies in a running game and writes nothing
-to the save. A new row starts hidden for All Minable's resources and shown for every other mod's.
+to the save. A new row starts hidden for All Minable's resources; until you change it, every other row follows whether the game itself lists that resource in the scanner.
 
 ### Resource wells (no settings — always on since 1.4.0)
 
@@ -219,10 +210,7 @@ destination. On Random World Generator worlds nodes are spawned map-wide and set
 ground when you come near.
 
 **One real exception.** Nodes added by **other mods** are picked up when they appear — and
-some mods spawn theirs after the world loads, or only once you research something. With
-**Include Modded Nodes** on, NodeShuffle looks for new nodes twice per load (when the world
-is ready and again 60 game seconds later) and adds them to the layout without re-rolling
-anything else. A node that appears later than that stays where it is until the next load.
+some mods spawn theirs after the world loads, or only once you research something. With **Include Modded Nodes** on, NodeShuffle looks for new nodes when the world is ready and then every 60 game seconds for the rest of the session, and adds them to the layout without re-rolling anything else. After 2048 nodes have been added this way in one session it stops looking until the next load.
 
 ### Known behaviour: a relocated resource well is absent until you reach its new site
 
@@ -281,7 +269,7 @@ Open the console (`` ` ``) and run:
   reporting a spot that looks off.
 - `NodeShuffle.SeedHere` — while standing under a natural rock roof (cave, arch,
   overhang), marks that spot so the shuffle can place nodes in that cavern.
-- `NodeShuffle.AuditPlacements` — logs how every node was placed.
+- `NodeShuffle.AuditPlacements` — logs, over every node in the layout, counts of how many read as in water, below the terrain or enclosed.
 - `NodeShuffle.DumpExtractors` — logs the extractors, nodes and compatibility
   state the mod can see.
 - `NodeShuffle.NearestCave` — Random World Generator worlds: logs the nearest cave
@@ -289,16 +277,7 @@ Open the console (`` ` ``) and run:
 
 ## Known issues
 
-- **Lithium mod family on the current game version.** With AlkaLib 1.1.2,
-  Lithium 1.2.1 and DroneChargers 1.1.4 (the versions published on 2026-09-02)
-  on game build 520140, the game has crashed while the player aimed at a lithium
-  node from within use range. The fault is in AlkaLib's node class, which was
-  built for an earlier game version; NodeShuffle's code is not on the crash's
-  call stack, and the same node class is used whether or not NodeShuffle is
-  installed. NodeShuffle places lithium on that mod's own node type, so its
-  lithium nodes are affected too. Until updated builds of those mods are
-  published, avoid aiming at lithium nodes up close, or play without the
-  Lithium mod family.
+- **Lithium mod family on the current game version.** With AlkaLib 1.1.2, Lithium 1.2.1 and DroneChargers 1.1.4 (the versions published on 2026-09-02) on game build 520140, the game crashed once while the player aimed at a lithium node at close range, on a Random World Generator world. NodeShuffle's code was not on the crash's call stack. AlkaLib's lithium node class, which NodeShuffle also uses for the lithium nodes it adds, was built for an earlier game version, and its table of interaction functions does not match the one this game build expects. On that world NodeShuffle's layout had no lithium nodes until a re-roll added 13 of them (**Use Vanilla Counts For Modded Resources**, on by default). Until updated builds of those mods are published, playing without the Lithium mod family avoids this class entirely. Turning off **Use Vanilla Counts For Modded Resources** before a roll stops NodeShuffle adding lithium nodes on Random World Generator worlds. Neither has been tested as a workaround.
 
 ## License
 

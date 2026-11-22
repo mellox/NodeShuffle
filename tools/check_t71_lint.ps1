@@ -378,7 +378,10 @@ $mutants = @(
        Repl = 'stops the mod acting at all'; Expect = 'H4' },
     @{ Name = 'M31 README figure drifts'; Key = 'readme';
        Find = '18 settings plus two lists';
-       Repl = '17 settings plus two lists'; Expect = 'H4b' }
+       Repl = '17 settings plus two lists'; Expect = 'H4b' },
+    @{ Name = 'M32 README wells-section absence sentence loses unbounded'; Key = 'readme';
+       Find = 'absent from the world for an **unbounded** time';
+       Repl = 'absent from the world for a **short** time'; Expect = 'H4' }
 )
 
 $mutantFails = @()
