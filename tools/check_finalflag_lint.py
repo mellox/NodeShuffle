@@ -219,8 +219,8 @@ def check(files, tools):
         if not re.search(r'^NodeShuffleFinalFlag\.cpp\|Display\|' + tag + r'\|1\tALWAYS\t\t', tools['tsv'], re.M): f.append('(F13) TSV row %s must be class ALWAYS' % tag)
     if "SAVEGAME_REQUIRED = ('FNodeShuffleEntry', 'bPlacement' + 'Final')" not in tools['ql'] or "'PlacementFinal' + 'Epoch')" not in tools['ql']:
         f.append('(F13) quietlog Q8 must pin both names and the SaveGame specifier')
-    own = "'2026-11-20-' + 'rwg022-list-1'"  # ns-rwg022-list-1 rotation
-    if ('$own = ' + own) not in tools['mcp'] or own not in tools['sf'] or ('$T.lmcp.Contains("`$own = ' + own + '")') not in tools['g20']: f.append('(F13) mcpcontract C4 / scanfilter S9 / rwg020 G9 must name rwg022-list-1 as newest')
+    own = "'2026-11-22-' + 'css87-1'"  # ns-css87-1 rotation (was rwg022-list-1)
+    if ('$own = ' + own) not in tools['mcp'] or own not in tools['sf'] or ('$T.lmcp.Contains("`$own = ' + own + '")') not in tools['g20']: f.append('(F13) mcpcontract C4 / scanfilter S9 / rwg020 G9 must name css87-1 as newest')
     # ---- F14 (cold review): decision-5 sticky test exact; one ApplyLayout caller; no mover after it in RefreshTick
     if body.count('const bool bSticky = !Actor && !E.bIsNew' + 'Node && E.bPinned;') != 1:
         f.append('(F14) the decision-5 sticky test must read: no actor, an original (not a new row), pinned')
@@ -290,7 +290,7 @@ def run_mutants(files, tools):
             ('N21 DIAGNOSTICS drops the not-promised list', 'doc', 'Not promised', 'Not listed', 'F12'),
             ('N22 TSV row reclassified', 'tsv', 'FINAL' + 'MOVED|1\tALWAYS', 'FINAL' + 'MOVED|1\tTOPIC', 'F13'),
             ('N23 quietlog Q8 SaveGame pin removed', 'ql', "SAVEGAME_REQUIRED = ('FNodeShuffleEntry', 'bPlacement' + 'Final')", "SAVEGAME_REQUIRED = ('', '')", 'F13'),
-            ('N24 mcpcontract C4 not rotated', 'mcp', "$own = '2026-11-20-' + 'rwg022-list-1'", "$own = '2026-11-20-' + 'finalflag-1'", 'F13')):
+            ('N24 mcpcontract C4 not rotated', 'mcp', "$own = '2026-11-22-' + 'css87-1'", "$own = '2026-11-20-' + 'rwg022-list-1'", 'F13')):
         if find not in tools[key]: miss.append('%s: find text absent (mutant cannot apply)' % name); continue
         mt = dict(tools); mt[key] = tools[key].replace(find, repl, 1)
         if any(x.startswith('(' + rule + ')') for x in check(files, mt)): caught += 1
